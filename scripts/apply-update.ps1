@@ -12,6 +12,10 @@ param(
 )
 
 $ErrorActionPreference = 'Continue'
+$appFull = [IO.Path]::GetFullPath($AppDir).TrimEnd('\')
+$rootFull = [IO.Path]::GetPathRoot($appFull).TrimEnd('\')
+if ([StringComparer]::OrdinalIgnoreCase.Equals($appFull, $rootFull)) { exit 3 }
+$AppDir = $appFull
 $DataDir = Join-Path $env:APPDATA 'WorkDaddy'
 $LogDir = Join-Path $DataDir 'update'
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
@@ -20,16 +24,54 @@ Start-Transcript -Path $Log -Append -Force
 
 Write-Host "[apply] $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') start src=$SrcZip dst=$AppDir"
 
-# 1) 杀 watchdog（会连带终止 daemon；PID 文件在数据目录）
+# 1) 先在独立临时目录解压并验证包结构，避免无效/错误 zip 触碰现有安装。
+$tmpDir = Join-Path $env:TEMP ("workdaddy-update-" + [guid]::NewGuid().ToString('N'))
+try {
+  if (-not (Test-Path -LiteralPath $SrcZip -PathType Leaf)) { throw '更新包不存在' }
+  New-Item -ItemType Directory -Force -Path $tmpDir -ErrorAction Stop | Out-Null
+  Expand-Archive -LiteralPath $SrcZip -DestinationPath $tmpDir -Force -ErrorAction Stop
+  foreach ($required in @(
+    'Install-WorkDaddy.cmd',
+    'Start-WorkDaddy.cmd',
+    'scripts\daemon.js',
+    'scripts\launcher.cmd',
+    'scripts\launcher-hidden.vbs',
+    'scripts\repair-entrypoints.ps1'
+  )) {
+    if (-not (Test-Path -LiteralPath (Join-Path $tmpDir $required) -PathType Leaf)) {
+      throw "更新包缺少 $required"
+    }
+  }
+  $srcRoot = $tmpDir
+} catch {
+  Write-Host "[apply] 更新包验证失败: $($_.Exception.Message)"
+  Remove-Item -LiteralPath $tmpDir -Recurse -Force -ErrorAction SilentlyContinue
+  Stop-Transcript
+  exit 1
+}
+
+# 2) 杀 watchdog（会连带终止 daemon；PID 文件在数据目录）
 $pidFile = Join-Path $DataDir 'watchdog.pid'
 if (Test-Path $pidFile) {
   try {
-    $wpid = [int]((Get-Content $pidFile -Raw).Trim())
-    if ($wpid -gt 0) { taskkill /F /T /PID $wpid 2>$null | Out-Null }
+    $watchdogPid = [int]((Get-Content -LiteralPath $pidFile -Raw).Trim())
+    $watchdog = Get-CimInstance Win32_Process -Filter "ProcessId=$watchdogPid" -ErrorAction SilentlyContinue
+    $expectedWatchdog = (Join-Path $AppDir 'scripts\watchdog.js').ToLowerInvariant()
+    if ($watchdog -and $watchdog.CommandLine -and $watchdog.CommandLine.ToLowerInvariant().Contains($expectedWatchdog)) {
+      taskkill /F /T /PID $watchdogPid 2>$null | Out-Null
+    }
   } catch {}
 }
 
-# 2) 兜底：按 API 端口杀残留进程
+# 2.5) 清理属于当前安装目录的旧交互式 launcher。
+try {
+  $oldLauncher = (Join-Path $AppDir 'scripts\launcher.cmd').ToLowerInvariant()
+  Get-CimInstance Win32_Process -Filter "Name='cmd.exe'" -ErrorAction SilentlyContinue |
+    Where-Object { $_.CommandLine -and $_.CommandLine.ToLowerInvariant().Contains($oldLauncher) } |
+    ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+} catch {}
+
+# 3) 兜底：按 API 端口杀残留进程
 $waitSec = 0
 while ($waitSec -lt 30) {
   $listening = netstat -ano | Select-String (":$Port\s") | Select-String 'LISTENING'
@@ -41,36 +83,33 @@ while ($waitSec -lt 30) {
 foreach ($line in (netstat -ano | Select-String (":$Port\s") | Select-String 'LISTENING')) {
   $parts = ($line.ToString().Trim() -split '\s+')
   $pid2 = $parts[$parts.Count - 1]
-  if ($pid2 -match '^\d+$') { taskkill /F /T /PID $pid2 2>$null | Out-Null }
+  if ($pid2 -match '^\d+$') {
+    $listener = Get-CimInstance Win32_Process -Filter "ProcessId=$pid2" -ErrorAction SilentlyContinue
+    $expectedDaemon = (Join-Path $AppDir 'scripts\daemon.js').ToLowerInvariant()
+    if ($listener -and $listener.CommandLine -and $listener.CommandLine.ToLowerInvariant().Contains($expectedDaemon)) {
+      taskkill /F /T /PID $pid2 2>$null | Out-Null
+    }
+  }
 }
 Start-Sleep -Seconds 1
 
-# 3) 备份旧目录（回滚：move AppDir.old AppDir）
+# 4) 备份旧目录（回滚：move AppDir.old AppDir）
 $oldDir = $AppDir + '.old'
-if (Test-Path $oldDir) { Remove-Item -Recurse -Force $oldDir -ErrorAction SilentlyContinue }
-if (Test-Path $AppDir) { Move-Item -Force $AppDir $oldDir -ErrorAction SilentlyContinue }
-
-# 4) 解压新版到临时目录，再移动到位（Expand-Archive 无法原地覆盖已存在目录）
-$tmpDir = Join-Path $env:TEMP ("workdaddy-update-" + [guid]::NewGuid().ToString('N'))
-New-Item -ItemType Directory -Force -Path $tmpDir | Out-Null
 try {
-  Expand-Archive -Path $SrcZip -DestinationPath $tmpDir -Force
+  if (Test-Path -LiteralPath $oldDir) { Remove-Item -LiteralPath $oldDir -Recurse -Force -ErrorAction Stop }
+  if (Test-Path -LiteralPath $AppDir) { Move-Item -LiteralPath $AppDir -Destination $oldDir -Force -ErrorAction Stop }
+  New-Item -ItemType Directory -Force -Path $AppDir -ErrorAction Stop | Out-Null
 } catch {
-  Write-Host "[apply] 解压失败: $($_.Exception.Message)"
-  if (Test-Path $oldDir) { Move-Item -Force $oldDir $AppDir -ErrorAction SilentlyContinue }  # 回滚
+  Write-Host "[apply] 备份旧版本失败: $($_.Exception.Message)"
+  if (-not (Test-Path -LiteralPath $AppDir) -and (Test-Path -LiteralPath $oldDir)) {
+    Move-Item -LiteralPath $oldDir -Destination $AppDir -Force -ErrorAction SilentlyContinue
+  }
+  Remove-Item -LiteralPath $tmpDir -Recurse -Force -ErrorAction SilentlyContinue
   Stop-Transcript
-  exit 1
+  exit 2
 }
 
-# 定位 zip 内的应用根：顶层含 scripts\daemon.js（打包结构）→ 顶层即根；个别情况顶层直接是文件
-$srcRoot = $tmpDir
-if (-not (Test-Path (Join-Path $tmpDir 'scripts\daemon.js')) -and -not (Test-Path (Join-Path $tmpDir 'daemon.js'))) {
-  $hit = Get-ChildItem $tmpDir -Recurse -Filter 'daemon.js' -ErrorAction SilentlyContinue | Select-Object -First 1
-  if ($hit) { $srcRoot = Split-Path $hit.FullName -Parent }
-}
-New-Item -ItemType Directory -Force -Path $AppDir | Out-Null
-
-# 复制内容（robocopy /MIR 保留结构；失败则回滚）
+# 5) 复制内容（robocopy /MIR 保留结构；失败则回滚）
 $rc = 1
 robocopy $srcRoot $AppDir /MIR /NFL /NDL /NJH /NJS /NP
 $rc = $LASTEXITCODE  # robocopy 0-7 都算成功
@@ -79,21 +118,53 @@ if ($rc -ge 8) {
   Remove-Item -Recurse -Force $AppDir -ErrorAction SilentlyContinue
   if (Test-Path $oldDir) { Move-Item -Force $oldDir $AppDir }
   Stop-Transcript
-  exit 2
+  Remove-Item -LiteralPath $tmpDir -Recurse -Force -ErrorAction SilentlyContinue
+  exit 3
 }
 
-# 5) 清理备份 + 拉起（launcher 幂等：检测 daemon 后启动 watchdog）
-Remove-Item -Recurse -Force $oldDir -ErrorAction SilentlyContinue
-$launcher = Join-Path $AppDir 'launcher.cmd'
-$launcherVbs = Join-Path $AppDir 'launcher-hidden.vbs'
-if (Test-Path $launcher) {
-  if (Test-Path $launcherVbs) {
-    # wscript.exe 不创建控制台，自动更新重启时也不再弹出空白 Windows Terminal。
-    Start-Process -FilePath (Join-Path $env:WINDIR 'System32\wscript.exe') -ArgumentList ('//nologo "' + $launcherVbs + '"') -WorkingDirectory (Split-Path $launcher)
-  } else {
-    # 兼容旧版本目录：直接启动 launcher.cmd。
-    Start-Process -FilePath $launcher -WorkingDirectory (Split-Path $launcher)
+# 6) 修复静默入口并拉起新版；确认 /healthz 后才删除回滚目录。
+$targetScripts = Join-Path $AppDir 'scripts'
+$launcher = Join-Path $targetScripts 'launcher.cmd'
+$launcherVbs = Join-Path $targetScripts 'launcher-hidden.vbs'
+$repairEntrypoints = Join-Path $targetScripts 'repair-entrypoints.ps1'
+$wscript = Join-Path $env:WINDIR 'System32\wscript.exe'
+if (Test-Path -LiteralPath $repairEntrypoints -PathType Leaf) {
+  try { & $repairEntrypoints -AppDir $AppDir } catch { Write-Host ('[apply] 修复静默入口失败: ' + $_.Exception.Message) }
+}
+if (Test-Path -LiteralPath $launcherVbs -PathType Leaf) {
+  Start-Process -FilePath $wscript -ArgumentList ('//B //Nologo "' + $launcherVbs + '"') -WorkingDirectory $targetScripts -WindowStyle Hidden
+} elseif (Test-Path -LiteralPath $launcher -PathType Leaf) {
+  Start-Process -FilePath $launcher -WorkingDirectory $targetScripts -WindowStyle Hidden
+}
+
+$ready = $false
+for ($attempt = 0; $attempt -lt 30 -and -not $ready; $attempt++) {
+  Start-Sleep -Seconds 1
+  for ($candidate = [int]$Port; $candidate -lt ([int]$Port + 8); $candidate++) {
+    try {
+      $health = Invoke-RestMethod -Uri ("http://127.0.0.1:$candidate/healthz") -TimeoutSec 1
+      if ($health.ok -and $health.service -eq 'workdaddy') { $ready = $true; break }
+    } catch {}
   }
+}
+
+if ($ready) {
+  Remove-Item -LiteralPath $oldDir -Recurse -Force -ErrorAction SilentlyContinue
+  Remove-Item -LiteralPath $tmpDir -Recurse -Force -ErrorAction SilentlyContinue
+} else {
+  Write-Host '[apply] 新版未通过健康检查，正在回滚旧版本'
+  Remove-Item -LiteralPath $AppDir -Recurse -Force -ErrorAction SilentlyContinue
+  if (Test-Path -LiteralPath $oldDir) { Move-Item -LiteralPath $oldDir -Destination $AppDir -Force }
+  Remove-Item -LiteralPath $tmpDir -Recurse -Force -ErrorAction SilentlyContinue
+  $rollbackVbs = Join-Path $AppDir 'scripts\launcher-hidden.vbs'
+  $rollbackCmd = Join-Path $AppDir 'scripts\launcher.cmd'
+  if (Test-Path -LiteralPath $rollbackVbs -PathType Leaf) {
+    Start-Process -FilePath $wscript -ArgumentList ('//B //Nologo "' + $rollbackVbs + '"') -WindowStyle Hidden
+  } elseif (Test-Path -LiteralPath $rollbackCmd -PathType Leaf) {
+    Start-Process -FilePath $rollbackCmd -WorkingDirectory (Split-Path $rollbackCmd) -WindowStyle Hidden
+  }
+  Stop-Transcript
+  exit 4
 }
 Write-Host "[apply] $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') done"
 Stop-Transcript

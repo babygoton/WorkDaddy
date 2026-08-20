@@ -23,10 +23,13 @@ const SCRIPTS_DIR = __dirname;
 const DATA_DIR =
   process.env.WBSWITCH_DATA_DIR ||
   path.join(process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'), 'WorkDaddy');
-const UI_PORT = parseInt(process.env.WBSWITCH_PORT || '47832', 10);
+const UI_PORT_BASE = parseInt(process.env.WBSWITCH_PORT || '47832', 10);
+let actualUiPort = UI_PORT_BASE;
 const cliCdpPort = process.argv.find((arg) => /^--cdp-port=\d+$/i.test(arg));
-const CDP_PORT = parseInt(process.env.WBSWITCH_CDP_PORT || (cliCdpPort ? cliCdpPort.split('=')[1] : '') || '9222', 10);
+const CONFIGURED_CDP_PORT = parseInt(process.env.WBSWITCH_CDP_PORT || (cliCdpPort ? cliCdpPort.split('=')[1] : '') || '9222', 10);
+let CDP_PORT = CONFIGURED_CDP_PORT;
 const ELEVATED_HELPER_MODE = process.argv.includes('--inject-helper');
+const LAUNCHER_LOCK_FILE = path.join(DATA_DIR, 'launcher.lock');
 
 function log(...args) {
   const line = `[launcher] ${new Date().toISOString()} ${args.join(' ')}\n`;
@@ -36,6 +39,57 @@ function log(...args) {
 
 // ---------- 小工具 ----------
 function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
+
+function processCommandLine(pid) {
+  if (!pid || pid === process.pid) return false;
+  try {
+    const r = spawnSync('powershell', [
+      '-NoProfile', '-Command',
+      `(Get-CimInstance Win32_Process -Filter "ProcessId=${Number(pid)}" -ErrorAction SilentlyContinue).CommandLine`,
+    ], {
+      encoding: 'utf8', timeout: 5000, windowsHide: true,
+    });
+    return r.status === 0 ? String(r.stdout || '').trim() : '';
+  } catch (_) { return ''; }
+}
+
+function processOwnsScript(pid, scriptPath) {
+  const commandLine = processCommandLine(pid);
+  return !!commandLine && commandLine.toLowerCase().includes(path.resolve(scriptPath).toLowerCase());
+}
+
+async function acquireLauncherLock(waitMs) {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+  const deadline = Date.now() + Math.max(0, waitMs || 0);
+  do {
+    try {
+      fs.writeFileSync(LAUNCHER_LOCK_FILE, JSON.stringify({
+        pid: process.pid,
+        role: ELEVATED_HELPER_MODE ? 'elevated-helper' : 'launcher',
+        startedAt: new Date().toISOString(),
+      }), { flag: 'wx', mode: 0o600 });
+      return true;
+    } catch (e) {
+      if (!e || e.code !== 'EEXIST') throw e;
+      let ownerPid = 0;
+      try { ownerPid = Number(JSON.parse(fs.readFileSync(LAUNCHER_LOCK_FILE, 'utf8')).pid); } catch (_) {}
+      if (!processOwnsScript(ownerPid, path.join(SCRIPTS_DIR, 'win-launcher.js'))) {
+        try { fs.unlinkSync(LAUNCHER_LOCK_FILE); } catch (_) {}
+        continue;
+      }
+      if (Date.now() >= deadline) return false;
+      await sleep(200);
+    }
+  } while (Date.now() <= deadline);
+  return false;
+}
+
+function releaseLauncherLock() {
+  try {
+    const owner = JSON.parse(fs.readFileSync(LAUNCHER_LOCK_FILE, 'utf8'));
+    if (Number(owner.pid) === process.pid) fs.unlinkSync(LAUNCHER_LOCK_FILE);
+  } catch (_) {}
+}
 
 // 当前进程是否为管理员（Windows）
 function isElevated() {
@@ -91,7 +145,11 @@ function portOpen(port) {
 
 function httpGet(port, p) {
   return new Promise((resolve) => {
-    const req = http.get({ host: '127.0.0.1', port, path: p, timeout: 1500 }, (res) => {
+    const token = readApiToken();
+    const req = http.get({
+      host: '127.0.0.1', port, path: p, timeout: 1500,
+      headers: token ? { 'X-WorkDaddy-Token': token } : {},
+    }, (res) => {
       let body = '';
       res.on('data', (c) => (body += c));
       res.on('end', () => resolve({ status: res.statusCode, body }));
@@ -103,7 +161,11 @@ function httpGet(port, p) {
 
 function httpPost(port, p) {
   return new Promise((resolve) => {
-    const req = http.request({ host: '127.0.0.1', port, path: p, method: 'POST', timeout: 1500 }, (res) => {
+    const token = readApiToken();
+    const req = http.request({
+      host: '127.0.0.1', port, path: p, method: 'POST', timeout: 1500,
+      headers: token ? { 'X-WorkDaddy-Token': token } : {},
+    }, (res) => {
       res.resume();
       res.on('end', () => resolve({ status: res.statusCode }));
     });
@@ -113,13 +175,30 @@ function httpPost(port, p) {
   });
 }
 
-async function isWorkBuddyCdp() {
-  const version = await httpGet(CDP_PORT, '/json/version');
+function readApiToken() {
+  try { return fs.readFileSync(path.join(DATA_DIR, 'api-token'), 'utf8').trim(); } catch (_) { return ''; }
+}
+
+async function isWorkBuddyCdpAt(port) {
+  const version = await httpGet(port, '/json/version');
   if (!version || version.status !== 200) return false;
   try {
     const info = JSON.parse(version.body || '{}');
-    return /workbuddy|codebuddy/i.test([info.Browser, info['User-Agent']].filter(Boolean).join(' '));
+    return /workbuddyai|workbuddy|codebuddy/i.test([info.Browser, info['User-Agent']].filter(Boolean).join(' '));
   } catch (_) { return false; }
+}
+
+async function isWorkBuddyCdp() { return isWorkBuddyCdpAt(CDP_PORT); }
+
+async function selectCdpPort() {
+  const candidates = [...new Set([CONFIGURED_CDP_PORT, 9222, 9223, 9333])];
+  for (const port of candidates) {
+    if (await isWorkBuddyCdpAt(port)) return { port, existing: true };
+  }
+  for (const port of candidates) {
+    if (!(await portOpen(port))) return { port, existing: false };
+  }
+  throw new Error('没有可用的 WorkBuddy CDP 端口（已检查 ' + candidates.join(', ') + '）');
 }
 
 function psOut(cmd) {
@@ -138,16 +217,18 @@ function readDaemonVersion() {
   } catch (_) { return ''; }
 }
 
-// ---------- 定位 node（托管优先：.workbuddy\binaries\node\versions\<v>\node.exe，其次 PATH） ----------
+// ---------- 定位 node（WorkBuddyAI/legacy 托管运行时优先，其次 PATH） ----------
 function findNode() {
-  const base = path.join(os.homedir(), '.workbuddy', 'binaries', 'node', 'versions');
   let verDirs = [];
-  try {
-    verDirs = fs.readdirSync(base)
-      .map((d) => path.join(base, d, 'node.exe'))
-      .filter((p) => fs.existsSync(p))
-      .sort();
-  } catch (_) {}
+  for (const homeName of ['.workbuddy-ai', '.workbuddy']) {
+    const base = path.join(os.homedir(), homeName, 'binaries', 'node', 'versions');
+    try {
+      verDirs.push(...fs.readdirSync(base)
+        .map((d) => path.join(base, d, 'node.exe'))
+        .filter((p) => fs.existsSync(p)));
+    } catch (_) {}
+  }
+  verDirs.sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
   if (verDirs.length) return verDirs[verDirs.length - 1];
   try {
     const r = spawnSync('node', ['-v'], { encoding: 'utf8', timeout: 3000, windowsHide: true });
@@ -156,7 +237,7 @@ function findNode() {
   return null;
 }
 
-// ---------- 定位 WorkBuddy.exe（环境变量 > 运行进程 > 注册表 > 常见路径） ----------
+// ---------- 定位 WorkBuddy/WorkBuddyAI（环境变量 > 运行进程 > 注册表 > 常见路径） ----------
 let wbBinaryCache = null;
 function findWorkBuddy() {
   if (wbBinaryCache) return wbBinaryCache;
@@ -164,16 +245,19 @@ function findWorkBuddy() {
   const envBin = tryFile(process.env.WBSWITCH_WORKBUDDY_BIN);
   if (envBin) return (wbBinaryCache = envBin);
   try {
-    const p = psOut('Get-Process WorkBuddy -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Path').split(/\r?\n/).filter(Boolean).pop();
+    const p = psOut('Get-Process WorkBuddyAI,WorkBuddy -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Path').split(/\r?\n/).filter(Boolean).pop();
     const hit = tryFile(p);
     if (hit) return (wbBinaryCache = hit);
   } catch (_) {}
   try {
-    const p = psOut("$k=@('HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*','HKLM:\\SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*','HKCU:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*'); Get-ItemProperty $k -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -match 'WorkBuddy|CodeBuddy' } | Select-Object -First 1 DisplayIcon,InstallLocation | ForEach-Object { if($_.DisplayIcon){ ($_.DisplayIcon -replace ',.*$','').Trim() } elseif($_.InstallLocation){ Join-Path $_.InstallLocation 'WorkBuddy.exe' } }").split(/\r?\n/).filter(Boolean).pop();
+    const p = psOut("$k=@('HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*','HKLM:\\SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*','HKCU:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*'); Get-ItemProperty $k -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -match 'WorkBuddy|CodeBuddy' } | Select-Object -First 1 DisplayIcon,InstallLocation | ForEach-Object { if($_.DisplayIcon){ ($_.DisplayIcon -replace ',.*$','').Trim() } elseif($_.InstallLocation){ $ai=Join-Path $_.InstallLocation 'WorkBuddyAI.exe'; $legacy=Join-Path $_.InstallLocation 'WorkBuddy.exe'; if(Test-Path $ai){$ai}else{$legacy} } }").split(/\r?\n/).filter(Boolean).pop();
     const hit = tryFile(p);
     if (hit) return (wbBinaryCache = hit);
   } catch (_) {}
   for (const c of [
+    path.join(process.env.LOCALAPPDATA || '', 'Programs', 'WorkBuddyAI', 'WorkBuddyAI.exe'),
+    path.join(process.env.ProgramFiles || '', 'WorkBuddyAI', 'WorkBuddyAI.exe'),
+    path.join(process.env['ProgramFiles(x86)'] || '', 'WorkBuddyAI', 'WorkBuddyAI.exe'),
     path.join(process.env.LOCALAPPDATA || '', 'Programs', 'WorkBuddy', 'WorkBuddy.exe'),
     path.join(process.env.ProgramFiles || '', 'WorkBuddy', 'WorkBuddy.exe'),
     path.join(process.env['ProgramFiles(x86)'] || '', 'WorkBuddy', 'WorkBuddy.exe'),
@@ -189,35 +273,60 @@ function findWorkBuddy() {
 function watchdogAlive() {
   try {
     const pid = parseInt(fs.readFileSync(path.join(DATA_DIR, 'watchdog.pid'), 'utf8').trim(), 10);
-    if (!pid) return false;
-    const r = spawnSync('tasklist', ['/FI', 'PID eq ' + pid, '/FO', 'CSV', '/NH'], { encoding: 'utf8', timeout: 5000, windowsHide: true });
-    return r.status === 0 && /node/i.test(r.stdout);
+    return !!pid && processOwnsScript(pid, path.join(SCRIPTS_DIR, 'watchdog.js'));
   } catch (_) { return false; }
 }
 
-function daemonRunning() {
-  return portOpen(UI_PORT);
+async function findDaemonPort() {
+  for (let port = UI_PORT_BASE; port < UI_PORT_BASE + 8; port++) {
+    const health = await httpGet(port, '/healthz');
+    if (health && health.status === 200) {
+      try {
+        const parsed = JSON.parse(health.body);
+        if (parsed && parsed.ok === true && parsed.service === 'workdaddy') {
+          actualUiPort = port;
+          return { port, health: parsed };
+        }
+      } catch (_) {}
+    }
+    // 1.0.5 did not expose /healthz. Recognize its richer status payload only
+    // for the upgrade path, then restart it into the authenticated API.
+    const legacyStatus = await httpGet(port, '/api/status');
+    if (legacyStatus && legacyStatus.status === 200) {
+      try {
+        const parsed = JSON.parse(legacyStatus.body);
+        if (parsed && parsed.ok === true && typeof parsed.version === 'string' && parsed.cdp && parsed.dataDir) {
+          actualUiPort = port;
+          return { port, health: { ...parsed, service: 'workdaddy' } };
+        }
+      } catch (_) {}
+    }
+  }
+  return null;
 }
 
-async function ensureDaemon(nodeBin) {
+async function daemonRunning() {
+  return !!(await findDaemonPort());
+}
+
+async function ensureDaemon(nodeBin, forceRestart) {
   fs.mkdirSync(path.join(DATA_DIR, 'accounts'), { recursive: true });
   // 已有 daemon：检查版本一致性（旧版本代码继续注入会出兼容问题）
-  const st = await httpGet(UI_PORT, '/api/status');
-  if (st && st.status === 200) {
-    let runningVer = '';
-    try { runningVer = (JSON.parse(st.body).version || ''); } catch (_) {}
+  const found = await findDaemonPort();
+  if (found) {
+    const runningVer = found.health.version || '';
     const want = readDaemonVersion();
-    if (runningVer === want) {
-      log('daemon 已在运行且版本一致 (' + runningVer + ')，跳过启动');
+    if (!forceRestart && runningVer === want) {
+      log('daemon 已在运行且版本一致 (' + runningVer + ', port=' + actualUiPort + ')，跳过启动');
       return true;
     }
-    log('检测到旧版 daemon (' + runningVer + ' != ' + want + ')，强制重启');
-    stopDaemonByPort();
+    log('daemon 需要重启 (' + runningVer + ' -> ' + want + ', cdp=' + CDP_PORT + ')');
+    stopDaemonByPort(actualUiPort);
   } else if (watchdogAlive()) {
     log('watchdog 在运行但 daemon 未就绪，等待其拉起...');
     for (let i = 0; i < 20; i++) {
       await sleep(500);
-      if (daemonRunning()) { log('daemon 已就绪'); return true; }
+      if (await daemonRunning()) { log('daemon 已就绪 (port=' + actualUiPort + ')'); return true; }
     }
     log('等待超时，主动拉起 watchdog');
   }
@@ -229,22 +338,24 @@ async function ensureDaemon(nodeBin) {
   }
   for (let i = 0; i < 30; i++) {
     await sleep(400);
-    if (daemonRunning()) { log('daemon 已就绪'); return true; }
+    if (await daemonRunning()) { log('daemon 已就绪 (port=' + actualUiPort + ')'); return true; }
   }
   log('等待 daemon 就绪超时');
-  return daemonRunning();
+  return await daemonRunning();
 }
 
-function stopDaemonByPort() {
+function stopDaemonByPort(port = actualUiPort) {
   // 杀 watchdog（会连带杀 daemon）→ 兜底按端口杀
   try {
     const pid = parseInt(fs.readFileSync(path.join(DATA_DIR, 'watchdog.pid'), 'utf8').trim(), 10);
-    if (pid) spawnSync('taskkill', ['/F', '/T', '/PID', String(pid)], { stdio: 'ignore', windowsHide: true });
+    if (pid && processOwnsScript(pid, path.join(SCRIPTS_DIR, 'watchdog.js'))) {
+      spawnSync('taskkill', ['/F', '/T', '/PID', String(pid)], { stdio: 'ignore', windowsHide: true });
+    }
     try { fs.unlinkSync(path.join(DATA_DIR, 'watchdog.pid')); } catch (_) {}
   } catch (_) {}
   // 兜底：杀监听 UI 端口的进程
   const out = spawnSync('netstat', ['-ano'], { encoding: 'utf8', timeout: 8000, windowsHide: true }).stdout || '';
-  const lines = out.split(/\r?\n/).filter((l) => l.includes(':' + UI_PORT) && /LISTENING/i.test(l));
+  const lines = out.split(/\r?\n/).filter((l) => l.includes(':' + port) && /LISTENING/i.test(l));
   const pids = new Set();
   for (const l of lines) {
     const m = l.trim().split(/\s+/);
@@ -252,20 +363,25 @@ function stopDaemonByPort() {
     if (pid && /^\d+$/.test(pid)) pids.add(pid);
   }
   for (const pid of pids) {
-    spawnSync('taskkill', ['/F', '/T', '/PID', pid], { stdio: 'ignore', windowsHide: true });
+    if (processOwnsScript(Number(pid), path.join(SCRIPTS_DIR, 'daemon.js'))) {
+      spawnSync('taskkill', ['/F', '/T', '/PID', pid], { stdio: 'ignore', windowsHide: true });
+    } else {
+      log('拒绝结束端口 ' + port + ' 上的非 WorkDaddy 进程 pid=' + pid);
+    }
   }
   return pids.size > 0;
 }
 
 // ---------- 2/3. WorkBuddy CDP 处理 ----------
-function workBuddyRunning() {
+function workBuddyRunning(wb) {
+  const imageName = path.basename(wb || '') || 'WorkBuddy.exe';
   try {
     const r = spawnSync(
       'tasklist',
-      ['/FI', 'IMAGENAME eq WorkBuddy.exe', '/FO', 'CSV', '/NH'],
+      ['/FI', 'IMAGENAME eq ' + imageName, '/FO', 'CSV', '/NH'],
       { encoding: 'utf8', timeout: 5000, windowsHide: true }
     );
-    return r.status === 0 && /"WorkBuddy\.exe"/i.test(r.stdout || '');
+    return r.status === 0 && (r.stdout || '').toLowerCase().includes('"' + imageName.toLowerCase() + '"');
   } catch (_) {
     return true;
   }
@@ -288,21 +404,22 @@ function runTaskkill(args) {
   });
 }
 
-async function waitForWorkBuddyExit(timeoutMs) {
+async function waitForWorkBuddyExit(wb, timeoutMs) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (!workBuddyRunning()) return true;
+    if (!workBuddyRunning(wb)) return true;
     await sleep(200);
   }
-  return !workBuddyRunning();
+  return !workBuddyRunning(wb);
 }
 
-async function quitWorkBuddy() {
-  if (!workBuddyRunning()) return true;
-  await runTaskkill(['/IM', 'WorkBuddy.exe']);
-  if (await waitForWorkBuddyExit(1800)) return true;
-  await runTaskkill(['/F', '/T', '/IM', 'WorkBuddy.exe']);
-  if (await waitForWorkBuddyExit(4000)) return true;
+async function quitWorkBuddy(wb) {
+  const imageName = path.basename(wb || '') || 'WorkBuddy.exe';
+  if (!workBuddyRunning(wb)) return true;
+  await runTaskkill(['/IM', imageName]);
+  if (await waitForWorkBuddyExit(wb, 1800)) return true;
+  await runTaskkill(['/F', '/T', '/IM', imageName]);
+  if (await waitForWorkBuddyExit(wb, 4000)) return true;
   throw new Error('无法确认 WorkBuddy 已退出');
 }
 
@@ -354,8 +471,25 @@ function launchWorkBuddy(wb) {
 }
 
 async function injectNow() {
-  // daemon 的 /api/inject 是 POST
-  try { await httpPost(UI_PORT, '/api/inject'); } catch (_) {}
+  const result = await httpPost(actualUiPort, '/api/inject');
+  return !!(result && result.status >= 200 && result.status < 300);
+}
+
+async function waitForInjection() {
+  for (let i = 0; i < 12; i++) {
+    if (await injectNow()) return true;
+    await sleep(500);
+  }
+  return false;
+}
+
+function handoffToElevatedHelper() {
+  if (!spawnElevatedHelper()) return false;
+  // The elevated launcher waits for this owner to release the lock. Releasing
+  // only after Start-Process succeeds closes the old UAC/lock race.
+  releaseLauncherLock();
+  log('已把启动流程交给管理员助手');
+  return true;
 }
 
 // ---------- main ----------
@@ -364,12 +498,23 @@ async function injectNow() {
   // 探测耗时让 Windows Terminal 看起来像“空白无响应”；同一行也会落到 launcher.log。
   try { fs.mkdirSync(DATA_DIR, { recursive: true }); } catch (_) {}
   log('启动入口: scripts=' + SCRIPTS_DIR + ' data=' + DATA_DIR + ' pid=' + process.pid);
+  if (!(await acquireLauncherLock(ELEVATED_HELPER_MODE ? 10000 : 0))) {
+    log('已有 launcher 实例在运行，本次启动跳过');
+    process.exit(0);
+  }
+  process.on('exit', releaseLauncherLock);
+
   const nodeBin = findNode();
   if (!nodeBin) {
-    log('未找到 Node.js（需 .workbuddy\\binaries 托管 node 或 PATH 中的 node）');
+    log('未找到 Node.js（需 .workbuddy-ai/.workbuddy 托管 node 或 PATH 中的 node）');
     console.error('错误：未找到 Node.js。请先安装 Node.js 或安装 WorkBuddy（自带托管 node）。');
     process.exit(1);
   }
+
+  const cdpSelection = await selectCdpPort();
+  CDP_PORT = cdpSelection.port;
+  process.env.WBSWITCH_CDP_PORT = String(CDP_PORT);
+  log('CDP 端口: ' + CDP_PORT + (cdpSelection.existing ? '（已有 WorkBuddy）' : '（可用）'));
 
   // 提权助手接管时，先停掉普通权限启动的 watchdog/daemon，避免两个权限级别的
   // daemon 同时占用端口；WorkBuddy GUI 后续仍由 ShellExecute 以用户权限启动。
@@ -378,11 +523,18 @@ async function injectNow() {
     stopDaemonByPort();
     await sleep(800);
   }
-  await ensureDaemon(nodeBin);
+  const daemonReady = await ensureDaemon(nodeBin, CDP_PORT !== CONFIGURED_CDP_PORT);
+  if (!daemonReady) {
+    console.error('WorkDaddy daemon 启动失败。日志：' + path.join(DATA_DIR, 'launcher.log'));
+    process.exit(5);
+  }
 
   // 已在 CDP 模式 → 幂等注入
   if (await isWorkBuddyCdp()) {
-    await injectNow();
+    if (!(await waitForInjection())) {
+      log('WorkBuddy 已在调试模式，但 /api/inject 调用失败');
+      process.exit(6);
+    }
     log('WorkBuddy 已在调试模式（端口 ' + CDP_PORT + '），组件已注入');
     console.log('WorkDaddy：WorkBuddy 已在调试模式，组件已注入 ✓');
     process.exit(0);
@@ -391,29 +543,21 @@ async function injectNow() {
   // 未开 CDP → 需要重启 WorkBuddy 带调试端口
   const wb = findWorkBuddy();
   if (!wb) {
-    console.error('未找到 WorkBuddy.exe。可用环境变量 WBSWITCH_WORKBUDDY_BIN 指定完整路径。');
-    log('未找到 WorkBuddy.exe');
+    console.error('未找到 WorkBuddy/WorkBuddyAI 可执行文件。可用环境变量 WBSWITCH_WORKBUDDY_BIN 指定完整路径。');
+    log('未找到 WorkBuddy/WorkBuddyAI 可执行文件');
     process.exit(2);
-  }
-
-  // WorkBuddy 常装在 C:\Program Files（受保护特权目录），结束已提升的旧进程可能需要管理员权限。
-  // 若当前非管理员：派发提权助手（触发一次 UAC）后立即退出，由助手完成重启+注入，
-  // 避免普通双击时卡在黑屏空转等 20 秒。
-  if (!isElevated()) {
-    log('非管理员权限：派发提权助手重启 WorkBuddy（唤醒 UAC）');
-    console.log('需要管理员权限以重启 WorkBuddy 进入调试模式，正在请求授权...');
-    if (spawnElevatedHelper()) {
-      console.log('已发起提权请求，点击 UAC「是」后将自动完成重启与注入。');
-      process.exit(0);
-    }
-    // 派发失败则仍退回当前进程尝试（容错）
-    log('提权派发失败，退回当前进程直接重启');
   }
 
   log('重启 WorkBuddy（带 --remote-debugging-port=' + CDP_PORT + '，GUI 使用当前用户权限）: ' + wb);
   console.log('正在以调试模式重启 WorkBuddy（约几秒）...');
 
-  await quitWorkBuddy();
+  try {
+    await quitWorkBuddy(wb);
+  } catch (e) {
+    log('普通权限退出 WorkBuddy 失败: ' + e.message);
+    if (!isElevated() && !ELEVATED_HELPER_MODE && handoffToElevatedHelper()) process.exit(0);
+    throw e;
+  }
   await sleep(500);
   launchWorkBuddy(wb);
 
@@ -424,14 +568,19 @@ async function injectNow() {
   }
   if (ok) {
     await sleep(1500);
-    await injectNow();
+    if (!(await waitForInjection())) {
+      log('WorkBuddy CDP 已启动，但 /api/inject 调用失败');
+      process.exit(6);
+    }
     log('WorkBuddy 已启动（调试模式），组件已注入');
     console.log('WorkDaddy：WorkBuddy 已启动（调试模式），组件已注入 ✓');
-  } else {
-    log('等待 20 秒未检测到调试端口 ' + CDP_PORT);
-    console.log('等待超时：未检测到调试端口 ' + CDP_PORT + '。可手动执行：cd /d ' + path.dirname(wb) + ' && "' + wb + '" --remote-debugging-port=' + CDP_PORT);
+    process.exit(0);
   }
-  process.exit(ok ? 0 : 3);
+
+  log('等待 20 秒未检测到 WorkBuddy CDP 端口 ' + CDP_PORT);
+  if (!isElevated() && !ELEVATED_HELPER_MODE && handoffToElevatedHelper()) process.exit(0);
+  console.log('等待超时：未检测到 WorkBuddy CDP 端口 ' + CDP_PORT + '。可手动执行：cd /d ' + path.dirname(wb) + ' && "' + wb + '" --remote-debugging-port=' + CDP_PORT);
+  process.exit(3);
 })().catch((e) => {
   log('launcher 异常: ' + (e && e.stack || e));
   console.error('WorkDaddy 启动异常: ' + (e && e.message || e));

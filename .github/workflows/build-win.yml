@@ -1,43 +1,58 @@
-name: Build & Verify Windows Setup
+name: Build & Verify Windows Release
 
-# 触发方式（任选其一都会跑这套打包+验证）：
-#   - 推 v* 标签（正式发版）
-#   - 手动触发（workflow_dispatch，可传版本号）
-#   - 推 master/main（可选，防回归）
 on:
+  pull_request:
+    paths:
+      - '.github/workflows/build-win.yml'
+      - '.github/scripts/**'
+      - '.gitattributes'
+      - 'scripts/**'
   push:
     tags:
       - 'v*'
+      - '[0-9]*'
   workflow_dispatch:
     inputs:
       version:
-        description: '版本号（如 1.0.4），留空则从代码读取'
+        description: '版本号（如 1.0.6），留空则从代码读取'
         required: false
         default: ''
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  build-and-verify:
-    name: Build zip + Setup.exe + verify
-    runs-on: windows-latest   # IExpress 是真 GUI，必须在 Windows runner 上打包
+  verify-windows:
+    name: Build zip + verify
+    runs-on: windows-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
-      - name: 校验 CRLF（cmd 必须 CRLF，否则 cmd.exe 解析括号块会失败）
+      - name: Use Node 22
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+
+      - name: Verify line endings
         shell: bash
         run: |
-          for f in scripts/*.cmd; do
-            if ! grep -q $'\r' "$f"; then
-              echo "::error::$f 不是 CRLF，无法在 Windows 使用，请转换"
-              exit 1
-            fi
-          done
-          echo "所有 .cmd 均为 CRLF ✓"
+          python - <<'PY'
+          from pathlib import Path
+          errors = []
+          for path in Path('scripts').glob('*.cmd'):
+              data = path.read_bytes()
+              if b'\n' in data.replace(b'\r\n', b'') or b'\r' in data.replace(b'\r\n', b''):
+                  errors.append(f'{path} must use CRLF exclusively')
+          for path in Path('scripts').glob('*.sh'):
+              if b'\r' in path.read_bytes():
+                  errors.append(f'{path} must use LF exclusively')
+          for error in errors:
+              print(f'::error::{error}')
+          raise SystemExit(1 if errors else 0)
+          PY
 
-      - name: 解析版本号
+      - name: Resolve version
         id: ver
         shell: bash
         run: |
@@ -46,54 +61,56 @@ jobs:
             VER=$(grep -o "DAEMON_VERSION = '[^']*'" scripts/daemon.js | head -1 | cut -d"'" -f2)
           fi
           echo "version=$VER" >> "$GITHUB_OUTPUT"
-          echo "检测到版本: $VER"
+          echo "version=$VER"
 
-      - name: 打包内置资产 builtin（build-win-zip.sh 需要）
-        shell: bash
-        run: |
-          SRC="WorkDaddy.app/Contents/Resources/scripts/builtin"
-          if [ -d "$SRC" ]; then
-            cp -R "$SRC/." scripts/builtin/
-            echo "已复制 builtin 资产"
-          else
-            echo "警告: 未找到 builtin，面板将无官方壁纸（不影响安装功能）"
-          fi
-
-      - name: 生成 Windows zip
+      - name: Build Windows zip
         shell: bash
         run: bash scripts/build-win-zip.sh
 
-      - name: 生成 Setup.exe（IExpress 自解压安装包）
-        shell: cmd
-        run: |
-          call scripts\make-setup.cmd
+      - name: Verify final package
+        shell: pwsh
+        run: .\.github\scripts\verify-windows-package.ps1 -ZipPath "release\WorkDaddy-${{ steps.ver.outputs.version }}-win64.zip"
 
-      - name: 列出产物
-        shell: bash
-        run: ls -lh release/
+      - name: Verify local API contract
+        shell: pwsh
+        run: .\.github\scripts\verify-api-contract.ps1
 
-      - name: 产物完整性自检（verify-win.cmd，纯只读）
-        shell: cmd
-        run: |
-          call scripts\verify-win.cmd
+      - name: Verify update guard
+        shell: pwsh
+        run: .\.github\scripts\verify-update-guard.ps1
 
-      - name: 上传产物（zip + Setup.exe）
-        uses: actions/upload-artifact@v4
+      - name: Upload verified Windows zip
+        uses: actions/upload-artifact@v7
         with:
           name: workdaddy-win64
-          path: |
-            release/WorkDaddy-*-win64.zip
-            release/WorkDaddy-Setup.exe
-            release/WorkDaddy-Setup-*.exe
+          path: release/WorkDaddy-*-win64.zip
 
-      # ---- 只有打 tag 时才顺手挂到 GitHub Release ----
-      - name: 发布到 GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
+  release-windows:
+    name: Publish Windows zip
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: verify-windows
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download verified artifact
+        uses: actions/download-artifact@v8
         with:
-          files: |
-            release/WorkDaddy-*-win64.zip
-            release/WorkDaddy-Setup.exe
-            release/WorkDaddy-Setup-*.exe
-            release/*.dmg
+          name: workdaddy-win64
+          path: release
+
+      - name: Write asset checksum note
+        shell: bash
+        run: |
+          asset=$(find release -maxdepth 1 -type f -name 'WorkDaddy-*-win64.zip' -print -quit)
+          test -n "$asset"
+          name=$(basename "$asset")
+          digest=$(sha256sum "$asset" | cut -d' ' -f1)
+          printf 'SHA256 (%s): %s\n' "$name" "$digest" > release/checksums.md
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          files: release/WorkDaddy-*-win64.zip
+          body_path: release/checksums.md
           generate_release_notes: true

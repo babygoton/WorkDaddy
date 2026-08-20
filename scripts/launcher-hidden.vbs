@@ -1,5 +1,7 @@
 Option Explicit
 
+If WScript.Arguments.Named.Exists("check") Then WScript.Quit 0
+
 ' Desktop shortcut entry point. wscript.exe has no console window, so running the
 ' shortcut as administrator cannot leave an empty Windows Terminal tab behind.
 Dim shell, fso, launcher, command

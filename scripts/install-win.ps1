@@ -8,7 +8,15 @@ param(
 )
 
 $ErrorActionPreference = 'Continue'
+$appFull = [IO.Path]::GetFullPath($AppDir).TrimEnd('\')
+$rootFull = [IO.Path]::GetPathRoot($appFull).TrimEnd('\')
+if ([StringComparer]::OrdinalIgnoreCase.Equals($appFull, $rootFull)) {
+  Write-Host '错误：安装目录不能是驱动器根目录。'
+  exit 1
+}
+$AppDir = $appFull
 $targetScripts = Join-Path $AppDir 'scripts'
+$dataDir = Join-Path $env:APPDATA 'WorkDaddy'
 
 Write-Host '=============================================================='
 Write-Host ' WorkDaddy Windows 安装'
@@ -16,7 +24,27 @@ Write-Host '=============================================================='
 Write-Host ("  源目录   : " + $SrcDir)
 Write-Host ("  安装目录 : " + $AppDir)
 
-# 1) 复制（排除开发/临时文件；node_modules/ws 随包带入）
+# 1) 覆盖升级前停止属于当前安装目录的旧 WorkDaddy 进程。
+try {
+  $pidFile = Join-Path $dataDir 'watchdog.pid'
+  if (Test-Path -LiteralPath $pidFile -PathType Leaf) {
+    $watchdogPid = [int]((Get-Content -LiteralPath $pidFile -Raw).Trim())
+    $watchdog = Get-CimInstance Win32_Process -Filter "ProcessId=$watchdogPid" -ErrorAction SilentlyContinue
+    $expectedWatchdog = (Join-Path $targetScripts 'watchdog.js').ToLowerInvariant()
+    if ($watchdog -and $watchdog.CommandLine -and $watchdog.CommandLine.ToLowerInvariant().Contains($expectedWatchdog)) {
+      taskkill /F /T /PID $watchdogPid 2>$null | Out-Null
+    }
+  }
+} catch {}
+try {
+  $oldLauncher = (Join-Path $targetScripts 'launcher.cmd').ToLowerInvariant()
+  Get-CimInstance Win32_Process -Filter "Name='cmd.exe'" -ErrorAction SilentlyContinue |
+    Where-Object { $_.CommandLine -and $_.CommandLine.ToLowerInvariant().Contains($oldLauncher) } |
+    ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+} catch {}
+Start-Sleep -Milliseconds 500
+
+# 2) 镜像复制（目标固定为 <AppDir>\scripts，清理旧版本残留）。
 if (-not (Test-Path (Join-Path $SrcDir 'daemon.js'))) {
   Write-Host '错误：源目录中找不到 daemon.js，请从仓库 scripts/ 目录运行本脚本。'
   exit 1
@@ -29,7 +57,7 @@ if ([StringComparer]::OrdinalIgnoreCase.Equals($sourceFull, $targetFull)) {
   # 在 Windows 上容易出现“文件正被另一个进程使用”。此时只需继续执行后续注册/快捷方式步骤。
   Write-Host '  源目录与安装目录相同，跳过自拷贝。'
 } else {
-  robocopy $SrcDir $targetScripts /E /XF *.log .DS_Store /XD win\probe /R:2 /W:1
+  robocopy $SrcDir $targetScripts /MIR /XF *.log .DS_Store /XD win\probe /R:3 /W:1
   $rc = $LASTEXITCODE
   if ($rc -ge 8) {
     Write-Host "复制失败（robocopy=$rc）"
@@ -37,8 +65,7 @@ if ([StringComparer]::OrdinalIgnoreCase.Equals($sourceFull, $targetFull)) {
   }
 }
 
-# 2) 数据目录
-$dataDir = Join-Path $env:APPDATA 'WorkDaddy'
+# 3) 数据目录
 New-Item -ItemType Directory -Force -Path (Join-Path $dataDir 'accounts') | Out-Null
 
 # 2.5) Logo 图标：随安装复制到安装目录根（桌面快捷方式用），源在 scripts 同级的 WorkDaddy.ico
@@ -48,55 +75,24 @@ if (Test-Path $logoIcoSrc) {
   try { Copy-Item $logoIcoSrc $logoIco -Force; Write-Host ('  图标复制 : ' + $logoIco) } catch {}
 }
 
-# 3) 登录自启（HKCU Run，登录时自动跑 launcher.cmd；崩溃自愈由 watchdog 负责）
-$runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+# 4) 创建/迁移静默入口（桌面快捷方式 + HKCU Run）。
 $launcher = Join-Path $targetScripts 'launcher.cmd'
-try {
-  Set-ItemProperty -Path $runKey -Name 'WorkDaddy' -Value ('"' + $launcher + '"')
-  Write-Host '  自启注册：HKCU\...\Run\WorkDaddy = ' $launcher
-} catch {
-  Write-Host ('  自启注册失败（可忽略，之后手动双击 launcher.cmd 即可）: ' + $_.Exception.Message)
-}
-
-# 4) 启动（daemon + 以 CDP 模式重启 WorkBuddy + 注入）
-Write-Host '  正在启动 WorkDaddy（如果 WorkBuddy 正在运行，会重启它以开启调试模式）...'
 $launcherVbs = Join-Path $targetScripts 'launcher-hidden.vbs'
-if (Test-Path $launcher) {
-  if (Test-Path $launcherVbs) {
-    Start-Process -FilePath (Join-Path $env:WINDIR 'System32\wscript.exe') -ArgumentList ('//nologo "' + $launcherVbs + '"') -WorkingDirectory (Split-Path $launcher)
-  } else {
-    Start-Process -FilePath $launcher -WorkingDirectory (Split-Path $launcher)
-  }
-} else {
-  Write-Host '  警告：launcher.cmd 不存在，跳过自动启动（请到安装目录手动双击）'
+$repairEntrypoints = Join-Path $targetScripts 'repair-entrypoints.ps1'
+try {
+  if (-not (Test-Path -LiteralPath $repairEntrypoints -PathType Leaf)) { throw 'repair-entrypoints.ps1 不存在' }
+  & $repairEntrypoints -AppDir $AppDir
+} catch {
+  Write-Host ('  静默入口创建失败（可手动运行 launcher.cmd）: ' + $_.Exception.Message)
 }
 
-# 5) 创建桌面快捷方式「WorkDaddy」
-#    优先使用 wscript.exe 隐藏入口，避免 Windows Terminal 为管理员 cmd 创建空白窗口；
-#    缺少隐藏入口时回退到 cmd.exe，兼容旧包/手工安装目录。
-$desktopDir = [Environment]::GetFolderPath('Desktop')
-if (-not $desktopDir) { $desktopDir = Join-Path $env:USERPROFILE 'Desktop' }
-$lnkPath = Join-Path $desktopDir 'WorkDaddy.lnk'
-# Logo 图标（macOS 版同款黑白的 WorkBuddy 机器人，打包时置于安装目录根）
-$logoIco = Join-Path $AppDir 'WorkDaddy.ico'
-try {
-  $ws = New-Object -ComObject WScript.Shell
-  $sc = $ws.CreateShortcut($lnkPath)
-  if (Test-Path $launcherVbs) {
-    $sc.TargetPath       = Join-Path $env:WINDIR 'System32\wscript.exe'
-    $sc.Arguments        = '//nologo "' + $launcherVbs + '"'
-  } else {
-    $sc.TargetPath       = "$env:ComSpec"
-    $sc.Arguments        = '/d /c call "' + $launcher + '"'
-  }
-  $sc.WorkingDirectory = (Split-Path $launcher)
-  $sc.Description      = 'WorkDaddy – WorkBuddy 增强工具（请以管理员身份运行）'
-  if (Test-Path $logoIco) { $sc.IconLocation = $logoIco + ',0' }   # 用官方 logo，而非 cmd 默认图标
-  $sc.Save()
-  Write-Host ('  桌面快捷方式 : ' + $lnkPath)
-  if (Test-Path $logoIco) { Write-Host ('  图标         : ' + $logoIco) }
-} catch {
-  Write-Host ('  桌面快捷方式创建失败（可忽略，之后可手动创建）: ' + $_.Exception.Message)
+# 5) 启动（daemon + 以 CDP 模式重启 WorkBuddy + 注入）。
+Write-Host '  正在启动 WorkDaddy（如果 WorkBuddy 正在运行，会重启它以开启调试模式）...'
+if (Test-Path -LiteralPath $launcherVbs -PathType Leaf) {
+  $wscript = Join-Path $env:WINDIR 'System32\wscript.exe'
+  Start-Process -FilePath $wscript -ArgumentList ('//B //Nologo "' + $launcherVbs + '"') -WorkingDirectory $targetScripts -WindowStyle Hidden
+} else {
+  Write-Host '  警告：launcher-hidden.vbs 不存在，跳过自动启动（可手动运行 launcher.cmd）'
 }
 
 Write-Host '=============================================================='

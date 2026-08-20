@@ -29,8 +29,15 @@ fi
 AUTH_FILE="${WBSWITCH_AUTH_FILE:-$HOME/Library/Application Support/CodeBuddyExtension/Data/Public/auth/workbuddy-desktop.info}"
 APP_BIN="/Applications/WorkBuddy.app/Contents/MacOS/Electron"
 
-# 统一使用的 node 路径（优先系统 PATH，兜底用 managed runtime）
-NODE_BIN="$(command -v node || echo /Users/h/.workbuddy/binaries/node/versions/22.22.2/bin/node)"
+# 统一使用的 node 路径（WorkBuddyAI/WorkBuddy managed runtime 优先）。
+NODE_BIN=""
+for base in "$HOME/.workbuddy-ai/binaries/node/versions" "$HOME/.workbuddy/binaries/node/versions"; do
+  for c in "$base"/*/bin/node; do
+    if [ -x "$c" ]; then NODE_BIN="$c"; break 2; fi
+  done
+done
+if [ -z "$NODE_BIN" ]; then NODE_BIN="$(command -v node 2>/dev/null || true)"; fi
+if [ -z "$NODE_BIN" ]; then echo "错误: 未找到 node"; exit 1; fi
 
 # 清理旧版常驻服务，但保留 HelloBuddy 数据目录；新 daemon 会在启动时迁移旧账号。
 launchctl bootout "gui/$(id -u)" "$LEGACY_PLIST" 2>/dev/null || true
@@ -130,8 +137,16 @@ launch_plugin() {
   fi
 
   # 等待守护进程就绪
+  API_PORT=""
   for i in $(seq 1 10); do
-    curl -s -m 1 "http://127.0.0.1:${PORT:-47832}/api/status" >/dev/null 2>&1 && { echo "==> 守护进程运行中"; break; }
+    local base_api_port="${WBSWITCH_PORT:-47832}"
+    for candidate in $(seq "$base_api_port" $((base_api_port + 7))); do
+      if curl -fsS -m 1 "http://127.0.0.1:${candidate}/healthz" >/dev/null 2>&1; then
+        API_PORT="$candidate"
+        echo "==> 守护进程运行中（端口 ${API_PORT}）"
+        break 2
+      fi
+    done
     sleep 1
   done
 
@@ -169,10 +184,16 @@ launch_plugin() {
   done
 
   if [ "$OK" = "1" ]; then
+    API_PORT="${API_PORT:-${WBSWITCH_PORT:-47832}}"
+    TOKEN_FILE="$DATA_DIR/api-token"
+    if [ -s "$TOKEN_FILE" ]; then
+      curl -fsS -m 3 -X POST -H "X-WorkDaddy-Token: $(cat "$TOKEN_FILE")" \
+        "http://127.0.0.1:${API_PORT}/api/inject" >/dev/null 2>&1 || true
+    fi
     echo ""
     echo "CDP 已开启: http://127.0.0.1:${PORT}"
     echo "   WorkBuddy 启动后右下角会自动出现账号切换组件（约几秒内）。"
-    echo "   若未出现，可手动重新注入: curl -X POST http://127.0.0.1:47832/api/inject"
+    echo "   若未出现，请重新运行本脚本；本地 API 已启用令牌保护。"
   else
     echo ""
     echo "警告：等待 15 秒仍未检测到 WorkBuddy CDP 端口 ${PORT}。"
