@@ -1012,8 +1012,8 @@ function isWorkBuddyCdpTarget(target) {
   if (!target || target.type !== 'page') return false;
   const url = String(target.url || '');
   const title = String(target.title || '');
-  return /(?:^|\/)WorkBuddy\.app(?:\/|$)/i.test(url) ||
-    /https?:\/\/(?:[^/]+\.)?(?:workbuddy|codebuddy)\.(?:cn|ai)(?:\/|$)/i.test(url) ||
+  return /(?:^|\/)WorkBuddy(?:\.app|AI)?(?:[\/\\]|$)/i.test(url) ||
+    /https?:\/\/(?:[^/]+\.)?(?:workbuddy|codebuddy)\.(?:cn|ai)(?:[\/\\]|$)/i.test(url) ||
     /^WorkBuddy(?:\s|$)/i.test(title);
 }
 
@@ -1261,6 +1261,13 @@ function resolveWorkBuddyBinary() {
     const hit = tryFile(p);
     if (hit) return (wbBinaryCache = hit);
   } catch (_) {}
+  // 2.5) 桌面快捷方式（最准确直接：用户桌面上已有的 WorkBuddy/WorkBuddy AI 快捷方式指向的真实路径）
+  try {
+    const cmd = "$s = New-Object -ComObject WScript.Shell; $d = @($([Environment]::GetFolderPath('Desktop')), $([Environment]::GetFolderPath('CommonDesktopDirectory'))); (Get-ChildItem -Path $d -Filter '*WorkBuddy*.lnk' -ErrorAction SilentlyContinue | ForEach-Object { $s.CreateShortcut($_.FullName).TargetPath } | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1)";
+    const p = psCmd(cmd).trim().split(/\r?\n/).filter(Boolean).pop();
+    const hit = tryFile(p);
+    if (hit) return (wbBinaryCache = hit);
+  } catch (_) {}
   // 3) 注册表卸载项（DisplayIcon = "D:\xxx\WorkBuddy.exe,0" 取逗号前）
   try {
     const out = psCmd("$k=@('HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*','HKLM:\\SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*','HKCU:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*'); Get-ItemProperty $k -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -match 'WorkBuddy|CodeBuddy' } | Select-Object -First 1 DisplayIcon,InstallLocation | ForEach-Object { if($_.DisplayIcon){ ($_.DisplayIcon -replace ',.*$','').Trim() } elseif($_.InstallLocation){ Join-Path $_.InstallLocation 'WorkBuddy.exe' } }");
@@ -1268,11 +1275,14 @@ function resolveWorkBuddyBinary() {
     const hit = tryFile(p);
     if (hit) return (wbBinaryCache = hit);
   } catch (_) {}
-  // 4) 常见路径兜底（含探测机实际安装位）
+  // 4) 常见路径兜底（含探测机实际安装位与 AI 版路径）
   const cands = [
     path.join(process.env.LOCALAPPDATA || '', 'Programs', 'WorkBuddy', 'WorkBuddy.exe'),
+    path.join(process.env.LOCALAPPDATA || '', 'Programs', 'WorkBuddyAI', 'WorkBuddyAI.exe'),
     path.join(process.env.ProgramFiles || '', 'WorkBuddy', 'WorkBuddy.exe'),
     path.join(process.env['ProgramFiles(x86)'] || '', 'WorkBuddy', 'WorkBuddy.exe'),
+    'D:\\software\\common\\WorkBuddyAI\\WorkBuddyAI.exe',
+    'D:\\workbuddy\\WorkBuddy.exe',
     'D:\\workbody\\WorkBuddy\\WorkBuddy.exe',
   ];
   for (const c of cands) {

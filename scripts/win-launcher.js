@@ -119,12 +119,13 @@ function spawnElevatedHelper() {
   }
 }
 
-function portOpen(port) {
+function isLocalPortAvailable(port) {
   return new Promise((resolve) => {
-    const s = net.connect({ port, host: '127.0.0.1' });
-    const t = setTimeout(() => { s.destroy(); resolve(false); }, 1200);
-    s.on('connect', () => { clearTimeout(t); s.destroy(); resolve(true); });
-    s.on('error', () => { clearTimeout(t); resolve(false); });
+    const server = net.createServer();
+    server.once('error', () => resolve(false));
+    server.listen({ host: '127.0.0.1', port }, () => {
+      server.close(() => resolve(true));
+    });
   });
 }
 
@@ -152,8 +153,24 @@ function httpPost(port, p) {
   });
 }
 
+async function findRunningCdpPort() {
+  for (const port of cdpPortCandidates()) {
+    if (await isWorkBuddyCdpAt(port)) return port;
+  }
+  return null;
+}
+
 async function isWorkBuddyCdp() {
-  return isWorkBuddyCdpAt(CDP_PORT);
+  const port = await findRunningCdpPort();
+  if (port) {
+    if (CDP_PORT !== port) {
+      CDP_PORT = port;
+      writeCdpPortFile(port);
+      log('已切换至活跃 CDP 端口: ' + port);
+    }
+    return true;
+  }
+  return false;
 }
 
 async function isWorkBuddyCdpAt(port) {
@@ -175,7 +192,7 @@ async function configureCdpPort() {
     }
   }
   for (const port of cdpPortCandidates()) {
-    if (!(await portOpen(port))) {
+    if (await isLocalPortAvailable(port)) {
       CDP_PORT = port;
       writeCdpPortFile(port);
       log('选择空闲 CDP 端口: ' + port);
@@ -242,9 +259,16 @@ function findWorkBuddy() {
     const hit = tryFile(p);
     if (hit) return (wbBinaryCache = hit);
   } catch (_) {}
+  // 2.5) 桌面快捷方式（最准确直接：用户桌面上已有的 WorkBuddy/WorkBuddy AI 快捷方式指向的真实路径）
+  try {
+    const cmd = "$s = New-Object -ComObject WScript.Shell; $d = @($([Environment]::GetFolderPath('Desktop')), $([Environment]::GetFolderPath('CommonDesktopDirectory'))); (Get-ChildItem -Path $d -Filter '*WorkBuddy*.lnk' -ErrorAction SilentlyContinue | ForEach-Object { $s.CreateShortcut($_.FullName).TargetPath } | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1)";
+    const p = psOut(cmd).split(/\r?\n/).filter(Boolean).pop();
+    const hit = tryFile(p);
+    if (hit) return (wbBinaryCache = hit);
+  } catch (_) {}
   // 便携版通常没有卸载项，但可能注册了 App Paths；优先读取其真实可执行路径。
   try {
-    const p = psOut("$k=@('HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\WorkBuddy.exe','HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\WorkBuddy.exe','HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\CodeBuddy.exe','HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\CodeBuddy.exe'); Get-ItemProperty $k -ErrorAction SilentlyContinue | ForEach-Object { if ($_.'(default)') { $_.'(default)' } elseif ($_.Path) { $_.Path } } | Select-Object -First 1").split(/\r?\n/).filter(Boolean).pop();
+    const p = psOut("$k=@('HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\WorkBuddy.exe','HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\WorkBuddy.exe','HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\WorkBuddyAI.exe','HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\WorkBuddyAI.exe','HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\CodeBuddy.exe','HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\CodeBuddy.exe'); Get-ItemProperty $k -ErrorAction SilentlyContinue | ForEach-Object { if ($_.'(default)') { $_.'(default)' } elseif ($_.Path) { $_.Path } } | Select-Object -First 1").split(/\r?\n/).filter(Boolean).pop();
     const hit = tryFile(p);
     if (hit) return (wbBinaryCache = hit);
   } catch (_) {}
@@ -255,19 +279,27 @@ function findWorkBuddy() {
   } catch (_) {}
   const roots = [
     path.join(process.env.LOCALAPPDATA || '', 'Programs', 'WorkBuddy', 'WorkBuddy.exe'),
+    path.join(process.env.LOCALAPPDATA || '', 'Programs', 'WorkBuddyAI', 'WorkBuddyAI.exe'),
     path.join(process.env.ProgramFiles || '', 'WorkBuddy', 'WorkBuddy.exe'),
     path.join(process.env['ProgramFiles(x86)'] || '', 'WorkBuddy', 'WorkBuddy.exe'),
     path.join(process.env.USERPROFILE || '', 'scoop', 'apps', 'workbuddy', 'current', 'WorkBuddy.exe'),
+    'D:\\software\\common\\WorkBuddyAI\\WorkBuddyAI.exe',
     'D:\\workbuddy\\WorkBuddy.exe',
   ];
-  if (process.env.WBSWITCH_WORKBUDDY_DIR) roots.push(path.join(process.env.WBSWITCH_WORKBUDDY_DIR, 'WorkBuddy.exe'));
+  if (process.env.WBSWITCH_WORKBUDDY_DIR) {
+    roots.push(path.join(process.env.WBSWITCH_WORKBUDDY_DIR, 'WorkBuddy.exe'));
+    roots.push(path.join(process.env.WBSWITCH_WORKBUDDY_DIR, 'WorkBuddyAI.exe'));
+  }
   // 兼容类似 D:\Software\workbuddy\WorkBuddy.exe 的便携目录，不递归扫描整盘。
   try {
     const driveRoots = psOut('(Get-PSDrive -PSProvider FileSystem).Root').split(/\r?\n/).map((x) => x.trim()).filter(Boolean);
     for (const root of driveRoots) {
+      roots.push(path.join(root, 'software', 'common', 'WorkBuddyAI', 'WorkBuddyAI.exe'));
       roots.push(path.join(root, 'Software', 'workbuddy', 'WorkBuddy.exe'));
+      roots.push(path.join(root, 'Software', 'WorkBuddyAI', 'WorkBuddyAI.exe'));
       roots.push(path.join(root, 'workbuddy', 'WorkBuddy.exe'));
       roots.push(path.join(root, 'WorkBuddy', 'WorkBuddy.exe'));
+      roots.push(path.join(root, 'WorkBuddyAI', 'WorkBuddyAI.exe'));
     }
   } catch (_) {}
   for (const c of roots) {
@@ -287,8 +319,9 @@ function watchdogAlive() {
   } catch (_) { return false; }
 }
 
-function daemonRunning() {
-  return portOpen(UI_PORT);
+async function daemonRunning() {
+  const st = await httpGet(UI_PORT, '/api/status');
+  return !!(st && st.status === 200);
 }
 
 async function ensureDaemon(nodeBin) {
@@ -309,7 +342,7 @@ async function ensureDaemon(nodeBin) {
     log('watchdog 在运行但 daemon 未就绪，等待其拉起...');
     for (let i = 0; i < 20; i++) {
       await sleep(500);
-      if (daemonRunning()) { log('daemon 已就绪'); return true; }
+      if (await daemonRunning()) { log('daemon 已就绪'); return true; }
     }
     log('等待超时，主动拉起 watchdog');
   }
@@ -321,10 +354,10 @@ async function ensureDaemon(nodeBin) {
   }
   for (let i = 0; i < 30; i++) {
     await sleep(400);
-    if (daemonRunning()) { log('daemon 已就绪'); return true; }
+    if (await daemonRunning()) { log('daemon 已就绪'); return true; }
   }
   log('等待 daemon 就绪超时');
-  return daemonRunning();
+  return await daemonRunning();
 }
 
 function stopDaemonByPort() {
@@ -547,11 +580,14 @@ async function injectNow() {
     return;
   }
 
-  // WorkBuddy 常装在 C:\Program Files（受保护特权目录），结束已提升的旧进程可能需要管理员权限。
-  // 若当前非管理员：派发提权助手（触发一次 UAC）后立即退出，由助手完成重启+注入，
-  // 避免普通双击时卡在黑屏空转等 20 秒。
-  if (!isElevated()) {
-    log('非管理员权限：派发提权助手重启 WorkBuddy（唤醒 UAC）');
+  if (workBuddyRunning()) {
+    await quitWorkBuddy();
+    await sleep(500);
+  }
+
+  // 仅当 WorkBuddy 仍在运行且无法被普通权限结束时（例如管理员残留进程），才请求 UAC 提权助手
+  if (workBuddyRunning() && !isElevated()) {
+    log('非管理员权限且存在特权残留进程：派发提权助手重启 WorkBuddy（唤醒 UAC）');
     console.log('需要管理员权限以重启 WorkBuddy 进入调试模式，正在请求授权...');
     if (spawnElevatedHelper()) {
       console.log('已发起提权请求，点击 UAC「是」后将自动完成重启与注入。');
@@ -561,11 +597,9 @@ async function injectNow() {
     log('提权派发失败，退回当前进程直接重启');
   }
 
-  log('重启 WorkBuddy（带 --remote-debugging-port=' + CDP_PORT + '，GUI 使用当前用户权限）: ' + wb);
-  console.log('正在以调试模式重启 WorkBuddy（约几秒）...');
+  log('启动 WorkBuddy（带 --remote-debugging-port=' + CDP_PORT + '）: ' + wb);
+  console.log('正在以调试模式启动 WorkBuddy（约几秒）...');
 
-  await quitWorkBuddy();
-  await sleep(500);
   launchWorkBuddy(wb);
 
   let ok = false;
