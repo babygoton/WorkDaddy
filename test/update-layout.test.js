@@ -111,7 +111,7 @@ test('seamless login refreshes the running WorkBuddy session', () => {
   assert.doesNotMatch(seamless, /没弹出来\?|点此打开授权页/);
 });
 
-test('CDP startup supports a persisted fallback port instead of hardcoding 9222', () => {
+test('CDP startup supports a persisted fallback port instead of hardcoding 9222', { skip: !fs.existsSync(path.join(repoRoot, 'WorkDaddy.app', 'Contents', 'MacOS', 'launcher')) ? 'WorkDaddy.app 打包产物不在源码仓库中，macOS launcher 断言仅在含产物的环境验证' : false }, () => {
   const daemon = read('daemon.js');
   const macLauncher = fs.readFileSync(path.join(repoRoot, 'WorkDaddy.app', 'Contents', 'MacOS', 'launcher'), 'utf8');
   const winLauncher = read('win-launcher.js');
@@ -217,8 +217,10 @@ test('auto-copy rules persist sessions and canonical workspace keys without leak
     lib.setAutoCopyRule(dir, { uid: 'source-a', kind: 'workspace', key: '/Users/example/project/', enabled: true });
     let rules = lib.getAutoCopyRules(dir, 'source-a');
     assert.deepEqual(rules.sessionIds, ['session-1']);
-    assert.deepEqual(rules.workspaces, ['/Users/example/project']);
-    assert.equal(lib.canonicalWorkspace('/Users/example/project/'), '/Users/example/project');
+    // canonicalWorkspace 在 Windows 上会转小写，断言用同一函数求期望值，保持跨平台一致
+    const expectedWorkspace = lib.canonicalWorkspace('/Users/example/project');
+    assert.deepEqual(rules.workspaces, [expectedWorkspace]);
+    assert.equal(lib.canonicalWorkspace('/Users/example/project/'), expectedWorkspace);
 
     const lineageId = lib.getAutoCopySession(dir, 'source-a', 'session-1').lineageId;
     lib.setAutoCopyMapping(dir, lineageId, 'target-b', { targetId: 'copied-1', status: 'copied' });

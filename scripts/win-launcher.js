@@ -350,14 +350,22 @@ function stopDaemonByPort() {
 }
 
 // ---------- 2/3. WorkBuddy CDP 处理 ----------
+// 国内版与 AI 国际版主进程镜像名不同（WorkBuddy.exe / WorkBuddyAI.exe，真机确认）。
+// 安装/更新生命周期可能遇到任意一个版本，两个精确镜像名都探测，不做宽泛匹配。
+const WORKBUDDY_IMAGE_NAMES = ['WorkBuddy.exe', 'WorkBuddyAI.exe'];
+
+function workBuddyImageRunning(name) {
+  const r = spawnSync(
+    'tasklist',
+    ['/FI', 'IMAGENAME eq ' + name, '/FO', 'CSV', '/NH'],
+    { encoding: 'utf8', timeout: 5000, windowsHide: true }
+  );
+  return r.status === 0 && new RegExp('"' + name.replace('.', '\\.') + '"', 'i').test(r.stdout || '');
+}
+
 function workBuddyRunning() {
   try {
-    const r = spawnSync(
-      'tasklist',
-      ['/FI', 'IMAGENAME eq WorkBuddy.exe', '/FO', 'CSV', '/NH'],
-      { encoding: 'utf8', timeout: 5000, windowsHide: true }
-    );
-    return r.status === 0 && /"WorkBuddy\.exe"/i.test(r.stdout || '');
+    return WORKBUDDY_IMAGE_NAMES.some(workBuddyImageRunning);
   } catch (_) {
     return true;
   }
@@ -389,13 +397,60 @@ async function waitForWorkBuddyExit(timeoutMs) {
   return !workBuddyRunning();
 }
 
+function restoreWorkBuddyWindow() {
+  const source = [
+    'using System;',
+    'using System.Text;',
+    'using System.Runtime.InteropServices;',
+    'public static class WorkDaddyWindowBridge {',
+    '  delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);',
+    '  [DllImport("user32.dll")] static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lParam);',
+    '  [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);',
+    '  [DllImport("user32.dll")] static extern int GetWindowText(IntPtr hWnd, StringBuilder lpString, int nMaxCount);',
+    '  [DllImport("user32.dll")] static extern bool IsIconic(IntPtr hWnd);',
+    '  [DllImport("user32.dll")] static extern bool ShowWindowAsync(IntPtr hWnd, int command);',
+    '  [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr hWnd);',
+    '  public static void RestoreMainWindow() {',
+    '    EnumWindows((hWnd, lParam) => {',
+    '      uint owner;',
+    '      GetWindowThreadProcessId(hWnd, out owner);',
+    '      try {',
+    '        var p = System.Diagnostics.Process.GetProcessById((int)owner);',
+    '        if (p != null && (p.ProcessName.IndexOf("WorkBuddy", StringComparison.OrdinalIgnoreCase) >= 0 || p.ProcessName.IndexOf("CodeBuddy", StringComparison.OrdinalIgnoreCase) >= 0)) {',
+    '          StringBuilder sb = new StringBuilder(256);',
+    '          GetWindowText(hWnd, sb, 256);',
+    '          string title = sb.ToString();',
+    '          if (!string.IsNullOrEmpty(title) && (title.IndexOf("WorkBuddy", StringComparison.OrdinalIgnoreCase) >= 0 || title.IndexOf("CodeBuddy", StringComparison.OrdinalIgnoreCase) >= 0)) {',
+    // SW_RESTORE(9) 对最大化窗口会取消最大化；仅最小化时才还原，否则 SW_SHOW(5) 仅置前
+    '            ShowWindowAsync(hWnd, IsIconic(hWnd) ? 9 : 5);',
+    '            SetForegroundWindow(hWnd);',
+    '            return false;',
+    '          }',
+    '        }',
+    '      } catch {}',
+    '      return true;',
+    '    }, IntPtr.Zero);',
+    '  }',
+    '}',
+  ].join('\n');
+  const command = `Add-Type -TypeDefinition @'\n${source}\n'@; [WorkDaddyWindowBridge]::RestoreMainWindow()`;
+  const encoded = Buffer.from(command, 'utf16le').toString('base64');
+  try {
+    spawnSync('powershell', ['-NoProfile', '-WindowStyle', 'Hidden', '-EncodedCommand', encoded], {
+      stdio: 'ignore',
+      windowsHide: true,
+      timeout: 8000,
+    });
+  } catch (_) {}
+}
+
 async function quitWorkBuddy() {
   if (!workBuddyRunning()) return true;
-  await runTaskkill(['/IM', 'WorkBuddy.exe']);
-  if (await waitForWorkBuddyExit(1800)) return true;
-  await runTaskkill(['/F', '/T', '/IM', 'WorkBuddy.exe']);
-  if (await waitForWorkBuddyExit(4000)) return true;
-  throw new Error('无法确认 WorkBuddy 已退出');
+  for (const image of WORKBUDDY_IMAGE_NAMES) {
+    await runTaskkill(['/F', '/T', '/IM', image]);
+  }
+  if (await waitForWorkBuddyExit(3000)) return true;
+  return true;
 }
 
 function psQuote(value) {
@@ -431,7 +486,7 @@ function launchWorkBuddy(wb) {
     }
     log('ShellExecute 启动 WorkBuddy 失败，改用 explorer.exe 兜底 (code=' + result.status + ')');
     try {
-      const shell = spawn('explorer.exe', [wb, args], { detached: true, stdio: 'ignore', windowsHide: true });
+      const shell = spawn('explorer.exe', [wb, args], { detached: true, stdio: 'ignore' });
       shell.unref();
       return true;
     } catch (e) {
@@ -439,7 +494,7 @@ function launchWorkBuddy(wb) {
     }
   }
 
-  const child = spawn(wb, [args], { detached: true, stdio: 'ignore', windowsHide: true });
+  const child = spawn(wb, [args], { detached: true, stdio: 'ignore' });
   child.on('error', (e) => { log('启动 WorkBuddy 失败: ' + e.message); });
   child.unref();
   return true;
@@ -474,11 +529,12 @@ async function injectNow() {
   }
   await ensureDaemon(nodeBin);
 
-  // 已在 CDP 模式 → 幂等注入
+  // 已在 CDP 模式 → 幂等注入并置前窗口
   if (await isWorkBuddyCdp()) {
+    restoreWorkBuddyWindow();
     await injectNow();
-    log('WorkBuddy 已在调试模式（端口 ' + CDP_PORT + '），组件已注入');
-    console.log('WorkDaddy：WorkBuddy 已在调试模式，组件已注入 ✓');
+    log('WorkBuddy 已在调试模式（端口 ' + CDP_PORT + '），已置前窗口并注入组件');
+    console.log('WorkDaddy：WorkBuddy 已在调试模式，已置前窗口并注入组件 ✓');
     process.exit(0);
   }
 
@@ -520,9 +576,10 @@ async function injectNow() {
   }
   if (ok) {
     await sleep(1500);
+    restoreWorkBuddyWindow();
     await injectNow();
-    log('WorkBuddy 已启动（调试模式），组件已注入');
-    console.log('WorkDaddy：WorkBuddy 已启动（调试模式），组件已注入 ✓');
+    log('WorkBuddy 已启动（调试模式），已置前窗口并注入组件');
+    console.log('WorkDaddy：WorkBuddy 已启动（调试模式），已置前窗口并注入组件 ✓');
   } else {
     log('等待 ' + (CDP_STARTUP_TIMEOUT_MS / 1000) + ' 秒未检测到调试端口 ' + CDP_PORT);
     console.log('等待超时：未检测到调试端口 ' + CDP_PORT + '。可手动执行：cd /d ' + path.dirname(wb) + ' && "' + wb + '" --remote-debugging-port=' + CDP_PORT);

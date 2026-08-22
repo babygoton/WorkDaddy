@@ -45,7 +45,7 @@ try { wsLib = require('ws'); } catch (_) {
 // Node 22 提供全局 WebSocket，但 macOS 用户常见的 Node 18/20 没有；app 内置 ws 作为统一兜底。
 const WebSocketCtor = globalThis.WebSocket || (wsLib && (wsLib.WebSocket || wsLib));
 const {
-  AUTH_FILE,
+  AUTH_FILES,
   defaultDataDir,
   logFile,
   ensureDirs,
@@ -56,6 +56,11 @@ const {
   deleteAccount,
   backupPath,
   updateMeta,
+  detectEdition,
+  setEdition,
+  currentEdition,
+  resolveAuthFile,
+  targetAuthFileForAccount,
   canonicalWorkspace,
   getAutoCopyRules,
   setAutoCopyRule,
@@ -68,6 +73,7 @@ const {
   getAutoCopyMapping,
   setAutoCopyMapping,
   deleteAutoCopyMapping,
+  workbuddyHomeDir,
   workbuddyModelsFile,
   listOfficialModels,
   readOfficialModel,
@@ -83,6 +89,32 @@ const { extractCreditSegments, sortCreditSegments } = require('./credit-segments
 const { captureException } = require('./sentry-report.js');
 
 const DATA_DIR = defaultDataDir();
+// 启动时一次性探测本机环境并锁定版本（'cn' 国内版 | 'ai' AI 国际版）：
+// 1) 优先按登录文件存在性探测（AI 版带 -ai 后缀）；
+// 2) 两个登录文件均不存在时（如首次安装），按已备份账号特征或运行中的进程镜像名（WorkBuddyAI.exe）判定；
+// 3) 判定后全程锁定，后续接口域名、登录文件、进程名均直接跟随该结果。
+function detectStartupEdition() {
+  const cnExists = fs.existsSync(AUTH_FILES.cn);
+  const aiExists = fs.existsSync(AUTH_FILES.ai);
+  if (cnExists || aiExists) {
+    return detectEdition(
+      (p) => fs.existsSync(p),
+      (p) => fs.statSync(p).mtimeMs
+    );
+  }
+  // 文件暂不存在时探测进程名。
+  // 注意：此处必须内联平台判断——模块级平台开关常量在本函数调用点之后才声明，
+  // 首次安装（两个登录文件都不存在）时引用它会触发 const 暂时性死区直接崩溃。
+  if (process.platform === 'win32') {
+    try {
+      const r = spawnSync('tasklist', ['/FI', 'IMAGENAME eq WorkBuddyAI.exe', '/FO', 'CSV', '/NH'], { encoding: 'utf8', timeout: 3000, windowsHide: true });
+      if (r.status === 0 && /"WorkBuddyAI\.exe"/i.test(r.stdout || '')) return 'ai';
+    } catch (_) {}
+  }
+  return 'cn';
+}
+
+setEdition(detectStartupEdition());
 // 版本号：改动 daemon/inject/theme-patches/builtin 资产后递增，launcher 检测到运行中版本不一致会强制用 app 内置代码重启
 // 0.6.6：品牌 HelloBuddy→WorkDaddy 期间版本号未递增，旧 HelloBuddy daemon 会被 launcher 误判为"同版本"而不重启，导致旧代码继续注入；递增后强制升级
 // 0.6.7：新增「关于」tab（/api/about + __WBS_VERSION__ 注入）；必须递增，否则旧 daemon 不重启、面板看不到关于页
@@ -128,8 +160,14 @@ const DATA_DIR = defaultDataDir();
 // 1.0.19：官方模型批量删除、模型卡片稳定布局与固定 650px 面板
 // 1.0.20：模型卡片悬浮操作、官方连通测试、完整长度脱敏 API Key
 // 1.0.21：模型页改为当前/备选模型列表风格，去除刷新入口并优化字段排版
-const DAEMON_VERSION = '1.0.7';
-const DAEMON_BUILD_ID = 'release-1.0.7-20260822';
+// 1.0.22：启动时探测本机环境版本（国内版/AI 国际版）并全程锁定：登录文件、无感登录域名、
+//         签到/积分接口、Windows 进程名全部跟随；修复 AI 版账号无法识别（登录文件名带
+//         -ai 后缀）与无感登录跳转 CN 域名两大问题
+// 1.0.9（发布号）：修复首次安装（无登录文件）时 daemon 启动即崩（版本探测引用尚未声明的
+//         平台常量触发 TDZ）；无感登录轮询改用发起时按请求版本保存的域名，避免双版本
+//         并存时 state 与轮询域名不一致导致授权结果永远取不到
+const DAEMON_VERSION = '1.0.9';
+const DAEMON_BUILD_ID = 'release-1.0.9-20260822';
 const HOST = '127.0.0.1';
 const IS_WIN = process.platform === 'win32'; // Windows 移植：平台分支开关（macOS 行为保持不变）
 // Windows 安装目录（install.ps1 铺、launcher 用、更新替换目标），对应 macOS 的 /Applications/WorkDaddy.app
@@ -428,7 +466,15 @@ function sha256File(file) {
 //   4. GET /v2/plugin/login/account?state=... 拉账号信息，拼成官方认证文件结构入库
 // ---------------------------------------------------------------------------
 
-const WB_API_ENDPOINT = 'https://www.codebuddy.cn';
+// 国内版与 AI 国际版的 API 域名不同（AI 版真机确认：asar 内置 https://www.workbuddy.ai，
+// 登录文件 auth.domain 也为 www.workbuddy.ai）；无感登录端点跟随启动时锁定的环境版本。
+const WB_API_ENDPOINTS = {
+  cn: 'https://www.codebuddy.cn',
+  ai: 'https://www.workbuddy.ai',
+};
+function wbApiEndpoint() {
+  return WB_API_ENDPOINTS[currentEdition()];
+}
 const WB_API_PREFIX = '/v2/plugin';
 const OAUTH_TIMEOUT_SECONDS = 600;
 const OAUTH_RESULT_RETENTION_SECONDS = 300;
@@ -539,7 +585,7 @@ function buildSeamlessAuthFile(tokenData, accData) {
   // 合并现有登录文件里的 allAccounts（按 uid 去重），保持与官方文件结构一致
   let all = [];
   try {
-    const cur = JSON.parse(fs.readFileSync(AUTH_FILE, 'utf8'));
+    const cur = JSON.parse(fs.readFileSync(resolveAuthFile(), 'utf8'));
     const arr = cur.allAccounts || cur.accounts;
     if (Array.isArray(arr)) all = arr;
   } catch (_) {}
@@ -586,8 +632,12 @@ async function oauthPollOnce(loginId) {
     scheduleOAuthStateCleanup(loginId);
     return { done: true, error: info.error };
   }
+  // 轮询域名必须用发起 /api/oauth/start 时按请求版本选定的 endpoint（存在 info 里），
+  // 而非 daemon 锁定的 wbApiEndpoint()——两者不一致时（如双版本并存）state 在 A 域名
+  // 申请、token 却到 B 域名轮询，无感登录永远无法完成。
+  const endpoint = info.endpoint || wbApiEndpoint();
   const tokenResp = await httpJson(
-    `${WB_API_ENDPOINT}${WB_API_PREFIX}/auth/token?state=${encodeURIComponent(info.state)}`,
+    `${endpoint}${WB_API_PREFIX}/auth/token?state=${encodeURIComponent(info.state)}`,
     'GET'
   );
   const code = tokenResp && typeof tokenResp.code === 'number' ? tokenResp.code : -1;
@@ -600,7 +650,7 @@ async function oauthPollOnce(loginId) {
   const accHeaders = { Authorization: `Bearer ${accessToken}` };
   if (data.domain) accHeaders['X-Domain'] = data.domain;
   const accResp = await httpJson(
-    `${WB_API_ENDPOINT}${WB_API_PREFIX}/login/account?state=${encodeURIComponent(info.state)}`,
+    `${endpoint}${WB_API_PREFIX}/login/account?state=${encodeURIComponent(info.state)}`,
     'GET',
     null,
     accHeaders
@@ -854,18 +904,61 @@ function scheduleBackup(reason) {
     backupTimer = null;
     try {
       backupCurrent(DATA_DIR, log);
+      // 备份成功后通知已打开的面板实时刷新账号列表
+      cdpSend('Runtime.evaluate', { expression: 'window.__wbsWidget && window.__wbsWidget.refresh && window.__wbsWidget.refresh()' }).catch(() => {});
     } catch (e) {
+      // 自愈：启动时还没有任何登录文件（版本锁定为默认 cn），用户随后在 AI 客户端
+      // 完成首次登录时会持续 ENOENT；此时按实际文件重新探测一次并改锁后重试。
+      if (/ENOENT/.test(String(e.code || e.message)) && relockEditionIfNeeded()) {
+        try {
+          backupCurrent(DATA_DIR, log);
+          cdpSend('Runtime.evaluate', { expression: 'window.__wbsWidget && window.__wbsWidget.refresh && window.__wbsWidget.refresh()' }).catch(() => {});
+          return;
+        } catch (e2) {
+          log(`[sync] ${reason} 改锁后重试备份仍失败: ${e2.message}`);
+          return;
+        }
+      }
       log(`[sync] ${reason} 触发备份失败: ${e.message}`);
     }
   }, BACKUP_DEBOUNCE);
 }
 
 // 兜底：登录文件本身变化（每次打开/刷新 WorkBuddy 都会重写该文件）
-fs.watchFile(AUTH_FILE, { interval: WATCH_INTERVAL }, (cur, prev) => {
-  // 文件被移走（如"假退出登录"）时不应触发备份；仅当文件存在且 mtime 变化才备份
-  if (!fs.existsSync(AUTH_FILE)) return;
-  if (cur.mtimeMs !== prev.mtimeMs) scheduleBackup('file-change');
-});
+// 当前被监听的登录文件（跟随锁定的环境版本；改锁后需重挂监听）
+let watchedAuthFile = null;
+function watchActiveAuthFile() {
+  if (watchedAuthFile) {
+    try { fs.unwatchFile(watchedAuthFile); } catch (_) {}
+  }
+  watchedAuthFile = resolveAuthFile();
+  fs.watchFile(watchedAuthFile, { interval: WATCH_INTERVAL }, (cur, prev) => {
+    // 文件被移走（如“假退出登录”）时不应触发备份；仅当文件存在且 mtime 变化才备份
+    if (!fs.existsSync(watchedAuthFile)) return;
+    if (cur.mtimeMs !== prev.mtimeMs) scheduleBackup('file-change');
+  });
+}
+
+// 按磁盘上实际存在的登录文件重新探测环境版本；版本变化时改锁并重挂文件监听。
+// 仅在「实际登录文件出现/切换」时触发；两文件均不存在（如假退出登录期间）时保持当前锁定版本不变。
+function relockEditionIfNeeded() {
+  const cnExists = fs.existsSync(AUTH_FILES.cn);
+  const aiExists = fs.existsSync(AUTH_FILES.ai);
+  // 当两个登录文件都不存在时（如假退出登录期间），绝对不能误切回 cn，必须保持当前锁定的版本
+  if (!cnExists && !aiExists) return false;
+  const now = detectEdition(
+    (p) => fs.existsSync(p),
+    (p) => fs.statSync(p).mtimeMs,
+    { fallback: currentEdition() }
+  );
+  if (now === currentEdition()) return false;
+  log(`[env] 检测到登录文件变化，环境版本 ${currentEdition()} -> ${now}，已重新锁定`);
+  setEdition(now);
+  watchActiveAuthFile();
+  return true;
+}
+
+watchActiveAuthFile();
 
 /* ================= CDP 客户端（Node 22 内置 WebSocket，零依赖） ================= */
 
@@ -920,7 +1013,7 @@ function isWorkBuddyCdpTarget(target) {
   const url = String(target.url || '');
   const title = String(target.title || '');
   return /(?:^|\/)WorkBuddy\.app(?:\/|$)/i.test(url) ||
-    /https?:\/\/(?:[^/]+\.)?(?:workbuddy|codebuddy)\.cn(?:\/|$)/i.test(url) ||
+    /https?:\/\/(?:[^/]+\.)?(?:workbuddy|codebuddy)\.(?:cn|ai)(?:\/|$)/i.test(url) ||
     /^WorkBuddy(?:\s|$)/i.test(title);
 }
 
@@ -1158,9 +1251,12 @@ function resolveWorkBuddyBinary() {
   // 1) 显式指定（launcher/install 传入最可靠）
   const envBin = tryFile(process.env.WBSWITCH_WORKBUDDY_BIN);
   if (envBin) return (wbBinaryCache = envBin);
-  // 2) 运行中的 WorkBuddy 进程 Path（最权威：多实例共享同一 exe）
+  // 2) 运行中的 WorkBuddy 进程 Path（最权威：多实例共享同一 exe）；优先本机环境版本的镜像名，
+  //    AI 国际版进程名为 WorkBuddyAI.exe，找不到时再试国内版名。
   try {
-    const out = psCmd('Get-Process WorkBuddy -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Path');
+    const primary = currentEdition() === 'ai' ? 'WorkBuddyAI' : 'WorkBuddy';
+    const secondary = primary === 'WorkBuddyAI' ? 'WorkBuddy' : 'WorkBuddyAI';
+    const out = psCmd(`Get-Process ${primary},${secondary} -ErrorAction SilentlyContinue | Where-Object { $_.Path } | Sort-Object -Property @{Expression={ $_.ProcessName -eq '${primary}' };Descending=$true} | Select-Object -First 1 -ExpandProperty Path`);
     const p = out.trim().split(/\r?\n/).filter(Boolean).pop();
     const hit = tryFile(p);
     if (hit) return (wbBinaryCache = hit);
@@ -1221,16 +1317,27 @@ async function restoreWorkBuddyWindow(pid) {
   if (!IS_WIN || !pid) return false;
   const source = [
     'using System;',
+    'using System.Text;',
     'using System.Runtime.InteropServices;',
     'public static class WorkDaddyWindowBridge {',
     '  delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);',
     '  [DllImport("user32.dll")] static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lParam);',
     '  [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);',
+    '  [DllImport("user32.dll")] static extern int GetWindowText(IntPtr hWnd, StringBuilder lpString, int nMaxCount);',
+    '  [DllImport("user32.dll")] static extern bool IsIconic(IntPtr hWnd);',
     '  [DllImport("user32.dll")] static extern bool ShowWindowAsync(IntPtr hWnd, int command);',
     '  [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr hWnd);',
     '  public static void Restore(uint targetPid) {',
     '    EnumWindows((hWnd, lParam) => { uint owner; GetWindowThreadProcessId(hWnd, out owner);',
-    '      if (owner == targetPid) { ShowWindowAsync(hWnd, 9); SetForegroundWindow(hWnd); return false; }',
+    '      if (owner == targetPid) {',
+    '        StringBuilder sb = new StringBuilder(256);',
+    '        GetWindowText(hWnd, sb, 256);',
+    '        string title = sb.ToString();',
+    '        if (!string.IsNullOrEmpty(title) && (title.IndexOf("WorkBuddy", StringComparison.OrdinalIgnoreCase) >= 0 || title.IndexOf("CodeBuddy", StringComparison.OrdinalIgnoreCase) >= 0)) {',
+    // SW_RESTORE(9) 对最大化窗口会取消最大化，观感为窗口突然变小；仅最小化时才还原
+    '          ShowWindowAsync(hWnd, IsIconic(hWnd) ? 9 : 5); SetForegroundWindow(hWnd); return false;',
+    '        }',
+    '      }',
     '      return true; }, IntPtr.Zero);',
     '  }',
     '}',
@@ -1246,15 +1353,21 @@ async function restoreWorkBuddyWindow(pid) {
   return true;
 }
 
+/** 本机环境对应的 WorkBuddy 主进程镜像名（AI 国际版为 WorkBuddyAI.exe，真机确认；仅精确匹配，不杀其他进程） */
+function workBuddyImageName() {
+  return currentEdition() === 'ai' ? 'WorkBuddyAI.exe' : 'WorkBuddy.exe';
+}
+
 function workBuddyRunning() {
   try {
     if (IS_WIN) {
+      const image = workBuddyImageName();
       const r = spawnSync(
         'tasklist',
-        ['/FI', 'IMAGENAME eq WorkBuddy.exe', '/FO', 'CSV', '/NH'],
+        ['/FI', 'IMAGENAME eq ' + image, '/FO', 'CSV', '/NH'],
         { encoding: 'utf8', timeout: 5000, windowsHide: true }
       );
-      return r.status === 0 && /"WorkBuddy\.exe"/i.test(r.stdout || '');
+      return r.status === 0 && new RegExp('"' + image.replace('.', '\\.') + '"', 'i').test(r.stdout || '');
     }
     const r = spawnSync('pgrep', ['-f', WORKBUDDY_APP], { stdio: 'ignore', timeout: 5000 });
     return r.status === 0;
@@ -1275,7 +1388,7 @@ async function waitForWorkBuddyExit(timeoutMs = 10000) {
 
 async function elevatedWindowsKill() {
   const command =
-    "$p = Start-Process -FilePath 'taskkill.exe' -ArgumentList '/F','/T','/IM','WorkBuddy.exe' -Verb RunAs -Wait -PassThru; exit $p.ExitCode";
+    "$p = Start-Process -FilePath 'taskkill.exe' -ArgumentList '/F','/T','/IM','" + workBuddyImageName() + "' -Verb RunAs -Wait -PassThru; exit $p.ExitCode";
   return runCommand('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', command], { timeoutMs: 30000 });
 }
 
@@ -1284,10 +1397,11 @@ async function quitWorkBuddy() {
   if (!workBuddyRunning()) return true;
 
   if (IS_WIN) {
-    await runCommand('taskkill', ['/IM', 'WorkBuddy.exe']);
+    const image = workBuddyImageName();
+    await runCommand('taskkill', ['/IM', image]);
     if (await waitForWorkBuddyExit(1800)) return true;
 
-    await runCommand('taskkill', ['/F', '/T', '/IM', 'WorkBuddy.exe']);
+    await runCommand('taskkill', ['/F', '/T', '/IM', image]);
     if (await waitForWorkBuddyExit(2500)) return true;
 
     // WorkBuddy 可能由管理员权限启动；普通 daemon 无法结束它时请求一次 UAC。
@@ -1332,7 +1446,7 @@ function relaunchWorkBuddy() {
       const bin = resolveWorkBuddyBinary();
       if (!bin) throw new Error('未找到 WorkBuddy.exe（可用环境变量 WBSWITCH_WORKBUDDY_BIN 指定）');
       log(`[logout] 以 --remote-debugging-port=${port} 重启 WorkBuddy: ${bin}`);
-      const child = spawn(bin, [`--remote-debugging-port=${port}`], { detached: true, stdio: 'ignore', windowsHide: true });
+      const child = spawn(bin, [`--remote-debugging-port=${port}`], { detached: true, stdio: 'ignore' });
       await new Promise((resolve, reject) => {
         child.once('error', reject);
         child.once('spawn', resolve);
@@ -1497,11 +1611,18 @@ async function waitPageLoaded(timeoutMs = 6000) {
  */
 /* ================= 积分自动领取（直接调接口，带每日缓存） ================= */
 
-const CHECKIN_ENDPOINTS = [
-  'https://www.workbuddy.cn/billing/meter/daily-checkin',
-  'https://www.workbuddy.cn/v2/billing/meter/daily-checkin',
-  'https://www.codebuddy.cn/v2/billing/meter/daily-checkin',
-];
+const CHECKIN_ENDPOINTS_BY_EDITION = {
+  cn: [
+    'https://www.workbuddy.cn/billing/meter/daily-checkin',
+    'https://www.workbuddy.cn/v2/billing/meter/daily-checkin',
+    'https://www.codebuddy.cn/v2/billing/meter/daily-checkin',
+  ],
+  // AI 国际版（WorkBuddyAI）API 域名，真机确认（asar 内置 + 登录文件 auth.domain）
+  ai: [
+    'https://www.workbuddy.ai/billing/meter/daily-checkin',
+    'https://www.workbuddy.ai/v2/billing/meter/daily-checkin',
+  ],
+};
 const CHECKIN_CACHE_FILE = path.join(DATA_DIR, 'checkin-cache.json');
 const CHECKIN_REQUEST_TIMEOUT_MS = 12000;
 const CHECKIN_QUEUE_DELAY_MS = 250;
@@ -1538,8 +1659,10 @@ function saveCheckinCache(cache) {
  * 成功 / 已签（code=10001）均视为当日已完成。
  */
 async function dailyCheckin(accessToken) {
+  const endpoints = CHECKIN_ENDPOINTS_BY_EDITION[currentEdition()] || CHECKIN_ENDPOINTS_BY_EDITION.cn;
+  const apiOrigin = new URL(endpoints[0]).origin;
   let lastErr = null;
-  for (const url of CHECKIN_ENDPOINTS) {
+  for (const url of endpoints) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), CHECKIN_REQUEST_TIMEOUT_MS);
     try {
@@ -1549,8 +1672,8 @@ async function dailyCheckin(accessToken) {
           accept: 'application/json, text/plain, */*',
           'content-type': 'application/json',
           'x-client-platform': 'web',
-          origin: 'https://www.workbuddy.cn',
-          referer: 'https://www.workbuddy.cn/profile/plans-usage',
+          origin: apiOrigin,
+          referer: apiOrigin + '/profile/plans-usage',
           authorization: 'Bearer ' + accessToken,
           'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36',
         },
@@ -1575,7 +1698,7 @@ async function dailyCheckin(accessToken) {
       clearTimeout(timeout);
     }
   }
-  return { ok: false, already: false, code: -1, message: lastErr || '未知错误', url: CHECKIN_ENDPOINTS[0] };
+  return { ok: false, already: false, code: -1, message: lastErr || '未知错误', url: endpoints[0] };
 }
 
 /** 对单个账号签到（带每日缓存，幂等：今日已成功过则跳过） */
@@ -1749,7 +1872,7 @@ async function collectDiagnostics(reason) {
     generatedAt: new Date().toISOString(),
     reason: reason || 'manual',
     daemon: { version: DAEMON_VERSION, buildId: DAEMON_BUILD_ID, pid: process.pid, platform: process.platform, arch: process.arch, node: process.version },
-    paths: { dataDir: DATA_DIR, logFile: logFile(DATA_DIR), diagnosticsFile: DIAGNOSTICS_FILE, authFile: AUTH_FILE },
+    paths: { dataDir: DATA_DIR, logFile: logFile(DATA_DIR), diagnosticsFile: DIAGNOSTICS_FILE, authFile: resolveAuthFile(), edition: currentEdition() },
     cdp: { connected: cdp.connected, port: cdp.port, targetUrl: cdp.targetUrl, error: cdp.error, targets: await readCdpTargets() },
     injection: null,
     logTail: readLogTail(),
@@ -1786,7 +1909,9 @@ async function writeDiagnosticsSnapshot(reason) {
 
 
 // ===== SESSIONS_API_MARK：会话管理（读 WorkBuddy workbuddy.db）=====
-const SESSIONS_DB = path.join(os.homedir(), '.workbuddy', 'workbuddy.db');
+function sessionsDbFile() {
+  return path.join(workbuddyHomeDir(), 'workbuddy.db');
+}
 // Windows：无系统 sqlite3 CLI，优先用 Node 内置 node:sqlite（需 --experimental-sqlite 启动，launcher/install 已统一加）
 let NodeSqlite = null;
 if (IS_WIN) { try { NodeSqlite = require('node:sqlite'); } catch (_) { NodeSqlite = null; } }
@@ -1796,12 +1921,17 @@ function sqliteIsWrite(sql) {
   return /^\s*(?:INSERT|UPDATE|DELETE|REPLACE|CREATE|DROP|ALTER|VACUUM|REINDEX|ANALYZE|BEGIN|COMMIT|ROLLBACK|ATTACH|DETACH)\b/i.test(String(sql || ''));
 }
 function sqliteRun(sql) {
+  const dbFile = sessionsDbFile();
+  const write = sqliteIsWrite(sql);
+  if (!fs.existsSync(dbFile)) {
+    if (!write) return Promise.resolve('');
+    try { fs.mkdirSync(path.dirname(dbFile), { recursive: true }); } catch (_) {}
+  }
   if (IS_WIN && NodeSqlite) {
     return new Promise((resolve, reject) => {
       let db = null;
       try {
-        const write = sqliteIsWrite(sql);
-        db = new NodeSqlite.DatabaseSync(SESSIONS_DB, { readOnly: !write });
+        db = new NodeSqlite.DatabaseSync(dbFile, { readOnly: !write });
         if (write) {
           db.exec(sql);
           db.close(); db = null;
@@ -1822,7 +1952,7 @@ function sqliteRun(sql) {
     });
   }
   return new Promise((resolve, reject) => {
-    const p = spawn('sqlite3', ['-header', SESSIONS_DB], { stdio: ['pipe', 'pipe', 'pipe'] });
+    const p = spawn('sqlite3', ['-header', dbFile], { stdio: ['pipe', 'pipe', 'pipe'] });
     let out = '', err = '';
     p.stdout.on('data', (d) => (out += d));
     p.stderr.on('data', (d) => (err += d));
@@ -1946,7 +2076,7 @@ async function insertCopiedSession(src, targetUid, newId) {
 async function copySessionRecord(src, targetUid, options = {}) {
   const sourceUid = String(options.sourceUid || src.user_id || '').trim();
   const auto = !!options.auto;
-  const wbHome = path.join(os.homedir(), '.workbuddy');
+  const wbHome = workbuddyHomeDir();
   let lineageId = options.lineageId || null;
   const sourceLineage = sourceUid ? getAutoCopySession(DATA_DIR, sourceUid, src.id) : { lineageId: null, enabled: false };
   if (!lineageId && sourceLineage.enabled) lineageId = sourceLineage.lineageId;
@@ -2212,7 +2342,7 @@ const ASK_MODE_RULE = [
 ].join('\n');
 
 function workbuddySettingsPath() {
-  return path.join(os.homedir(), '.workbuddy', 'settings.json');
+  return path.join(workbuddyHomeDir(), 'settings.json');
 }
 
 function readWorkbuddySettings() {
@@ -3213,19 +3343,29 @@ function formatLocalDateTime(d) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
 
+// 积分接口域名跟随启动时锁定的环境版本（国内版为 www.workbuddy.cn，AI 版为 www.workbuddy.ai）
+const BILLING_ORIGINS = {
+  cn: 'https://www.workbuddy.cn',
+  ai: 'https://www.workbuddy.ai',
+};
+function billingOrigin() {
+  return BILLING_ORIGINS[currentEdition()] || BILLING_ORIGINS.cn;
+}
+
 /**
  * 查询剩余积分余额（单套 PackageCodes）。
  * 接口返回 Account 数组，累加每个 Account 的 CapacityRemainPrecise。
  */
 async function fetchResource(accessToken, body, source) {
-  const r = await fetch('https://www.workbuddy.cn/billing/meter/get-user-resource', {
+  const apiOrigin = billingOrigin();
+  const r = await fetch(apiOrigin + '/billing/meter/get-user-resource', {
     method: 'POST',
     headers: {
       accept: 'application/json, text/plain, */*',
       'content-type': 'application/json',
       'x-client-platform': 'web',
-      origin: 'https://www.workbuddy.cn',
-      referer: 'https://www.workbuddy.cn/profile/plans-usage',
+      origin: apiOrigin,
+      referer: apiOrigin + '/profile/plans-usage',
       authorization: `Bearer ${accessToken}`,
       'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36',
     },
@@ -3233,13 +3373,16 @@ async function fetchResource(accessToken, body, source) {
     signal: AbortSignal.timeout(12000),
   });
   const text = await r.text();
+  if (!r.ok) {
+    if (r.status === 401) throw new Error('登录身份已过期');
+    throw new Error(`积分接口 HTTP ${r.status}: ${text.slice(0, 120)}`);
+  }
   let o;
   try {
     o = JSON.parse(text);
   } catch (e) {
     throw new Error(`解析积分响应失败: ${e.message}`);
   }
-  if (!r.ok) throw new Error(`积分接口 HTTP ${r.status}: ${text.slice(0, 120)}`);
   if (o.code !== 0 && o.code !== undefined) throw new Error(o.msg || `积分接口返回 code=${o.code}`);
   const data = o.data && o.data.Response && o.data.Response.Data;
   const accounts = (data && data.Accounts) || [];
@@ -3476,13 +3619,14 @@ function handleApi(req, res) {
         // 必须先停宿主：优雅退出可能把内存中的旧身份重新写回登录文件。
         await quitWorkBuddy();
         quit = true;
-        if (fs.existsSync(AUTH_FILE)) {
-          fs.unlinkSync(AUTH_FILE); // token 仍保留在 accounts/ 备份里
+        const activeAuthFile = resolveAuthFile();
+        if (fs.existsSync(activeAuthFile)) {
+          fs.unlinkSync(activeAuthFile); // token 仍保留在 accounts/ 备份里
           log('[logout] WorkBuddy 已退出，已删除登录文件（假退出，token 未过期，备份保留）');
         } else {
           log('[logout] WorkBuddy 已退出，当前无登录文件');
         }
-        if (fs.existsSync(AUTH_FILE)) {
+        if (fs.existsSync(activeAuthFile)) {
           throw new Error('删除登录文件后仍然存在');
         }
         await relaunchWorkBuddy();
@@ -3499,20 +3643,26 @@ function handleApi(req, res) {
 
   // 「无感登录」第一步：申请 state + 授权链接（不退出、不打断当前 WorkBuddy）
   if (req.method === 'POST' && p === '/api/oauth/start') {
-    return (async () => {
+    return readBody(req).then(async (body) => {
       try {
+        const reqEdition = (body && (body.edition === 'ai' || body.edition === 'cn'))
+          ? body.edition
+          : currentEdition();
+        const endpoint = WB_API_ENDPOINTS[reqEdition] || wbApiEndpoint();
         const resp = await httpJson(
-          `${WB_API_ENDPOINT}${WB_API_PREFIX}/auth/state?platform=workbuddy`,
+          `${endpoint}${WB_API_PREFIX}/auth/state?platform=workbuddy`,
           'POST',
           {}
         );
         const d = (resp && resp.data) || {};
         if (!d.state) throw new Error('auth/state 响应缺少 state');
         const authUrl =
-          d.authUrl || d.auth_url || d.url || `${WB_API_ENDPOINT}/login?state=${d.state}`;
+          d.authUrl || d.auth_url || d.url || `${endpoint}/login?state=${d.state}`;
         const loginId = 'wd_' + crypto.randomUUID().replace(/-/g, '');
         oauthStates.set(loginId, {
           state: d.state,
+          edition: reqEdition,
+          endpoint,
           expiresAt: Date.now() + OAUTH_TIMEOUT_SECONDS * 1000,
           done: false,
           result: null,
@@ -3523,13 +3673,13 @@ function handleApi(req, res) {
           (OAUTH_TIMEOUT_SECONDS + OAUTH_RESULT_RETENTION_SECONDS) * 1000
         );
         if (cleanupTimer.unref) cleanupTimer.unref();
-        log(`[oauth] 发起无感登录 loginId=${loginId}`);
+        log(`[oauth] 发起无感登录 loginId=${loginId} edition=${reqEdition}`);
         return json(res, 200, { ok: true, loginId, verificationUri: authUrl, expiresIn: OAUTH_TIMEOUT_SECONDS });
       } catch (e) {
         log(`[oauth] 发起失败: ${e.message}`);
         return json(res, 502, { ok: false, error: e.message });
       }
-    })();
+    });
   }
 
   // 「无感登录」第二步：轮询授权结果，完成即自动入库
@@ -3579,7 +3729,7 @@ function handleApi(req, res) {
       },
       current: currentAccount(),
       dataDir: DATA_DIR,
-      authFile: AUTH_FILE,
+      authFile: resolveAuthFile(),
     });
   }
 
@@ -4107,7 +4257,7 @@ function handleApi(req, res) {
         // 1) 真实删除 DB 记录（非软删）
         await sqliteRun("DELETE FROM sessions WHERE id IN (" + esc + ");");
         // 2) 删除本地消息文件（jsonl/目录/workspace/tasks/file-history/artifact-index）
-        const wbHome = path.join(os.homedir(), '.workbuddy');
+        const wbHome = workbuddyHomeDir();
         let filesRemoved = 0;
         for (const id of ids) filesRemoved += deleteSessionFiles(wbHome, id);
         let rulesRemoved = 0;
@@ -4869,7 +5019,8 @@ initBuiltinAssets();
 // 启动时刷新决策弹窗规则到最新版本（已启用时替换旧规则段）
 refreshAskModeIfEnabled();
 log('WorkBuddy 多账号切换器启动 (CDP 模式)');
-log(`登录信息文件: ${AUTH_FILE}`);
+log(`环境检测: ${currentEdition() === 'ai' ? 'WorkBuddy AI 国际版' : 'WorkBuddy 国内版'}`);
+log(`登录信息文件: ${resolveAuthFile()}`);
 log(`备份目录: ${DATA_DIR}`);
 
 restoreSleepMode();
@@ -4887,7 +5038,7 @@ process.on('SIGTERM', () => {
   releaseDaemonLock();
   try { stopCaffeinate(); } catch (_) {}
   try {
-    fs.unwatchFile(AUTH_FILE);
+    if (watchedAuthFile) fs.unwatchFile(watchedAuthFile);
   } catch (_) {}
   process.exit(0);
 });

@@ -39,23 +39,96 @@ function isLegacyDataDir(dataDir) {
 
 // macOS: ~/Library/Application Support/CodeBuddyExtension/Data/Public/auth/workbuddy-desktop.info
 // Windows: %LOCALAPPDATA%\CodeBuddyExtension\Data\Public\auth\workbuddy-desktop.info（真机已确认）
-const AUTH_FILE =
-  process.env.WBSWITCH_AUTH_FILE ||
-  (IS_WIN
-    ? path.join(
-        process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'),
-        'CodeBuddyExtension',
-        'Data',
-        'Public',
-        'auth',
-        'workbuddy-desktop.info'
-      )
-    : path.join(
-        os.homedir(),
-        'Library/Application Support/CodeBuddyExtension/Data/Public/auth/workbuddy-desktop.info'
-      ));
+// AI 国际版（WorkBuddyAI）写的是同目录下带 -ai 后缀的 workbuddy-desktop-ai.info（真机已确认）。
+// daemon 启动时通过 detectEdition() 一次性探测本机装的是哪个版本并锁定，
+// 之后登录文件/接口域名/进程名都直接跟随该版本，不做运行时反复猜测。
+const AUTH_DIR = IS_WIN
+  ? path.join(
+      process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'),
+      'CodeBuddyExtension',
+      'Data',
+      'Public',
+      'auth'
+    )
+  : path.join(os.homedir(), 'Library/Application Support/CodeBuddyExtension/Data/Public/auth');
 
-const LOGOUT_MARKER = `${AUTH_FILE}.logged-out`;
+const AUTH_FILES = {
+  cn: path.join(AUTH_DIR, 'workbuddy-desktop.info'),
+  ai: path.join(AUTH_DIR, 'workbuddy-desktop-ai.info'),
+};
+
+// 兼容旧导出：未设环境变量时指向国内版路径。运行期请使用 resolveAuthFile()。
+const AUTH_FILE = process.env.WBSWITCH_AUTH_FILE || AUTH_FILES.cn;
+
+/** 按文件名判断登录文件所属版本：AI 国际版文件名带 -ai 后缀 */
+function authEditionOf(file) {
+  return /-ai\.info$/i.test(path.basename(String(file || ''))) ? 'ai' : 'cn';
+}
+
+/**
+ * 启动时一次性探测本机环境版本（纯函数便于测试）：
+ * - 仅 AI 登录文件存在 → 'ai'；仅国内版存在 → 'cn'
+ * - 两者并存 → 取最近登录（mtime 新）的那个，属明确的一次性启动决策
+ * - 都不存在 → 回退 'cn'（保持旧行为；首次在 AI 版登录后重启 daemon 即自动归位）
+ * @param {(p: string) => boolean} exists 探测文件存在
+ * @param {(p: string) => number} mtimeMs 取修改时间
+ * @returns {'cn'|'ai'}
+ */
+function detectEdition(exists, mtimeMs, opts = {}) {
+  const cnExists = !!exists(AUTH_FILES.cn);
+  const aiExists = !!exists(AUTH_FILES.ai);
+  if (cnExists && aiExists) {
+    try {
+      return Number(mtimeMs(AUTH_FILES.ai)) >= Number(mtimeMs(AUTH_FILES.cn)) ? 'ai' : 'cn';
+    } catch (_) {
+      return 'cn';
+    }
+  }
+  if (aiExists) return 'ai';
+  if (cnExists) return 'cn';
+  if (opts && opts.fallback) return opts.fallback;
+  return 'cn';
+}
+
+// 当前锁定的环境版本。daemon 启动时通过 setEdition(detectEdition(...)) 显式设定；
+// 未设定时惰性探测一次，保证独立调用 lib 函数（如 CLI 脚本/测试）也能拿到正确版本。
+let ACTIVE_EDITION = null;
+
+/** 锁定环境版本（daemon 启动时调用一次） */
+function setEdition(edition) {
+  ACTIVE_EDITION = edition === 'ai' ? 'ai' : 'cn';
+  return ACTIVE_EDITION;
+}
+
+/** 当前锁定的环境版本（未显式设定时惰性探测一次） */
+function currentEdition() {
+  if (!ACTIVE_EDITION) {
+    setEdition(
+      detectEdition(
+        (p) => fs.existsSync(p),
+        (p) => fs.statSync(p).mtimeMs
+      )
+    );
+  }
+  return ACTIVE_EDITION;
+}
+
+/** 指定版本的登录信息文件（显式环境变量优先，行为与旧版一致） */
+function authFileForEdition(edition) {
+  return process.env.WBSWITCH_AUTH_FILE || AUTH_FILES[edition === 'ai' ? 'ai' : 'cn'];
+}
+
+/** 当前生效的登录信息文件（跟随启动时锁定的版本） */
+function resolveAuthFile() {
+  return authFileForEdition(currentEdition());
+}
+
+/** 假退出标记跟随当前生效的登录文件 */
+function logoutMarker() {
+  return `${resolveAuthFile()}.logged-out`;
+}
+
+const LOGOUT_MARKER = `${AUTH_FILE}.logged-out`; // 兼容旧导出，运行期请用 logoutMarker()
 
 function defaultDataDir() {
   // 旧版 launchd 可能把 WBSWITCH_DATA_DIR 设成 HelloBuddy；新版本始终落到 WorkDaddy，
@@ -71,8 +144,20 @@ function metaFile(dataDir) {
   return path.join(dataDir, 'meta.json');
 }
 
+function workbuddyHomeDir() {
+  const custom = process.env.WBSWITCH_WORKBUDDY_USER_DIR;
+  if (custom) return custom;
+  const preferredDir = currentEdition() === 'ai' ? '.workbuddy-ai' : '.workbuddy';
+  const preferred = path.join(os.homedir(), preferredDir);
+  if (fs.existsSync(preferred)) return preferred;
+  const fallbackDir = currentEdition() === 'ai' ? '.workbuddy' : '.workbuddy-ai';
+  const fallback = path.join(os.homedir(), fallbackDir);
+  if (fs.existsSync(fallback)) return fallback;
+  return preferred;
+}
+
 function workbuddyModelsFile() {
-  return path.join(os.homedir(), '.workbuddy', 'models.json');
+  return path.join(workbuddyHomeDir(), 'models.json');
 }
 
 function modelBackupsDir(dataDir) {
@@ -106,7 +191,7 @@ function sanitizeModel(model, opts) {
 }
 
 function readModelsFile(file = workbuddyModelsFile()) {
-  if (!fs.existsSync(file)) throw new Error(`未找到模型配置文件: ${file}`);
+  if (!fs.existsSync(file)) return { file, format: 'array', models: [], missing: true };
   let parsed;
   try {
     parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -611,10 +696,11 @@ function backupPath(dataDir, uid) {
 
 /** WorkBuddy ignores auth files while this marker exists; retire it after a switch. */
 function retireLogoutMarker(log = () => {}) {
-  if (!fs.existsSync(LOGOUT_MARKER)) return false;
+  const marker = logoutMarker();
+  if (!fs.existsSync(marker)) return false;
   try {
-    const retired = `${LOGOUT_MARKER}.retired.${process.pid}.${Date.now()}`;
-    fs.renameSync(LOGOUT_MARKER, retired);
+    const retired = `${marker}.retired.${process.pid}.${Date.now()}`;
+    fs.renameSync(marker, retired);
     try {
       fs.unlinkSync(retired);
     } catch (_) {
@@ -623,18 +709,19 @@ function retireLogoutMarker(log = () => {}) {
     log('[switch] 已清理 WorkBuddy 登录退出标记');
     return true;
   } catch (e) {
+    const code = e && e.code;
     if (IS_WIN) {
-      throw new Error(`清理登录退出标记失败(${e.code || ''}): ${(e.message || e).toString().slice(0, 200)}`);
+      throw new Error(`清理登录退出标记失败(${code || ''}): ${(e.message || e).toString().slice(0, 200)}`);
     }
     // WorkBuddy may launch the daemon in a sandbox that cannot unlink auth files.
     try {
       const { execFileSync } = require('child_process');
-      const markerQ = LOGOUT_MARKER.replace(/"/g, '\\"');
+      const markerQ = marker.replace(/"/g, '\\"');
       execFileSync('osascript', ['-e', `do shell script "rm -f \\\"${markerQ}\\\""`], {
         timeout: 15000,
         stdio: 'pipe',
       });
-      if (fs.existsSync(LOGOUT_MARKER)) throw new Error('标记仍然存在');
+      if (fs.existsSync(marker)) throw new Error('标记仍然存在');
       log('[switch] 已通过系统授权清理 WorkBuddy 登录退出标记');
       return true;
     } catch (e2) {
@@ -704,7 +791,7 @@ function ensureDirs(dataDir, log = () => {}) {
 
 /** 读取登录信息文件并抽取账号关键字段（不返回令牌内容） */
 function readAuthFile() {
-  const raw = fs.readFileSync(AUTH_FILE, 'utf8');
+  const raw = fs.readFileSync(resolveAuthFile(), 'utf8');
   const json = JSON.parse(raw);
   if (!json || typeof json !== 'object') {
     throw new Error('auth 文件不是有效的 JSON 对象');
@@ -743,10 +830,11 @@ function updateMeta(dataDir, info) {
 /** 把当前登录信息备份到 accounts/<uid>.info（原子写入，0600） */
 function backupCurrent(dataDir, log = () => {}) {
   ensureDirs(dataDir, log);
+  const authFile = resolveAuthFile();
   const info = readAuthFile();
   const dest = backupPath(dataDir, info.uid);
   const tmp = dest + '.tmp';
-  fs.writeFileSync(tmp, fs.readFileSync(AUTH_FILE), { mode: 0o600 });
+  fs.writeFileSync(tmp, fs.readFileSync(authFile), { mode: 0o600 });
   fs.renameSync(tmp, dest);
   fs.chmodSync(dest, 0o600);
   updateMeta(dataDir, info);
@@ -825,7 +913,21 @@ function deleteAccount(dataDir, uid) {
   return { deleted: deletedFile, uid };
 }
 
-/** 切换登录账号：把备份文件复制回登录信息文件（先校验 uid 匹配） */
+/** 根据账号备份自身的 auth.domain 或环境判定写回的登录文件路径。
+ * 显式环境变量 WBSWITCH_AUTH_FILE 优先（单文件覆盖模式，与 resolveAuthFile 口径一致）。 */
+function targetAuthFileForAccount(backupJson) {
+  if (process.env.WBSWITCH_AUTH_FILE) return process.env.WBSWITCH_AUTH_FILE;
+  if (backupJson && backupJson.auth && /\.ai/i.test(backupJson.auth.domain || '')) {
+    return AUTH_FILES.ai;
+  }
+  if (backupJson && backupJson.auth && /\.cn/i.test(backupJson.auth.domain || '')) {
+    return AUTH_FILES.cn;
+  }
+  return resolveAuthFile();
+}
+
+/** 切换登录账号：把备份文件复制回登录信息文件（先校验 uid 匹配）。
+ * 写入目标根据账号备份所属版本（auth.domain）与当前锁定环境判定，AI 版写 workbuddy-desktop-ai.info，国内版写 workbuddy-desktop.info。 */
 function switchTo(dataDir, uid, log = () => {}) {
   migrateLegacyDataDir(dataDir, log);
   const src = backupPath(dataDir, uid);
@@ -838,11 +940,12 @@ function switchTo(dataDir, uid, log = () => {}) {
   if (!acct || acct.uid !== uid) {
     throw new Error('备份文件校验失败：uid 不匹配，已中止切换');
   }
-  const tmp = AUTH_FILE + '.wbswitch.tmp';
+  const targetAuthFile = targetAuthFileForAccount(json);
+  const tmp = targetAuthFile + '.wbswitch.tmp';
   try {
     fs.writeFileSync(tmp, raw, { mode: 0o600 });
-    fs.renameSync(tmp, AUTH_FILE);
-    fs.chmodSync(AUTH_FILE, 0o600);
+    fs.renameSync(tmp, targetAuthFile);
+    fs.chmodSync(targetAuthFile, 0o600);
   } catch (e) {
     // 沙箱环境（如从 WorkBuddy 托管后台运行）直接写系统目录会 EPERM。
     // macOS 回退：osascript 委托 GUI 会话复制（不涉及内容转义，只传路径）。
@@ -854,9 +957,9 @@ function switchTo(dataDir, uid, log = () => {}) {
     }
     log(`[switch] 直写失败(${e.code})，改用 osascript 委托写入`);
     const bridge = path.join(dataDir, '.auth-switch-bridge.tmp');
-    const authBridge = AUTH_FILE + '.wbswitch.tmp';
+    const authBridge = targetAuthFile + '.wbswitch.tmp';
     const bridgeQ = bridge.replace(/"/g, '\\"');
-    const authQ = AUTH_FILE.replace(/"/g, '\\"');
+    const authQ = targetAuthFile.replace(/"/g, '\\"');
     const tmpQ = authBridge.replace(/"/g, '\\"');
     try {
       // 1) 本进程写 bridge（数据目录可写）
@@ -877,10 +980,19 @@ function switchTo(dataDir, uid, log = () => {}) {
 
 module.exports = {
   AUTH_FILE,
+  AUTH_FILES,
+  detectEdition,
+  setEdition,
+  currentEdition,
+  authEditionOf,
+  authFileForEdition,
+  resolveAuthFile,
+  targetAuthFileForAccount,
   defaultDataDir,
   migrateLegacyDataDir,
   accountsDir,
   metaFile,
+  workbuddyHomeDir,
   workbuddyModelsFile,
   modelBackupsDir,
   maskApiKey,

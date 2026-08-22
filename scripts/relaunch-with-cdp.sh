@@ -26,7 +26,14 @@ if [ "${WBSWITCH_DATA_DIR:-}" = "$LEGACY_DATA_DIR" ]; then
 else
   DATA_DIR="${WBSWITCH_DATA_DIR:-$DEFAULT_DATA_DIR}"
 fi
-AUTH_FILE="${WBSWITCH_AUTH_FILE:-$HOME/Library/Application Support/CodeBuddyExtension/Data/Public/auth/workbuddy-desktop.info}"
+AUTH_DIR="$HOME/Library/Application Support/CodeBuddyExtension/Data/Public/auth"
+if [ -n "${WBSWITCH_AUTH_FILE:-}" ]; then
+  AUTH_FILE="$WBSWITCH_AUTH_FILE"
+elif [ -f "$AUTH_DIR/workbuddy-desktop-ai.info" ] && [ ! -f "$AUTH_DIR/workbuddy-desktop.info" ]; then
+  AUTH_FILE="$AUTH_DIR/workbuddy-desktop-ai.info"
+else
+  AUTH_FILE="$AUTH_DIR/workbuddy-desktop.info"
+fi
 APP_BIN="/Applications/WorkBuddy.app/Contents/MacOS/Electron"
 CDP_PORT_FILE="$DATA_DIR/cdp-port.json"
 

@@ -1476,6 +1476,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       var panes = root.querySelectorAll('.wbs-pane');
       for (var i = 0; i < tabs.length; i++) tabs[i].classList.toggle('active', tabs[i].getAttribute('data-tab') === name);
       for (var j = 0; j < panes.length; j++) panes[j].classList.toggle('active', panes[j].getAttribute('data-pane') === name);
+      if (name === 'accounts') refresh();
       if (name === 'theme') { if (themePane && !themePane.dataset.built) buildThemePane(); loadWallpapers(); }
       if (name === 'sessions' && sessionsPane && !sessionsPane.dataset.built) buildSessionsPane();
       if (name === 'models' && modelsPane && !modelsPane.dataset.built) buildModelsPane();
@@ -2944,15 +2945,15 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         '<div class="wbs-login-modal" role="dialog" aria-modal="true" aria-labelledby="wbs-login-modal-title">' +
         '<div class="wbs-login-modal-title" id="wbs-login-modal-title">选择登录方式</div>' +
         '<div class="wbs-login-body" id="wbs-login-body" role="radiogroup" aria-label="登录方式">' +
-        '<label class="wbs-login-option selected" data-way="logout">' +
-        '<input type="radio" name="wbs-login-way" value="logout" checked>' +
-        '<span class="wbs-login-option-copy"><span class="wbs-login-option-title">假退出</span>' +
-        '<span class="wbs-login-option-desc">以「不让当前账号登录身份过期」的方式切到登录页，可以登录新账号，也可以切回已登录账号</span></span>' +
+        '<label class="wbs-login-option selected" data-way="seamless">' +
+        '<input type="radio" name="wbs-login-way" value="seamless" checked>' +
+        '<span class="wbs-login-option-copy"><span class="wbs-login-option-title">无感登录（推荐）</span>' +
+        '<span class="wbs-login-option-desc">不退出 WorkBuddy，在系统浏览器完成授权后新账号自动加入列表</span></span>' +
         '</label>' +
-        '<label class="wbs-login-option" data-way="seamless">' +
-        '<input type="radio" name="wbs-login-way" value="seamless">' +
-        '<span class="wbs-login-option-copy"><span class="wbs-login-option-title">无感登录</span>' +
-        '<span class="wbs-login-option-desc">不退出 WorkBuddy，在浏览器完成授权后新账号自动加入列表</span></span>' +
+        '<label class="wbs-login-option" data-way="logout">' +
+        '<input type="radio" name="wbs-login-way" value="logout">' +
+        '<span class="wbs-login-option-copy"><span class="wbs-login-option-title">假退出</span>' +
+        '<span class="wbs-login-option-desc">退出并返回 WorkBuddy 官方登录页，保留历史账号不失效</span></span>' +
         '</label>' +
         '</div>' +
         '<div class="wbs-modal-actions"><button class="wbs-modal-btn" type="button" id="wbs-login-cancel">取消</button>' +
@@ -3014,7 +3015,12 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       });
 
       var statusEl = function () { return mask.querySelector('#wbs-login-status'); };
-      api('/api/oauth/start', { method: 'POST' })
+      var hostEdition = (/WorkBuddyAI/i.test(window.location.href || '') || /WorkBuddyAI/i.test(document.title || '')) ? 'ai' : undefined;
+      api('/api/oauth/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(hostEdition ? { edition: hostEdition } : {})
+      })
         .then(function (r) {
           if (cancelled) return;
           // 自动在系统浏览器打开授权页；失败不阻断
@@ -3057,12 +3063,14 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
                         false,
                         root
                       );
-                      setBuildTimeout(refresh, 1500);
+                      refresh();
+                      setTimeout(refresh, 800);
                     })
                     .catch(function (e) {
                       if (cancelled) return;
                       var switchErrEl = statusEl();
                       if (switchErrEl) switchErrEl.textContent = '账号已授权，但自动切换失败：' + (e.message || e) + '。可关闭后在列表中手动切换。';
+                      refresh();
                     });
                 } else {
                   var errEl = statusEl();
@@ -3933,8 +3941,14 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     }
 
     function render(data) {
-      state.accounts = data.accounts || [];
       state.current = data.current;
+      var curUid = state.current && state.current.uid;
+      // 稳定排序：当前登录账号始终置顶，其余账号按最近刷新时间稳定排列，避免异步拉取积分时列表上下跳动
+      state.accounts = (data.accounts || []).slice().sort(function (a, b) {
+        if (curUid && a.uid === curUid) return -1;
+        if (curUid && b.uid === curUid) return 1;
+        return (b.lastRefreshTime || 0) - (a.lastRefreshTime || 0);
+      });
       state.creditRemaining = state.accounts.length;
       updateAccountSummary();
       var list = accountsPane.querySelector('.wbs-acct-list');
@@ -4068,6 +4082,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
           accountsPane.innerHTML = msg;
         });
     }
+    state._refresh = refresh;
 
     function updateAccountSummary() {
       var count = accountsPane.querySelector('#wbs-acct-count');
@@ -4156,8 +4171,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       state.creditRemaining = accounts.length;
       function settleBatch() {
         if (runId !== state.creditRunId || state.creditRemaining !== 0) return;
-        sortAccountsByCreditExpiry();
-        reorderAccountCards();
+        // 原地展示积分，不再打乱卡片 DOM 顺序，彻底消除面板打开后列表跳动问题
         var sum = 0;
         state.accounts.forEach(function (account) {
           if (typeof account.credits === 'number' && isFinite(account.credits)) sum += account.credits;
@@ -4367,6 +4381,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       }
     }
     if (css && css.parentNode) css.remove();
+    state._refresh = null;
     try { delete window.__wbsWidget; } catch (e) { window.__wbsWidget = null; }
   }
 

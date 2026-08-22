@@ -110,12 +110,20 @@ if (Test-Path $logoIcoSrc) {
   try { Copy-Item $logoIcoSrc $logoIco -Force; Write-Host ('  图标复制 : ' + $logoIco) } catch {}
 }
 
-# 3) 登录自启（HKCU Run，登录时自动跑 launcher.cmd；崩溃自愈由 watchdog 负责）
+# 3) 登录自启（HKCU Run，登录时自动跑 launcher；崩溃自愈由 watchdog 负责）
+#    必须经 launcher-hidden.vbs（wscript 静默入口）启动：直接注册 launcher.cmd 会在每次登录时
+#    弹出 cmd 黑窗口，且 launcher.cmd 结尾的 pause 在无交互环境下会常驻不退出。
 $runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
 $launcher = Join-Path $targetScripts 'launcher.cmd'
+$launcherVbs = Join-Path $targetScripts 'launcher-hidden.vbs'
 try {
-  Set-ItemProperty -Path $runKey -Name 'WorkDaddy' -Value ('"' + $launcher + '"')
-  Write-Host '  自启注册：HKCU\...\Run\WorkDaddy = ' $launcher
+  if (Test-Path $launcherVbs) {
+    $autostartValue = '"' + (Join-Path $env:WINDIR 'System32\wscript.exe') + '" //nologo "' + $launcherVbs + '"'
+  } else {
+    $autostartValue = '"' + $launcher + '"'
+  }
+  Set-ItemProperty -Path $runKey -Name 'WorkDaddy' -Value $autostartValue
+  Write-Host '  自启注册：HKCU\...\Run\WorkDaddy = ' $autostartValue
 } catch {
   Write-Host ('  自启注册失败（可忽略，之后手动双击 launcher.cmd 即可）: ' + $_.Exception.Message)
   Send-Sentry 'windows-install-autostart' ('注册登录自启失败: ' + $_.Exception.Message) 0
@@ -123,7 +131,6 @@ try {
 
 # 4) 启动（daemon + 以 CDP 模式重启 WorkBuddy + 注入）
 Write-Host '  正在启动 WorkDaddy（如果 WorkBuddy 正在运行，会重启它以开启调试模式）...'
-$launcherVbs = Join-Path $targetScripts 'launcher-hidden.vbs'
 if (Test-Path $launcher) {
   if (Test-Path $launcherVbs) {
     Start-Process -FilePath (Join-Path $env:WINDIR 'System32\wscript.exe') -ArgumentList ('//nologo "' + $launcherVbs + '"') -WorkingDirectory (Split-Path $launcher)

@@ -15,3 +15,4 @@ daemon.log
 
 # 工作区元数据（WorkBuddy 项目数据，不入库）
 .workbuddy/
+.workbuddy-ai/

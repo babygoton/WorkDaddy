@@ -54,7 +54,8 @@ test('legacy account-scoped rules migrate to global lineages and workspace paths
   const rules = getAutoCopyRules(dataDir, 'h');
   assert.deepEqual(rules.sessionIds, ['session-a']);
   assert.equal(rules.workspaces.length, 1);
-  assert.equal(canonicalWorkspace('/Users/example/Repo/'), '/Users/example/Repo');
+  // canonicalWorkspace 在 Windows 上会转小写，断言用同一函数求期望值，保持跨平台一致
+  assert.equal(canonicalWorkspace('/Users/example/Repo/'), canonicalWorkspace('/Users/example/Repo'));
   const lineage = getAutoCopySession(dataDir, 'h', 'session-a');
   assert.ok(lineage.lineageId);
   assert.equal(lineage.enabled, true);
@@ -99,8 +100,10 @@ test('deleting the last lineage member removes mappings, while other members ret
 test('workspace rules are global across source accounts', () => {
   const dataDir = tempDataDir();
   setAutoCopyRule(dataDir, { uid: 'h', kind: 'workspace', key: '/Users/h/Repo/', enabled: true });
-  assert.deepEqual(getAutoCopyRules(dataDir, 'h').workspaces, ['/Users/h/Repo']);
-  assert.deepEqual(getAutoCopyRules(dataDir, 's').workspaces, ['/Users/h/Repo']);
+  // canonicalWorkspace 在 Windows 上会转小写，期望值用同一函数求得，避免平台差异
+  const repoKey = canonicalWorkspace('/Users/h/Repo');
+  assert.deepEqual(getAutoCopyRules(dataDir, 'h').workspaces, [repoKey]);
+  assert.deepEqual(getAutoCopyRules(dataDir, 's').workspaces, [repoKey]);
   setAutoCopyRule(dataDir, { uid: 's', kind: 'workspace', key: '/Users/h/Repo', enabled: false });
   assert.deepEqual(getAutoCopyRules(dataDir, 'h').workspaces, []);
 });
