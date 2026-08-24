@@ -87,6 +87,7 @@ const { captureException, captureMessage } = require('./sentry-report.js');
 const { getProfile, profileDataDir, listInstalledModelSources } = require('./profiles.js');
 const { classifyTarget, looksLikeWbFamilyTarget, isTargetForProfile } = require('./cdp-targets.js');
 const pluginSync = require('./plugin-sync.js');
+const cliAuth = require('./cli-auth.js');
 
 const PROFILE = getProfile();
 const DATA_DIR = defaultDataDir();
@@ -155,11 +156,15 @@ const DATA_DIR = defaultDataDir();
 // 1.0.25：账号同步接入「CodeBuddy 插件」目标：Cursor / VS Code 的 state.vscdb 凭据
 //         （DPAPI + AES-256-GCM）切换；以 uid 三重校验防串号（备份/请求/写回读回）。
 //         GET /api/plugin-sync/editors + POST /api/plugin-sync；编辑器需完全退出后同步。
+// 1.0.26：账号同步接入「CodeBuddy CLI」目标：直接把 WorkBuddy 账号备份写入 CLI 认证文件
+//         （CodeBuddyExtension/Data/Public/auth/Tencent-Cloud.coding-copilot.info，与
+//         workbuddy-desktop.info 同目录同格式）。CLI 无加密密钥时明文存储，读取时直接
+//         当明文用；无需 apiKeyHelper，不重启 WorkBuddy。GET /api/cli/status + POST /api/cli/sync。
 // 1.0.9：WorkBuddy / WorkBuddy AI profile 隔离；修复 Windows launcher 的本地端口探测、
 //        AI 端 CDP 误连国内端、watchdog 路径和退出确认问题。
 // 1.0.13：下载使用唯一临时文件并在校验通过后原子替换，防止并发更新造成 ENOENT。
-const DAEMON_VERSION = '1.0.25';
-const DAEMON_BUILD_ID = 'release-1.0.25-20260824-plugin-sync';
+const DAEMON_VERSION = '1.0.26';
+const DAEMON_BUILD_ID = 'release-1.0.26-20260824-cli-auth';
 const HOST = '127.0.0.1';
 const IS_WIN = process.platform === 'win32'; // Windows 移植：平台分支开关（macOS 行为保持不变）
 // Windows 安装目录（install.ps1 铺、launcher 用、更新替换目标），对应 macOS 的 /Applications/WorkDaddy.app
@@ -4463,6 +4468,38 @@ function handleApi(req, res) {
         const code = Number(e.statusCode) || 500;
         log('[plugin-sync] 同步失败: ' + e.message);
         return json(res, code, { ok: false, error: e.message, running: !!e.editorRunning });
+      }
+    });
+  }
+
+  // CodeBuddy CLI 账号切换：查询 CLI 认证文件当前账号（脱敏，不返回 token）
+  if (req.method === 'GET' && p === '/api/cli/status') {
+    try {
+      const st = cliAuth.status();
+      return json(res, 200, Object.assign({ ok: true }, st));
+    } catch (e) {
+      log('[cli-sync] 状态查询失败: ' + e.message);
+      return json(res, 500, { ok: false, error: e.message });
+    }
+  }
+
+  // CodeBuddy CLI 账号切换：把 WorkBuddy 账号备份写入 CLI 认证文件
+  // （CodeBuddyExtension/Data/Public/auth/Tencent-Cloud.coding-copilot.info）
+  // 不重启 WorkBuddy；CLI 下次读认证文件即生效。
+  if (req.method === 'POST' && p === '/api/cli/sync') {
+    return readBody(req).then((body) => {
+      const uid = String((body && body.uid) || '').trim();
+      if (!uid) return json(res, 400, { ok: false, error: '缺少 uid' });
+      try {
+        const backupFile = path.join(DATA_DIR, 'accounts', uid + '.info');
+        const result = cliAuth.syncAccount(uid, { backupFile: backupFile });
+        log('[cli-sync] CodeBuddy CLI 已切换为 ' + (result.activeNickname || result.activeUid) +
+          ' (uid ' + String(result.activeUid).slice(0, 8) + '…)；认证文件已写入 ' + result.cliAuthFile);
+        return json(res, 200, Object.assign({ ok: true }, result));
+      } catch (e) {
+        const code = Number(e.statusCode) || 500;
+        log('[cli-sync] 同步失败: ' + e.message);
+        return json(res, code, { ok: false, error: e.message });
       }
     });
   }

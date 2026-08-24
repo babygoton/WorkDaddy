@@ -1904,12 +1904,13 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     }
 
     // ===== 账号同步弹窗（两步向导）=====
-    // codebuddy 桌面端 / CLI 的后端切换逻辑待接入；plugin 目标已接入 daemon：
+    // codebuddy 桌面端后端逻辑待接入；plugin 与 cli 已接入 daemon：
     //   GET /api/plugin-sync/editors（编辑器安装/插件登录态/运行状态检测）
     //   POST /api/plugin-sync（state.vscdb 凭据切换，daemon 侧以 uid 三重校验防串号）
+    //   GET /api/cli/status + POST /api/cli/sync（CLI 认证文件写入，同目录同格式）
     var SYNC_TARGETS = [
       { id: 'codebuddy', label: 'CodeBuddy', desc: '同步到 CodeBuddy 桌面端，需选择国际版或国内版' },
-      { id: 'cli', label: 'CodeBuddy CLI', desc: '直接切换到 CodeBuddy CLI 并同步该账号' },
+      { id: 'cli', label: 'CodeBuddy CLI', desc: '把账号直接写入 CLI 认证文件，无需重启；下次 CLI 请求即生效' },
       { id: 'plugin', label: 'CodeBuddy 插件', desc: '同步到 Cursor / VS Code 中已安装的 CodeBuddy 插件' },
     ];
 
@@ -1985,6 +1986,32 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         });
       }
 
+      // 拉取 CodeBuddy CLI 当前认证状态，更新 cli 步骤的提示文案
+      function loadCliStatus() {
+        api('/api/cli/status').then(function (d) {
+          if (!mask.isConnected) return;
+          var box = mask.querySelector('#wbs-cli-status-loading');
+          if (!box) return;
+          var parts = [];
+          if (d.configured && d.activeUid && d.activeNickname) {
+            parts.push('当前 CLI 账号：' + esc(d.activeNickname) + '。');
+          } else if (d.configured) {
+            parts.push('CLI 已配置认证文件，但当前未识别到账号。');
+          } else {
+            parts.push('CLI 尚未配置认证文件，将自动创建。');
+          }
+          parts.push('点击「完成」把 CLI 切到「' + esc(accountName) + '」，认证文件写入后下次 CLI 请求即生效。');
+          box.innerHTML = parts.join(' ');
+        }).catch(function (e) {
+          if (!mask.isConnected) return;
+          var box = mask.querySelector('#wbs-cli-status-loading');
+          if (box) {
+            box.textContent = '检查 CLI 状态失败：' + (e.message || e);
+            box.style.color = 'var(--wb-color-text-warning, #c77b30)';
+          }
+        });
+      }
+
       // 拉取编辑器检测列表并渲染为 plugin 步骤的选项（不可用项禁用但保留说明）
       function loadSyncEditors() {
         api('/api/plugin-sync/editors').then(function (d) {
@@ -2040,10 +2067,10 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
             { value: 'cn', label: '国内版', desc: '同步到 CodeBuddy 国内版' },
           ], 'sub', null) + '</div>';
         } else if (sel.target === 'cli') {
-          // CLI 无需二次选择：直接进入切换逻辑
+          // CLI 无需二次选择：直接进入切换逻辑，先检查当前 CLI 认证状态
           needPick = false;
           sel.sub = 'cli';
-          bodyHtml = '<div class="wbs-password-hint">将在 CodeBuddy CLI 中直接切换到该账号，点击「完成」开始同步。</div>';
+          bodyHtml = '<div class="wbs-password-hint" id="wbs-cli-status-loading">正在检查 CodeBuddy CLI 当前账号…</div>';
         } else {
           bodyHtml = '<div class="wbs-password-hint" id="wbs-sync-editors-loading">正在检测已安装的编辑器…</div>' +
             '<div class="wbs-sync-options" id="wbs-sync-editors" style="display:none"></div>';
@@ -2062,6 +2089,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
           });
         }
         if (sel.target === 'plugin') loadSyncEditors();
+        if (sel.target === 'cli') loadCliStatus();
         mask.querySelector('[data-sync-act="back"]').addEventListener('click', renderStep1);
         mask.querySelector('[data-sync-act="finish"]').addEventListener('click', function () {
           if (needPick && !sel.sub) return;
@@ -2069,7 +2097,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         });
       }
 
-      // 完成：plugin 调 daemon 同步接口；codebuddy/cli 后端逻辑仍待接入
+      // 完成：plugin 与 cli 调 daemon 同步接口；codebuddy 桌面端后端逻辑仍待接入
       function finishSync() {
         var targetLabel = (SYNC_TARGETS.filter(function (t) { return t.id === sel.target; })[0] || {}).label || sel.target;
         if (sel.target === 'plugin') {
@@ -2093,9 +2121,30 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
             });
           return;
         }
+        if (sel.target === 'cli') {
+          var cliFinish = mask.querySelector('[data-sync-act="finish"]');
+          var cliBack = mask.querySelector('[data-sync-act="back"]');
+          if (cliFinish) { cliFinish.disabled = true; cliFinish.textContent = '同步中…'; }
+          if (cliBack) cliBack.disabled = true;
+          api('/api/cli/sync', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ uid: sel.uid }),
+          })
+            .then(function (r) {
+              cleanup();
+              toast('已切换 CodeBuddy CLI 为 ' + (r.activeNickname || '账号') + '；认证文件已写入，下次 CLI 请求即生效', false, root);
+            })
+            .catch(function (e) {
+              if (cliFinish) { cliFinish.disabled = false; cliFinish.textContent = '完成'; }
+              if (cliBack) cliBack.disabled = false;
+              toast('同步失败: ' + (e.message || e), true, root);
+            });
+          return;
+        }
         var subLabel = sel.target === 'codebuddy' ? (sel.sub === 'intl' ? '国际版' : '国内版') : '';
         cleanup();
-        // TODO(backend): codebuddy 桌面端 / CLI 的同步接口，携带 { uid, target: sel.target, sub: sel.sub }
+        // TODO(backend): codebuddy 桌面端的同步接口，携带 { uid, target: sel.target, sub: sel.sub }
         toast('已发起同步：' + targetLabel + (subLabel ? ' · ' + subLabel : '') + '（后端逻辑待接入）', false, root);
       }
 
