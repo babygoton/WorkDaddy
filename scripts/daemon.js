@@ -86,6 +86,7 @@ const { buildCreditResourceBody } = require('./credit-resource-queries.js');
 const { captureException, captureMessage } = require('./sentry-report.js');
 const { getProfile, profileDataDir, listInstalledModelSources } = require('./profiles.js');
 const { classifyTarget, looksLikeWbFamilyTarget, isTargetForProfile } = require('./cdp-targets.js');
+const pluginSync = require('./plugin-sync.js');
 
 const PROFILE = getProfile();
 const DATA_DIR = defaultDataDir();
@@ -151,11 +152,14 @@ const DATA_DIR = defaultDataDir();
 // 1.0.22：对齐 WorkBuddy v2 全量资源接口，避免 PackageCodes 白名单漏掉赠送/付费额度。
 // 1.0.23：手动注入确认组件已挂载；注入失败不再让 Windows launcher 假报成功。
 // 1.0.24：下载尚未收到数据时隐藏 0 B/s 和未知剩余时间文案。
+// 1.0.25：账号同步接入「CodeBuddy 插件」目标：Cursor / VS Code 的 state.vscdb 凭据
+//         （DPAPI + AES-256-GCM）切换；以 uid 三重校验防串号（备份/请求/写回读回）。
+//         GET /api/plugin-sync/editors + POST /api/plugin-sync；编辑器需完全退出后同步。
 // 1.0.9：WorkBuddy / WorkBuddy AI profile 隔离；修复 Windows launcher 的本地端口探测、
 //        AI 端 CDP 误连国内端、watchdog 路径和退出确认问题。
 // 1.0.13：下载使用唯一临时文件并在校验通过后原子替换，防止并发更新造成 ENOENT。
-const DAEMON_VERSION = '1.0.24';
-const DAEMON_BUILD_ID = 'release-1.0.24-20260824-download-progress-copy';
+const DAEMON_VERSION = '1.0.25';
+const DAEMON_BUILD_ID = 'release-1.0.25-20260824-plugin-sync';
 const HOST = '127.0.0.1';
 const IS_WIN = process.platform === 'win32'; // Windows 移植：平台分支开关（macOS 行为保持不变）
 // Windows 安装目录（install.ps1 铺、launcher 用、更新替换目标），对应 macOS 的 /Applications/WorkDaddy.app
@@ -4109,6 +4113,193 @@ function decryptLegacyExport(b64, password) {
   return Buffer.concat([decipher.update(data), decipher.final()]).toString('utf8');
 }
 
+/* ================= CodeBuddy 插件账号同步（Cursor / VS Code）=================
+ * 纯逻辑（密文包装/明文合并/uid 校验）在 scripts/plugin-sync.js；本区块是平台接入：
+ *   - DPAPI 解出编辑器 Local State 的 os_crypt AES key（仅 Windows；密钥绝不落日志）
+ *   - node:sqlite 读写 %APPDATA%\<Editor>\User\globalStorage\state.vscdb
+ *   - 编辑器进程检测（运行中禁止写库：退出时会用内存旧状态覆盖写入，见技术总结踩坑1）
+ */
+const editorAesKeyCache = new Map();
+
+function pluginSyncAppDataDir() {
+  return process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming');
+}
+
+function openPluginStateDb(stateDb, { readOnly = false } = {}) {
+  let DatabaseSync;
+  try {
+    ({ DatabaseSync } = require('node:sqlite'));
+  } catch (e) {
+    throw new Error('当前 Node 运行时不包含 node:sqlite，无法读写插件凭据库（需 Node 22.5+）');
+  }
+  if (!readOnly) return new DatabaseSync(stateDb);
+  try {
+    return new DatabaseSync(stateDb, { readOnly: true });
+  } catch (e) {
+    // 旧版 DatabaseSync 不支持 readOnly 选项：按可写方式打开但仅用于只读查询
+    if (/readOnly|option/i.test(String(e.message || ''))) return new DatabaseSync(stateDb);
+    throw e;
+  }
+}
+
+function dpapiUnprotect(encrypted) {
+  if (!IS_WIN) throw new Error('插件同步当前仅支持 Windows（依赖 DPAPI 解密编辑器密钥）');
+  const script = [
+    'Add-Type -AssemblyName System.Security',
+    '$in = [Console]::In.ReadToEnd().Trim()',
+    '$bytes = [Convert]::FromBase64String($in)',
+    '$key = [Security.Cryptography.ProtectedData]::Unprotect($bytes, $null, [Security.Cryptography.DataProtectionScope]::CurrentUser)',
+    '[Console]::Out.Write([Convert]::ToBase64String($key))',
+  ].join('\n');
+  const r = spawnSync('powershell', ['-NoProfile', '-NonInteractive', '-Command', script], {
+    input: encrypted.toString('base64'),
+    encoding: 'utf8',
+    timeout: 15000,
+    windowsHide: true,
+  });
+  const out = String(r.stdout || '').trim();
+  if (r.status !== 0 || !out) {
+    throw new Error('DPAPI 解密编辑器密钥失败(' + r.status + ')' + (r.stderr ? ': ' + String(r.stderr).trim().slice(0, 120) : ''));
+  }
+  return Buffer.from(out, 'base64');
+}
+
+function loadEditorAesKey(editor) {
+  if (editorAesKeyCache.has(editor.id)) return editorAesKeyCache.get(editor.id);
+  const paths = pluginSync.pluginSyncEditorPaths(editor, pluginSyncAppDataDir());
+  let localState;
+  try {
+    localState = JSON.parse(fs.readFileSync(paths.localState, 'utf8'));
+  } catch (e) {
+    throw new Error(`读取 ${editor.label} Local State 失败: ${e.message}`);
+  }
+  const encB64 = localState && localState.os_crypt && localState.os_crypt.encrypted_key;
+  if (!encB64) throw new Error(`${editor.label} Local State 缺少 os_crypt.encrypted_key`);
+  const enc = Buffer.from(String(encB64), 'base64');
+  if (enc.subarray(0, 5).toString('latin1') !== 'DPAPI') {
+    throw new Error(`${editor.label} 密钥前缀非 DPAPI，已中止`);
+  }
+  const key = dpapiUnprotect(enc.subarray(5));
+  if (key.length !== 32) throw new Error(`${editor.label} AES 密钥长度异常: ${key.length}`);
+  editorAesKeyCache.set(editor.id, key);
+  return key;
+}
+
+function isEditorProcessRunning(editor) {
+  try {
+    if (IS_WIN) {
+      const name = editor.processName + '.exe';
+      const r = spawnSync('tasklist', ['/FI', 'IMAGENAME eq ' + name, '/FO', 'CSV', '/NH'], {
+        encoding: 'utf8', timeout: 10000, windowsHide: true,
+      });
+      if (r.status !== 0) return false;
+      return String(r.stdout || '').toLowerCase().includes(name.toLowerCase());
+    }
+    const r = spawnSync('pgrep', ['-x', editor.processName], { encoding: 'utf8', timeout: 10000 });
+    return r.status === 0 && String(r.stdout || '').trim().length > 0;
+  } catch (_) {
+    return false; // 检测失败不拦截；写库后的读回校验兜底
+  }
+}
+
+function readPluginSecretBlob(editor) {
+  const paths = pluginSync.pluginSyncEditorPaths(editor, pluginSyncAppDataDir());
+  const db = openPluginStateDb(paths.stateDb, { readOnly: true });
+  try {
+    const row = db.prepare('SELECT value FROM ItemTable WHERE key = ?').get(pluginSync.PLUGIN_SECRET_KEY);
+    return row ? pluginSync.secretValueToBuffer(row.value) : null;
+  } finally {
+    try { db.close(); } catch (_) {}
+  }
+}
+
+function writePluginSecretBlob(editor, key, plainJson) {
+  const paths = pluginSync.pluginSyncEditorPaths(editor, pluginSyncAppDataDir());
+  const blob = pluginSync.encryptSecretBuffer(key, Buffer.from(plainJson, 'utf8'));
+  const db = openPluginStateDb(paths.stateDb);
+  try {
+    const info = db.prepare('UPDATE ItemTable SET value = ? WHERE key = ?')
+      .run(pluginSync.bufferToSecretValue(blob), pluginSync.PLUGIN_SECRET_KEY);
+    if (!info || !info.changes) {
+      throw new Error(`${editor.label} 中没有 CodeBuddy 插件登录记录，请先在编辑器内登录一次插件`);
+    }
+    return blob;
+  } finally {
+    try { db.close(); } catch (_) {}
+  }
+}
+
+function pluginSyncEditorStatus() {
+  const appDataDir = pluginSyncAppDataDir();
+  return pluginSync.PLUGIN_SYNC_EDITORS.map((editor) => {
+    const paths = pluginSync.pluginSyncEditorPaths(editor, appDataDir);
+    const installed = fs.existsSync(paths.localState) && fs.existsSync(paths.stateDb);
+    let hasPluginSecret = false;
+    if (installed) {
+      try {
+        const db = openPluginStateDb(paths.stateDb, { readOnly: true });
+        try {
+          hasPluginSecret = !!db.prepare('SELECT key FROM ItemTable WHERE key = ?').get(pluginSync.PLUGIN_SECRET_KEY);
+        } finally {
+          try { db.close(); } catch (_) {}
+        }
+      } catch (_) { /* 数据库被锁或表缺失时按未检测处理 */ }
+    }
+    return {
+      id: editor.id,
+      label: editor.label,
+      installed,
+      hasPluginSecret,
+      running: isEditorProcessRunning(editor),
+      platformSupported: IS_WIN,
+    };
+  });
+}
+
+/**
+ * 同步执行：备份(uid) → 插件凭据切换。
+ * 防串号三重校验：备份 account.uid === 请求 uid（normalizeBackup）、模板合并基于同一备份、
+ * 写回读回后 account.uid 必须仍等于目标 uid（verifySyncedPlain），任一不符即中止/报错。
+ */
+function performPluginSync(editorId, uid) {
+  const fail = (statusCode, message, extra) => {
+    const err = new Error(message);
+    err.statusCode = statusCode;
+    Object.assign(err, extra || {});
+    throw err;
+  };
+  const editor = pluginSync.findPluginSyncEditor(editorId);
+  if (!editor) fail(400, '不支持的编辑器: ' + editorId);
+  if (!IS_WIN) fail(400, '插件同步当前仅支持 Windows');
+  const file = path.join(DATA_DIR, 'accounts', `${uid}.info`);
+  if (!fs.existsSync(file)) fail(404, '账号备份不存在');
+  const backup = JSON.parse(fs.readFileSync(file, 'utf8'));
+  pluginSync.normalizeBackup(backup, uid); // 提前校验，uid 不一致直接中止
+  const paths = pluginSync.pluginSyncEditorPaths(editor, pluginSyncAppDataDir());
+  if (!fs.existsSync(paths.stateDb)) {
+    fail(404, `未找到 ${editor.label} 的数据目录，请确认已安装并至少启动过一次`);
+  }
+  if (isEditorProcessRunning(editor)) {
+    fail(409, `${editor.label} 正在运行，请先完全退出（托盘进程也退出）再同步，否则退出时会把旧凭据写回覆盖`, { editorRunning: true });
+  }
+  const key = loadEditorAesKey(editor);
+  const blob = readPluginSecretBlob(editor);
+  if (!blob) fail(404, `${editor.label} 中没有 CodeBuddy 插件登录记录，请先在编辑器内登录一次插件`);
+  const template = JSON.parse(pluginSync.decryptSecretBuffer(key, blob).toString('utf8'));
+  const next = pluginSync.buildPluginSecretPlain(template, backup, uid);
+  writePluginSecretBlob(editor, key, JSON.stringify(next));
+  // 读回解密校验：写库后的凭据必须是目标账号
+  const verifyBlob = readPluginSecretBlob(editor);
+  const verifyPlain = JSON.parse(pluginSync.decryptSecretBuffer(key, verifyBlob).toString('utf8'));
+  pluginSync.verifySyncedPlain(verifyPlain, uid);
+  return {
+    editor: editor.id,
+    label: editor.label,
+    uid,
+    nickname: (backup.account && backup.account.nickname) || '',
+  };
+}
+
 function handleApi(req, res) {
   const url = new URL(req.url, `http://${req.headers.host || HOST}`);
   const p = url.pathname;
@@ -4251,6 +4442,30 @@ function handleApi(req, res) {
   }
 
   // /api/batch-claim 已移除：领取改为打开面板时自动调接口（见 /api/accounts）
+
+  // 插件同步：列出支持的编辑器及安装/插件/运行状态（同步向导第二步数据源）
+  if (req.method === 'GET' && p === '/api/plugin-sync/editors') {
+    return json(res, 200, { ok: true, editors: pluginSyncEditorStatus() });
+  }
+
+  // 插件同步：把指定 uid 备份的登录态写入目标编辑器的 CodeBuddy 插件凭据
+  if (req.method === 'POST' && p === '/api/plugin-sync') {
+    return readBody(req).then((body) => {
+      try {
+        const uid = String((body && body.uid) || '').trim();
+        const editorId = String((body && body.editor) || '').trim();
+        if (!uid) return json(res, 400, { ok: false, error: '缺少 uid' });
+        if (!editorId) return json(res, 400, { ok: false, error: '缺少 editor' });
+        const result = performPluginSync(editorId, uid);
+        log('[plugin-sync] ' + result.label + ' 已切换为 ' + (result.nickname || result.uid) + ' (uid ' + String(result.uid).slice(0, 8) + '…) 并读回校验通过');
+        return json(res, 200, Object.assign({ ok: true }, result));
+      } catch (e) {
+        const code = Number(e.statusCode) || 500;
+        log('[plugin-sync] 同步失败: ' + e.message);
+        return json(res, code, { ok: false, error: e.message, running: !!e.editorRunning });
+      }
+    });
+  }
 
   // 「无感登录」第一步：申请 state + 授权链接（不退出、不打断当前 WorkBuddy）
   if (req.method === 'POST' && p === '/api/oauth/start') {

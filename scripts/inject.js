@@ -187,6 +187,13 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
     '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>' +
     '<polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
+  // 账号同步：双向循环箭头（sync 图标）
+  var SYNC_SVG =
+    '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+    '<path d="M21 12a9 9 0 0 1-15.5 6.2"/>' +
+    '<path d="M3 12a9 9 0 0 1 15.5-6.2"/>' +
+    '<polyline points="18.5 1.5 18.5 5.8 14.2 5.8"/>' +
+    '<polyline points="5.5 22.5 5.5 18.2 9.8 18.2"/></svg>';
 
   // 暂存提示词按钮图标：纯色「标签」图标（实心填充风，非线条）；fill 用 currentColor 跟随按钮文字色（主题适配）
   var STASH_SVG =
@@ -1894,6 +1901,207 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       };
       reader.onerror = function () { toast('读取文件失败', true, root); };
       reader.readAsText(file);
+    }
+
+    // ===== 账号同步弹窗（两步向导）=====
+    // codebuddy 桌面端 / CLI 的后端切换逻辑待接入；plugin 目标已接入 daemon：
+    //   GET /api/plugin-sync/editors（编辑器安装/插件登录态/运行状态检测）
+    //   POST /api/plugin-sync（state.vscdb 凭据切换，daemon 侧以 uid 三重校验防串号）
+    var SYNC_TARGETS = [
+      { id: 'codebuddy', label: 'CodeBuddy', desc: '同步到 CodeBuddy 桌面端，需选择国际版或国内版' },
+      { id: 'cli', label: 'CodeBuddy CLI', desc: '直接切换到 CodeBuddy CLI 并同步该账号' },
+      { id: 'plugin', label: 'CodeBuddy 插件', desc: '同步到 Cursor / VS Code 中已安装的 CodeBuddy 插件' },
+    ];
+
+    function closeSyncModal(mask) {
+      if (mask && mask.parentNode) mask.parentNode.removeChild(mask);
+    }
+
+    function openSyncModal(accountName, accountUid) {
+      var panelEl = root.querySelector('.wbs-panel');
+      var mask = document.createElement('div');
+      mask.className = 'wbs-panel-modal-mask wbs-sync-mask';
+      (panelEl || root).appendChild(mask);
+      var sel = { uid: accountUid || '', target: null, sub: null, subLabel: '' };
+      var escKey = function (ev) { if (ev.key === 'Escape') cleanup(); };
+
+      function cleanup() {
+        document.removeEventListener('keydown', escKey);
+        closeSyncModal(mask);
+      }
+
+      // 通用选项行（复用 .wbs-login-option 视觉），group 用于互斥选择
+      function optionsHtml(items, group, selectedValue) {
+        return items.map(function (it) {
+          var checked = selectedValue === it.value ? ' selected' : '';
+          return '<label class="wbs-login-option' + checked + (it.disabled ? ' disabled' : '') + '" data-sync-group="' + group + '" data-sync-value="' + it.value + '">' +
+            '<input type="radio" name="wbs-sync-' + group + '" ' + (selectedValue === it.value ? 'checked ' : '') + (it.disabled ? 'disabled ' : '') + '>' +
+            '<span class="wbs-login-option-copy"><span class="wbs-login-option-title">' + it.label + '</span>' +
+            (it.desc ? '<span class="wbs-login-option-desc">' + it.desc + '</span>' : '') +
+            '</span></label>';
+        }).join('');
+      }
+
+      function bindOptions(group, onPick) {
+        mask.querySelectorAll('[data-sync-group="' + group + '"]').forEach(function (opt) {
+          opt.addEventListener('click', function () {
+            var input = opt.querySelector('input');
+            if (input && input.disabled) return;
+            mask.querySelectorAll('[data-sync-group="' + group + '"]').forEach(function (o) { o.classList.remove('selected'); });
+            opt.classList.add('selected');
+            input.checked = true;
+            onPick(opt.getAttribute('data-sync-value'));
+          });
+        });
+      }
+
+      function dialogHtml(title, sub, bodyHtml, actionsHtml) {
+        return '<div class="wbs-password-modal" role="dialog" aria-modal="true" aria-label="' + title + '">' +
+          '<div class="wbs-login-modal-title">' + title + '</div>' +
+          (sub ? '<div class="wbs-sync-sub">' + sub + '</div>' : '') +
+          bodyHtml +
+          '<div class="wbs-modal-actions">' + actionsHtml + '</div></div>';
+      }
+
+      // 第一步：选择同步目标
+      function renderStep1() {
+        sel.target = null; sel.sub = null; sel.subLabel = '';
+        mask.innerHTML = dialogHtml(
+          '同步账号',
+          '将「' + esc(accountName) + '」的登录态同步到：',
+          '<div class="wbs-sync-options">' + optionsHtml(SYNC_TARGETS.map(function (t) { return { value: t.id, label: t.label, desc: t.desc }; }), 'target', null) + '</div>',
+          '<button class="wbs-modal-btn" type="button" data-sync-act="cancel">取消</button>' +
+          '<button class="wbs-modal-btn wbs-modal-ok" type="button" data-sync-act="next" disabled>下一步</button>'
+        );
+        bindOptions('target', function (v) {
+          sel.target = v;
+          var next = mask.querySelector('[data-sync-act="next"]');
+          if (next) next.disabled = false;
+        });
+        mask.querySelector('[data-sync-act="cancel"]').addEventListener('click', cleanup);
+        mask.querySelector('[data-sync-act="next"]').addEventListener('click', function () {
+          if (!sel.target) return;
+          renderStep2();
+        });
+      }
+
+      // 拉取编辑器检测列表并渲染为 plugin 步骤的选项（不可用项禁用但保留说明）
+      function loadSyncEditors() {
+        api('/api/plugin-sync/editors').then(function (d) {
+          if (!mask.isConnected) return; // 弹窗已关闭
+          var editors = (d && d.editors) || [];
+          var loadingEl = mask.querySelector('#wbs-sync-editors-loading');
+          var boxEl = mask.querySelector('#wbs-sync-editors');
+          if (!boxEl) return;
+          if (!editors.length) {
+            if (loadingEl) loadingEl.textContent = '未检测到可用编辑器：请先安装 Cursor 或 VS Code，并在其中登录一次 CodeBuddy 插件。';
+            return;
+          }
+          var items = editors.map(function (ed) {
+            var desc;
+            if (!ed.platformSupported) desc = '当前系统暂不支持';
+            else if (!ed.installed) desc = '未安装';
+            else if (!ed.hasPluginSecret) desc = '未检测到 CodeBuddy 插件登录记录，请先在编辑器内登录一次';
+            else if (ed.running) desc = '正在运行，需完全退出后才能同步';
+            else desc = '已就绪';
+            return {
+              value: ed.id,
+              label: ed.label,
+              desc: desc,
+              disabled: !ed.platformSupported || !ed.installed || !ed.hasPluginSecret,
+            };
+          });
+          boxEl.innerHTML = optionsHtml(items, 'sub', null);
+          if (loadingEl) loadingEl.style.display = 'none';
+          boxEl.style.display = '';
+          bindOptions('sub', function (v) {
+            sel.sub = v;
+            var picked = items.filter(function (x) { return x.value === v; })[0];
+            sel.subLabel = picked ? picked.label : '';
+            var finish = mask.querySelector('[data-sync-act="finish"]');
+            if (finish) finish.disabled = false;
+          });
+        }).catch(function (e) {
+          if (!mask.isConnected) return;
+          var loadingEl = mask.querySelector('#wbs-sync-editors-loading');
+          if (loadingEl) loadingEl.textContent = '编辑器检测失败: ' + (e.message || e);
+        });
+      }
+
+      // 第二步：按目标分流 —— codebuddy 选版本 / cli 直接切换 / plugin 选编辑器（异步检测）
+      function renderStep2() {
+        var title = '同步账号';
+        var sub = '同步目标：' + (SYNC_TARGETS.filter(function (t) { return t.id === sel.target; })[0] || {}).label;
+        var bodyHtml = '';
+        var needPick = true;
+        if (sel.target === 'codebuddy') {
+          bodyHtml = '<div class="wbs-sync-options">' + optionsHtml([
+            { value: 'intl', label: '国际版', desc: '同步到 CodeBuddy 国际版（workbuddy-ai）' },
+            { value: 'cn', label: '国内版', desc: '同步到 CodeBuddy 国内版' },
+          ], 'sub', null) + '</div>';
+        } else if (sel.target === 'cli') {
+          // CLI 无需二次选择：直接进入切换逻辑
+          needPick = false;
+          sel.sub = 'cli';
+          bodyHtml = '<div class="wbs-password-hint">将在 CodeBuddy CLI 中直接切换到该账号，点击「完成」开始同步。</div>';
+        } else {
+          bodyHtml = '<div class="wbs-password-hint" id="wbs-sync-editors-loading">正在检测已安装的编辑器…</div>' +
+            '<div class="wbs-sync-options" id="wbs-sync-editors" style="display:none"></div>';
+        }
+        mask.innerHTML = dialogHtml(
+          title, sub, bodyHtml,
+          '<button class="wbs-modal-btn" type="button" data-sync-act="back">上一步</button>' +
+          '<button class="wbs-modal-btn wbs-modal-ok" type="button" data-sync-act="finish"' + (needPick ? ' disabled' : '') + '>完成</button>'
+        );
+        if (needPick && sel.target !== 'plugin') {
+          bindOptions('sub', function (v) {
+            sel.sub = v;
+            sel.subLabel = v === 'intl' ? '国际版' : '国内版';
+            var finish = mask.querySelector('[data-sync-act="finish"]');
+            if (finish) finish.disabled = false;
+          });
+        }
+        if (sel.target === 'plugin') loadSyncEditors();
+        mask.querySelector('[data-sync-act="back"]').addEventListener('click', renderStep1);
+        mask.querySelector('[data-sync-act="finish"]').addEventListener('click', function () {
+          if (needPick && !sel.sub) return;
+          finishSync();
+        });
+      }
+
+      // 完成：plugin 调 daemon 同步接口；codebuddy/cli 后端逻辑仍待接入
+      function finishSync() {
+        var targetLabel = (SYNC_TARGETS.filter(function (t) { return t.id === sel.target; })[0] || {}).label || sel.target;
+        if (sel.target === 'plugin') {
+          var finishBtn = mask.querySelector('[data-sync-act="finish"]');
+          var backBtn = mask.querySelector('[data-sync-act="back"]');
+          if (finishBtn) { finishBtn.disabled = true; finishBtn.textContent = '同步中…'; }
+          if (backBtn) backBtn.disabled = true;
+          api('/api/plugin-sync', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ uid: sel.uid, editor: sel.sub }),
+          })
+            .then(function (r) {
+              cleanup();
+              toast('已同步到 ' + (r.label || sel.subLabel) + '：' + (r.nickname || '账号') + '，打开编辑器即可使用', false, root);
+            })
+            .catch(function (e) {
+              if (finishBtn) { finishBtn.disabled = false; finishBtn.textContent = '完成'; }
+              if (backBtn) backBtn.disabled = false;
+              toast('同步失败: ' + (e.message || e), true, root);
+            });
+          return;
+        }
+        var subLabel = sel.target === 'codebuddy' ? (sel.sub === 'intl' ? '国际版' : '国内版') : '';
+        cleanup();
+        // TODO(backend): codebuddy 桌面端 / CLI 的同步接口，携带 { uid, target: sel.target, sub: sel.sub }
+        toast('已发起同步：' + targetLabel + (subLabel ? ' · ' + subLabel : '') + '（后端逻辑待接入）', false, root);
+      }
+
+      mask.addEventListener('click', function (ev) { if (ev.target === mask) cleanup(); });
+      document.addEventListener('keydown', escKey);
+      renderStep1();
     }
 
     // ===== Tab 切换 =====
@@ -4835,11 +5043,14 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         var card = el('div', 'wbs-card' + (isCur ? ' cur' : ''));
         card.setAttribute('data-uid', a.uid);
         var badge = isCur ? '<span class="wbs-badge">当前</span>' : '';
-        // 当前登录账号隐藏操作；认证已过期的账号保留删除，但隐藏切换，避免进入登录页。
+        // 当前登录账号隐藏切换操作；认证已过期的账号保留删除，但隐藏切换，避免进入登录页。
+        // 同步按钮：所有账号（含当前账号）均展示，用于把该账号登录态同步到其他端。
         var expired = isIdentityExpired(a);
+        var syncBtnHtml =
+          '<button class="wbs-icon-btn wbs-sync" type="button" title="同步" data-uid="' + a.uid + '" data-name="' + (a.nickname || '未命名') + '">' + SYNC_SVG + '</button>';
         var ops = isCur
-          ? ''
-          : '<div class="wbs-ops">' +
+          ? '<div class="wbs-ops">' + syncBtnHtml + '</div>'
+          : '<div class="wbs-ops">' + syncBtnHtml +
             (expired ? '' : '<button class="wbs-icon-btn wbs-acc-switch" type="button" title="切换" data-uid="' + a.uid + '" data-name="' + (a.nickname || '未命名') + '">' + SWITCH_SVG + '</button>') +
             '<button class="wbs-icon-btn wbs-del" type="button" title="删除" data-uid="' + a.uid + '" data-name="' + (a.nickname || '未命名') + '">' + TRASH_SVG + '</button>' +
             '</div>';
@@ -4939,6 +5150,13 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
               btn.setAttribute('title', '删除');
               armed = false;
             });
+        });
+      });
+      // 同步按钮：打开同步目标选择弹窗（plugin 目标已接入后端；桌面端/CLI 待接入）
+      list.querySelectorAll('.wbs-sync').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          if (btn.disabled) return;
+          openSyncModal(btn.dataset.name || '未命名', btn.dataset.uid || '');
         });
       });
     }
@@ -5833,11 +6051,20 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '.wbs-password-field input{box-sizing:border-box;width:100%;min-height:34px;padding:7px 9px;border:1px solid var(--wb-border-default,#e5e5e5);border-radius:8px;background:var(--wb-bg-secondary,#fff);color:var(--wb-color-text-primary,#1f1f1f);font:inherit;outline:none}',
     '.wbs-password-field input:focus{border-color:var(--wb-button-primary-bg,#1f1f1f);box-shadow:0 0 0 2px color-mix(in srgb,var(--wb-button-primary-bg,#1f1f1f) 16%,transparent)}',
     '.wbs-password-hint{margin-top:7px;color:var(--wb-icon-tertiary,#999);font-size:11px;line-height:1.5}',
+    /* 账号同步弹窗：灰色不透明遮罩，覆盖范围限定在 WorkDaddy 面板内（wbs-panel-modal-mask 的 absolute 定位） */
+    '.wbs-sync-mask{background:#8a8a8a}',
+    'html.cb-dark .wbs-sync-mask,html[data-theme="dark"] .wbs-sync-mask{background:#3f3f42}',
+    '.wbs-sync-sub{margin:-8px 0 12px;font-size:11.5px;color:var(--wb-icon-secondary,#666);line-height:1.5;word-break:break-all}',
+    '.wbs-sync-options{display:flex;flex-direction:column;gap:8px;margin-bottom:14px}',
+    '.wbs-modal-btn:disabled{opacity:.45;cursor:not-allowed}',
+    '.wbs-icon-btn.wbs-sync:hover{color:var(--wb-button-primary-bg,#1f1f1f)}',
     '.wbs-password-error{min-height:17px;margin-top:4px;color:#d14343;font-size:11px;line-height:1.5}',
     '.wbs-login-body{display:flex;flex-direction:column;gap:9px;margin-bottom:16px}',
     '.wbs-login-option{display:flex;align-items:flex-start;gap:10px;width:100%;box-sizing:border-box;padding:12px 13px;border:1px solid transparent;border-radius:11px;background:var(--wb-bg-popover,#fff);cursor:pointer;text-align:left;transition:border-color .16s,background .16s,box-shadow .16s;font-family:inherit}',
     '.wbs-login-option:hover{border-color:var(--wb-border-strong,#b9b9bd);background:var(--wb-bg-hover,#f5f5f5)}',
     '.wbs-login-option.selected{border-color:var(--wb-button-primary-bg,#1f1f1f);background:color-mix(in srgb,var(--wb-button-primary-bg,#1f1f1f) 7%,var(--wb-bg-popover,#fff));box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--wb-button-primary-bg,#1f1f1f) 15%,transparent)}',
+    '.wbs-login-option.disabled{opacity:.5;cursor:not-allowed}',
+    '.wbs-login-option.disabled:hover{border-color:transparent;background:var(--wb-bg-popover,#fff)}',
     '.wbs-login-option input{width:16px;height:16px;flex:0 0 16px;margin:2px 0 0;accent-color:var(--wb-button-primary-bg,#1f1f1f);cursor:pointer}',
     '.wbs-login-option-copy{display:flex;flex:1;min-width:0;flex-direction:column;gap:4px}',
     '.wbs-login-option-title{font-size:13px;font-weight:700;color:var(--wb-color-text-primary,#1f1f1f);line-height:1.4}',
