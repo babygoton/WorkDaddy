@@ -1993,7 +1993,9 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
           var box = mask.querySelector('#wbs-cli-status-loading');
           if (!box) return;
           var parts = [];
-          if (d.configured && d.activeUid && d.activeNickname) {
+          if (d.loggedOut) {
+            parts.push('CLI 当前处于登出状态（存在 .logged-out 标记），同步时会自动清理标记并写入认证文件。');
+          } else if (d.configured && d.activeUid && d.activeNickname) {
             parts.push('当前 CLI 账号：' + esc(d.activeNickname) + '。');
           } else if (d.configured) {
             parts.push('CLI 已配置认证文件，但当前未识别到账号。');

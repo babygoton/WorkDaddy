@@ -170,3 +170,47 @@ test('repeated sync to different account swaps active uid', () => {
   assert.ok(written.accounts.some((a) => a.uid === UID));
   assert.ok(written.accounts.some((a) => a.uid === OTHER_UID));
 });
+
+test('syncAccount clears existing logged-out marker so CLI recognizes the session', () => {
+  const s = sandbox();
+  // 模拟 CLI 退出账户后的状态：认证文件不存在 + logged-out 标记存在
+  const marker = s.cliAuthFile + '.logged-out';
+  fs.writeFileSync(marker, 'some-logout-token-uuid', { mode: 0o600 });
+  assert.ok(fs.existsSync(marker));
+
+  writeBackup(s.accountsDir, UID, backupFixture(UID, '账号甲'));
+  const r = cliAuth.syncAccount(UID, {
+    backupFile: path.join(s.accountsDir, UID + '.info'),
+    cliAuthFile: s.cliAuthFile,
+  });
+  assert.equal(r.markerRetired, true);
+  assert.ok(!fs.existsSync(marker), '登出标记应被清理');
+  assert.ok(fs.existsSync(s.cliAuthFile), '认证文件应已写入');
+  // 写回的账号必须是目标账号
+  const written = JSON.parse(fs.readFileSync(s.cliAuthFile, 'utf8'));
+  assert.equal(written.account.uid, UID);
+});
+
+test('status reports loggedOut when marker exists', () => {
+  const s = sandbox();
+  const marker = s.cliAuthFile + '.logged-out';
+  fs.writeFileSync(marker, 'uuid', { mode: 0o600 });
+  const st = cliAuth.status({ cliAuthFile: s.cliAuthFile });
+  assert.equal(st.loggedOut, true);
+  assert.equal(st.logoutMarkerPath, marker);
+  assert.equal(st.configured, false, '认证文件不存在时 configured 应为 false');
+});
+
+test('status reports loggedOut=false after sync clears marker', () => {
+  const s = sandbox();
+  const marker = s.cliAuthFile + '.logged-out';
+  fs.writeFileSync(marker, 'uuid', { mode: 0o600 });
+  writeBackup(s.accountsDir, UID, backupFixture(UID, '账号甲'));
+  cliAuth.syncAccount(UID, {
+    backupFile: path.join(s.accountsDir, UID + '.info'),
+    cliAuthFile: s.cliAuthFile,
+  });
+  const st = cliAuth.status({ cliAuthFile: s.cliAuthFile });
+  assert.equal(st.loggedOut, false);
+  assert.equal(st.configured, true);
+});

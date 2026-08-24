@@ -147,6 +147,48 @@ function verifySyncedAuth(cliAuth, targetUid) {
 }
 
 /**
+ * 清理 CLI 认证文件的登出标记（<authFile>.logged-out）。
+ * CLI 的 FileAuthenticationStorage.store 在写入时若发现登出标记存在，
+ * 整个写入会被短路跳过（首条件 !existsSync(marker) 为 false）；
+ * 即便我们直接写文件，CLI 启动后看到标记仍认为处于登出状态而无视认证文件。
+ * 所以切换账号时必须清理该标记（与 WorkBuddy lib.js retireLogoutMarker 同构）。
+ */
+function logoutMarkerPath(cliAuthFile) {
+  return cliAuthFile + '.logged-out';
+}
+
+function retireLogoutMarker(cliAuthFile) {
+  const marker = logoutMarkerPath(cliAuthFile);
+  if (!fs.existsSync(marker)) return false;
+  // rename 后删除，避免直接 unlink 在 Windows 上被锁
+  const retired = `${marker}.retired.${process.pid}.${Date.now()}`;
+  try {
+    fs.renameSync(marker, retired);
+    try { fs.unlinkSync(retired); } catch (_) {
+      // 残留 retired 标记无害，且保持操作可恢复
+    }
+    return true;
+  } catch (e) {
+    if (IS_WIN) {
+      throw new Error(`清理 CLI 登出标记失败(${e.code || ''}): ${(e.message || e).toString().slice(0, 200)}`);
+    }
+    // macOS 沙箱环境可能无权直接 unlink 认证目录文件，委托 osascript
+    try {
+      const { execFileSync } = require('child_process');
+      const markerQ = marker.replace(/"/g, '\\"');
+      execFileSync('osascript', ['-e', `do shell script "rm -f \\\"${markerQ}\\\""`], {
+        timeout: 15000,
+        stdio: 'pipe',
+      });
+      if (fs.existsSync(marker)) throw new Error('标记仍然存在');
+      return true;
+    } catch (e2) {
+      throw new Error(`清理 CLI 登出标记失败: ${(e2.message || e2).toString().slice(0, 200)}`);
+    }
+  }
+}
+
+/**
  * 把指定 uid 的 WorkBuddy 账号备份写入 CLI 认证文件。
  * opts: { backupFile, cliAuthFile }
  *   backupFile  WorkBuddy 账号备份路径（accounts/<uid>.info）
@@ -181,12 +223,25 @@ function syncAccount(uid, opts) {
   const written = readJsonFile(target);
   verifySyncedAuth(written, id);
 
+  // 清理登出标记：CLI 的 store 看到该标记会无视认证文件，导致「无账户模式」。
+  // 必须在写文件后清理，确保 CLI 下次启动读到认证文件而非登出状态。
+  let markerRetired = false;
+  try {
+    markerRetired = retireLogoutMarker(target);
+  } catch (e) {
+    // 清理失败是致命的：CLI 仍会处于登出状态，让上层报错
+    const err = new Error(e.message + '（CLI 认证文件已写入但登出标记未清理，请手动删除 ' + logoutMarkerPath(target) + ' 后重试）');
+    err.statusCode = 500;
+    throw err;
+  }
+
   return {
     ok: true,
     synced: true,
     activeUid: id,
     activeNickname: (content.account && content.account.nickname) || '',
     cliAuthFile: target,
+    markerRetired: markerRetired,
   };
 }
 
@@ -198,12 +253,16 @@ function status(opts) {
   const o = opts || {};
   const target = o.cliAuthFile || cliAuthFile();
   const auth = readJsonFile(target);
+  const logoutMarker = logoutMarkerPath(target);
+  const loggedOut = fs.existsSync(logoutMarker);
   if (!auth) {
     return {
       configured: false,
       cliAuthFile: target,
       activeUid: '',
       activeNickname: '',
+      loggedOut: loggedOut,
+      logoutMarkerPath: logoutMarker,
     };
   }
   const account = auth.account || (Array.isArray(auth.accounts) && auth.accounts[0]);
@@ -212,6 +271,8 @@ function status(opts) {
     cliAuthFile: target,
     activeUid: String((account && account.uid) || ''),
     activeNickname: String((account && account.nickname) || ''),
+    loggedOut: loggedOut,
+    logoutMarkerPath: logoutMarker,
   };
 }
 
@@ -222,6 +283,8 @@ module.exports = {
   normalizeBackup,
   buildCliAuthContent,
   verifySyncedAuth,
+  logoutMarkerPath,
+  retireLogoutMarker,
   syncAccount,
   status,
 };

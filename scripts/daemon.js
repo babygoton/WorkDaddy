@@ -4494,7 +4494,8 @@ function handleApi(req, res) {
         const backupFile = path.join(DATA_DIR, 'accounts', uid + '.info');
         const result = cliAuth.syncAccount(uid, { backupFile: backupFile });
         log('[cli-sync] CodeBuddy CLI 已切换为 ' + (result.activeNickname || result.activeUid) +
-          ' (uid ' + String(result.activeUid).slice(0, 8) + '…)；认证文件已写入 ' + result.cliAuthFile);
+          ' (uid ' + String(result.activeUid).slice(0, 8) + '…)；认证文件已写入 ' + result.cliAuthFile +
+          (result.markerRetired ? '；已清理登出标记' : ''));
         return json(res, 200, Object.assign({ ok: true }, result));
       } catch (e) {
         const code = Number(e.statusCode) || 500;
