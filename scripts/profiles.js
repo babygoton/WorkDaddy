@@ -52,26 +52,36 @@ const PROFILES = {
     capabilities: { accounts: true, sessions: true, models: true, stashPrompt: true, theme: true, checkin: true },
     targetHints: ['workbuddy ai', 'workbuddy'],
   },
+  // CodeBuddy IDE（CN/国际版）的认证文件位于 CodeBuddyExtension 共享认证目录，
+  // 文件名来自 genie 扩展 ID（publisher.name = "Tencent-Cloud.coding-copilot"），
+  // 与 CodeBuddy CLI 的认证文件同路径同格式（{ account, auth, accounts, allAccounts }）。
+  // 该文件由 CodeBuddyExtension 共享组件写入，WorkBuddy 桌面端登录后会同时写入
+  // workbuddy-desktop.info 与 Tencent-Cloud.coding-copilot.info。
+  // 国际版（CodeBuddy Intl）的扩展 ID 与 CN 版相同，因此凭证文件名不变，仅 API host 不同。
+  //
+  // 退出登录的坑：CodeBuddy CLI/IDE 退出登录会留下 <authFile>.logged-out 标记文件，
+  // FileAuthenticationStorage.store 看到该标记会短路跳过写入，导致后续写文件都视为未登录。
+  // lib.js retireLogoutMarker（与 cli-auth.js retireLogoutMarker 同构）负责清理该标记。
   'codebuddy-cn': {
     id: 'codebuddy-cn', name: 'CodeBuddy CN', region: 'cn', kind: 'codebuddy', mode: 'auto',
     appPath: appPath('CodeBuddy CN'),
     dataRoot: path.join(appSupport, 'CodeBuddy CN'),
-    authFile: null,
+    authFile: path.join(extensionAuth, 'Tencent-Cloud.coding-copilot.info'),
     sessionDb: path.join(appSupport, 'CodeBuddy CN', 'codebuddy-sessions.vscdb'),
     modelsFile: path.join(appSupport, 'CodeBuddy CN', 'User', 'globalStorage', 'state.vscdb'),
     apiHost: 'https://www.codebuddy.cn',
-    capabilities: { accounts: false, sessions: true, models: false, stashPrompt: false, theme: false, checkin: true },
+    capabilities: { accounts: true, sessions: true, models: false, stashPrompt: false, theme: false, checkin: true },
     targetHints: ['codebuddy cn'],
   },
   'codebuddy-intl': {
     id: 'codebuddy-intl', name: 'CodeBuddy', region: 'intl', kind: 'codebuddy', mode: 'auto',
     appPath: appPath('CodeBuddy'),
     dataRoot: path.join(appSupport, 'CodeBuddy'),
-    authFile: null,
+    authFile: path.join(extensionAuth, 'Tencent-Cloud.coding-copilot.info'),
     sessionDb: path.join(appSupport, 'CodeBuddy', 'codebuddy-sessions.vscdb'),
     modelsFile: path.join(appSupport, 'CodeBuddy', 'User', 'globalStorage', 'state.vscdb'),
     apiHost: 'https://www.codebuddy.ai',
-    capabilities: { accounts: false, sessions: true, models: false, stashPrompt: false, theme: false, checkin: true },
+    capabilities: { accounts: true, sessions: true, models: false, stashPrompt: false, theme: false, checkin: true },
     targetHints: ['codebuddy'],
   },
 };
