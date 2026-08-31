@@ -176,20 +176,30 @@ fi
 ln -s /Applications "$STAGE/Applications"
 
 # Finder 不直接显示 SVG 背景；保留 SVG 作为矢量母版，打包时用系统 sips
-# 渲染为与窗口同尺寸的 PNG，避免 Quick Look 缩略图强制补成正方形。
+# 渲染 1x/2x 位图并合成 HiDPI TIFF，避免 Retina 屏幕放大单分辨率背景。
 if [ ! -f "$DMG_BACKGROUND_SVG" ]; then
   echo "错误：缺少 DMG 背景矢量资源 $DMG_BACKGROUND_SVG" >&2
   exit 1
 fi
 mkdir -p "$STAGE/.background"
-RENDERED_BACKGROUND="$STAGE/.background/background.png"
-sips -s format png "$DMG_BACKGROUND_SVG" --out "$RENDERED_BACKGROUND" >/dev/null
-BACKGROUND_WIDTH="$(sips -g pixelWidth "$RENDERED_BACKGROUND" | awk '/pixelWidth:/ { print $2 }')"
-BACKGROUND_HEIGHT="$(sips -g pixelHeight "$RENDERED_BACKGROUND" | awk '/pixelHeight:/ { print $2 }')"
-if [ "$BACKGROUND_WIDTH" != "$DMG_WINDOW_WIDTH" ] || [ "$BACKGROUND_HEIGHT" != "$DMG_WINDOW_HEIGHT" ]; then
-  echo "错误：DMG 背景尺寸必须为 ${DMG_WINDOW_WIDTH}x${DMG_WINDOW_HEIGHT}，实际为 ${BACKGROUND_WIDTH}x${BACKGROUND_HEIGHT}" >&2
+BACKGROUND_1X="$STAGE/.background/background-1x.png"
+BACKGROUND_2X="$STAGE/.background/background-2x.png"
+RENDERED_BACKGROUND="$STAGE/.background/background.tiff"
+sips -s format png "$DMG_BACKGROUND_SVG" --out "$BACKGROUND_1X" >/dev/null
+sips -s format png -z 800 1240 "$DMG_BACKGROUND_SVG" --out "$BACKGROUND_2X" >/dev/null
+BACKGROUND_1X_WIDTH="$(sips -g pixelWidth "$BACKGROUND_1X" | awk '/pixelWidth:/ { print $2 }')"
+BACKGROUND_1X_HEIGHT="$(sips -g pixelHeight "$BACKGROUND_1X" | awk '/pixelHeight:/ { print $2 }')"
+BACKGROUND_2X_WIDTH="$(sips -g pixelWidth "$BACKGROUND_2X" | awk '/pixelWidth:/ { print $2 }')"
+BACKGROUND_2X_HEIGHT="$(sips -g pixelHeight "$BACKGROUND_2X" | awk '/pixelHeight:/ { print $2 }')"
+if [ "$BACKGROUND_1X_WIDTH" != "$DMG_WINDOW_WIDTH" ] || [ "$BACKGROUND_1X_HEIGHT" != "$DMG_WINDOW_HEIGHT" ]; then
+  echo "错误：DMG 1x 背景尺寸必须为 ${DMG_WINDOW_WIDTH}x${DMG_WINDOW_HEIGHT}，实际为 ${BACKGROUND_1X_WIDTH}x${BACKGROUND_1X_HEIGHT}" >&2
   exit 1
 fi
+if [ "$BACKGROUND_2X_WIDTH" != "$((DMG_WINDOW_WIDTH * 2))" ] || [ "$BACKGROUND_2X_HEIGHT" != "$((DMG_WINDOW_HEIGHT * 2))" ]; then
+  echo "错误：DMG 2x 背景尺寸必须为 $((DMG_WINDOW_WIDTH * 2))x$((DMG_WINDOW_HEIGHT * 2))，实际为 ${BACKGROUND_2X_WIDTH}x${BACKGROUND_2X_HEIGHT}" >&2
+  exit 1
+fi
+tiffutil -cathidpicheck "$BACKGROUND_1X" "$BACKGROUND_2X" -out "$RENDERED_BACKGROUND" >/dev/null
 
 # 先创建可写镜像，让 Finder 把窗口尺寸、图标位置和背景写进卷根目录的
 # .DS_Store；布局完成后再转成只读压缩镜像。
@@ -246,7 +256,7 @@ on run argv
       set label position of viewOptions to bottom
       set shows item info of viewOptions to false
       set shows icon preview of viewOptions to true
-      set background picture of viewOptions to file ".background:background.png"
+      set background picture of viewOptions to file ".background:background.tiff"
 
       set position of item appName to {150, 190}
       set position of item "Applications" to {470, 190}

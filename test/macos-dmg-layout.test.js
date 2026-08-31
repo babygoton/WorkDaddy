@@ -14,7 +14,7 @@ test('macOS DMG build stores a fixed commercial Finder layout', () => {
   assert.match(buildSource, /set bounds to \{windowLeft, windowTop, windowRight, windowBottom\}/);
   assert.match(buildSource, /set position of item appName to \{150, 190\}/);
   assert.match(buildSource, /set position of item "Applications" to \{470, 190\}/);
-  assert.match(buildSource, /set background picture of viewOptions to file "\.background:background\.png"/);
+  assert.match(buildSource, /set background picture of viewOptions to file "\.background:background\.tiff"/);
   assert.match(buildSource, /set arrangement of viewOptions to not arranged/);
   assert.match(buildSource, /set icon size of viewOptions to dmgIconSize/);
   assert.match(buildSource, /set position of every item to \{windowRight \+ 100, 100\}/);
@@ -35,9 +35,13 @@ test('macOS DMG layout is written to a writable image before final compression',
 test('macOS DMG uses a fixed-size SVG master for its arrow artwork', () => {
   assert.equal(fs.existsSync(backgroundPath), true, 'missing DMG SVG background');
   const svg = fs.readFileSync(backgroundPath, 'utf8');
-  assert.match(buildSource, /sips -s format png "\$DMG_BACKGROUND_SVG"/);
-  assert.match(buildSource, /BACKGROUND_WIDTH[\s\S]*pixelWidth/);
-  assert.match(buildSource, /BACKGROUND_HEIGHT[\s\S]*pixelHeight/);
+  assert.match(buildSource, /BACKGROUND_1X="\$STAGE\/\.background\/background-1x\.png"/);
+  assert.match(buildSource, /BACKGROUND_2X="\$STAGE\/\.background\/background-2x\.png"/);
+  assert.match(buildSource, /sips -s format png "\$DMG_BACKGROUND_SVG" --out "\$BACKGROUND_1X"/);
+  assert.match(buildSource, /sips -s format png -z 800 1240 "\$DMG_BACKGROUND_SVG" --out "\$BACKGROUND_2X"/);
+  assert.match(buildSource, /tiffutil -cathidpicheck[\s\S]*background\.tiff/);
+  assert.match(buildSource, /BACKGROUND_1X_WIDTH[\s\S]*pixelWidth/);
+  assert.match(buildSource, /BACKGROUND_2X_WIDTH[\s\S]*pixelWidth/);
   assert.match(svg, /<svg[^>]+viewBox="0 0 620 400"/);
   assert.match(svg, /<path\b[^>]+id="install-arrow"/);
   assert.match(svg, /fill="#697386"/);

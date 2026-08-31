@@ -125,6 +125,37 @@ test('custom target persists outside the install and overlays only its base prof
   }
 });
 
+test('enterprise profile overrides remain Windows-only and macOS keeps the official profile', () => {
+  const dataDir = tempDir();
+  try {
+    writeWorkBuddyTarget({
+      dataDir,
+      profileId: 'workbuddy-cn',
+      platform: 'win32',
+      target: {
+        schemaVersion: 1,
+        profileId: 'workbuddy-cn',
+        binary: 'C:\\Company\\workbuddy-ent.exe',
+        processNames: ['workbuddy-ent.exe'],
+        dataRoot: 'C:\\Users\\tester\\.workbuddy-ent',
+        authFile: 'C:\\Auth\\workbuddy-desktop-workbuddy-ent.info',
+        sessionDb: 'C:\\Users\\tester\\.workbuddy-ent\\workbuddy.db',
+        modelsFile: 'C:\\Users\\tester\\.workbuddy-ent\\models.json',
+        apiHost: 'https://api.ent.example.com',
+        targetHints: ['workbuddy-ent', 'api.ent.example.com'],
+        cdp: { mode: 'environment', port: 9226 },
+      },
+    });
+
+    assert.deepEqual(
+      getProfile('workbuddy-cn', { dataDir, env: {}, platform: 'darwin' }),
+      PROFILES['workbuddy-cn']
+    );
+  } finally {
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
 test('selecting the official executable pins its path without changing official behavior', () => {
   const dataDir = tempDir();
   try {
@@ -171,6 +202,21 @@ test('installer configuration command persists exactly one selected client', () 
     assert.equal(selected.clientType, 'enterprise');
     assert.equal(selected.binary, 'C:\\Apps\\workbuddy-ent.exe');
     assert.equal(selected.version, '5.4.5.0');
+  } finally {
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
+test('macOS launcher target probe remains a no-op outside Windows installer configuration', () => {
+  const dataDir = tempDir();
+  const script = path.join(__dirname, '..', 'scripts', 'workbuddy-target.js');
+  try {
+    const result = spawnSync(process.execPath, [
+      script, '--profile', 'workbuddy-cn', '--data-dir', dataDir,
+    ], { encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout, '');
+    assert.equal(fs.existsSync(path.join(dataDir, 'workbuddy-target.json')), false);
   } finally {
     fs.rmSync(dataDir, { recursive: true, force: true });
   }

@@ -314,7 +314,7 @@ function configureFromInstaller(argv = process.argv.slice(2)) {
   return saved;
 }
 
-if (require.main === module) {
+if (require.main === module && process.argv.slice(2).includes('--configure')) {
   try {
     configureFromInstaller();
   } catch (error) {

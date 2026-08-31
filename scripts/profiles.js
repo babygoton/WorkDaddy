@@ -115,9 +115,11 @@ function getProfile(id = process.env.WBSWITCH_PROFILE || 'workbuddy-cn', options
   if (PROFILES[key]) {
     const base = PROFILES[key];
     if (base.kind !== 'workbuddy') return base;
+    const platform = options.platform || process.platform;
+    if (platform !== 'win32') return base;
     const env = options.env || process.env;
     const dataDir = options.dataDir || env.WBSWITCH_DATA_DIR || profileDataDir(base);
-    const target = readWorkBuddyTarget({ dataDir, profileId: key, env, platform: options.platform || process.platform });
+    const target = readWorkBuddyTarget({ dataDir, profileId: key, env, platform });
     return applyWorkBuddyTarget(base, target);
   }
   throw new Error(`未知客户端 profile: ${id}`);
