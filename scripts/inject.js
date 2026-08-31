@@ -152,6 +152,125 @@ function normalizeQueueText(value) {
   return parts.join('\n').replace(/\s+/g, ' ').trim();
 }
 
+function parseComposerContentBlock(node) {
+  if (!node || !node.getAttribute) return null;
+  try {
+    var raw = node.getAttribute('data-contentblock') || '';
+    return JSON.parse(raw.indexOf('&quot;') >= 0 ? raw.replace(/&quot;/g, '"') : raw);
+  } catch (e) {
+    return null;
+  }
+}
+
+// Preserve the DOM order of text and inline content blocks. Reading innerText
+// separately from querySelectorAll loses that order when quotes are interleaved.
+function composerBlocksFromTree(editor) {
+  if (!editor || !editor.childNodes) return [];
+
+  function appendText(output, value) {
+    var text = String(value || '').replace(/[\uFEFF\u200B]/g, '');
+    if (!text) return;
+    var last = output[output.length - 1];
+    if (last && last.type === 'text') last.text += text;
+    else output.push({ type: 'text', text: text });
+  }
+
+  function collect(node, output) {
+    if (!node) return;
+    if (node.nodeType === 3) {
+      appendText(output, node.nodeValue || '');
+      return;
+    }
+    if (node.nodeType !== 1) return;
+    if (node.hasAttribute && node.hasAttribute('data-slate-placeholder')) return;
+    if (node.hasAttribute && node.hasAttribute('data-contentblock')) {
+      var item = parseComposerContentBlock(node);
+      if (item && item.type) output.push(item);
+      return;
+    }
+    var children = node.childNodes || [];
+    for (var i = 0; i < children.length; i++) collect(children[i], output);
+  }
+
+  var blocks = [];
+  for (var i = 0; i < editor.childNodes.length; i++) {
+    var part = [];
+    collect(editor.childNodes[i], part);
+    if (!part.length) continue;
+    if (blocks.length) appendText(blocks, '\n');
+    for (var j = 0; j < part.length; j++) {
+      if (part[j].type === 'text') appendText(blocks, part[j].text);
+      else blocks.push(part[j]);
+    }
+  }
+  while (blocks.length && blocks[0].type === 'text' && !blocks[0].text) blocks.shift();
+  while (blocks.length && blocks[blocks.length - 1].type === 'text' && !blocks[blocks.length - 1].text) blocks.pop();
+  return blocks;
+}
+
+function composerTextFromTree(editor) {
+  return composerBlocksFromTree(editor).filter(function (block) {
+    return block && block.type === 'text';
+  }).map(function (block) { return block.text; }).join('');
+}
+
+function selectionQuoteMeta(meta) {
+  if (!meta || meta.selectionQuote !== true) return null;
+  var safe = {};
+  ['displayAsPhrase', 'displayAsContext', 'displayText', 'selectionQuote', 'mentionType',
+   'selectedText', 'title'].forEach(function (key) {
+    var value = meta[key];
+    if (typeof value === 'string' || typeof value === 'boolean' || typeof value === 'number') safe[key] = value;
+  });
+  return safe;
+}
+
+function contentItemToBlock(it) {
+  if (!it || it.type === 'text') return null;
+  if (it.type === 'image' && it.imageBase64) {
+    return { type: 'image', data: it.imageBase64, mimeType: 'image/png', uri: it.uri || '' };
+  }
+  if (it.type === 'image') {
+    return { type: 'image', data: it.data || '', mimeType: 'image/png', uri: it.uri || '' };
+  }
+  var block = { type: it.type, name: it.name || '附件', uri: it.uri || '', title: it.title || it.name || '附件' };
+  if (it.mimeType) block.mimeType = it.mimeType;
+  var quoteMeta = it.type === 'resource_link' ? selectionQuoteMeta(it._meta) : null;
+  if (quoteMeta) block._meta = quoteMeta;
+  return block;
+}
+
+// Convert captured composer data into clone-safe WorkBuddy queue blocks. Selection
+// quotes keep their serializable metadata so the official editor can restore the tag.
+function contentToBlocks(content) {
+  if (content && Array.isArray(content.orderedBlocks)) {
+    return content.orderedBlocks.map(function (block) {
+      if (block && block.type === 'text') {
+        return { type: 'text', text: block.text || '' };
+      }
+      return contentItemToBlock(block);
+    }).filter(function (block) { return !!block; });
+  }
+  var blocks = [];
+  var text = (content && content.text || '').replace(/[\uFEFF\u200B]+/g, '').trim();
+  if (text) blocks.push({ type: 'text', text: text });
+  (content && content.items || []).forEach(function (it) {
+    try {
+      if (it.type === 'image' && it.imageBase64) {
+        blocks.push({ type: 'image', data: it.imageBase64, mimeType: 'image/png', uri: it.uri || '' });
+      } else if (it.type === 'image') {
+        blocks.push({ type: 'image', data: it.data || '', mimeType: 'image/png', uri: it.uri || '' });
+      } else if (it.type !== 'text') {
+        var block = contentItemToBlock(it);
+        if (block) {
+          blocks.push(block);
+        }
+      }
+    } catch (e) {}
+  });
+  return blocks;
+}
+
 // Queue ids are the only authoritative identity. Text is an exact fallback for
 // older renderers that did not expose ids; substring matching is deliberately
 // forbidden because ordinary prompts commonly contain a stashed prompt.
@@ -189,6 +308,9 @@ if (typeof module !== 'undefined' && module.exports) {
     autoContinueMessageText: autoContinueMessageText,
     autoContinueControllerCompleted: autoContinueControllerCompleted,
     selectAutoContinueAssistant: selectAutoContinueAssistant,
+    composerBlocksFromTree: composerBlocksFromTree,
+    composerTextFromTree: composerTextFromTree,
+    contentToBlocks: contentToBlocks,
     normalizeQueueText: normalizeQueueText,
     isStashQueueItem: isStashQueueItem,
     stashContentSignature: stashContentSignature,
@@ -562,24 +684,12 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
   }
   // 输入框是否有内容（文字或任意 contentblock 节点：图片/文件/技能）
   // 关键：Slate 空输入框时渲染 [data-slate-placeholder="true"] 占位节点（如"今天帮你做些什么？"），
-  // innerText 会包含占位文字 → 误判有内容 → 按钮空输入框也显示。用 TreeWalker 遍历真实文本节点，
-  // 跳过 placeholder 子树。
+  // innerText 会包含占位文字；contentblock 的可见标签也不是正文。统一通过
+  // composerTextFromTree 跳过这两类装饰子树。
   function composerHasContent(editor) {
     if (!editor) return false;
-    try {
-      var textLen = 0;
-      var walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT, null);
-      var n;
-      while ((n = walker.nextNode())) {
-        var p = n.parentElement;
-        if (p && p.hasAttribute && p.hasAttribute('data-slate-placeholder')) continue; // 跳过占位文字
-        textLen += (n.nodeValue || '').replace(/[\uFEFF\u200B\u00A0]/g, '').replace(/\s+/g, '').length;
-      }
-      if (textLen > 0) return true;
-    } catch (_) {
-      var t = (editor.innerText || editor.textContent || '').toString().replace(/[\uFEFF\u200B\u00A0]/g, '').replace(/\s+/g, '');
-      if (t.length > 0) return true;
-    }
+    var text = composerTextFromTree(editor).replace(/[\uFEFF\u200B\u00A0]/g, '').replace(/\s+/g, '');
+    if (text.length > 0) return true;
     if (editor.querySelector && editor.querySelector('[data-contentblock]')) return true;
     return false;
   }
@@ -587,29 +697,15 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
   function getComposerContent() {
     var editor = findComposer();
     if (!editor) return null;
-    var text = (editor.innerText || editor.textContent || '').toString();
-    var items = [];
-    var blocks = editor.querySelectorAll ? editor.querySelectorAll('[data-contentblock]') : [];
-    for (var i = 0; i < blocks.length; i++) {
-      try {
-        var raw = blocks[i].getAttribute('data-contentblock') || '';
-        var j = JSON.parse(raw.indexOf('&quot;') >= 0 ? raw.replace(/&quot;/g, '"') : raw);
-        var item = {
-          type: j.type,
-          name: j.name || (j.uri || '').toString().split('/').pop() || '',
-          uri: j.uri || '',
-          _meta: j._meta || null,
-        };
-        if (j.type === 'image' && typeof j.data === 'string' && j.data.indexOf('iVBOR') === 0) {
-          item.imageBase64 = j.data; // 完整 PNG 字节，可直接还原
-        }
-        items.push(item);
-      } catch (e) {}
-    }
+    var orderedBlocks = composerBlocksFromTree(editor);
+    var text = orderedBlocks.filter(function (block) { return block.type === 'text'; })
+      .map(function (block) { return block.text; }).join('');
+    var items = orderedBlocks.filter(function (block) { return block.type !== 'text'; });
     return {
       text: text,
       textLen: text.replace(/[\uFEFF\u200B]/g, '').trim().length,
       items: items,
+      orderedBlocks: orderedBlocks,
       capturedAt: new Date().toISOString(),
     };
   }
@@ -2614,116 +2710,23 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     // 立即安装或升级按钮桥接，不要求用户先再次点击“暂存提示词”。
     setBuildTimeout(bootstrapModernQueueBridge, 300);
     setBuildTimeout(bootstrapModernQueueBridge, 1200);
-
-    function writeModernQueueItemToComposer(item) {
-      var editor = findComposer();
-      if (!editor) return false;
-      var blocks = item && Array.isArray(item.contentBlocks) ? item.contentBlocks : [];
-      var text = blocks.map(function (block) {
-        return block && typeof block.text === 'string' ? block.text : '';
-      }).filter(Boolean).join('\n') || (item && (item.previewText || item.label)) || '';
-      if (!text) return false;
-      try {
-        editor.focus();
-        var selection = window.getSelection();
-        var range = document.createRange();
-        range.selectNodeContents(editor);
-        selection.removeAllRanges();
-        selection.addRange(range);
-        document.execCommand('delete');
-        document.execCommand('insertText', false, text);
-        editor.dispatchEvent(new InputEvent('input', { bubbles: true, data: text, inputType: 'insertText' }));
-        return true;
-      } catch (e) {
-        return false;
-      }
-    }
-
     function handleModernQueueActionClick(event) {
       if (!event || event.button > 0) return;
       var button = event.target && event.target.closest && event.target.closest('.cb-message-queue-item-actions button.icon-btn');
       if (!button) return;
       var cell = button.closest('.cb-message-queue-item');
       if (!cell) return;
-      var buttons = cell.querySelectorAll('.cb-message-queue-item-actions button.icon-btn');
-      var actionIndex = Array.prototype.indexOf.call(buttons, button);
-      if (actionIndex < 0 || actionIndex > 2) return;
       var itemId = cell.getAttribute('data-queue-item-id');
-      var adapter = findWbsAdapter();
-      if (!WBS_COMPAT.isModernQueueAdapter(adapter)) return;
-      var sessionId = adapter && adapter.currentActiveSessionId;
-      if (!itemId || !sessionId) return;
-      var manager = null;
-      try {
-        var roots = [document.querySelector('.cr-document[data-root-id="' + String(sessionId).replace(/"/g, '\\"') + '"]'), document.querySelector('.conversation-shell')];
-        for (var ri = 0; ri < roots.length && !manager; ri++) {
-          var root = roots[ri];
-          if (!root) continue;
-          for (var key in root) {
-            if (key.indexOf('__reactFiber$') !== 0 && key.indexOf('__reactInternalInstance') !== 0) continue;
-            var cur = root[key], seen = 0;
-            while (cur && seen++ < 500) {
-              var props = cur.memoizedProps;
-              var controller = props && props.value;
-              if (controller && controller.conversationId === sessionId && controller.lifecycle && controller.lifecycle.conv) {
-                manager = controller.lifecycle.conv.queueManager;
-                break;
-              }
-              cur = cur.return;
-            }
-            break;
-          }
-        }
-      } catch (e) {}
-      var item = manager && typeof manager.items === 'function'
-        ? manager.items().find(function (entry) { return entry && String(entry.id) === String(itemId); })
-        : null;
+      // Real rows must stay owned by WorkBuddy's React callbacks: they use
+      // inputApi.setBlocks() for edit and promptQueue.sendNow() for guided send.
+      if (!itemId || itemId.indexOf('wbs-pending-') !== 0) return;
       event.preventDefault();
       event.stopPropagation();
       if (typeof event.stopImmediatePropagation === 'function') event.stopImmediatePropagation();
-      // Optimistic rows have no server-side id yet; let the real enqueue settle
-      // before allowing send/edit/delete actions on them.
-      if (item && item.__wbsOptimistic) return;
-      var operation;
-      if (actionIndex === 0 && typeof adapter.sendConversationMessageQueueItemNow === 'function') {
-        operation = adapter.sendConversationMessageQueueItemNow(sessionId, itemId);
-      } else if (actionIndex === 1 && typeof adapter.removeConversationMessageQueueItem === 'function') {
-        operation = Promise.resolve(adapter.removeConversationMessageQueueItem(sessionId, itemId)).then(function () {
-          if (!writeModernQueueItemToComposer(item)) throw new Error('WorkBuddy 输入框回填失败');
-        });
-      } else if (actionIndex === 2 && typeof adapter.removeConversationMessageQueueItem === 'function') {
-        operation = adapter.removeConversationMessageQueueItem(sessionId, itemId);
-      } else {
-        return;
-      }
-      Promise.resolve(operation).catch(function (error) {
-        crumb('queue-action:fail:' + actionIndex + ':' + ((error && error.message) || error));
-      });
     }
     listen(document, 'click', handleModernQueueActionClick, true);
 
-    // 把抓取的输入框富文本转成 contentblocks（image 补回 base64 data），原样加入 WorkBuddy 队列。
-    // 【稳定性】只保留最朴素的纯对象字段，去掉 _meta/displayAsPhrase 等可能带不可克隆引用的元数据——
-    // 5.3.8 在重渲染队列面板跨进程克隆该项时会因这类字段崩（An object could not be cloned）。
-    function contentToBlocks(content) {
-      var blocks = [];
-      var text = (content && content.text || '').replace(/[\uFEFF\u200B]+/g, '').trim();
-      if (text) blocks.push({ type: 'text', text: text });
-      (content && content.items || []).forEach(function (it) {
-        try {
-          if (it.type === 'image' && it.imageBase64) {
-            blocks.push({ type: 'image', data: it.imageBase64, mimeType: 'image/png', uri: it.uri || '' });
-          } else if (it.type === 'image') {
-            blocks.push({ type: 'image', data: it.data || '', mimeType: 'image/png', uri: it.uri || '' });
-          } else if (it.type !== 'text') {
-            var b = { type: it.type, name: it.name || '附件', uri: it.uri || '', title: it.title || it.name || '附件' };
-            if (it.mimeType) b.mimeType = it.mimeType;
-            blocks.push(b);
-          }
-        } catch (e) {}
-      });
-      return blocks;
-    }
+    // 输入框内容在顶层 contentToBlocks 中转为可克隆的官方队列 blocks。
     // 入队/暂停全部走 adapter 的官方包装方法（enqueueConversationMessageQueueItem / pauseConversationMessageQueue）：
     // 包装方法内部会调用 client RPC + _notifyQueueUpdate(snapshot)（sanitize + 存快照 + 同步运行时 + 通知面板回调），
     // 官方面板正是靠这一条链路刷新的。手动直调 client.sessions.* 或手动喂 _queueCallbacks 都会绕过/复刻这条
@@ -3084,7 +3087,8 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
           // 新版布局（无 voice-mic-wrap）：复用通用输入框定位（视口下半部可见的 contenteditable）
           ed = findComposer();
         }
-        clearModernComposerDraft(ed, stashSessionAtClick);
+        var modernDraftCleared = clearModernComposerDraft(ed, stashSessionAtClick);
+        if (modernDraftCleared) return;
         var cleared = false;
         var node = ed;
         for (var up = 0; up < 20 && node; up++) {
