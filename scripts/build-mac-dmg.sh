@@ -49,6 +49,12 @@ echo "==> launcher 可执行位已保证: $(stat -f '%Sp' "$APP/Contents/MacOS/l
 for f in daemon.js session-db.js secure-transfer.js windows-process-boundary.js workbuddy-compat.js inject.js theme-patches.js credit-segments.js credit-resource-queries.js credit-request-usage.js credit-usage-store.js atomic-file-write.js ui-port.js checkin-result.js lib.js profiles.js workbuddy-target.js cdp-targets.js sentry-report.js install.sh relaunch-with-cdp.sh uninstall.sh apply-update.sh; do
   [ -f "scripts/$f" ] && cp "scripts/$f" "$APP/Contents/Resources/scripts/$f"
 done
+if [ -f "scripts/picker-internal.js" ]; then
+  cp "scripts/picker-internal.js" "$APP/Contents/Resources/scripts/picker-internal.js"
+  chmod 644 "$APP/Contents/Resources/scripts/picker-internal.js"
+else
+  rm -f "$APP/Contents/Resources/scripts/picker-internal.js"
+fi
 WALLPAPER_OVERRIDE="scripts/builtin-overrides/wallpaper-06.webp"
 if [ -f "$WALLPAPER_OVERRIDE" ]; then
   mkdir -p "$APP/Contents/Resources/scripts/builtin/wallpapers" "$APP/Contents/Resources/scripts/builtin/nebula"

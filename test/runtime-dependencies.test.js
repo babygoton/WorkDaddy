@@ -61,6 +61,13 @@ test('macOS release stages every daemon startup dependency', () => {
   }
 });
 
+test('macOS release synchronizes the optional internal picker without stale shell copies', () => {
+  const buildSource = fs.readFileSync(path.join(scriptsDir, 'build-mac-dmg.sh'), 'utf8');
+  assert.match(buildSource, /if \[ -f "scripts\/picker-internal\.js" \]; then/);
+  assert.match(buildSource, /cp "scripts\/picker-internal\.js" "\$APP\/Contents\/Resources\/scripts\/picker-internal\.js"/);
+  assert.match(buildSource, /rm -f "\$APP\/Contents\/Resources\/scripts\/picker-internal\.js"/);
+});
+
 test('WorkBuddy target configuration prefers explicit environment and fails closed', () => {
   const { readWorkBuddyTarget } = require('../scripts/workbuddy-target.js');
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'workdaddy-target-'));

@@ -35,7 +35,7 @@ test('插件内检查器包含 DOM 树、重叠元素栈、节点详情和 HTML'
   assert.match(handler, /wbs-inspector-detail/);
   assert.match(handler, /wbs-inspector-html/);
   assert.match(handler, /mouseover/);
-  assert.match(injectSource, /document\.elementsFromPoint/);
+  assert.match(pickerSource, /document\.elementsFromPoint/);
 });
 
 test('再次拾取时保留检查器和 WorkDaddy 面板并原地刷新节点', () => {
@@ -51,23 +51,23 @@ test('再次拾取时保留检查器和 WorkDaddy 面板并原地刷新节点', 
 });
 
 test('检查器默认严格保持 80% 高 60% 并允许手动缩放', () => {
-  assert.match(injectSource, /\.wbs-modal\.wbs-inspector-modal\{[^}]*width:80vw;height:60vh/);
-  assert.match(injectSource, /resize:both/);
-  assert.match(injectSource, /overflow:hidden/);
-  assert.doesNotMatch(injectSource, /@media\(max-width:900px\)\{\.wbs-inspector-modal/);
-  assert.doesNotMatch(injectSource, /@media\(max-width:600px\)\{\.wbs-inspector-modal/);
+  assert.match(pickerSource, /\.wbs-modal\.wbs-inspector-modal\{[^}]*width:80vw;height:60vh/);
+  assert.match(pickerSource, /resize:both/);
+  assert.match(pickerSource, /overflow:hidden/);
+  assert.doesNotMatch(pickerSource, /@media\(max-width:900px\)\{\.wbs-inspector-modal/);
+  assert.doesNotMatch(pickerSource, /@media\(max-width:600px\)\{\.wbs-inspector-modal/);
 });
 
 test('检查器浮窗外不遮罩不模糊并允许页面接收指针', () => {
-  assert.match(injectSource, /\.wbs-inspector-mask\{[^}]*background:transparent[^}]*pointer-events:none/);
-  assert.match(injectSource, /\.wbs-inspector-modal\{[^}]*pointer-events:auto/);
-  assert.doesNotMatch(injectSource, /\.wbs-inspector-mask\{[^}]*backdrop-filter/);
+  assert.match(pickerSource, /\.wbs-inspector-mask\{[^}]*background:transparent[^}]*pointer-events:none/);
+  assert.match(pickerSource, /\.wbs-inspector-modal\{[^}]*pointer-events:auto/);
+  assert.doesNotMatch(pickerSource, /\.wbs-inspector-mask\{[^}]*backdrop-filter/);
 });
 
 test('节点详情眼睛按钮切换 opacity 0 并精确恢复原内联值', () => {
   const inspector = functionSource('showInspector', 'stopInspect');
   assert.match(inspector, /wbs-ins-visibility/);
-  assert.match(injectSource, /opacityStates = new WeakMap\(\)/);
+  assert.match(pickerSource, /opacityStates = new WeakMap\(\)/);
   assert.match(inspector, /style\.setProperty\('opacity', '0', 'important'\)/);
   assert.match(inspector, /style\.setProperty\('opacity', state\.value, state\.priority\)/);
   assert.match(inspector, /style\.removeProperty\('opacity'\)/);
@@ -83,9 +83,9 @@ test('重注入通过检查器关闭入口清理监听器且拾取高亮恢复�
 });
 
 test('检查器内部使用容器查询跟随自身尺寸响应式', () => {
-  assert.match(injectSource, /container-type:inline-size/);
-  assert.match(injectSource, /@container inspector \(max-width:760px\)/);
-  assert.match(injectSource, /grid-template-columns:1fr/);
+  assert.match(pickerSource, /container-type:inline-size/);
+  assert.match(pickerSource, /@container inspector \(max-width:760px\)/);
+  assert.match(pickerSource, /grid-template-columns:1fr/);
 });
 
 test('检查器标题栏可拖拽且具有明确关闭按钮', () => {
