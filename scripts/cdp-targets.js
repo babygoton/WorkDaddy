@@ -79,6 +79,19 @@ function isTargetForProfile(target, profile) {
   const desc = String(target.description || '');
   const haystack = `${url} ${title} ${desc}`;
 
+  // 企业专享版沿用 CN/AI 的 UI 能力，但应用路径和登录域均由用户选择后生成。
+  // 企业模式只接受它自己的精确信号，不再回落到官方域名或通用标题。
+  if (profile.customTarget) {
+    const signals = [];
+    try { if (profile.apiHost) signals.push(new URL(profile.apiHost).hostname.toLowerCase()); } catch (_) {}
+    for (const hint of profile.targetHints || []) {
+      const value = String(hint || '').trim().toLowerCase();
+      if (value.length >= 4) signals.push(value);
+    }
+    const lower = haystack.toLowerCase();
+    return signals.some((signal) => lower.includes(signal));
+  }
+
   // 强信号：页面明确属于某客户端 → 必须与当前 profile 一致，否则一律拒绝
   const cls = classifyTarget(url, title, desc);
   if (cls) return cls === profile.id;

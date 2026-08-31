@@ -230,8 +230,9 @@ const DATA_DIR = defaultDataDir();
 // 1.1.25：内置官方壁纸更新时刷新数据目录旧副本；新 profile 默认启用 WorkDaddy 壁纸主题。
 // 1.1.26：daemon 启动 30 秒后补签，并将全账号签到兜底周期缩短为 1 小时。
 // 1.1.27：修复 Windows 原生启动路径发现、旧托管 Node 升级和首次会话播种失败；补充脱敏启动诊断与匿名安装 ID。
-const DAEMON_VERSION = '1.1.27';
-const DAEMON_BUILD_ID = 'release-1.1.27-20260831-windows-sentry-diagnostics';
+// 1.1.28：Windows 安装向导支持选择并锁定 WorkBuddy 客户端，企业版使用进程级环境变量 CDP。
+const DAEMON_VERSION = '1.1.28';
+const DAEMON_BUILD_ID = 'release-1.1.28-20260831-enterprise-client-target';
 const HOST = '127.0.0.1';
 const IS_WIN = process.platform === 'win32'; // Windows 移植：平台分支开关（macOS 行为保持不变）
 // Windows 安装目录（install.ps1 铺、launcher 用、更新替换目标），对应 macOS 的 /Applications/WorkDaddy.app
@@ -243,7 +244,7 @@ let ACTUAL_PORT = UI_PORT_BASE; // 实际监听端口（可能回退到当前 pr
 const PROFILE_CDP_PORT = { 'workbuddy-cn': 9222, 'workbuddy-ai': 9223, 'codebuddy-cn': 9224, 'codebuddy-intl': 9225 };
 const CDP_PORT_HINT = process.env.WBSWITCH_CDP_PORT
   ? parseInt(process.env.WBSWITCH_CDP_PORT, 10)
-  : (PROFILE_CDP_PORT[PROFILE.id] || null);
+  : (Number(PROFILE.cdp && PROFILE.cdp.port) || PROFILE_CDP_PORT[PROFILE.id] || null);
 const CDP_PORT_FILE = path.join(DATA_DIR, 'cdp-port.json');
 const UI_PORT_FILE = path.join(DATA_DIR, 'ui-port.json');
 const API_TOKEN_FILE = path.join(DATA_DIR, '.api-token');
@@ -1730,10 +1731,10 @@ const WORKBUDDY_APP_NAME = path.basename(WORKBUDDY_APP).replace(/\.app$/i, '');
 // Windows：解析 WorkBuddy 可执行文件真实路径（安装盘可自定义，必须动态查）
 // 优先级：WBSWITCH_WORKBUDDY_BIN > 运行进程 Path > 注册表卸载项 > 常见路径
 let wbBinaryCache = null;
-const PROFILE_BINARY_NAMES = new Set(
-  PROFILE.id === 'workbuddy-ai' ? ['workbuddyai.exe'] :
-    PROFILE.id === 'workbuddy-cn' ? ['workbuddy.exe'] : ['codebuddy.exe']
-);
+const PROFILE_BINARY_NAMES = new Set((
+  PROFILE.binaryNames || (PROFILE.id === 'workbuddy-ai' ? ['workbuddyai.exe'] :
+    PROFILE.id === 'workbuddy-cn' ? ['workbuddy.exe'] : ['codebuddy.exe'])
+).map((name) => String(name).toLowerCase()));
 function queryWindowsWorkBuddyProcesses() {
   const names = [...PROFILE_BINARY_NAMES].map((name) => `\"${name}\"`).join(',');
   const helper = path.join(__dirname, 'windows-process-boundary.ps1');
@@ -1782,7 +1783,9 @@ function resolveWorkBuddyBinary() {
     return (wbBinaryCache = envBin);
   }
   if (configuredBin) {
-    if (runningBin && !sameWindowsPath(runningBin, configuredBin)) {
+    const sameConfiguredInstall = runningBin && PROFILE_BINARY_NAMES.has(path.win32.basename(runningBin).toLowerCase()) &&
+      sameWindowsPath(path.win32.dirname(runningBin), path.win32.dirname(configuredBin));
+    if (runningBin && !sameConfiguredInstall) {
       throw new Error('检测到当前 profile 正从另一安装目录运行，登录信息未修改');
     }
     return (wbBinaryCache = configuredBin);
@@ -1914,7 +1917,9 @@ async function restoreWorkBuddyWindow(pid) {
 function verifiedWindowsWorkBuddyProcesses(binary) {
   if (!binary) throw new Error('未找到 WorkBuddy 可执行文件，无法验证运行中的进程');
   const processes = queryWindowsWorkBuddyProcesses();
-  const verified = filterVerifiedWindowsProcesses(binary, processes);
+  const verified = filterVerifiedWindowsProcesses(
+    binary, processes, fs.realpathSync.native, PROFILE.customTarget ? PROFILE_BINARY_NAMES : null
+  );
   if (processes.length !== verified.length) {
     throw new Error('存在当前 profile 进程，但没有进程属于已验证安装目录；登录信息未修改');
   }
@@ -2022,8 +2027,12 @@ function relaunchWorkBuddy() {
     if (IS_WIN) {
       const bin = resolveWorkBuddyBinary();
       if (!bin) throw new Error('未找到 WorkBuddy.exe（可用环境变量 WBSWITCH_WORKBUDDY_BIN 指定）');
-      log(`[logout] 以 --remote-debugging-port=${port} 重启 WorkBuddy: ${bin}`);
-      const child = spawn(bin, [`--remote-debugging-port=${port}`], { detached: true, stdio: 'ignore', windowsHide: true });
+      const environmentMode = !!(PROFILE.cdp && PROFILE.cdp.mode === 'environment');
+      log(`[logout] 以 ${environmentMode ? '环境变量' : '命令行参数'} CDP=${port} 重启 WorkBuddy: ${bin}`);
+      const child = spawn(bin, environmentMode ? [] : [`--remote-debugging-port=${port}`], {
+        detached: true, stdio: 'ignore', windowsHide: true,
+        env: environmentMode ? { ...process.env, WORKBUDDY_REMOTE_DEBUGGING_PORT: String(port) } : process.env,
+      });
       await new Promise((resolve, reject) => {
         child.once('error', reject);
         child.once('spawn', resolve);
@@ -3324,8 +3333,10 @@ function isAllowedApiOrigin(origin) {
     if (u.protocol !== 'http:' && u.protocol !== 'https:') return false;
     const host = String(u.hostname || '').toLowerCase();
     // WorkBuddy 的 renderer 可能是官方网页来源，也可能是 loopback DevTools 页面。
-    return host === 'localhost' || host === '127.0.0.1' || host === '[::1]' ||
-      host === 'workbuddy.cn' || host.endsWith('.workbuddy.cn') ||
+    const loopback = host === 'localhost' || host === '127.0.0.1' || host === '[::1]';
+    if (loopback) return true;
+    if (PROFILE.customTarget) return !!PROFILE.apiHost && u.origin === PROFILE.apiHost;
+    return host === 'workbuddy.cn' || host.endsWith('.workbuddy.cn') ||
       host === 'workbuddy.ai' || host.endsWith('.workbuddy.ai') ||
       host === 'codebuddy.cn' || host.endsWith('.codebuddy.cn') ||
       host === 'codebuddy.ai' || host.endsWith('.codebuddy.ai');

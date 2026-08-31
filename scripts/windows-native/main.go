@@ -49,6 +49,7 @@ var (
 	kernel32                      = syscall.NewLazyDLL("kernel32.dll")
 	advapi32                      = syscall.NewLazyDLL("advapi32.dll")
 	user32                        = syscall.NewLazyDLL("user32.dll")
+	versionDLL                    = syscall.NewLazyDLL("version.dll")
 	procCreateMutexW              = kernel32.NewProc("CreateMutexW")
 	procGetCurrentProcess         = kernel32.NewProc("GetCurrentProcess")
 	procOpenProcessToken          = advapi32.NewProc("OpenProcessToken")
@@ -61,6 +62,9 @@ var (
 	procTerminateProcess          = kernel32.NewProc("TerminateProcess")
 	procWaitForSingleObject       = kernel32.NewProc("WaitForSingleObject")
 	procMessageBoxW               = user32.NewProc("MessageBoxW")
+	procGetFileVersionInfoSizeW   = versionDLL.NewProc("GetFileVersionInfoSizeW")
+	procGetFileVersionInfoW       = versionDLL.NewProc("GetFileVersionInfoW")
+	procVerQueryValueW            = versionDLL.NewProc("VerQueryValueW")
 )
 
 type processEntry32 struct {
@@ -86,6 +90,30 @@ type lockOwner struct {
 	PID int `json:"pid"`
 }
 
+type workBuddyTarget struct {
+	ProfileID    string   `json:"profileId"`
+	Binary       string   `json:"binary"`
+	Version      string   `json:"version"`
+	ProcessName  string   `json:"processName"`
+	ProcessNames []string `json:"processNames"`
+}
+
+type vsFixedFileInfo struct {
+	Signature        uint32
+	StructVersion    uint32
+	FileVersionMS    uint32
+	FileVersionLS    uint32
+	ProductVersionMS uint32
+	ProductVersionLS uint32
+	FileFlagsMask    uint32
+	FileFlags        uint32
+	FileOS           uint32
+	FileType         uint32
+	FileSubtype      uint32
+	FileDateMS       uint32
+	FileDateLS       uint32
+}
+
 func utf16Ptr(value string) *uint16 {
 	ptr, err := syscall.UTF16PtrFromString(value)
 	if err != nil {
@@ -97,6 +125,35 @@ func utf16Ptr(value string) *uint16 {
 func messageBox(title, message string, flags uintptr) int {
 	result, _, _ := procMessageBoxW.Call(0, uintptr(unsafe.Pointer(utf16Ptr(message))), uintptr(unsafe.Pointer(utf16Ptr(title))), flags)
 	return int(result)
+}
+
+func fileVersion(binary string) string {
+	name := utf16Ptr(binary)
+	var ignored uint32
+	size, _, _ := procGetFileVersionInfoSizeW.Call(uintptr(unsafe.Pointer(name)), uintptr(unsafe.Pointer(&ignored)))
+	if size == 0 || size > 16*1024*1024 {
+		return ""
+	}
+	buffer := make([]byte, size)
+	ok, _, _ := procGetFileVersionInfoW.Call(
+		uintptr(unsafe.Pointer(name)), 0, size, uintptr(unsafe.Pointer(&buffer[0])),
+	)
+	if ok == 0 {
+		return ""
+	}
+	root := utf16Ptr("\\")
+	var fixed *vsFixedFileInfo
+	var fixedSize uint32
+	ok, _, _ = procVerQueryValueW.Call(
+		uintptr(unsafe.Pointer(&buffer[0])), uintptr(unsafe.Pointer(root)),
+		uintptr(unsafe.Pointer(&fixed)), uintptr(unsafe.Pointer(&fixedSize)),
+	)
+	if ok == 0 || fixed == nil || fixedSize < uint32(unsafe.Sizeof(*fixed)) || fixed.Signature != 0xFEEF04BD {
+		return ""
+	}
+	return fmt.Sprintf("%d.%d.%d.%d",
+		fixed.FileVersionMS>>16, fixed.FileVersionMS&0xffff,
+		fixed.FileVersionLS>>16, fixed.FileVersionLS&0xffff)
 }
 
 func isElevated() (bool, error) {
@@ -198,11 +255,93 @@ func productName(profile string) string {
 	return "WorkDaddy"
 }
 
+func configuredTarget(profile string) workBuddyTarget {
+	dir, err := dataDir(profile)
+	if err != nil {
+		return workBuddyTarget{}
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "workbuddy-target.json"))
+	if err != nil {
+		return workBuddyTarget{}
+	}
+	var target workBuddyTarget
+	if json.Unmarshal(data, &target) != nil || !strings.EqualFold(target.ProfileID, profile) {
+		return workBuddyTarget{}
+	}
+	configuredBinary := strings.TrimSpace(target.Binary)
+	processNames := target.ProcessNames
+	if len(processNames) == 0 && strings.TrimSpace(target.ProcessName) != "" {
+		processNames = []string{target.ProcessName}
+	}
+	if !filepath.IsAbs(configuredBinary) || len(processNames) == 0 || len(processNames) > 4 {
+		return workBuddyTarget{}
+	}
+	selectedName := filepath.Base(configuredBinary)
+	hasSelectedName := false
+	for index, name := range processNames {
+		name = strings.TrimSpace(name)
+		if name == "" || !strings.EqualFold(name, filepath.Base(name)) || !strings.EqualFold(filepath.Ext(name), ".exe") {
+			return workBuddyTarget{}
+		}
+		processNames[index] = name
+		if strings.EqualFold(name, selectedName) {
+			hasSelectedName = true
+		}
+	}
+	if !hasSelectedName {
+		return workBuddyTarget{}
+	}
+	target.Binary = filepath.Clean(configuredBinary)
+	target.ProcessNames = processNames
+	return target
+}
+
 func workBuddyImage(profile string) string {
+	if target := configuredTarget(profile); len(target.ProcessNames) > 0 {
+		return target.ProcessNames[0]
+	}
 	if profile == profileAI {
 		return "WorkBuddyAI.exe"
 	}
 	return "WorkBuddy.exe"
+}
+
+func processNamesForBinary(binary string) []string {
+	selected := filepath.Base(binary)
+	names := []string{selected}
+	stem := strings.TrimSuffix(selected, filepath.Ext(selected))
+	lower := strings.ToLower(stem)
+	for _, separator := range []string{"-", "_", " "} {
+		prefix := "workbuddy" + separator
+		if !strings.HasPrefix(lower, prefix) {
+			continue
+		}
+		parts := strings.FieldsFunc(stem[len(prefix):], func(r rune) bool { return r == '-' || r == '_' || r == ' ' })
+		suffix := ""
+		for _, part := range parts {
+			if part != "" {
+				suffix += strings.ToUpper(part[:1]) + strings.ToLower(part[1:])
+			}
+		}
+		if suffix != "" {
+			names = append(names, "WorkBuddy"+suffix+".exe")
+		}
+		break
+	}
+	return names
+}
+
+func targetForBinary(profile, binary string) workBuddyTarget {
+	binary = strings.TrimSpace(binary)
+	if (profile != profileCN && profile != profileAI) || !filepath.IsAbs(binary) ||
+		!strings.EqualFold(filepath.Ext(binary), ".exe") || strings.ContainsAny(binary, "\r\n") {
+		return workBuddyTarget{}
+	}
+	info, err := os.Stat(binary)
+	if err != nil || info.IsDir() {
+		return workBuddyTarget{}
+	}
+	return workBuddyTarget{ProfileID: profile, Binary: filepath.Clean(binary), ProcessNames: processNamesForBinary(binary)}
 }
 
 func enumerateProcesses() ([]processRecord, error) {
@@ -255,19 +394,36 @@ func queryProcessPath(pid uint32) string {
 	return syscall.UTF16ToString(buffer[:size])
 }
 
-func matchingWorkBuddyProcesses(profile string) ([]processRecord, error) {
+func matchingWorkBuddyProcessesForTarget(profile string, target workBuddyTarget) ([]processRecord, error) {
 	records, err := enumerateProcesses()
 	if err != nil {
 		return nil, err
 	}
-	expected := workBuddyImage(profile)
+	expectedNames := []string{workBuddyImage(profile)}
+	if len(target.ProcessNames) > 0 {
+		expectedNames = target.ProcessNames
+	}
 	matched := make([]processRecord, 0)
 	for _, record := range records {
-		if strings.EqualFold(record.Name, expected) {
+		nameMatches := false
+		for _, expected := range expectedNames {
+			if strings.EqualFold(record.Name, expected) {
+				nameMatches = true
+				break
+			}
+		}
+		pathMatches := target.Binary == "" || (record.Path != "" &&
+			samePath(filepath.Dir(record.Path), filepath.Dir(target.Binary)) &&
+			strings.EqualFold(filepath.Base(record.Path), record.Name))
+		if nameMatches && pathMatches {
 			matched = append(matched, record)
 		}
 	}
 	return matched, nil
+}
+
+func matchingWorkBuddyProcesses(profile string) ([]processRecord, error) {
+	return matchingWorkBuddyProcessesForTarget(profile, configuredTarget(profile))
 }
 
 func samePath(left, right string) bool {
@@ -396,7 +552,7 @@ func uniqueRunningWorkBuddyPath(profile string, matches []processRecord) (string
 	return paths[0], nil
 }
 
-func terminateWorkBuddy(profile string) int {
+func terminateWorkBuddyTarget(profile string, target workBuddyTarget) int {
 	elevated, err := isElevated()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "cannot determine helper privilege:", err)
@@ -406,7 +562,7 @@ func terminateWorkBuddy(profile string) int {
 		fmt.Fprintln(os.Stderr, "WorkBuddy termination requires standard user privilege")
 		return exitAccessDenied
 	}
-	matches, err := matchingWorkBuddyProcesses(profile)
+	matches, err := matchingWorkBuddyProcessesForTarget(profile, target)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return exitFailure
@@ -429,6 +585,10 @@ func terminateWorkBuddy(profile string) int {
 		}
 	}
 	return 0
+}
+
+func terminateWorkBuddy(profile string) int {
+	return terminateWorkBuddyTarget(profile, configuredTarget(profile))
 }
 
 func stopLifecycle(profile, appDir string) int {
@@ -533,8 +693,45 @@ func runNodeLauncher(appDir, profile string) int {
 }
 
 func helperMain(appDir, profile string) (bool, int) {
+	if hasArgument("--target-info") {
+		target := configuredTarget(profile)
+		output := argumentValue("--output")
+		if target.Binary == "" || output == "" || !filepath.IsAbs(output) || strings.ContainsAny(target.Binary, "\r\n") {
+			return true, exitFailure
+		}
+		version := strings.TrimSpace(target.Version)
+		if version == "" {
+			version = fileVersion(target.Binary)
+		}
+		if strings.ContainsAny(version, "\r\n") {
+			return true, exitFailure
+		}
+		if os.WriteFile(output, []byte(target.Binary+"\r\n"+version+"\r\n"), 0600) != nil {
+			return true, exitFailure
+		}
+		return true, 0
+	}
+	if hasArgument("--file-version") {
+		binary := argumentValue("--binary")
+		if binary == "" || !filepath.IsAbs(binary) {
+			return true, exitUsage
+		}
+		version := fileVersion(binary)
+		if version == "" {
+			return true, exitFailure
+		}
+		fmt.Fprintln(os.Stdout, version)
+		return true, 0
+	}
 	if hasArgument("--check-workbuddy") {
-		matches, err := matchingWorkBuddyProcesses(profile)
+		target := configuredTarget(profile)
+		if binary := argumentValue("--binary"); binary != "" {
+			target = targetForBinary(profile, binary)
+			if target.Binary == "" {
+				return true, exitUsage
+			}
+		}
+		matches, err := matchingWorkBuddyProcessesForTarget(profile, target)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			return true, exitFailure
@@ -554,6 +751,13 @@ func helperMain(appDir, profile string) (bool, int) {
 		return true, 0
 	}
 	if hasArgument("--terminate-workbuddy") {
+		if binary := argumentValue("--binary"); binary != "" {
+			target := targetForBinary(profile, binary)
+			if target.Binary == "" {
+				return true, exitUsage
+			}
+			return true, terminateWorkBuddyTarget(profile, target)
+		}
 		return true, terminateWorkBuddy(profile)
 	}
 	if hasArgument("--stop-lifecycle") {
