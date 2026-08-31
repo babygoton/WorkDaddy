@@ -21,6 +21,10 @@ if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
   exit 2
 fi
 APP="WorkDaddy.app"
+DMG_WINDOW_WIDTH=620
+DMG_WINDOW_HEIGHT=400
+DMG_ICON_SIZE=112
+DMG_BACKGROUND_SVG="$DIR/scripts/assets/macos-dmg-background.svg"
 PROFILE="${WORKDADDY_BUILD_PROFILE:-}"
 if [ -z "$PROFILE" ]; then
   for profile in workbuddy-cn workbuddy-ai; do
@@ -73,8 +77,21 @@ chmod 644 "$APP/Contents/Resources/scripts/session-db.js" \
   "$APP/Contents/Resources/scripts/theme-patches.js"
 echo "==> 前端代码已覆盖（权限按壳原样）"
 
-# 3) 打包：staging 放 WorkDaddy.app + Applications 软链（与 1.0.3 dmg 同构）
+# 3) 打包：staging 放 WorkDaddy.app + Applications 软链，并写入固定 Finder 布局。
 STAGE="$(mktemp -d)"
+DMG_TEMP_DIR="$(mktemp -d)"
+RW_DMG="$DMG_TEMP_DIR/${PACKAGE_APP_NAME}-rw.dmg"
+ATTACH_PLIST="$DMG_TEMP_DIR/attach.plist"
+MOUNT_DIR=""
+DMG_DEVICE=""
+cleanup_dmg_build() {
+  if [ -n "$DMG_DEVICE" ]; then
+    hdiutil detach "$DMG_DEVICE" -force >/dev/null 2>&1 || true
+  fi
+  rm -rf -- "$STAGE" "$DMG_TEMP_DIR"
+}
+trap cleanup_dmg_build EXIT
+
 PACKAGE_APP="$STAGE/${PACKAGE_APP_NAME}.app"
 cp -R "$APP" "$PACKAGE_APP"
 sed -i.bak "s|^PROFILE=.*|PROFILE=\"${PROFILE}\"|" "$PACKAGE_APP/Contents/MacOS/launcher"
@@ -157,10 +174,119 @@ if [ -f "$PACKAGE_APP/Contents/Resources/scripts/package.json" ]; then
     "$PACKAGE_APP/Contents/Resources/scripts/package.json"
 fi
 ln -s /Applications "$STAGE/Applications"
+
+# Finder 不直接显示 SVG 背景；保留 SVG 作为矢量母版，打包时用系统 sips
+# 渲染为与窗口同尺寸的 PNG，避免 Quick Look 缩略图强制补成正方形。
+if [ ! -f "$DMG_BACKGROUND_SVG" ]; then
+  echo "错误：缺少 DMG 背景矢量资源 $DMG_BACKGROUND_SVG" >&2
+  exit 1
+fi
+mkdir -p "$STAGE/.background"
+RENDERED_BACKGROUND="$STAGE/.background/background.png"
+sips -s format png "$DMG_BACKGROUND_SVG" --out "$RENDERED_BACKGROUND" >/dev/null
+BACKGROUND_WIDTH="$(sips -g pixelWidth "$RENDERED_BACKGROUND" | awk '/pixelWidth:/ { print $2 }')"
+BACKGROUND_HEIGHT="$(sips -g pixelHeight "$RENDERED_BACKGROUND" | awk '/pixelHeight:/ { print $2 }')"
+if [ "$BACKGROUND_WIDTH" != "$DMG_WINDOW_WIDTH" ] || [ "$BACKGROUND_HEIGHT" != "$DMG_WINDOW_HEIGHT" ]; then
+  echo "错误：DMG 背景尺寸必须为 ${DMG_WINDOW_WIDTH}x${DMG_WINDOW_HEIGHT}，实际为 ${BACKGROUND_WIDTH}x${BACKGROUND_HEIGHT}" >&2
+  exit 1
+fi
+
+# 先创建可写镜像，让 Finder 把窗口尺寸、图标位置和背景写进卷根目录的
+# .DS_Store；布局完成后再转成只读压缩镜像。
+hdiutil create -volname "$PACKAGE_APP_NAME" -srcfolder "$STAGE" -ov -format UDRW "$RW_DMG" >/dev/null
+hdiutil attach -readwrite -noverify -noautoopen -plist "$RW_DMG" > "$ATTACH_PLIST"
+read -r DMG_DEVICE MOUNT_DIR < <(python3 - "$ATTACH_PLIST" <<'PY'
+import plistlib
+import sys
+
+with open(sys.argv[1], 'rb') as f:
+    attached = plistlib.load(f)
+for entity in attached.get('system-entities', []):
+    mount_point = entity.get('mount-point')
+    device = entity.get('dev-entry')
+    if mount_point and device:
+        print(device, mount_point)
+        break
+PY
+)
+if [ -z "$DMG_DEVICE" ] || [ -z "$MOUNT_DIR" ]; then
+  echo "错误：无法识别可写 DMG 的挂载设备或目录" >&2
+  exit 1
+fi
+
+VOLUME_NAME="$(basename "$MOUNT_DIR")"
+sleep 2
+osascript - "$VOLUME_NAME" "${PACKAGE_APP_NAME}.app" "$DMG_WINDOW_WIDTH" "$DMG_WINDOW_HEIGHT" "$DMG_ICON_SIZE" <<'APPLESCRIPT'
+on run argv
+  set volumeName to item 1 of argv
+  set appName to item 2 of argv
+  set dmgWindowWidth to item 3 of argv as integer
+  set dmgWindowHeight to item 4 of argv as integer
+  set dmgIconSize to item 5 of argv as integer
+  set windowLeft to 200
+  set windowTop to 120
+  set windowRight to windowLeft + dmgWindowWidth
+  set windowBottom to windowTop + dmgWindowHeight
+
+  tell application "Finder"
+    tell disk (volumeName as string)
+      open
+      tell container window
+        set current view to icon view
+        set toolbar visible to false
+        set statusbar visible to false
+        set bounds to {windowLeft, windowTop, windowRight, windowBottom}
+        set position of every item to {windowRight + 100, 100}
+      end tell
+
+      set viewOptions to icon view options of container window
+      set arrangement of viewOptions to not arranged
+      set icon size of viewOptions to dmgIconSize
+      set text size of viewOptions to 13
+      set label position of viewOptions to bottom
+      set shows item info of viewOptions to false
+      set shows icon preview of viewOptions to true
+      set background picture of viewOptions to file ".background:background.png"
+
+      set position of item appName to {150, 190}
+      set position of item "Applications" to {470, 190}
+      close
+      open
+      delay 1
+      tell container window
+        set statusbar visible to false
+        set bounds to {windowLeft, windowTop, windowRight - 10, windowBottom - 10}
+      end tell
+    end tell
+
+    delay 1
+    tell disk (volumeName as string)
+      tell container window
+        set statusbar visible to false
+        set bounds to {windowLeft, windowTop, windowRight, windowBottom}
+      end tell
+    end tell
+    delay 2
+  end tell
+end run
+APPLESCRIPT
+
+sync
+for _ in {1..20}; do
+  test -f "$MOUNT_DIR/.DS_Store" && break
+  sleep 0.25
+done
+if ! test -f "$MOUNT_DIR/.DS_Store"; then
+  echo "错误：Finder 未能把 DMG 窗口布局写入 .DS_Store" >&2
+  exit 1
+fi
+rm -rf -- "$MOUNT_DIR/.fseventsd"
+hdiutil detach "$DMG_DEVICE" >/dev/null
+DMG_DEVICE=""
 rm -f "$OUT"
-hdiutil create -volname "$PACKAGE_APP_NAME" -srcfolder "$STAGE" -ov -format UDZO -imagekey zlib-level=9 "$OUT" >/dev/null
-rm -rf "$STAGE"
+hdiutil convert "$RW_DMG" -ov -format UDZO -imagekey zlib-level=9 -o "$OUT" >/dev/null
 
 echo "==> 完成: $(ls -lh "$OUT" | awk '{print $5}')"
 echo "    校验: hdiutil attach -nobrowse -readonly '$OUT' 后检查"
+echo "          Finder 窗口必须为 ${DMG_WINDOW_WIDTH}x${DMG_WINDOW_HEIGHT}，左右图标间显示箭头"
 echo "          launcher 权限必须为 rwxr-xr-x、daemon.js 版本为 ${VERSION}"
