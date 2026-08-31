@@ -39,8 +39,9 @@ test('macOS DMG uses a fixed-size SVG master for its arrow artwork', () => {
   assert.match(buildSource, /BACKGROUND_WIDTH[\s\S]*pixelWidth/);
   assert.match(buildSource, /BACKGROUND_HEIGHT[\s\S]*pixelHeight/);
   assert.match(svg, /<svg[^>]+viewBox="0 0 620 400"/);
-  assert.match(svg, /<line\b[^>]+x1="246"[^>]+x2="382"/);
+  assert.match(svg, /stroke-width="3\.5"/);
+  assert.match(svg, /<line\b[^>]+x1="280"[^>]+x2="348"/);
   assert.match(svg, /id="arrowhead"/);
-  assert.match(svg, /<polyline\b[^>]+points="362,170 382,190 362,210"/);
+  assert.match(svg, /<polyline\b[^>]+points="338,180 348,190 338,200"/);
   assert.doesNotMatch(svg, /<text\b/);
 });
