@@ -86,7 +86,29 @@ test('session resource normalizer treats background terminal updates as final', 
     event: 'sessionUpdated',
   });
   assert.equal(normalize({ id: 'task-b', status: 'model_streaming' }, 'sessionUpdated').active, true);
+  assert.equal(normalize({ id: 'task-b', status: 'pending' }, 'sessionUpdated').active, false);
+  assert.equal(normalize({ id: 'task-b', status: 'pending', activePromptStartedAt: 123 }, 'sessionUpdated').active, true);
   assert.equal(normalize({ id: 'task-b', status: 'pending', pendingInputKind: 'permission' }, 'sessionUpdated').active, true);
+  assert.equal(normalize({
+    id: 'task-b',
+    status: 'pending',
+    messageQueueRuntime: { pendingItemCount: 1, paused: false },
+  }, 'sessionUpdated').active, true);
+});
+
+test('session lifecycle adds unknown background work and removes terminal sessions', () => {
+  const action = inject.sessionMonitorLifecycleAction;
+  assert.equal(action({ id: 'task-b', active: true, terminal: false }, false), 'add');
+  assert.equal(action({ id: 'task-b', active: true, terminal: false }, true), 'update');
+  assert.equal(action({ id: 'task-b', active: false, terminal: true }, true), 'remove');
+  assert.equal(action({ id: 'task-b', active: false, terminal: true }, false), 'ignore');
+  assert.equal(action({ id: 'task-b', active: false, terminal: false }, false), 'ignore');
+});
+
+test('multi-session monitor subscribes while idle and detaches switched controllers without deleting sessions', () => {
+  assert.match(injectSource, /function acStartMultiMonitor\(\)[\s\S]*var hasResource = acMultiBindSessionResource\(\);[\s\S]*if \(!hasResource && !hasSidebar && !Object\.keys\(acMulti\.sessions\)\.length\)/);
+  assert.match(injectSource, /function acMultiDetachController\(session\)[\s\S]*session\.controller = null;/);
+  assert.match(injectSource, /function acMultiFinishSession\(session\)[\s\S]*delete acMulti\.sessions\[session\.id\];/);
 });
 
 test('session resource subscription delivers non-active completion without controller changes', () => {
@@ -140,4 +162,20 @@ test('compat discovers the global session resource by capabilities', () => {
   const root = { children: [], __reactFiber$root: { memoizedProps: { adapter }, return: null } };
   const doc = { querySelector(selector) { return selector === '#root > div' ? root : null; } };
   assert.equal(compat.findSessionsResource(doc), resource);
+});
+
+test('compat reads the sidebar conversation status snapshot from a narrow fiber root', () => {
+  const records = [
+    { id: 'task-a', title: '任务 A', status: 'running' },
+    { id: 'task-b', title: '任务 B', status: 'completed' },
+  ];
+  const ownerFiber = { memoizedProps: { allConversations: records }, return: null };
+  const item = { __reactFiber$item: { memoizedProps: {}, return: ownerFiber } };
+  const doc = {
+    querySelector(selector) {
+      if (selector === '.conversation-list .conversation-item') return item;
+      return null;
+    },
+  };
+  assert.deepEqual(compat.findConversationListRecords(doc), records);
 });

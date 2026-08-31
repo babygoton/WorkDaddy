@@ -352,6 +352,27 @@
     return isSessionsResource(resource) ? resource : null;
   }
 
+  // Sidebar records are an initial/reconciliation snapshot only. Live updates
+  // come from sessionsResource; this narrow fiber walk avoids scanning the page.
+  function findConversationListRecords(doc) {
+    if (!doc || typeof doc.querySelector !== 'function') return [];
+    try {
+      var element = doc.querySelector('.conversation-list .conversation-item') ||
+        doc.querySelector('.conversation-list');
+      var fiber = reactFiber(element);
+      var seen = 0;
+      while (fiber && seen++ < 80) {
+        var props = fiber.memoizedProps;
+        var records = props && props.allConversations;
+        if (Array.isArray(records) && records.some(function (item) {
+          return item && item.id && typeof item.status === 'string';
+        })) return records;
+        fiber = fiber.return;
+      }
+    } catch (_) {}
+    return [];
+  }
+
   function hasModernQueueSurface(doc) {
     if (!doc || typeof doc.querySelector !== 'function') return false;
     return !!findModernQueueAdapter(doc) || !!doc.querySelector(
@@ -402,6 +423,7 @@
     findModernQueueAdapter: findModernQueueAdapter,
     findQueueAdapter: findQueueAdapter,
     findSessionsResource: findSessionsResource,
+    findConversationListRecords: findConversationListRecords,
     findMessageNavigationAdapter: findMessageNavigationAdapter,
     findMessageNavigationSurface: findMessageNavigationSurface,
     findConversationControllers: findConversationControllers,

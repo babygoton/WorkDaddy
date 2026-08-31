@@ -328,11 +328,18 @@ var SESSION_MONITOR_ACTIVE_STATUSES = {
 };
 var SESSION_MONITOR_TERMINAL_STATUSES = {
   completed: true, cancelled: true, canceled: true, done: true, failed: true,
-  error: true, terminated: true, archived: true, deleted: true,
+  error: true, terminated: true, archived: true, deleted: true, killed: true,
 };
 
 function normalizeSessionMonitorStatus(value) {
   return typeof value === 'string' ? value.trim().toLowerCase().replace(/[\s-]+/g, '_') : '';
+}
+
+function sessionMonitorLifecycleAction(update, exists) {
+  if (!update || !update.id) return 'ignore';
+  if (update.terminal) return exists ? 'remove' : 'ignore';
+  if (!update.active) return exists ? 'update' : 'ignore';
+  return exists ? 'update' : 'add';
 }
 
 // WorkBuddy's session resource is the authoritative cross-session lifecycle
@@ -350,8 +357,14 @@ function normalizeSessionMonitorResourceRecord(record, eventName) {
   }
   var status = terminalStatus || tokens[0] || '';
   var pendingInputKind = normalizeSessionMonitorStatus(value.pendingInputKind);
+  var queueRuntime = value.messageQueueRuntime && typeof value.messageQueueRuntime === 'object' ? value.messageQueueRuntime : null;
+  var queueActive = !!(queueRuntime && queueRuntime.paused !== true &&
+    (queueRuntime.inflightItemId || Number(queueRuntime.pendingItemCount || 0) > 0 ||
+      Number(queueRuntime.sendingItemCount || 0) > 0));
+  var promptActive = typeof value.activePromptStartedAt === 'number' && Number.isFinite(value.activePromptStartedAt);
   var active = !terminalStatus && (!!SESSION_MONITOR_ACTIVE_STATUSES[status] ||
-    pendingInputKind === 'permission' || pendingInputKind === 'question' || pendingInputKind === 'user_input');
+    pendingInputKind === 'permission' || pendingInputKind === 'question' || pendingInputKind === 'user_input' ||
+    queueActive || promptActive);
   return {
     id: id,
     title: String(value.name || value.title || '').slice(0, 120),
@@ -482,6 +495,7 @@ if (typeof module !== 'undefined' && module.exports) {
     classifyNoDisturbApprovalCandidate: classifyNoDisturbApprovalCandidate,
     isSessionMonitorInProgress: isSessionMonitorInProgress,
     normalizeSessionMonitorResourceRecord: normalizeSessionMonitorResourceRecord,
+    sessionMonitorLifecycleAction: sessionMonitorLifecycleAction,
     subscribeSessionMonitorResource: subscribeSessionMonitorResource,
     createSessionMonitorRegistry: createSessionMonitorRegistry,
   };
@@ -6465,6 +6479,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       sessionResource: null,
       sessionResourceUnsubscribe: null,
       sessionResourceRetryAt: 0,
+      sidebarReconcileAt: 0,
     };
 
     /** 状态机可视化日志：只写入当前 renderer 的有界内存，不落盘、不发送到 daemon。 */
@@ -7498,16 +7513,57 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       if (previous !== status || operation) acMonitorLog(session.id, status, detail || {});
     }
 
+    function acMultiCreateSession(update, source) {
+      if (!update || !update.id || acMulti.sessions[update.id]) return acMulti.sessions[update.id] || null;
+      var session = {
+        id: update.id,
+        controller: null,
+        title: update.title || '',
+        status: 'discovered',
+        lastSeen: 0,
+        controllerLastDiscoveredAt: 0,
+        lastVersion: -1,
+        lastBusy: false,
+        idleAt: 0,
+        baselineAssistantKey: '',
+        awaitingNewReply: true,
+        awaitingSince: 0,
+        hadActivity: !!update.active,
+        judgedMessages: new Set(),
+        timer: null,
+        generation: acMulti.generation,
+        sending: false,
+        unsubs: [],
+        resourceActive: !!update.active,
+        resourceStatus: update.status || '',
+        resourcePendingInputKind: update.pendingInputKind || '',
+        resourceUpdatedAt: Date.now(),
+      };
+      acMulti.sessions[session.id] = session;
+      acMonitorRegistry.ensure(session.id, { title: session.title, status: session.status });
+      acMonitorLog(session.id, 'discovered', { source: source || 'session-resource' });
+      return session;
+    }
+
+    function acMultiStatusFromResource(update) {
+      if (update.pendingInputKind) return 'awaiting-approval';
+      return update.status === 'pending' ? 'pending' : 'running';
+    }
+
     function acMultiHandleSessionResourceUpdate(update) {
       if (!update || !update.id || !acRunning || acMulti.mode !== 'multi') return;
       var session = acMulti.sessions[update.id];
-      if (!session) return;
+      var action = sessionMonitorLifecycleAction(update, !!session);
+      if (action === 'add') session = acMultiCreateSession(update, update.event === 'sidebarSnapshot' ? 'sidebar' : 'session-resource');
+      if (action === 'ignore' || !session) return;
       session.resourceActive = update.active;
+      session.resourceStatus = update.status || session.resourceStatus;
+      session.resourcePendingInputKind = update.pendingInputKind || '';
       session.resourceUpdatedAt = Date.now();
       if (update.title) session.title = update.title;
-      if (update.terminal) {
+      if (action === 'remove') {
         acMultiUpdateStatus(session, 'completed', {
-          source: 'session-resource',
+          source: update.event === 'sidebarSnapshot' ? 'sidebar' : 'session-resource',
           event: update.event,
           status: update.status,
         });
@@ -7515,17 +7571,22 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         return;
       }
       if (!update.active) return;
-      if (update.pendingInputKind) {
-        acMultiUpdateStatus(session, 'awaiting-approval', {
-          source: 'session-resource',
-          pendingInputKind: update.pendingInputKind,
-        });
-      } else if (session.status === 'hydrating') {
-        acMultiUpdateStatus(session, 'running', {
-          source: 'session-resource',
-          status: update.status,
-        });
+      acMultiUpdateStatus(session, acMultiStatusFromResource(update), {
+        source: update.event === 'sidebarSnapshot' ? 'sidebar' : 'session-resource',
+        status: update.status,
+        pendingInputKind: update.pendingInputKind || undefined,
+      });
+    }
+
+    function acMultiReconcileSidebar() {
+      if (!WBS_COMPAT || typeof WBS_COMPAT.findConversationListRecords !== 'function') return false;
+      var records = [];
+      try { records = WBS_COMPAT.findConversationListRecords(document) || []; } catch (_) {}
+      for (var i = 0; i < records.length; i++) {
+        var update = normalizeSessionMonitorResourceRecord(records[i], 'sidebarSnapshot');
+        if (update) acMultiHandleSessionResourceUpdate(update);
       }
+      return records.length > 0;
     }
 
     function acMultiBindSessionResource() {
@@ -7604,6 +7665,13 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
 
     function acMultiCheckSession(session) {
       if (!session || !acRunning || !session.controller) return;
+      var selectedId = acActiveConversationId();
+      if (selectedId && String(selectedId) !== String(session.id) && session.resourceActive) {
+        acMultiUpdateStatus(session,
+          session.resourcePendingInputKind ? 'awaiting-approval' : (session.resourceStatus === 'pending' ? 'pending' : 'running'),
+          { source: 'session-resource' });
+        return;
+      }
       var snapshot = acControllerSnapshot(session.controller);
       if (!snapshot || !snapshot.conversationId) return;
       session.lastSeen = Date.now();
@@ -7699,69 +7767,67 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       var existing = acMulti.sessions[id];
       if (existing && existing.controller === controller) {
         existing.lastSeen = Date.now();
+        existing.controllerLastDiscoveredAt = Date.now();
         return existing;
       }
-      if (existing) acMultiUnbindController(existing);
       var initialSnapshot = acControllerSnapshot(controller);
-      if (!isSessionMonitorInProgress(initialSnapshot)) return null;
-      var session = {
+      if (!existing && !isSessionMonitorInProgress(initialSnapshot)) return null;
+      var session = existing || acMultiCreateSession({
         id: id,
-        controller: controller,
         title: acSessionTitle(controller),
-        status: 'discovered',
-        lastSeen: Date.now(),
-        lastVersion: -1,
-        lastBusy: false,
-        idleAt: 0,
-        baselineAssistantKey: '',
-        awaitingNewReply: true,
-        awaitingSince: 0,
-        hadActivity: true,
-        judgedMessages: new Set(),
-        timer: null,
-        generation: acMulti.generation,
-        sending: false,
-        unsubs: [],
-        resourceActive: false,
-        resourceUpdatedAt: 0,
-      };
+        status: 'running',
+        active: true,
+        terminal: false,
+      }, 'controller');
+      if (!session) return null;
+      if (session.controller && session.controller !== controller) acMultiDetachController(session);
+      session.controller = controller;
+      session.lastSeen = Date.now();
+      session.controllerLastDiscoveredAt = Date.now();
+      session.generation = acMulti.generation;
+      session.title = session.title || acSessionTitle(controller);
+      session.hadActivity = session.hadActivity || isSessionMonitorInProgress(initialSnapshot);
       // Establish the historical baseline before the first store callback.
       // Otherwise an already-rendered assistant message would look like a new
       // reply and could trigger an immediate false continuation.
       // A busy controller's current assistant is the in-flight reply, not a
       // historical baseline. Leave it empty so completion can be judged.
-      if (!initialSnapshot.busy && !initialSnapshot.blocked && !initialSnapshot.hydrating) {
+      if (initialSnapshot && !initialSnapshot.busy && !initialSnapshot.blocked && !initialSnapshot.hydrating) {
         session.baselineAssistantKey = initialSnapshot.assistantId || '';
       }
-      acMulti.sessions[id] = session;
-      acMonitorRegistry.ensure(id, { title: session.title, status: 'discovered' });
-      acMonitorLog(id, 'discovered', { source: 'controller' });
       var notify = function () { acMultiCheckSession(session); };
       try { if (controller.sessionStore && typeof controller.sessionStore.subscribe === 'function') session.unsubs.push(controller.sessionStore.subscribe(notify)); } catch (_) {}
       try { if (controller.messageStore && typeof controller.messageStore.subscribe === 'function') session.unsubs.push(controller.messageStore.subscribe(notify)); } catch (_) {}
-      acMultiCheckSession(session);
+      if (initialSnapshot && (isSessionMonitorInProgress(initialSnapshot) || !session.resourceActive)) acMultiCheckSession(session);
       return session;
     }
 
     function acMultiFinishSession(session) {
       if (!session || !acMulti.sessions[session.id]) return;
-      acMultiUnbindController(session);
+      acMultiDetachController(session);
+      delete acMulti.sessions[session.id];
       acMonitorRegistry.remove(session.id);
       if (acMonitorSelectedId === session.id) acMonitorSelectedId = '';
       acScheduleMonitorLogRender();
     }
 
-    function acMultiUnbindController(session) {
+    function acMultiDetachController(session) {
       if (!session) return;
       if (session.timer) { clearTimeout(session.timer); session.timer = null; }
       for (var i = 0; i < session.unsubs.length; i++) { try { session.unsubs[i](); } catch (_) {} }
-      delete acMulti.sessions[session.id];
+      session.unsubs = [];
+      session.controller = null;
+      session.sending = false;
     }
 
     function acMultiDiscover() {
-      if (!acRunning || acMulti.mode !== 'multi' || typeof WBS_COMPAT.findConversationControllers !== 'function') return;
+      if (!acRunning || acMulti.mode !== 'multi') return;
       var controllers = [];
-      try { controllers = WBS_COMPAT.findConversationControllers(document) || []; } catch (_) {}
+      try {
+        if (WBS_COMPAT && typeof WBS_COMPAT.findConversationControllers === 'function') {
+          controllers = WBS_COMPAT.findConversationControllers(document) || [];
+        }
+      } catch (_) {}
       var seen = Object.create(null);
       for (var i = 0; i < controllers.length; i++) {
         var session = acMultiBindController(controllers[i]);
@@ -7769,11 +7835,19 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       }
       var now = Date.now();
       if (!acMulti.sessionResource && now >= acMulti.sessionResourceRetryAt) acMultiBindSessionResource();
+      if (now >= acMulti.sidebarReconcileAt) {
+        acMulti.sidebarReconcileAt = now + 15000;
+        acMultiReconcileSidebar();
+      }
       Object.keys(acMulti.sessions).forEach(function (id) {
         var current = acMulti.sessions[id];
-        // Keep a temporarily unmounted controller for one discovery window;
-        // virtualized conversation surfaces must not reset its baseline.
-        if (!seen[id] && now - current.lastSeen > 15000) acMultiFinishSession(current);
+        if (!current.controller || seen[id]) return;
+        // Controller lifetime follows the active view. Detaching it must not
+        // delete a background session still reported active by the global list.
+        if (now - current.controllerLastDiscoveredAt > 15000) {
+          acMultiDetachController(current);
+          if (!current.resourceActive) acMultiFinishSession(current);
+        }
       });
       if (acRunning) acMulti.discoveryTimer = setBuildTimeout(acMultiDiscover, AC_HEARTBEAT_MS);
       acMultiUpdateStatus(null);
@@ -7783,8 +7857,11 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       acMulti.mode = 'multi';
       acStopLegacyMonitor();
       acMulti.generation++;
+      var hasResource = acMultiBindSessionResource();
+      var hasSidebar = acMultiReconcileSidebar();
+      acMulti.sidebarReconcileAt = Date.now() + 15000;
       acMultiDiscover();
-      if (!Object.keys(acMulti.sessions).length) {
+      if (!hasResource && !hasSidebar && !Object.keys(acMulti.sessions).length) {
         acMulti.mode = 'none';
         if (acMulti.discoveryTimer) { clearTimeout(acMulti.discoveryTimer); acMulti.discoveryTimer = null; }
         acMultiUnbindSessionResource();
@@ -7800,10 +7877,11 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       if (acMulti.discoveryTimer) { clearTimeout(acMulti.discoveryTimer); acMulti.discoveryTimer = null; }
       acMultiUnbindSessionResource();
       Object.keys(acMulti.sessions).forEach(function (id) {
-        acMultiUnbindController(acMulti.sessions[id]);
+        acMultiDetachController(acMulti.sessions[id]);
         acMonitorRegistry.remove(id);
       });
       acMulti.sessions = Object.create(null);
+      acMulti.sidebarReconcileAt = 0;
       acMonitorSelectedId = '';
       acScheduleMonitorLogRender();
     }
@@ -7832,7 +7910,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     var acMonitorSelectedId = '';
     function acMonitorStatusLabel(status) {
       var labels = {
-        discovered: '已发现', running: '运行中', hydrating: '恢复中', 'awaiting-approval': '等待允许',
+        discovered: '已发现', running: '运行中', pending: '等待中', hydrating: '恢复中', 'awaiting-approval': '等待允许',
         'waiting-new-reply': '等待新回复', settling: '整理中', interrupted: '已中断', sending: '发送中',
         'continue-sent': '已继续', completed: '已完成', stopped: '已停止', idle: '空闲',
         'send-error': '发送失败', 'send-unconfirmed': '未确认', 'input-busy': '输入框占用', unknown: '未知',
@@ -8347,6 +8425,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       if (ids.length) {
         for (var i = 0; i < ids.length; i++) {
           var session = acMulti.sessions[ids[i]];
+          if (session && session.resourceActive) return true;
           var snapshot = session && session.controller ? acControllerSnapshot(session.controller) : null;
           if (snapshot && (snapshot.busy || snapshot.blocked || snapshot.hydrating)) return true;
         }
