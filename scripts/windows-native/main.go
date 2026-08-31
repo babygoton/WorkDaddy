@@ -510,6 +510,12 @@ func stopInstalledLauncher(appDir string) int {
 	}
 	matches := make([]processRecord, 0, 1)
 	for _, record := range records {
+		// The --stop-lifecycle helper is itself WorkDaddyLauncher.exe from the
+		// target directory. Exclude only this helper; every other match remains
+		// subject to the single-process fail-closed boundary below.
+		if record.PID == uint32(os.Getpid()) {
+			continue
+		}
 		if strings.EqualFold(record.Name, "WorkDaddyLauncher.exe") && samePath(record.Path, expectedLauncher) {
 			matches = append(matches, record)
 		}

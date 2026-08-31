@@ -139,6 +139,7 @@ test('installer lifecycle cleanup releases only the exact installed native launc
   const stop = source.slice(stopStart, stopEnd);
   assert.match(stop, /filepath\.Join\(appDir, "WorkDaddyLauncher\.exe"\)/);
   assert.match(stop, /enumerateProcesses\(\)/);
+  assert.match(stop, /record\.PID == uint32\(os\.Getpid\(\)\)[\s\S]*continue/);
   assert.match(stop, /samePath\(record\.Path, expectedLauncher\)/);
   assert.match(stop, /len\(matches\) > 1[\s\S]*exitIdentityMismatch/);
   assert.match(stop, /terminateExactProcess\(int\(matches\[0\]\.PID\), expectedLauncher, "launcher"\)/);
