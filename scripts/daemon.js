@@ -230,8 +230,9 @@ const DATA_DIR = defaultDataDir();
 // 1.1.25：内置官方壁纸更新时刷新数据目录旧副本；新 profile 默认启用 WorkDaddy 壁纸主题。
 // 1.1.26：daemon 启动 30 秒后补签，并将全账号签到兜底周期缩短为 1 小时。
 // 1.1.27：修复 Windows 原生启动路径发现、旧托管 Node 升级和首次会话播种失败；补充脱敏启动诊断与匿名安装 ID。
-const DAEMON_VERSION = '1.1.27';
-const DAEMON_BUILD_ID = 'release-1.1.27-20260831-windows-sentry-diagnostics';
+// 1.1.28：修复首次会话播种的 profile 目录缺失，以及 native lifecycle helper 误计自身进程。
+const DAEMON_VERSION = '1.1.28';
+const DAEMON_BUILD_ID = 'release-1.1.28-20260831-sentry-runtime-fixes';
 const HOST = '127.0.0.1';
 const IS_WIN = process.platform === 'win32'; // Windows 移植：平台分支开关（macOS 行为保持不变）
 // Windows 安装目录（install.ps1 铺、launcher 用、更新替换目标），对应 macOS 的 /Applications/WorkDaddy.app
@@ -3411,6 +3412,7 @@ function readWorkbuddySettings() {
 
 function writeWorkbuddySettings(settings) {
   const file = workbuddySettingsPath();
+  fs.mkdirSync(path.dirname(file), { recursive: true });
   replaceFileWithRetry(file, JSON.stringify(settings, null, 2) + '\n');
 }
 

@@ -412,6 +412,7 @@ test('daemon settings writes tolerate transient Windows file locks', () => {
   const settingsEnd = daemon.indexOf('\n}\n\nfunction buildAskRuleBlock', settingsStart);
   const appStart = daemon.indexOf('function writeAppConfig(');
   const appEnd = daemon.indexOf('\n}\nfunction acBlock', appStart);
+  assert.match(daemon.slice(settingsStart, settingsEnd), /mkdirSync\(path\.dirname\(file\),\s*\{\s*recursive:\s*true\s*\}\)/);
   assert.match(daemon.slice(settingsStart, settingsEnd), /replaceFileWithRetry\(file/);
   assert.match(daemon.slice(appStart, appEnd), /replaceFileWithRetry\(file/);
   assert.doesNotMatch(daemon.slice(settingsStart, settingsEnd), /file \+ '\\.wbs-tmp'/);
