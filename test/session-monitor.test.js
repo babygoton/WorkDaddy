@@ -1,0 +1,87 @@
+'use strict';
+
+const assert = require('node:assert/strict');
+const test = require('node:test');
+const inject = require('../scripts/inject.js');
+const compat = require('../scripts/workbuddy-compat.js');
+const fs = require('node:fs');
+const path = require('node:path');
+
+const injectSource = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'inject.js'), 'utf8');
+
+test('approval gate accepts attached background approval cards without visibility checks', () => {
+  const classify = inject.classifyNoDisturbApprovalCandidate;
+  assert.equal(classify({
+    label: '1允许',
+    context: '任务 B 检测到受保护文件修改',
+    hasDeny: true,
+    hasOnce: true,
+    buttonCount: 3,
+  }), 'once');
+  assert.equal(classify({
+    label: '始终允许',
+    context: '权限 approval\n拒绝',
+    hasDeny: true,
+    hasOnce: true,
+    buttonCount: 2,
+  }), 'session');
+});
+
+test('approval gate handles simultaneous cards and rejects unrelated confirmations', () => {
+  const classify = inject.classifyNoDisturbApprovalCandidate;
+  const cards = [
+    { label: '允许', context: '沙箱外写入\n拒绝', hasDeny: true, hasOnce: true, buttonCount: 2 },
+    { label: 'Allow', context: '系统级工具\nDeny', hasDeny: true, hasOnce: true, buttonCount: 2 },
+    { label: '确认', context: '确认生成图片，消耗 10 积分\n取消', hasDeny: false, buttonCount: 2 },
+  ];
+  assert.deepEqual(cards.map(classify), ['once', 'once', null]);
+  assert.equal(classify({
+    label: '允许',
+    context: '普通设置确认',
+    hasDeny: false,
+    buttonCount: 2,
+    disabled: true,
+  }), null);
+});
+
+test('session monitor registry keeps bounded per-session logs in memory', () => {
+  const registry = inject.createSessionMonitorRegistry({ maxLogs: 2, maxSessions: 2 });
+  registry.ensure('a', { title: '任务 A', status: 'running' });
+  registry.append('a', 'state', { status: 'running' });
+  registry.append('a', 'approval-clicked', { source: 'api' });
+  registry.append('a', 'continue-sent', { source: 'api' });
+  assert.equal(registry.list().length, 1);
+  assert.equal(registry.get('a').logs.length, 2);
+  assert.equal(registry.get('a').logs[0].event, 'approval-clicked');
+  assert.equal(registry.get('a').logs[1].event, 'continue-sent');
+  registry.ensure('b');
+  registry.ensure('c');
+  assert.equal(registry.get('a'), null);
+  assert.deepEqual(registry.list().map((item) => item.id), ['b', 'c']);
+});
+
+test('session monitor progress gate excludes completed and idle snapshots', () => {
+  const inProgress = inject.isSessionMonitorInProgress;
+  assert.equal(inProgress({ busy: true }), true);
+  assert.equal(inProgress({ blocked: true }), true);
+  assert.equal(inProgress({ hydrating: true }), true);
+  assert.equal(inProgress({ complete: true, busy: false }), false);
+  assert.equal(inProgress({ state: 'done', busy: false }), false);
+});
+
+test('monitor log card stays hidden until the five-click logo unlock', () => {
+  assert.match(injectSource, /id="wbs-monitor-log-card"' \+ \(hiddenToolsUnlocked \? '' : ' style="display:none"'\)/);
+  assert.match(injectSource, /if \(piClickCount >= 5\)[\s\S]*hiddenToolsUnlocked = true;[\s\S]*monitorLogCard\.style\.display = '';/);
+});
+
+test('compat discovers multiple capability-shaped controllers and de-duplicates fibers', () => {
+  const controllers = [
+    { conversationId: 'a', messageStore: { getState() {}, subscribe() {} }, getMessagesViewState() {} },
+    { conversationId: 'b', messageStore: { getState() {}, subscribe() {} }, getMessagesViewState() {} },
+  ];
+  const root = { children: [], __reactFiber$root: { memoizedProps: { value: controllers[0] }, return: null } };
+  const child = { children: [], __reactFiber$child: { memoizedProps: { controller: controllers[1] }, return: root.__reactFiber$root } };
+  root.children.push(child);
+  const doc = { querySelector(selector) { return selector === '#root > div' ? root : null; } };
+  assert.deepEqual(compat.findConversationControllers(doc).map((c) => c.conversationId), ['a', 'b']);
+});

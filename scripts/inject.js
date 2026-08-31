@@ -180,6 +180,95 @@ function stashContentMatches(expected, current) {
   return !!expected && !!current && stashContentSignature(expected) === stashContentSignature(current);
 }
 
+// Pure approval-label/context gate shared by the renderer fallback and tests.
+// Keep this deliberately narrow: a generic "确认" button must never qualify.
+function classifyNoDisturbApprovalCandidate(input) {
+  var value = input || {};
+  var label = String(value.label || '').trim().replace(/^\d+\s*/, '');
+  var kind = null;
+  if (/始终允许|Always\s*allow/i.test(label)) kind = 'session';
+  else if (/^(允许|允许一次|Allow|Yes|同意|批准|确认允许)$/i.test(label) || (/^Yes/i.test(label) && label.length < 24)) kind = 'once';
+  if (!kind || value.disabled || value.ariaDisabled) return null;
+  var context = String(value.context || '').slice(0, 700);
+  if (value.creditSeen || /积分|信用|credit|消耗|付费|支付|费用|金额|余额|扣费/i.test(context)) return null;
+  var keywordHit = /批量删除|沙箱|越界|越权|系统级工具|系统工具|权限|允许访问|将运行|需要你确认|需要你的确认|确认允许|检测到|受保护|敏感|凭据|黑名单|sandbox|approval|permission/i.test(context);
+  var structuredHit = value.hasDeny === true && value.hasOnce === true && Number(value.buttonCount || 0) >= 2 && Number(value.buttonCount || 0) <= 12;
+  return keywordHit || structuredHit ? kind : null;
+}
+
+function isSessionMonitorInProgress(snapshot) {
+  return !!(snapshot && (snapshot.busy || snapshot.blocked || snapshot.hydrating));
+}
+
+// In-memory state for background-session monitors. This deliberately has no
+// persistence or daemon transport: the About-page viewer is a live diagnostic
+// surface and must not turn conversation activity into a local log file.
+function createSessionMonitorRegistry(options) {
+  var opts = options || {};
+  var maxLogs = Math.max(1, Number(opts.maxLogs || 160));
+  var maxSessions = Math.max(1, Number(opts.maxSessions || 64));
+  var sessions = Object.create(null);
+  var order = [];
+  function ensure(id, meta) {
+    var key = String(id || '').trim();
+    if (!key) return null;
+    if (!sessions[key]) {
+      if (order.length >= maxSessions) {
+        var evicted = order.shift();
+        if (evicted) delete sessions[evicted];
+      }
+      sessions[key] = { id: key, title: '', status: 'unknown', updatedAt: 0, logs: [] };
+      order.push(key);
+    }
+    if (meta) {
+      if (meta.title != null) sessions[key].title = String(meta.title).slice(0, 120);
+      if (meta.status != null) sessions[key].status = String(meta.status).slice(0, 40);
+    }
+    sessions[key].updatedAt = Date.now();
+    return sessions[key];
+  }
+  function update(id, patch) {
+    var item = ensure(id);
+    if (!item) return null;
+    var p = patch || {};
+    Object.keys(p).forEach(function (key) {
+      if (key === 'logs' || key === 'id') return;
+      item[key] = p[key];
+    });
+    item.updatedAt = Date.now();
+    return item;
+  }
+  function append(id, event, detail) {
+    var item = ensure(id);
+    if (!item) return null;
+    var entry = {
+      at: Date.now(),
+      event: String(event || 'event').slice(0, 80),
+      detail: detail && typeof detail === 'object' ? Object.assign({}, detail) : {},
+    };
+    item.logs.push(entry);
+    if (item.logs.length > maxLogs) item.logs.splice(0, item.logs.length - maxLogs);
+    item.updatedAt = entry.at;
+    return entry;
+  }
+  function remove(id) {
+    var key = String(id || '').trim();
+    if (!sessions[key]) return false;
+    delete sessions[key];
+    var index = order.indexOf(key);
+    if (index >= 0) order.splice(index, 1);
+    return true;
+  }
+  function clear() {
+    sessions = Object.create(null);
+    order = [];
+  }
+  function list() {
+    return order.map(function (key) { return sessions[key]; }).filter(Boolean);
+  }
+  return { ensure: ensure, update: update, append: append, remove: remove, clear: clear, list: list, get: function (id) { return sessions[String(id || '')] || null; } };
+}
+
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     createBuildLifecycle: createBuildLifecycle,
@@ -193,6 +282,9 @@ if (typeof module !== 'undefined' && module.exports) {
     isStashQueueItem: isStashQueueItem,
     stashContentSignature: stashContentSignature,
     stashContentMatches: stashContentMatches,
+    classifyNoDisturbApprovalCandidate: classifyNoDisturbApprovalCandidate,
+    isSessionMonitorInProgress: isSessionMonitorInProgress,
+    createSessionMonitorRegistry: createSessionMonitorRegistry,
   };
 }
 if (typeof window !== 'undefined' && typeof document !== 'undefined') {
@@ -3308,6 +3400,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     var enhancePane = root.querySelector('[data-pane="enhance"]');
     var pcPane = root.querySelector('[data-pane="pc"]');
     var aboutPane = root.querySelector('[data-pane="about"]');
+    var hiddenToolsUnlocked = false;
     var logoutBtn = root.querySelector('[data-act="logout"]');
     var creditTooltip = null;
     var creditTooltipSegment = null;
@@ -4691,7 +4784,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         '<div class="wbs-sleep-modes" id="wbs-sleep-modes">' +
         '<label class="wbs-sleep-mode"><input type="radio" name="wbs-sleep-mode" value="allow"><span class="wbs-sleep-mode-name">允许电脑休眠</span><span class="wbs-sleep-mode-hint">系统默认，空闲后正常休眠</span></label>' +
         '<label class="wbs-sleep-mode"><input type="radio" name="wbs-sleep-mode" value="keep"><span class="wbs-sleep-mode-name">持续禁止休眠</span><span class="wbs-sleep-mode-hint">保持唤醒，防黑屏锁屏</span></label>' +
-        '<label class="wbs-sleep-mode"><input type="radio" name="wbs-sleep-mode" value="until-done"><span class="wbs-sleep-mode-name">当前会话结束允许休眠</span><span class="wbs-sleep-mode-hint">仅当前会话，回复中保持唤醒</span></label>' +
+        '<label class="wbs-sleep-mode"><input type="radio" name="wbs-sleep-mode" value="until-done"><span class="wbs-sleep-mode-name">所有会话结束允许休眠</span><span class="wbs-sleep-mode-hint">任一会话运行中都保持唤醒</span></label>' +
         '</div>' +
         '<div class="wbs-ask-row" id="wbs-display-sleep-row" style="display:none">' +
         '<label class="wbs-ask-label" for="wbs-display-switch">允许显示器休眠<span class="wbs-ask-hint">禁止休眠时，是否允许显示器单独黑屏</span></label>' +
@@ -4708,11 +4801,10 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
           r.addEventListener('change', function () {
             if (!this.checked) return;
             var mode = this.value;
-            // until-done：校验当前会话正在进行中才允许开启；无进行中会话则拒绝并回退 allow
+            // until-done：校验至少一个会话正在进行中；无进行中会话则拒绝并回退 allow
             if (mode === 'until-done') {
-              var st = isSessionBusy(null);
-              if (!st.busy) {
-                toast('当前没有进行中的会话，无法开启「当前会话结束允许休眠」', true, root);
+              if (!isAnySessionBusy()) {
+                toast('当前没有进行中的会话，无法开启「所有会话结束允许休眠」', true, root);
                 var goBack = pcPane && pcPane.querySelector('input[name="wbs-sleep-mode"][value="allow"]');
                 if (goBack) goBack.checked = true;
                 syncSleepState();
@@ -4775,6 +4867,15 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
           '</div>' +
           '<div class="wbs-telemetry-status" id="wbs-telemetry-status" role="status" aria-live="polite">正在读取设置…</div>' +
         '</div>' +
+        '<div class="wbs-pcard wbs-monitor-log-card" id="wbs-monitor-log-card"' + (hiddenToolsUnlocked ? '' : ' style="display:none"') + '>' +
+          '<div class="wbs-telemetry-head">' +
+            '<div class="wbs-telemetry-label"><span class="wbs-pcard-title">会话监听日志</span><span class="wbs-pcard-sub">仅保存在当前页面内存</span></div>' +
+          '</div>' +
+          '<div class="wbs-monitor-log-inline" id="wbs-monitor-log-inline">' +
+            '<div class="wbs-monitor-log-session-list" aria-label="进行中的会话"></div>' +
+            '<div class="wbs-monitor-log-list" role="log" aria-live="polite">暂无进行中的会话</div>' +
+          '</div>' +
+        '</div>' +
         '';
 
       // 回拉 /api/about 填充信息（失败时保留硬编码占位）
@@ -4797,6 +4898,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         if (issues && d.repository) issues.href = d.repository.replace(/\/$/, '') + '/issues';
       }).catch(function () {});
       wireTelemetrySettings();
+      acRenderMonitorLogModal();
       // 自动更新：检查 + 红点 + 更新卡片
       checkForUpdate();
     }
@@ -5716,8 +5818,11 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         piClickTimer = setBuildTimeout(function () { piClickCount = 0; }, 1200);
         if (piClickCount >= 5) {
           piClickCount = 0;
+          hiddenToolsUnlocked = true;
           if (piPickBtn) piPickBtn.style.display = '';
-          try { toast('元素检查已呼出', false, root); } catch (_) {}
+          var monitorLogCard = aboutPane && aboutPane.querySelector('#wbs-monitor-log-card');
+          if (monitorLogCard) monitorLogCard.style.display = '';
+          try { toast('隐藏工具已呼出', false, root); } catch (_) {}
         }
       });
     }
@@ -6025,10 +6130,12 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     var displaySleepSwitch = null; // 允许显示器休眠开关（电脑 pane，wirePcPane 赋值）
     var sleepMode = 'allow'; // 当前休眠模式（内存缓存，syncSleepState 更新）
     var sleepUntilDoneCheck = null; // until-done 模式下的空闲检测定时器
+    var sleepSessionCache = Object.create(null); // until-done 独立发现的控制器缓存（仅内存）
 
     /* ===== 免打扰模块（No-Disturb）===== */
     var ndAutoObserver = null; // 弹窗自动点允许的 MutationObserver
     var ndScanTimer = null;
+    var ndScanRoots = [];
     var ndEnabledCount = 0;
     // 开关定义：id/配置名/确认弹窗文案（开启时弹窗，红字确认）
     var ND_DEFS = [
@@ -6269,8 +6376,10 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     };
     var acRunning = false;
     var acStatusTimer = null;
+    var acMonitorRegistry = createSessionMonitorRegistry({ maxLogs: 180 });
+    var acMulti = { generation: 0, sessions: Object.create(null), discoveryTimer: null };
 
-    /** 状态机可视化日志：写入环形缓冲 + 渲染到开发者工具卡片（连点 5 次 logo 呼出）+ 上报 daemon breadcrumb */
+    /** 状态机可视化日志：只写入当前 renderer 的有界内存，不落盘、不发送到 daemon。 */
     var AC_LOG_MAX = 150;
     var acLogLines = [];
     var acLogLastKeyTs = {};
@@ -6287,13 +6396,6 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         var pre = enhancePane && enhancePane.querySelector('#wbs-ac-log');
         if (pre) { pre.textContent = acLogLines.join('\n'); pre.scrollTop = pre.scrollHeight; }
       } catch (e) {}
-      try {
-        fetch(API + '/api/breadcrumb', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json', 'X-WorkDaddy-Token': WBS_API_TOKEN },
-          body: JSON.stringify({ msg: 'ac:' + msg, extra: extra || {} }),
-        }).catch(function () {});
-      } catch (e) {}
     }
     /** 限频日志：同一 key 在窗口内最多打一条（流式 mutation 每帧都打会刷屏） */
     function acLogR(key, msg, extra, windowMs) {
@@ -6303,6 +6405,31 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       if (now - last < w) return;
       acLogLastKeyTs[key] = now;
       acLog(msg, extra);
+    }
+
+    function acSessionTitle(controller) {
+      try {
+        var view = controller && typeof controller.getSessionViewState === 'function'
+          ? controller.getSessionViewState() : null;
+        return String((view && (view.title || view.name)) || '').slice(0, 120);
+      } catch (_) { return ''; }
+    }
+
+    function acMonitorLog(sessionId, event, detail) {
+      if (!sessionId) return;
+      acMonitorRegistry.append(sessionId, event, detail || {});
+      acScheduleMonitorLogRender();
+    }
+
+    var acMonitorLogFrame = null;
+    function acScheduleMonitorLogRender() {
+      if (acMonitorLogFrame != null) return;
+      var raf = window.requestAnimationFrame || function (fn) { return setTimeout(fn, 40); };
+      acMonitorLogFrame = raf(function () {
+        acMonitorLogFrame = null;
+        acRenderLog();
+        acRenderMonitorLogModal();
+      });
     }
 
     function acResetState() {
@@ -7192,7 +7319,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     }
 
     /** 启动监控：优先绑定 ConversationController stores；旧客户端找不到 controller 时才挂 DOM observer。 */
-    function acStartMonitor() {
+    function acStartLegacyMonitor() {
       var carry = acCtx.controller ? {
         conversationId: acCtx.controller.conversationId,
         baselineAssistantKey: acCtx.baselineAssistantKey,
@@ -7248,7 +7375,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       acLog('baseline-established', { awaitingNewReply: true });
       acStartStatusAnim(); // 开关开启期间持续显示「监控激活会话中…」
     }
-    function acStopMonitor() {
+    function acStopLegacyMonitor() {
       var c = acCtx;
       if (c.settleTimer) { clearTimeout(c.settleTimer); c.settleTimer = null; }
       if (c.observer) { try { c.observer.disconnect(); } catch (e) {} c.observer = null; }
@@ -7269,6 +7396,280 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       c.baselineMessages = null;
     }
 
+    function acMultiUpdateStatus(session, status, detail) {
+      var count = Object.keys(acMulti.sessions).length;
+      var st = enhancePane && enhancePane.querySelector('#wbs-ac-status');
+      if (st) st.textContent = count ? '监控激活会话中' : '等待会话';
+      if (!session || !session.id) return;
+      var previous = session.status;
+      session.status = status;
+      acMonitorRegistry.update(session.id, { title: session.title, status: status });
+      // Store subscriptions can emit on every streaming chunk. Keep the live
+      // viewer useful by logging transitions and explicit operations only.
+      var operation = /^(discovered|sending|continue-sent|send-error|send-unconfirmed|input-busy|interrupted|completed|stopped|awaiting-approval)$/.test(status);
+      if (previous !== status || operation) acMonitorLog(session.id, status, detail || {});
+    }
+
+    function acMultiSchedule(session, delay) {
+      if (!session || !acRunning) return;
+      if (session.timer) clearTimeout(session.timer);
+      session.timer = setBuildTimeout(function () {
+        session.timer = null;
+        acMultiCheckSession(session);
+      }, Math.max(100, Number(delay || 800)));
+    }
+
+    function acMultiSend(session, snapshot) {
+      if (!session || !snapshot || session.sending || !acRunning) return;
+      var controller = session.controller;
+      if (!controller || typeof controller.sendPrompt !== 'function') return;
+      var view;
+      try { view = controller.getSessionViewState(); } catch (_) { return; }
+      if (view && (view.isBusy || view.isRunActive || view.isTurnActive || view.isPending || view.isSending)) {
+        acMultiUpdateStatus(session, 'running', { reason: 'send-busy-skip' });
+        return;
+      }
+      // Only the active session has a user-editable composer. A background
+      // controller send must never inspect or overwrite that composer.
+      if (String(acActiveConversationId() || '') === String(session.id) && !acControllerComposerEmpty()) {
+        acMultiUpdateStatus(session, 'input-busy', { reason: 'active-composer-not-empty' });
+        acWeak('输入框非空，已放弃会话 ' + session.id + ' 的自动继续');
+        return;
+      }
+      session.sending = true;
+      acMultiUpdateStatus(session, 'sending', { assistantId: snapshot.assistantId || '' });
+      var promise;
+      try {
+        promise = controller.sendPrompt({ blocks: [{ type: 'text', text: AC_CONTINUE_TEXT }] }, {
+          _meta: { 'codebuddy.ai': { source: 'workdaddy-auto-continue' } },
+        });
+      } catch (e) {
+        session.sending = false;
+        acMultiUpdateStatus(session, 'send-error', { error: (e && e.message) || '?' });
+        return;
+      }
+      Promise.resolve(promise).then(function (result) {
+        if (!acRunning || session.generation !== acMulti.generation) return;
+        session.sending = false;
+        session.awaitingNewReply = true;
+        session.awaitingSince = Date.now();
+        session.baselineAssistantKey = snapshot.assistantId || session.baselineAssistantKey;
+        acMultiUpdateStatus(session, 'continue-sent', { assistantId: snapshot.assistantId || '' });
+      }).catch(function (e) {
+        if (!acRunning || session.generation !== acMulti.generation) return;
+        session.sending = false;
+        acMultiUpdateStatus(session, 'send-unconfirmed', { error: (e && e.message) || '?' });
+      });
+    }
+
+    function acMultiCheckSession(session) {
+      if (!session || !acRunning || !session.controller) return;
+      var snapshot = acControllerSnapshot(session.controller);
+      if (!snapshot || !snapshot.conversationId) return;
+      session.lastSeen = Date.now();
+      session.title = session.title || acSessionTitle(session.controller);
+      acMonitorRegistry.ensure(session.id, { title: session.title });
+      session.hadActivity = session.hadActivity || isSessionMonitorInProgress(snapshot);
+      if (snapshot.hydrating) {
+        session.awaitingNewReply = true;
+        session.baselineAssistantKey = snapshot.assistantId || session.baselineAssistantKey;
+        session.lastVersion = snapshot.version;
+        acMultiUpdateStatus(session, 'hydrating');
+        return;
+      }
+      if (snapshot.blocked) {
+        session.lastBusy = true;
+        session.idleAt = 0;
+        session.lastVersion = snapshot.version;
+        acMultiUpdateStatus(session, 'awaiting-approval', { state: snapshot.state || '' });
+        return;
+      }
+      if (snapshot.busy) {
+        session.lastBusy = true;
+        session.idleAt = 0;
+        session.lastVersion = snapshot.version;
+        acMultiUpdateStatus(session, 'running', { phase: snapshot.phase || '', state: snapshot.state || '' });
+        return;
+      }
+      if (session.lastBusy || !session.idleAt) session.idleAt = Date.now();
+      session.lastBusy = false;
+      session.lastVersion = snapshot.version;
+      if (!snapshot.assistantId) {
+        acMultiFinishSession(session);
+        return;
+      }
+      if (session.awaitingNewReply) {
+        if (snapshot.assistantId === session.baselineAssistantKey) {
+          // Hydration can settle on an existing historical reply without ever
+          // producing a new turn. It is no longer an in-progress session.
+          if (!session.awaitingSince && !snapshot.busy) {
+            acMultiFinishSession(session);
+            return;
+          }
+          if (session.awaitingSince && !snapshot.busy && Date.now() - session.awaitingSince >= AC_CONTROLLER_SETTLE_MS) {
+            acMultiFinishSession(session);
+            return;
+          }
+          acMultiUpdateStatus(session, 'waiting-new-reply');
+          return;
+        }
+        session.awaitingNewReply = false;
+        session.baselineAssistantKey = snapshot.assistantId;
+        session.idleAt = Date.now();
+        acMultiUpdateStatus(session, 'new-reply', { assistantId: snapshot.assistantId });
+      }
+      var signature = 'id:' + snapshot.assistantId;
+      if (session.judgedMessages.has(signature)) return;
+      var idleFor = Date.now() - session.idleAt;
+      var completed = autoContinueControllerCompleted(snapshot);
+      if (!completed && !snapshot.error && idleFor < AC_CONTROLLER_SETTLE_MS) {
+        acMultiUpdateStatus(session, 'settling', { idleForMs: idleFor });
+        acMultiSchedule(session, Math.max(250, AC_CONTROLLER_SETTLE_MS - idleFor));
+        return;
+      }
+      var decision = classifyAutoContinueControllerSnapshot({
+        assistantId: snapshot.assistantId,
+        busy: snapshot.busy,
+        manualStop: snapshot.manualStop,
+        error: snapshot.error,
+        networkFailure: snapshot.networkFailure,
+        completionMarker: acHasMarker(snapshot.text),
+        complete: snapshot.terminalKnown ? false : snapshot.complete,
+        terminal: snapshot.terminal,
+      });
+      session.judgedMessages.add(signature);
+      if (!decision.trigger) {
+        acMultiFinishSession(session);
+        return;
+      }
+      if (snapshot.manualStop) {
+        acMultiFinishSession(session);
+        return;
+      }
+      acMultiUpdateStatus(session, 'interrupted', { reason: decision.reason, idleForMs: idleFor });
+      acMultiSend(session, snapshot);
+    }
+
+    function acMultiBindController(controller) {
+      if (!controller || !controller.conversationId) return null;
+      var id = String(controller.conversationId);
+      var existing = acMulti.sessions[id];
+      if (existing && existing.controller === controller) {
+        existing.lastSeen = Date.now();
+        return existing;
+      }
+      if (existing) acMultiUnbindController(existing);
+      var initialSnapshot = acControllerSnapshot(controller);
+      if (!isSessionMonitorInProgress(initialSnapshot)) return null;
+      var session = {
+        id: id,
+        controller: controller,
+        title: acSessionTitle(controller),
+        status: 'discovered',
+        lastSeen: Date.now(),
+        lastVersion: -1,
+        lastBusy: false,
+        idleAt: 0,
+        baselineAssistantKey: '',
+        awaitingNewReply: true,
+        awaitingSince: 0,
+        hadActivity: true,
+        judgedMessages: new Set(),
+        timer: null,
+        generation: acMulti.generation,
+        sending: false,
+        unsubs: [],
+      };
+      // Establish the historical baseline before the first store callback.
+      // Otherwise an already-rendered assistant message would look like a new
+      // reply and could trigger an immediate false continuation.
+      // A busy controller's current assistant is the in-flight reply, not a
+      // historical baseline. Leave it empty so completion can be judged.
+      if (!initialSnapshot.busy && !initialSnapshot.blocked && !initialSnapshot.hydrating) {
+        session.baselineAssistantKey = initialSnapshot.assistantId || '';
+      }
+      acMulti.sessions[id] = session;
+      acMonitorRegistry.ensure(id, { title: session.title, status: 'discovered' });
+      acMonitorLog(id, 'discovered', { source: 'controller' });
+      var notify = function () { acMultiCheckSession(session); };
+      try { if (controller.sessionStore && typeof controller.sessionStore.subscribe === 'function') session.unsubs.push(controller.sessionStore.subscribe(notify)); } catch (_) {}
+      try { if (controller.messageStore && typeof controller.messageStore.subscribe === 'function') session.unsubs.push(controller.messageStore.subscribe(notify)); } catch (_) {}
+      acMultiCheckSession(session);
+      return session;
+    }
+
+    function acMultiFinishSession(session) {
+      if (!session || !acMulti.sessions[session.id]) return;
+      acMultiUnbindController(session);
+      acMonitorRegistry.remove(session.id);
+      if (acMonitorSelectedId === session.id) acMonitorSelectedId = '';
+      acScheduleMonitorLogRender();
+    }
+
+    function acMultiUnbindController(session) {
+      if (!session) return;
+      if (session.timer) { clearTimeout(session.timer); session.timer = null; }
+      for (var i = 0; i < session.unsubs.length; i++) { try { session.unsubs[i](); } catch (_) {} }
+      delete acMulti.sessions[session.id];
+    }
+
+    function acMultiDiscover() {
+      if (!acRunning || acMulti.mode !== 'multi' || typeof WBS_COMPAT.findConversationControllers !== 'function') return;
+      var controllers = [];
+      try { controllers = WBS_COMPAT.findConversationControllers(document) || []; } catch (_) {}
+      var seen = Object.create(null);
+      for (var i = 0; i < controllers.length; i++) {
+        var session = acMultiBindController(controllers[i]);
+        if (session) seen[session.id] = true;
+      }
+      var now = Date.now();
+      Object.keys(acMulti.sessions).forEach(function (id) {
+        var current = acMulti.sessions[id];
+        // Keep a temporarily unmounted controller for one discovery window;
+        // virtualized conversation surfaces must not reset its baseline.
+        if (!seen[id] && now - current.lastSeen > 15000) acMultiFinishSession(current);
+      });
+      if (acRunning) acMulti.discoveryTimer = setBuildTimeout(acMultiDiscover, AC_HEARTBEAT_MS);
+      acMultiUpdateStatus(null);
+    }
+
+    function acStartMultiMonitor() {
+      acMulti.mode = 'multi';
+      acStopLegacyMonitor();
+      acMulti.generation++;
+      acMultiDiscover();
+      if (!Object.keys(acMulti.sessions).length) {
+        acMulti.mode = 'none';
+        if (acMulti.discoveryTimer) { clearTimeout(acMulti.discoveryTimer); acMulti.discoveryTimer = null; }
+        return false;
+      }
+      acShowStatus();
+      return true;
+    }
+
+    function acStopMultiMonitor() {
+      acMulti.mode = 'none';
+      acMulti.generation++;
+      if (acMulti.discoveryTimer) { clearTimeout(acMulti.discoveryTimer); acMulti.discoveryTimer = null; }
+      Object.keys(acMulti.sessions).forEach(function (id) {
+        acMultiUnbindController(acMulti.sessions[id]);
+        acMonitorRegistry.remove(id);
+      });
+      acMulti.sessions = Object.create(null);
+      acMonitorSelectedId = '';
+      acScheduleMonitorLogRender();
+    }
+
+    function acStartMonitor() {
+      if (acStartMultiMonitor()) return;
+      acStartLegacyMonitor();
+    }
+
+    function acStopMonitor() {
+      acStopMultiMonitor();
+      acStopLegacyMonitor();
+    }
+
     /** 把已累积日志渲染进开发者工具卡片（buildEnhancePane 重建后恢复显示） */
     function acRenderLog() {
       try {
@@ -7278,6 +7679,71 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
           pre.scrollTop = pre.scrollHeight;
         }
       } catch (e) {}
+    }
+
+    var acMonitorSelectedId = '';
+    function acMonitorStatusLabel(status) {
+      var labels = {
+        discovered: '已发现', running: '运行中', hydrating: '恢复中', 'awaiting-approval': '等待允许',
+        'waiting-new-reply': '等待新回复', settling: '整理中', interrupted: '已中断', sending: '发送中',
+        'continue-sent': '已继续', completed: '已完成', stopped: '已停止', idle: '空闲',
+        'send-error': '发送失败', 'send-unconfirmed': '未确认', 'input-busy': '输入框占用', unknown: '未知',
+      };
+      return labels[status] || status || '未知';
+    }
+    function acMonitorSafeDetail(detail) {
+      var src = detail && typeof detail === 'object' ? detail : {};
+      var safe = {};
+      Object.keys(src).forEach(function (key) {
+        if (/text|prompt|content|token|key|path|cookie|account|nickname/i.test(key)) return;
+        var value = src[key];
+        if (value == null || typeof value === 'function') return;
+        safe[key] = typeof value === 'string' ? value.slice(0, 160) : value;
+      });
+      var out = JSON.stringify(safe);
+      return out === '{}' ? '' : out;
+    }
+    function acRenderMonitorLogModal() {
+      var host = aboutPane && aboutPane.querySelector('#wbs-monitor-log-inline');
+      if (!host) return;
+      var tabs = host.querySelector('.wbs-monitor-log-session-list');
+      var list = host.querySelector('.wbs-monitor-log-list');
+      if (!tabs || !list) return;
+      var sessions = acMonitorRegistry.list();
+      if (!sessions.length) {
+        acMonitorSelectedId = '';
+        tabs.textContent = '';
+        list.textContent = '暂无进行中的会话';
+        return;
+      }
+      if (!sessions.some(function (item) { return item.id === acMonitorSelectedId; })) acMonitorSelectedId = sessions[0].id;
+      tabs.textContent = '';
+      sessions.forEach(function (session) {
+        var tab = document.createElement('button');
+        tab.type = 'button';
+        tab.className = 'wbs-monitor-log-session-btn' + (session.id === acMonitorSelectedId ? ' active' : '');
+        tab.setAttribute('aria-pressed', session.id === acMonitorSelectedId ? 'true' : 'false');
+        tab.title = session.id;
+        var name = session.title || ('会话 ' + session.id.slice(0, 8));
+        tab.textContent = name + ' · ' + acMonitorStatusLabel(session.status);
+        tab.addEventListener('click', function () { acMonitorSelectedId = session.id; acRenderMonitorLogModal(); });
+        tabs.appendChild(tab);
+      });
+      var selected = sessions.find(function (item) { return item.id === acMonitorSelectedId; });
+      list.textContent = '';
+      if (!selected || !selected.logs.length) {
+        list.textContent = '该会话暂无操作日志';
+        return;
+      }
+      selected.logs.forEach(function (entry) {
+        var row = document.createElement('div');
+        row.className = 'wbs-monitor-log-entry';
+        var time = new Date(entry.at).toLocaleTimeString();
+        var detail = acMonitorSafeDetail(entry.detail);
+        row.textContent = '[' + time + '] ' + acMonitorStatusLabel(entry.event) + (detail ? ' · ' + detail : '');
+        list.appendChild(row);
+      });
+      list.scrollTop = list.scrollHeight;
     }
 
     function wireAutoContinuePane() {
@@ -7461,6 +7927,15 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       acRunning = false;
       if (acThemeObserver) { try { acThemeObserver.disconnect(); } catch (e) {} acThemeObserver = null; }
       acStopMonitor();
+      stopNoDisturbAutoApprove();
+      stopUntilDoneCheck();
+      if (acMonitorLogFrame != null) {
+        try {
+          var cancelFrame = window.cancelAnimationFrame || clearTimeout;
+          cancelFrame(acMonitorLogFrame);
+        } catch (e) {}
+        acMonitorLogFrame = null;
+      }
       if (acStatusTimer) { clearTimeout(acStatusTimer); acStatusTimer = null; }
     });
 
@@ -7469,18 +7944,49 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       if (ndAutoObserver) return;
       var doc = (window && window.document) || document;
       if (!doc || !doc.body) return;
-      ndAutoObserver = new MutationObserver(function () { scheduleNdScan(); });
-      ndAutoObserver.observe(doc.body, { childList: true, subtree: true });
+      ndScanRoots = [];
+      ndAutoObserver = new MutationObserver(function (records) {
+        for (var i = 0; i < records.length; i++) ndQueueScanRoot(records[i].target);
+        scheduleNdScan();
+      });
+      ndAutoObserver.observe(doc.body, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ['aria-disabled', 'disabled', 'class', 'hidden', 'style', 'data-state', 'data-status'],
+      });
+      ndQueueScanRoot(doc.body);
       scheduleNdScan();
     }
     function stopNoDisturbAutoApprove() {
       if (ndAutoObserver) { ndAutoObserver.disconnect(); ndAutoObserver = null; }
       if (ndScanTimer) { clearTimeout(ndScanTimer); ndScanTimer = null; }
+      ndScanRoots = [];
     }
     function scheduleNdScan() {
       if (ndScanTimer) clearTimeout(ndScanTimer);
       ndScanTimer = setTimeout(scanNoDisturbApproval, 120);
     }
+    function ndQueueScanRoot(node) {
+      if (!node) return;
+      var el = node.nodeType === 1 ? node : node.parentElement;
+      if (!el) return;
+      // Prefer stable semantic dialog/task boundaries; fall back to a shallow
+      // ancestor so a background card is scanned without walking the whole body.
+      var root = el.closest && el.closest('[role="dialog"],[data-conversation-id],[data-root-id],' +
+        '[class*="_dialog_"],[class*="_modal_"],[class*="_permission_"],[class*="_confirm_"],' +
+        '[class*="_decision_"],[class*="_approval_"],[class*="_question_"],[class*="_ask_"],' +
+        '[class*="permission-dialog"],[class*="confirm-dialog"],[class*="decision-dialog"],' +
+        '[class*="approval"],[class*="permission"],[class*="confirm"]');
+      if (!root) {
+        root = el;
+        for (var i = 0; i < 4 && root.parentElement; i++) root = root.parentElement;
+      }
+      if (ndScanRoots.indexOf(root) < 0) ndScanRoots.push(root);
+      if (ndScanRoots.length > 24) ndScanRoots.shift();
+    }
+    // Kept as a small compatibility helper for older diagnostic harnesses;
+    // background cards are intentionally allowed through the structured gate.
     function ndVisible(el) {
       return !!(el && el.getClientRects && el.getClientRects().length && el.offsetParent !== null);
     }
@@ -7508,39 +8014,90 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       }
       return false;
     }
+    function ndClassifyApprovalCandidate(value) {
+      if (typeof classifyNoDisturbApprovalCandidate === 'function') return classifyNoDisturbApprovalCandidate(value);
+      var input = value || {};
+      var label = String(input.label || '').trim().replace(/^\d+\s*/, '');
+      var kind = /始终允许|Always\s*allow/i.test(label) ? 'session' :
+        (/^(允许|允许一次|Allow|Yes|同意|批准|确认允许)$/i.test(label) || (/^Yes/i.test(label) && label.length < 24) ? 'once' : null);
+      if (!kind || input.disabled || input.ariaDisabled) return null;
+      var context = String(input.context || '').slice(0, 700);
+      if (input.creditSeen || ND_CREDIT_PATTERN.test(context)) return null;
+      return ND_CONFIRM_PATTERN.test(context) || (input.hasDeny === true && input.hasOnce === true && input.buttonCount >= 2 && input.buttonCount <= 12) ? kind : null;
+    }
+    function ndSessionIdForNode(node) {
+      try {
+        var owner = node && node.closest && node.closest('[data-conversation-id],[data-root-id]');
+        return owner && (owner.getAttribute('data-conversation-id') || owner.getAttribute('data-root-id')) || '';
+      } catch (_) { return ''; }
+    }
+    function ndApprovalContext(button) {
+      var box = button;
+      var text = '';
+      var hasDeny = false;
+      var count = 0;
+      var creditSeen = false;
+      var creditBox = button;
+      for (var creditDepth = 0; creditDepth < 8 && creditBox; creditDepth++) {
+        creditBox = creditBox.parentElement;
+        if (creditBox && ND_CREDIT_PATTERN.test(String(creditBox.textContent || '').slice(0, 700))) {
+          creditSeen = true;
+          break;
+        }
+      }
+      for (var depth = 0; depth < 8 && box; depth++) {
+        box = box.parentElement;
+        if (!box) break;
+        var current = String(box.textContent || '');
+        if (current.length > 700) current = current.slice(0, 700);
+        text = current;
+        if (ND_CREDIT_PATTERN.test(current)) creditSeen = true;
+        hasDeny = ND_DENY_WORD.test(current);
+        var buttons = box.querySelectorAll('button');
+        count = buttons ? buttons.length : 0;
+        var hasOnce = ndIsDecisionGroup(box);
+        var kind = ndClassifyApprovalCandidate({
+          label: button.textContent || '',
+          context: current,
+          hasDeny: hasDeny,
+          buttonCount: count,
+          hasOnce: hasOnce,
+          creditSeen: creditSeen,
+          disabled: button.disabled,
+          ariaDisabled: button.getAttribute('aria-disabled') === 'true',
+        });
+        if (kind) return { kind: kind, context: current, box: box };
+      }
+      return { kind: null, context: text, box: box };
+    }
     function scanNoDisturbApproval() {
       var doc = (window && window.document) || document;
       if (!doc) return;
-      var btns = doc.querySelectorAll('button');
-      for (var i = 0; i < btns.length; i++) {
-        var b = btns[i];
-        if (b.getAttribute('data-nd-auto')) continue; // 已处理过
-        if (!ndVisible(b)) continue;
-        if (b.disabled || b.getAttribute('aria-disabled') === 'true') continue; // 禁用按钮不点
-        var t = ndNormalizeLabel(b.textContent || '');
-        var kind = null;
-        if (/始终允许|Always\s*allow/i.test(t)) kind = 'session';
-        else if (ND_ONCE_LABEL.test(t)) kind = 'once';
-        else if (/^Yes/i.test(t) && t.length < 24) kind = 'once';
-        if (!kind) continue;
-        // 向上找确认容器（至多 8 层），验证语境：关键词命中，或近层命中「允许+拒绝」决策组（且无扣费文案）
-        var box = b;
-        var hit = false;
-        var creditSeen = false;
-        for (var c = 0; c < 8 && box; c++) {
-          box = box.parentElement;
-          if (!box) break;
-          var txt = box.textContent || '';
-          if (txt.length > 500) txt = txt.slice(0, 500);
-          if (ND_CONFIRM_PATTERN.test(txt)) { hit = true; break; }
-          if (ND_CREDIT_PATTERN.test(txt)) creditSeen = true;
-          if (c < 3 && !creditSeen && ND_DENY_WORD.test(txt) && ndIsDecisionGroup(box)) { hit = true; break; }
+      var roots = (typeof ndScanRoots !== 'undefined' && ndScanRoots.length) ? ndScanRoots.splice(0, ndScanRoots.length) : [doc.body];
+      var seen = typeof WeakSet !== 'undefined' ? new WeakSet() : null;
+      for (var r = 0; r < roots.length; r++) {
+        var root = roots[r];
+        if (!root || !root.querySelectorAll || (doc.documentElement && !doc.documentElement.contains(root))) continue;
+        var btns = root.querySelectorAll('button');
+        for (var i = 0; i < btns.length; i++) {
+          var b = btns[i];
+          if (seen && seen.has(b)) continue;
+          if (seen) seen.add(b);
+          if (b.getAttribute('data-nd-auto')) continue;
+          var t = ndNormalizeLabel(b.textContent || '');
+          if (!t) continue;
+          var approval = ndApprovalContext(b);
+          if (!approval.kind) continue;
+          b.setAttribute('data-nd-auto', '1');
+          var sessionId = ndSessionIdForNode(b);
+          // The viewer represents active Auto-Continue sessions only; do not
+          // create a permanent tab for a one-off approval when that monitor is off.
+          if (sessionId && acRunning && acMulti.sessions[sessionId]) {
+            acMonitorLog(sessionId, 'approval-clicked', { kind: approval.kind, source: 'dom' });
+          }
+          toNdAudit(approval.kind, t);
+          try { if (b.click) b.click(); } catch (e) {}
         }
-        if (!hit) continue;
-        b.setAttribute('data-nd-auto', '1');
-        toNdAudit(kind, t);
-        try { if (b.click) b.click(); } catch (e) {}
-        return; // 每轮只确认一个，避免连环误触
       }
     }
     function toNdAudit(kind, matched) {
@@ -7562,7 +8119,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ mode: mode, displaySleep: displaySleep }),
       }).then(function (d) {
-        var map = { allow: '允许电脑休眠（系统默认）', keep: '持续禁止休眠（保持唤醒）', 'until-done': '当前会话结束允许休眠（暂禁休眠）' };
+        var map = { allow: '允许电脑休眠（系统默认）', keep: '持续禁止休眠（保持唤醒）', 'until-done': '所有会话结束允许休眠（暂禁休眠）' };
         toast('休眠模式已切换为「' + (map[mode] || mode) + '」' + (displaySleep ? '，显示器可单独休眠' : ''), false, root);
         syncSleepState();
         return d;
@@ -7571,11 +8128,9 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         syncSleepState();
       });
     }
-    // AI 是否正在生成回复（until-done 专用，限定当前会话内，参考 Auto-Continue 的 acActiveConversationId）：
-    // 只检查「当前激活会话」的生成状态：停止按钮在输入区工具栏（cr-input-toolbar，全局唯一——只有一个
-    // 激活会话渲染输入区，不会误判其他会话）；reasoning streaming 在消息区内。
-    // 返回 { busy, sessionId } —— busy=true 表示锁定的会话仍在生成。
-    // scopeId 为空时按当前激活会话判断；锁定会话已切走（不再是激活会话）= 该会话已结束 → 不忙碌。
+    // 旧客户端无控制器时的休眠兜底：只检查当前激活会话的 DOM 信号。
+    // 正常路径由 isAnySessionBusy() 通过所有已发现 ConversationController 判断，
+    // 因此这里只保留兼容旧版 DOM 的最后降级分支。
     function isSessionBusy(lockedId) {
       try {
         var activeId = acActiveConversationId();
@@ -7606,26 +8161,67 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         return { busy: false, sessionId: activeId };
       } catch (e) { return { busy: false, sessionId: acActiveConversationId ? acActiveConversationId() : '' }; }
     }
-    // until-done 模式：锁定开启时的当前会话，轮询该会话是否仍在生成；会话结束（或切走）自动恢复 allow。
-    // 只监听当前会话（参考 Auto-Continue 的 acActiveConversationId 定位会话），不做全局任务扫描。
-    var sleepUntilDoneSession = null; // 开启 until-done 时锁定的会话 ID
+    // until-done 模式：轮询所有已发现会话；全部结束后自动恢复 allow。
+    var sleepUntilDoneSession = null; // 兼容旧字段；全量模式不再锁定单一会话
+    function discoverSleepSessionBusy() {
+      var controllers = [];
+      try {
+        if (WBS_COMPAT && typeof WBS_COMPAT.findConversationControllers === 'function') {
+          controllers = WBS_COMPAT.findConversationControllers(document) || [];
+        }
+      } catch (_) {}
+      var seen = Object.create(null);
+      var busy = false;
+      var now = Date.now();
+      for (var i = 0; i < controllers.length; i++) {
+        var controller = controllers[i];
+        var id = controller && controller.conversationId ? String(controller.conversationId) : '';
+        if (!id) continue;
+        seen[id] = true;
+        var cached = sleepSessionCache[id] || (sleepSessionCache[id] = { controller: controller, lastSeen: now, wasBusy: false });
+        cached.controller = controller;
+        cached.lastSeen = now;
+        var snapshot = acControllerSnapshot(controller);
+        cached.wasBusy = !!(snapshot && (snapshot.busy || snapshot.blocked || snapshot.hydrating));
+        if (cached.wasBusy) busy = true;
+      }
+      Object.keys(sleepSessionCache).forEach(function (id) {
+        var cached = sleepSessionCache[id];
+        if (seen[id]) return;
+        // Virtualized background conversations may be absent for one scan.
+        if (cached.wasBusy && now - cached.lastSeen < 15000) busy = true;
+        else if (now - cached.lastSeen >= 15000) delete sleepSessionCache[id];
+      });
+      return busy;
+    }
+    function isAnySessionBusy() {
+      var ids = Object.keys(acMulti.sessions);
+      if (ids.length) {
+        for (var i = 0; i < ids.length; i++) {
+          var session = acMulti.sessions[ids[i]];
+          var snapshot = session && session.controller ? acControllerSnapshot(session.controller) : null;
+          if (snapshot && (snapshot.busy || snapshot.blocked || snapshot.hydrating)) return true;
+        }
+        return discoverSleepSessionBusy();
+      }
+      if (discoverSleepSessionBusy()) return true;
+      return !!isSessionBusy(null).busy;
+    }
     function startUntilDoneCheck() {
       if (sleepUntilDoneCheck) return;
-      // 开启时锁定当前激活会话；没有任何会话则视为无需防休眠（直接不启动，由开启校验兜底）
-      sleepUntilDoneSession = acActiveConversationId() || null;
+      sleepUntilDoneSession = null;
       sleepUntilDoneCheck = setBuildInterval(function () {
         if (!alive) { stopUntilDoneCheck(); return; }
         if (sleepMode !== 'until-done') { stopUntilDoneCheck(); return; }
-        var st = isSessionBusy(sleepUntilDoneSession);
-        if (!st.busy) {
-          // 锁定的会话已结束（或已切到别的会话/FAB 呼吸灯熄灭）→ 自动恢复允许休眠
+        if (!isAnySessionBusy()) {
+          // 所有已发现会话均结束 → 自动恢复允许休眠
           stopUntilDoneCheck();
           api('/api/sleep-mode', {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
             body: JSON.stringify({ mode: 'allow', displaySleep: false }),
           }).then(function () {
-            toast('当前会话已完成，已自动恢复「允许电脑休眠」', false, root);
+            toast('所有进行中的会话已完成，已自动恢复「允许电脑休眠」', false, root);
             syncSleepState();
           }).catch(function () { syncSleepState(); });
         }
@@ -7634,6 +8230,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     function stopUntilDoneCheck() {
       if (sleepUntilDoneCheck) { clearInterval(sleepUntilDoneCheck); sleepUntilDoneCheck = null; }
       sleepUntilDoneSession = null;
+      sleepSessionCache = Object.create(null);
     }
     // 同步防休眠状态：三模式 radio + 显示器开关 + 状态文字 + 悬浮按钮角标（daemon 重启/状态变化后保持一致）
     function syncSleepState() {
@@ -7661,8 +8258,8 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
               var antiLock = d.antiLock === true; // daemon 是否已启用防锁屏（UserIsActive 断言）
               if (d.mode === 'keep') t = '持续禁止休眠：电脑/显示器保持唤醒' + (antiLock ? '，已防锁屏' : '');
               if (d.mode === 'keep' && d.displaySleep) t = '持续禁止休眠：仅阻止系统睡眠，显示器可黑屏（可能锁屏）';
-              if (d.mode === 'until-done') t = '当前会话结束允许休眠：本会话回复中保持唤醒，结束后自动恢复' + (antiLock ? '，已防锁屏' : '');
-              if (d.mode === 'until-done' && d.displaySleep) t = '当前会话结束允许休眠：暂禁中，显示器可黑屏（可能锁屏）';
+              if (d.mode === 'until-done') t = '所有会话结束允许休眠：任一会话回复中保持唤醒，全部结束后自动恢复' + (antiLock ? '，已防锁屏' : '');
+              if (d.mode === 'until-done' && d.displaySleep) t = '所有会话结束允许休眠：暂禁中，显示器可黑屏（可能锁屏）';
               dot.title = t;
             }
             var fab = root.querySelector('.wbs-fab');
@@ -8955,6 +9552,15 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '.wbs-telemetry-switch{flex:0 0 36px}',
     '.wbs-telemetry-status{margin-top:5px;font-size:10.5px;color:var(--wb-button-primary-bg,#1f1f1f);font-weight:600}',
     '.wbs-telemetry-status.is-off{color:var(--wb-icon-tertiary,#999);font-weight:500}',
+    '.wbs-monitor-log-card{padding:7px 12px;margin:2px 0 4px;background:transparent;border:none}',
+    '.wbs-monitor-log-inline{display:flex;flex-direction:column;gap:5px;min-width:0}',
+    '.wbs-monitor-log-session-list{display:flex;flex-direction:column;gap:3px;max-height:92px;overflow-y:auto;overscroll-behavior:contain;padding:1px 0;scrollbar-width:thin}',
+    '.wbs-monitor-log-session-btn{display:block;box-sizing:border-box;width:100%;min-height:25px;padding:4px 7px;border:1px solid var(--wb-border-subtle,#ededed);border-radius:7px;background:var(--wb-bg-secondary,#fafafa);color:var(--wb-icon-secondary,#666);font:600 10.5px/1.25 inherit;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer;transition:background .15s,border-color .15s,color .15s}',
+    '.wbs-monitor-log-session-btn:hover{background:var(--wb-bg-hover,#f5f5f5);color:var(--wb-color-text-primary,#1f1f1f)}',
+    '.wbs-monitor-log-session-btn.active{border-color:var(--wb-button-primary-bg,#1f1f1f);background:color-mix(in srgb,var(--wb-button-primary-bg,#1f1f1f) 10%,var(--wb-bg-secondary,#fafafa));color:var(--wb-color-text-primary,#1f1f1f)}',
+    '.wbs-monitor-log-list{min-height:62px;max-height:154px;overflow-y:auto;overscroll-behavior:contain;padding:5px 7px;border:1px solid var(--wb-border-subtle,#ededed);border-radius:7px;background:color-mix(in srgb,var(--wb-bg-secondary,#fafafa) 65%,transparent);font:10px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--wb-icon-secondary,#666);white-space:pre-wrap;overflow-wrap:anywhere;scrollbar-width:thin}',
+    '.wbs-monitor-log-entry{padding:2px 0;border-bottom:1px solid color-mix(in srgb,var(--wb-border-subtle,#ededed) 70%,transparent);overflow-wrap:anywhere}',
+    '.wbs-monitor-log-entry:last-child{border-bottom:none}',
     '.wbs-about-foot{display:flex;align-items:center;justify-content:center;gap:10px;margin-top:10px}',
     '.wbs-about-ver{font-family:ui-monospace,SF Mono,Menlo,monospace;font-size:11px;font-weight:500;color:var(--wb-icon-tertiary,#999);letter-spacing:.3px}',
     '.wbs-about-feedback{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-weight:600;color:var(--wb-button-primary-bg,#1f1f1f);background:rgba(0,0,0,.05);padding:5px 12px;border-radius:999px;text-decoration:none;transition:background .15s;flex-shrink:0;white-space:nowrap}',
