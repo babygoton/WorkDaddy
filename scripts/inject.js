@@ -319,6 +319,81 @@ function isSessionMonitorInProgress(snapshot) {
   return !!(snapshot && (snapshot.busy || snapshot.blocked || snapshot.hydrating));
 }
 
+var SESSION_MONITOR_ACTIVE_STATUSES = {
+  planning: true, preparing: true, connecting: true, working: true, running: true,
+  tool_start: true, tool_end: true, handoff: true, summarizing: true,
+  waiting_team_members: true, model_requesting: true, model_streaming: true,
+  model_done: true, tool_executing: true, await_input: true, awaitinput: true,
+  waiting_input: true, waiting_user_input: true,
+};
+var SESSION_MONITOR_TERMINAL_STATUSES = {
+  completed: true, cancelled: true, canceled: true, done: true, failed: true,
+  error: true, terminated: true, archived: true, deleted: true,
+};
+
+function normalizeSessionMonitorStatus(value) {
+  return typeof value === 'string' ? value.trim().toLowerCase().replace(/[\s-]+/g, '_') : '';
+}
+
+// WorkBuddy's session resource is the authoritative cross-session lifecycle
+// source. Prefer any terminal token across status/protocolStatus/state so a
+// stale working field cannot mask a newer completed protocol status.
+function normalizeSessionMonitorResourceRecord(record, eventName) {
+  var value = record && typeof record === 'object' ? record : {};
+  var id = String(value.id || value.sessionId || value.conversationId || '').trim();
+  if (!id) return null;
+  var tokens = [value.protocolStatus, value.status, value.state].map(normalizeSessionMonitorStatus).filter(Boolean);
+  if (eventName === 'sessionDeleted') tokens.unshift('deleted');
+  var terminalStatus = '';
+  for (var i = 0; i < tokens.length; i++) {
+    if (SESSION_MONITOR_TERMINAL_STATUSES[tokens[i]]) { terminalStatus = tokens[i]; break; }
+  }
+  var status = terminalStatus || tokens[0] || '';
+  var pendingInputKind = normalizeSessionMonitorStatus(value.pendingInputKind);
+  var active = !terminalStatus && (!!SESSION_MONITOR_ACTIVE_STATUSES[status] ||
+    pendingInputKind === 'permission' || pendingInputKind === 'question' || pendingInputKind === 'user_input');
+  return {
+    id: id,
+    title: String(value.name || value.title || '').slice(0, 120),
+    status: status,
+    pendingInputKind: pendingInputKind,
+    active: active,
+    terminal: !!terminalStatus,
+    event: String(eventName || 'sessionUpdated'),
+  };
+}
+
+function subscribeSessionMonitorResource(resource, listener) {
+  if (!resource || typeof resource.on !== 'function' || typeof listener !== 'function') return function () {};
+  var subscriptions = [];
+  function recordsFromPayload(eventName, payload) {
+    if (eventName !== 'sessionsChanged') return [payload];
+    if (Array.isArray(payload)) return payload;
+    if (!payload || typeof payload !== 'object') return [];
+    return payload.agents || payload.sessions || payload.conversations || payload.records || [];
+  }
+  ['sessionUpdated', 'sessionCreated', 'sessionDeleted', 'sessionsChanged'].forEach(function (eventName) {
+    var handler = function (payload) {
+      var records = recordsFromPayload(eventName, payload);
+      for (var i = 0; i < records.length; i++) {
+        var update = normalizeSessionMonitorResourceRecord(records[i], eventName);
+        if (update) listener(update);
+      }
+    };
+    try {
+      resource.on(eventName, handler);
+      subscriptions.push([eventName, handler]);
+    } catch (_) {}
+  });
+  return function () {
+    if (typeof resource.off !== 'function') return;
+    for (var i = 0; i < subscriptions.length; i++) {
+      try { resource.off(subscriptions[i][0], subscriptions[i][1]); } catch (_) {}
+    }
+    subscriptions = [];
+  };
+}
+
 // In-memory state for background-session monitors. This deliberately has no
 // persistence or daemon transport: the About-page viewer is a live diagnostic
 // surface and must not turn conversation activity into a local log file.
@@ -406,6 +481,8 @@ if (typeof module !== 'undefined' && module.exports) {
     stashContentMatches: stashContentMatches,
     classifyNoDisturbApprovalCandidate: classifyNoDisturbApprovalCandidate,
     isSessionMonitorInProgress: isSessionMonitorInProgress,
+    normalizeSessionMonitorResourceRecord: normalizeSessionMonitorResourceRecord,
+    subscribeSessionMonitorResource: subscribeSessionMonitorResource,
     createSessionMonitorRegistry: createSessionMonitorRegistry,
   };
 }
@@ -6381,7 +6458,14 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     var acRunning = false;
     var acStatusTimer = null;
     var acMonitorRegistry = createSessionMonitorRegistry({ maxLogs: 180 });
-    var acMulti = { generation: 0, sessions: Object.create(null), discoveryTimer: null };
+    var acMulti = {
+      generation: 0,
+      sessions: Object.create(null),
+      discoveryTimer: null,
+      sessionResource: null,
+      sessionResourceUnsubscribe: null,
+      sessionResourceRetryAt: 0,
+    };
 
     /** 状态机可视化日志：只写入当前 renderer 的有界内存，不落盘、不发送到 daemon。 */
     var AC_LOG_MAX = 150;
@@ -7414,6 +7498,58 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       if (previous !== status || operation) acMonitorLog(session.id, status, detail || {});
     }
 
+    function acMultiHandleSessionResourceUpdate(update) {
+      if (!update || !update.id || !acRunning || acMulti.mode !== 'multi') return;
+      var session = acMulti.sessions[update.id];
+      if (!session) return;
+      session.resourceActive = update.active;
+      session.resourceUpdatedAt = Date.now();
+      if (update.title) session.title = update.title;
+      if (update.terminal) {
+        acMultiUpdateStatus(session, 'completed', {
+          source: 'session-resource',
+          event: update.event,
+          status: update.status,
+        });
+        acMultiFinishSession(session);
+        return;
+      }
+      if (!update.active) return;
+      if (update.pendingInputKind) {
+        acMultiUpdateStatus(session, 'awaiting-approval', {
+          source: 'session-resource',
+          pendingInputKind: update.pendingInputKind,
+        });
+      } else if (session.status === 'hydrating') {
+        acMultiUpdateStatus(session, 'running', {
+          source: 'session-resource',
+          status: update.status,
+        });
+      }
+    }
+
+    function acMultiBindSessionResource() {
+      if (acMulti.sessionResource) return true;
+      acMulti.sessionResourceRetryAt = Date.now() + 15000;
+      if (!WBS_COMPAT || typeof WBS_COMPAT.findSessionsResource !== 'function') return false;
+      var resource = null;
+      try { resource = WBS_COMPAT.findSessionsResource(document); } catch (_) {}
+      if (!resource) return false;
+      acMulti.sessionResource = resource;
+      acMulti.sessionResourceUnsubscribe = subscribeSessionMonitorResource(resource, acMultiHandleSessionResourceUpdate);
+      acLog('session-resource-bound');
+      return true;
+    }
+
+    function acMultiUnbindSessionResource() {
+      if (typeof acMulti.sessionResourceUnsubscribe === 'function') {
+        try { acMulti.sessionResourceUnsubscribe(); } catch (_) {}
+      }
+      acMulti.sessionResourceUnsubscribe = null;
+      acMulti.sessionResource = null;
+      acMulti.sessionResourceRetryAt = 0;
+    }
+
     function acMultiSchedule(session, delay) {
       if (!session || !acRunning) return;
       if (session.timer) clearTimeout(session.timer);
@@ -7478,7 +7614,10 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         session.awaitingNewReply = true;
         session.baselineAssistantKey = snapshot.assistantId || session.baselineAssistantKey;
         session.lastVersion = snapshot.version;
-        acMultiUpdateStatus(session, 'hydrating');
+        // An unmounted controller can remain frozen in hydration forever. A
+        // newer global resource event is authoritative for background state.
+        acMultiUpdateStatus(session, session.resourceActive ? 'running' : 'hydrating',
+          session.resourceActive ? { source: 'session-resource' } : undefined);
         return;
       }
       if (snapshot.blocked) {
@@ -7583,6 +7722,8 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         generation: acMulti.generation,
         sending: false,
         unsubs: [],
+        resourceActive: false,
+        resourceUpdatedAt: 0,
       };
       // Establish the historical baseline before the first store callback.
       // Otherwise an already-rendered assistant message would look like a new
@@ -7627,6 +7768,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         if (session) seen[session.id] = true;
       }
       var now = Date.now();
+      if (!acMulti.sessionResource && now >= acMulti.sessionResourceRetryAt) acMultiBindSessionResource();
       Object.keys(acMulti.sessions).forEach(function (id) {
         var current = acMulti.sessions[id];
         // Keep a temporarily unmounted controller for one discovery window;
@@ -7645,6 +7787,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       if (!Object.keys(acMulti.sessions).length) {
         acMulti.mode = 'none';
         if (acMulti.discoveryTimer) { clearTimeout(acMulti.discoveryTimer); acMulti.discoveryTimer = null; }
+        acMultiUnbindSessionResource();
         return false;
       }
       acShowStatus();
@@ -7655,6 +7798,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       acMulti.mode = 'none';
       acMulti.generation++;
       if (acMulti.discoveryTimer) { clearTimeout(acMulti.discoveryTimer); acMulti.discoveryTimer = null; }
+      acMultiUnbindSessionResource();
       Object.keys(acMulti.sessions).forEach(function (id) {
         acMultiUnbindController(acMulti.sessions[id]);
         acMonitorRegistry.remove(id);

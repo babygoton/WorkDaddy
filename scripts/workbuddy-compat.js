@@ -338,6 +338,20 @@
     return findModernQueueAdapter(doc) || findLegacyQueueAdapter(doc);
   }
 
+  function isSessionsResource(value) {
+    return !!value && typeof value === 'object' &&
+      typeof value.on === 'function' && typeof value.off === 'function' &&
+      (typeof value.list === 'function' || typeof value.getByIds === 'function');
+  }
+
+  // The facade publishes sessionUpdated/sessionsChanged for background sessions
+  // even after their ConversationController has left the mounted React tree.
+  function findSessionsResource(doc) {
+    var found = findQueueAdapter(doc);
+    var resource = found && found.adapter && found.adapter.sessionsResource;
+    return isSessionsResource(resource) ? resource : null;
+  }
+
   function hasModernQueueSurface(doc) {
     if (!doc || typeof doc.querySelector !== 'function') return false;
     return !!findModernQueueAdapter(doc) || !!doc.querySelector(
@@ -387,6 +401,7 @@
     findLegacyQueueAdapter: findLegacyQueueAdapter,
     findModernQueueAdapter: findModernQueueAdapter,
     findQueueAdapter: findQueueAdapter,
+    findSessionsResource: findSessionsResource,
     findMessageNavigationAdapter: findMessageNavigationAdapter,
     findMessageNavigationSurface: findMessageNavigationSurface,
     findConversationControllers: findConversationControllers,

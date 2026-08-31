@@ -69,6 +69,50 @@ test('session monitor progress gate excludes completed and idle snapshots', () =
   assert.equal(inProgress({ state: 'done', busy: false }), false);
 });
 
+test('session resource normalizer treats background terminal updates as final', () => {
+  const normalize = inject.normalizeSessionMonitorResourceRecord;
+  assert.deepEqual(normalize({
+    id: 'task-b',
+    status: 'working',
+    protocolStatus: 'completed',
+    name: '任务 B',
+  }, 'sessionUpdated'), {
+    id: 'task-b',
+    title: '任务 B',
+    status: 'completed',
+    pendingInputKind: '',
+    active: false,
+    terminal: true,
+    event: 'sessionUpdated',
+  });
+  assert.equal(normalize({ id: 'task-b', status: 'model_streaming' }, 'sessionUpdated').active, true);
+  assert.equal(normalize({ id: 'task-b', status: 'pending', pendingInputKind: 'permission' }, 'sessionUpdated').active, true);
+});
+
+test('session resource subscription delivers non-active completion without controller changes', () => {
+  const handlers = new Map();
+  const resource = {
+    on(event, handler) { handlers.set(event, handler); },
+    off(event, handler) { if (handlers.get(event) === handler) handlers.delete(event); },
+  };
+  const updates = [];
+  const unsubscribe = inject.subscribeSessionMonitorResource(resource, (update) => updates.push(update));
+
+  handlers.get('sessionUpdated')({ id: 'task-b', status: 'completed' });
+  handlers.get('sessionsChanged')([
+    { id: 'task-a', status: 'working' },
+    { id: 'task-c', status: 'failed' },
+  ]);
+
+  assert.deepEqual(updates.map((item) => [item.id, item.status, item.terminal]), [
+    ['task-b', 'completed', true],
+    ['task-a', 'working', false],
+    ['task-c', 'failed', true],
+  ]);
+  unsubscribe();
+  assert.equal(handlers.size, 0);
+});
+
 test('monitor log card stays hidden until the five-click logo unlock', () => {
   assert.match(injectSource, /id="wbs-monitor-log-card"' \+ \(hiddenToolsUnlocked \? '' : ' style="display:none"'\)/);
   assert.match(injectSource, /if \(piClickCount >= 5\)[\s\S]*hiddenToolsUnlocked = true;[\s\S]*monitorLogCard\.style\.display = '';/);
@@ -84,4 +128,16 @@ test('compat discovers multiple capability-shaped controllers and de-duplicates 
   root.children.push(child);
   const doc = { querySelector(selector) { return selector === '#root > div' ? root : null; } };
   assert.deepEqual(compat.findConversationControllers(doc).map((c) => c.conversationId), ['a', 'b']);
+});
+
+test('compat discovers the global session resource by capabilities', () => {
+  const resource = { on() {}, off() {}, list() {}, getByIds() {} };
+  const adapter = {
+    sessionsResource: resource,
+    enqueueConversationMessageQueueItem() {},
+    pauseConversationMessageQueue() {},
+  };
+  const root = { children: [], __reactFiber$root: { memoizedProps: { adapter }, return: null } };
+  const doc = { querySelector(selector) { return selector === '#root > div' ? root : null; } };
+  assert.equal(compat.findSessionsResource(doc), resource);
 });
