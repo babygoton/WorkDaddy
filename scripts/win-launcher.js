@@ -1321,6 +1321,13 @@ function nativeWorkBuddyRunning() {
   return false;
 }
 
+function stopNativeWorkBuddy() {
+  const result = runNativeHelper(['--terminate-workbuddy', '--profile', PROFILE.id], { timeout: 60000 });
+  if (result.status !== 0) {
+    throw new Error('无法精确重启当前 WorkBuddy（错误码 ' + result.status + '）');
+  }
+}
+
 function findWorkBuddyNative() {
   const candidates = [];
   const summary = {
@@ -1566,10 +1573,15 @@ async function ensureDaemonNative(nodeBin) {
 }
 
 async function waitForWorkBuddyCdpNative(binary) {
-  const launched = launchWorkBuddy(binary);
-  nativeLaunchState = launched;
-  log('WorkBuddy 启动请求已派发 method=' + launched.method + ' expectedPort=' + CDP_PORT +
-    (launched.pid ? ' pid=' + launched.pid : ''));
+  let restartedAfterHandoff = false;
+  let launchStartedAt = 0;
+  const start = () => {
+    nativeLaunchState = launchWorkBuddy(binary);
+    launchStartedAt = Date.now();
+    log('WorkBuddy 启动请求已派发 method=' + nativeLaunchState.method + ' expectedPort=' + CDP_PORT +
+      (nativeLaunchState.pid ? ' pid=' + nativeLaunchState.pid : ''));
+  };
+  start();
   const deadline = Date.now() + CDP_STARTUP_TIMEOUT_MS;
   while (Date.now() < deadline) {
     await sleep(1000);
@@ -1581,8 +1593,43 @@ async function waitForWorkBuddyCdpNative(binary) {
         return true;
       }
     }
+    if (nativeLaunchFailed(nativeLaunchState)) {
+      if (!restartedAfterHandoff && nativeWorkBuddyRunning()) {
+        restartedAfterHandoff = true;
+        log('WorkBuddy 启动进程异常退出但同 profile 进程仍在运行，精确停止后重试一次');
+        stopNativeWorkBuddy();
+        await sleep(1000);
+        start();
+        continue;
+      }
+      const error = new Error('WorkBuddy 启动进程异常退出' +
+        (nativeLaunchState.errorCode ? '（' + nativeLaunchState.errorCode + '）' : '（退出码 ' + nativeLaunchState.exitCode + '）'));
+      error.sentryStage = 'windows-native-launcher-workbuddy-exit';
+      error.sentryExtra = {
+        cdpPort: CDP_PORT,
+        launch: { ...nativeLaunchState },
+        processes: nativeWorkBuddyProcessSummary(),
+        discovery: nativeWorkBuddyDiscoverySummary(),
+      };
+      throw error;
+    }
+    if (!restartedAfterHandoff && Number.isInteger(nativeLaunchState && nativeLaunchState.exitCode) &&
+        Date.now() - launchStartedAt >= 5000 && nativeWorkBuddyRunning()) {
+      restartedAfterHandoff = true;
+      log('WorkBuddy 启动请求已被无 CDP 的单实例接管，精确停止后重试一次');
+      stopNativeWorkBuddy();
+      await sleep(1000);
+      start();
+    }
   }
   return false;
+}
+
+function nativeLaunchFailed(state) {
+  return Boolean(state && (
+    state.errorCode ||
+    (Number.isInteger(state.exitCode) && state.exitCode !== 0)
+  ));
 }
 
 async function nativeStartupMain() {
@@ -1616,8 +1663,9 @@ async function nativeStartupMain() {
   }
 
   if (nativeWorkBuddyRunning()) {
-    log('WorkBuddy 已运行但没有 CDP，交给原生启动器提示用户手动退出');
-    return 10;
+    log('WorkBuddy 已运行但没有 CDP，按当前 profile 的唯一真实路径精确重启');
+    stopNativeWorkBuddy();
+    await sleep(1000);
   }
 
   const ok = await waitForWorkBuddyCdpNative(wb);
@@ -1728,6 +1776,7 @@ if (require.main === module && process.env.WBSWITCH_NATIVE_LAUNCHER === '1') {
 });
 
 module.exports = {
+  nativeLaunchFailed,
   strictPowerShellLines,
   getWorkBuddyProcesses,
   workBuddyProcesses,

@@ -6,7 +6,7 @@ const { EventEmitter } = require('node:events');
 const path = require('node:path');
 const test = require('node:test');
 const { launchWindowsInstaller } = require('../scripts/windows-installer-launch.js');
-const { strictPowerShellLines } = require('../scripts/win-launcher.js');
+const { nativeLaunchFailed, strictPowerShellLines } = require('../scripts/win-launcher.js');
 
 const root = path.join(__dirname, '..');
 const read = (relative) => fs.readFileSync(path.join(root, relative), 'utf8');
@@ -194,4 +194,37 @@ test('native startup failures report one structured diagnostic event', () => {
   assert.match(launcher, /error\.sentryStage/);
   assert.match(launcher, /error\.sentryExtra/);
   assert.match(launcher, /nativeDaemonDiagnostics/);
+});
+
+test('native startup precisely restarts a verified WorkBuddy without CDP', () => {
+  const launcher = read('scripts/win-launcher.js');
+  const stopStart = launcher.indexOf('function stopNativeWorkBuddy()');
+  const stopEnd = launcher.indexOf('\nfunction ', stopStart + 1);
+  assert.ok(stopStart >= 0 && stopEnd > stopStart);
+  const stop = launcher.slice(stopStart, stopEnd);
+  assert.match(stop, /--terminate-workbuddy/);
+  assert.match(stop, /--profile[\s\S]*PROFILE\.id/);
+  assert.match(stop, /result\.status !== 0[\s\S]*throw new Error/);
+
+  const nativeMainStart = launcher.indexOf('async function nativeStartupMain()');
+  const nativeMainEnd = launcher.indexOf('\n// ---------- legacy script entry', nativeMainStart);
+  const nativeMain = launcher.slice(nativeMainStart, nativeMainEnd);
+  assert.match(nativeMain, /nativeWorkBuddyRunning\(\)[\s\S]*stopNativeWorkBuddy\(\)[\s\S]*waitForWorkBuddyCdpNative/);
+  assert.doesNotMatch(nativeMain, /return 10/);
+});
+
+test('native CDP startup detects failed child launches instead of waiting for the full timeout', () => {
+  assert.equal(nativeLaunchFailed(null), false);
+  assert.equal(nativeLaunchFailed({ errorCode: null, exitCode: null }), false);
+  assert.equal(nativeLaunchFailed({ errorCode: null, exitCode: 0 }), false);
+  assert.equal(nativeLaunchFailed({ errorCode: 'ENOENT', exitCode: null }), true);
+  assert.equal(nativeLaunchFailed({ errorCode: null, exitCode: 9 }), true);
+
+  const launcher = read('scripts/win-launcher.js');
+  const waitStart = launcher.indexOf('async function waitForWorkBuddyCdpNative(binary)');
+  const waitEnd = launcher.indexOf('\nasync function nativeStartupMain()', waitStart);
+  const wait = launcher.slice(waitStart, waitEnd);
+  assert.match(wait, /nativeLaunchFailed\(nativeLaunchState\)/);
+  assert.match(wait, /windows-native-launcher-workbuddy-exit/);
+  assert.match(wait, /stopNativeWorkBuddy\(\)[\s\S]*start\(\)/);
 });
