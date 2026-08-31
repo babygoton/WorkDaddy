@@ -1020,6 +1020,9 @@ test('automatic session copy includes workspace-only rules when the initial plan
   assert.match(daemon, /hasSourceAutoCopyRules/);
   assert.match(daemon, /hasPendingAutoCopyTo\(uid\)/);
   assert.match(daemon, /startAutoCopyJob\(sourceUid, uid, autoCopyPlan\)/);
+  assert.match(daemon, /syncAutoCopyLineage\(src\.lineageId, targetUid\)/);
+  assert.match(daemon, /selectLatestAutoCopyMember\(live\)/);
+  assert.match(daemon, /lineageId = ensureAutoCopySession\(DATA_DIR, source, row\.id\)/);
   assert.match(inject, /data-auto-kind="' \+ kind \+ '"/);
   assert.match(inject, /autoCopyButton\('workspace'/);
   assert.match(inject, /autoCopyButton\('session'/);

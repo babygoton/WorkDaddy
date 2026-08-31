@@ -560,6 +560,45 @@ function getAutoCopySessionMembers(dataDir, lineageId, uid) {
   return result;
 }
 
+// Return the de-duplicated account/session pairs for a lineage.  The copier
+// needs the uid as well as the id so it can refresh every live account member,
+// not only the account that happened to be active during the switch.
+function getAutoCopySessionMemberRecords(dataDir, lineageId) {
+  const config = readAutoCopyConfig(dataDir);
+  const lineage = config.sessions[String(lineageId || '')];
+  if (!lineage || !Array.isArray(lineage.members)) return [];
+  const seen = new Set();
+  const result = [];
+  for (const member of lineage.members) {
+    const uid = String(member && member.uid || '').trim();
+    const id = String(member && member.id || '').trim();
+    if (!uid || !id) continue;
+    const key = JSON.stringify([uid, id]);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push({ uid, id });
+  }
+  return result;
+}
+
+// Pick the freshest member snapshot.  Message files are authoritative; the
+// database timestamp is only a deterministic fallback for legacy/missing
+// files.  Ties are resolved by member order so repeated switches stay stable.
+function selectLatestAutoCopyMember(members) {
+  if (!Array.isArray(members) || !members.length) return null;
+  let best = null;
+  members.forEach((member, index) => {
+    if (!member || !member.id) return;
+    const contentMtime = Number(member.contentMtime || 0);
+    const updatedAt = Number(member.updatedAt || 0);
+    if (!best || contentMtime > best.contentMtime ||
+        (contentMtime === best.contentMtime && updatedAt > best.updatedAt)) {
+      best = Object.assign({ memberIndex: index }, member, { contentMtime, updatedAt });
+    }
+  });
+  return best ? members[best.memberIndex] : null;
+}
+
 function ensureAutoCopySession(dataDir, uid, sessionId) {
   const meta = readMeta(dataDir);
   const config = ensureAutoCopyMeta(meta);
@@ -1050,6 +1089,8 @@ module.exports = {
   setAutoCopyRule,
   getAutoCopySession,
   getAutoCopySessionMembers,
+  getAutoCopySessionMemberRecords,
+  selectLatestAutoCopyMember,
   ensureAutoCopySession,
   addAutoCopySessionMember,
   removeAutoCopySessionMember,

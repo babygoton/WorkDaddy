@@ -21,6 +21,8 @@ const {
   removeAutoCopyAccount,
   setAutoCopyMapping,
   getAutoCopyMapping,
+  getAutoCopySessionMemberRecords,
+  selectLatestAutoCopyMember,
   listOfficialModels,
   maskApiKey,
   sanitizeModel,
@@ -34,6 +36,16 @@ const {
   importModels,
   checkinDisplayValue,
 } = require('../scripts/lib.js');
+
+test('lineage sync selects the newest live member instead of trusting the switching source', () => {
+  const members = [
+    { uid: 'account-a', id: 'copy-a', contentMtime: 100, updatedAt: 500 },
+    { uid: 'account-b', id: 'copy-b', contentMtime: 300, updatedAt: 100 },
+    { uid: 'account-c', id: 'copy-c', contentMtime: 200, updatedAt: 900 },
+  ];
+  assert.deepEqual(selectLatestAutoCopyMember(members), members[1]);
+  assert.deepEqual(selectLatestAutoCopyMember([]), null);
+});
 
 function tempDataDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'workdaddy-auto-copy-'));
@@ -123,6 +135,10 @@ test('lineage member lookup is deduplicated and one member can be removed withou
   assert.equal(removeAutoCopySessionMember(dataDir, lineageId, 'target', 'target-old'), true);
   assert.deepEqual(getAutoCopySessionMembers(dataDir, lineageId, 'target'), ['target-new']);
   assert.equal(getAutoCopySession(dataDir, 'source', 'source-session').lineageId, lineageId);
+  assert.deepEqual(getAutoCopySessionMemberRecords(dataDir, lineageId), [
+    { uid: 'source', id: 'source-session' },
+    { uid: 'target', id: 'target-new' },
+  ]);
 });
 
 test('workspace rules are global across source accounts', () => {
