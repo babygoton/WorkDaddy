@@ -69,6 +69,20 @@ test('profile process selection rejects multiple roots and ignores other CodeBud
   );
 });
 
+test('enterprise process aliases are accepted only in the selected install directory', () => {
+  const selected = 'C:\\Company\\WorkBuddy\\workbuddy-ent.exe';
+  const names = new Set(['workbuddy-ent.exe', 'workbuddyent.exe']);
+  const rows = [
+    { ProcessId: 111, Name: 'WorkBuddyEnt.exe', ExecutablePath: 'C:\\Company\\WorkBuddy\\WorkBuddyEnt.exe' },
+    { ProcessId: 112, Name: 'WorkBuddyEnt.exe', ExecutablePath: 'D:\\Other\\WorkBuddyEnt.exe' },
+    { ProcessId: 113, Name: 'Unrelated.exe', ExecutablePath: 'C:\\Company\\WorkBuddy\\Unrelated.exe' },
+  ];
+  assert.deepEqual(
+    boundary.filterVerifiedWindowsProcesses(selected, rows, resolveWindows, names).map((row) => row.ProcessId),
+    [111]
+  );
+});
+
 test('node process identity requires exact executable, PID, and script argument', () => {
   const expectedNode = 'C:\\Node\\node.exe';
   const expectedScript = 'C:\\WorkDaddy\\scripts\\daemon.js';

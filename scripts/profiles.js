@@ -3,6 +3,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { readWorkBuddyTarget } = require('./workbuddy-target.js');
 
 const home = os.homedir();
 const IS_WIN = process.platform === 'win32';
@@ -76,9 +77,49 @@ const PROFILES = {
   },
 };
 
-function getProfile(id = process.env.WBSWITCH_PROFILE || 'workbuddy-cn') {
+function applyWorkBuddyTarget(profile, target) {
+  if (!target || !target.configured || !target.binary) return profile;
+  if (target.clientType === 'official') {
+    return {
+      ...profile,
+      appPath: target.binary,
+      binaryNames: target.processNames || [path.basename(target.binary)],
+      cdp: target.cdp || { mode: 'argument' },
+      configuredTarget: true,
+      customTarget: false,
+      targetVersion: target.version || '',
+      lockTargetVersion: target.lockVersion === true,
+    };
+  }
+  return {
+    ...profile,
+    appPath: target.binary,
+    ...(target.dataRoot ? { dataRoot: target.dataRoot } : {}),
+    authFile: target.authFile || null,
+    ...(target.sessionDb ? { sessionDb: target.sessionDb } : {}),
+    ...(target.modelsFile ? { modelsFile: target.modelsFile } : {}),
+    apiHost: target.apiHost || '',
+    capabilities: { ...profile.capabilities, ...(target.capabilities || {}) },
+    targetHints: [...(target.targetHints || [])],
+    binaryNames: target.processNames || [target.processName || path.basename(target.binary)],
+    cdp: target.cdp || { mode: 'argument' },
+    configuredTarget: true,
+    customTarget: true,
+    targetVersion: target.version || '',
+    lockTargetVersion: target.lockVersion === true,
+  };
+}
+
+function getProfile(id = process.env.WBSWITCH_PROFILE || 'workbuddy-cn', options = {}) {
   const key = String(id || '').trim().toLowerCase();
-  if (PROFILES[key]) return PROFILES[key];
+  if (PROFILES[key]) {
+    const base = PROFILES[key];
+    if (base.kind !== 'workbuddy') return base;
+    const env = options.env || process.env;
+    const dataDir = options.dataDir || env.WBSWITCH_DATA_DIR || profileDataDir(base);
+    const target = readWorkBuddyTarget({ dataDir, profileId: key, env, platform: options.platform || process.platform });
+    return applyWorkBuddyTarget(base, target);
+  }
   throw new Error(`未知客户端 profile: ${id}`);
 }
 
@@ -114,4 +155,4 @@ function profileDataDir(profile, configured) {
   return path.join(sharedDataDir(), 'profiles', profile.id);
 }
 
-module.exports = { PROFILES, getProfile, listProfiles, listInstalledModelSources, profileDataDir, sharedDataDir };
+module.exports = { PROFILES, applyWorkBuddyTarget, getProfile, listProfiles, listInstalledModelSources, profileDataDir, sharedDataDir };

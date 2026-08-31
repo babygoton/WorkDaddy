@@ -81,6 +81,27 @@ test('isTargetForProfile 已绑定 profile 时允许标题兜底', () => {
   }
 });
 
+test('isTargetForProfile 企业配置只接受自身域名或路径提示', () => {
+  const enterprise = {
+    ...PROFILES['workbuddy-cn'],
+    customTarget: true,
+    apiHost: 'https://api.ent.example.com',
+    targetHints: ['workbuddy-ent'],
+  };
+  assert.equal(isTargetForProfile({
+    type: 'page', url: 'https://api.ent.example.com/app', title: '企业 WorkBuddy',
+  }, enterprise), true);
+  assert.equal(isTargetForProfile({
+    type: 'page', url: 'file:///C:/Company/workbuddy-ent/resources/index.html', title: 'WorkBuddy',
+  }, enterprise), true);
+  assert.equal(isTargetForProfile({
+    type: 'page', url: 'https://www.workbuddy.cn/app', title: 'WorkBuddy',
+  }, enterprise), false);
+  assert.equal(isTargetForProfile({
+    type: 'page', url: 'file:///unknown/index.html', title: 'WorkBuddy',
+  }, enterprise), false);
+});
+
 test('looksLikeWbFamilyTarget 把四客户端页面都视为同族（不清理）', () => {
   assert.equal(looksLikeWbFamilyTarget({ type: 'page', url: AI_URL, title: 'WorkBuddy' }), true);
   assert.equal(looksLikeWbFamilyTarget({ type: 'page', url: CN_URL, title: 'WorkBuddy' }), true);

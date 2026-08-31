@@ -157,18 +157,22 @@ function assertSameProcessIdentity(original, current) {
   return after;
 }
 
-function filterVerifiedWindowsProcesses(expectedBinary, processes, realpath = fs.realpathSync.native) {
+function filterVerifiedWindowsProcesses(expectedBinary, processes, realpath = fs.realpathSync.native, allowedProcessNames = null) {
   const expected = resolveWindowsExecutable(expectedBinary, realpath);
   const expectedDir = path.win32.dirname(expected);
   const expectedName = path.win32.basename(expected).toLowerCase();
-  if (!ALLOWED_WORKBUDDY_PROCESS_NAMES.has(expectedName)) {
+  const allowedNames = allowedProcessNames
+    ? new Set(Array.from(allowedProcessNames, (name) => String(name).toLowerCase()))
+    : new Set([expectedName]);
+  if (!allowedNames.has(expectedName) || Array.from(allowedNames).some((name) => !/^[^\\/:*?"<>|\0]+\.exe$/i.test(name)) ||
+      (!allowedProcessNames && !ALLOWED_WORKBUDDY_PROCESS_NAMES.has(expectedName))) {
     throw new Error('Expected executable is not a WorkBuddy-family binary');
   }
   const verified = [];
   for (const item of Array.isArray(processes) ? processes : []) {
     const process = validateProcessRecord(item);
     const name = process.Name.toLowerCase();
-    if (name !== expectedName) continue;
+    if (!allowedNames.has(name)) continue;
     let executable;
     try {
       executable = resolveWindowsExecutable(process.ExecutablePath, realpath);

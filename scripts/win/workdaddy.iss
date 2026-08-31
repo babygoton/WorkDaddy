@@ -79,6 +79,15 @@ Filename: "{app}\WorkDaddyLauncher.exe"; Parameters: "--stop-lifecycle --profile
 Type: filesandordirs; Name: "{app}"
 
 [Code]
+var
+  ClientPage: TInputFileWizardPage;
+  ClientSourceLabel: TNewStaticText;
+  ClientVersionLabel: TNewStaticText;
+  UseDetectedButton: TNewButton;
+  DetectedOfficialPath: String;
+  SelectedWorkBuddyPath: String;
+  SelectedWorkBuddyVersion: String;
+
 function RunNativeHelper(const Mode: String; var ResultCode: Integer): Boolean;
 var
   Parameters: String;
@@ -93,6 +102,238 @@ begin
     ewWaitUntilTerminated,
     ResultCode
   );
+end;
+
+function ExpectedWorkBuddyName(): String;
+begin
+  if '{#ProfileId}' = 'workbuddy-ai' then
+    Result := 'WorkBuddyAI.exe'
+  else
+    Result := 'WorkBuddy.exe';
+end;
+
+function UsableClientFile(const Candidate: String): Boolean;
+begin
+  Result := (Candidate <> '') and FileExists(Candidate) and
+    (CompareText(ExtractFileExt(Candidate), '.exe') = 0);
+end;
+
+function ReadSavedClient(var Binary: String; var Version: String): Boolean;
+var
+  ResultCode: Integer;
+  InfoFile: String;
+  Lines: TArrayOfString;
+begin
+  Result := False;
+  InfoFile := ExpandConstant('{tmp}\workbuddy-target-info.txt');
+  DeleteFile(InfoFile);
+  if not RunNativeHelper('--target-info --output "' + InfoFile + '"', ResultCode) then
+    exit;
+  if (ResultCode <> 0) or (not LoadStringsFromFile(InfoFile, Lines)) or
+    (GetArrayLength(Lines) < 1) then
+    exit;
+  Binary := Trim(Lines[0]);
+  if GetArrayLength(Lines) > 1 then
+    Version := Trim(Lines[1])
+  else
+    Version := '';
+  { Keep a missing saved path visible so an update cannot silently switch an
+    enterprise user back to the official client. The page will require them
+    to browse to the new location before installation continues. }
+  Result := Binary <> '';
+end;
+
+function DetectOfficialClient(var Binary: String): Boolean;
+var
+  Name: String;
+  Key: String;
+  Candidate: String;
+  Candidates: TArrayOfString;
+  Index: Integer;
+begin
+  Result := False;
+  Name := ExpectedWorkBuddyName();
+  Key := 'Software\Microsoft\Windows\CurrentVersion\App Paths\' + Name;
+  if RegQueryStringValue(HKCU, Key, '', Candidate) and UsableClientFile(Candidate) then
+  begin
+    Binary := Candidate;
+    Result := True;
+    exit;
+  end;
+  if RegQueryStringValue(HKLM, Key, '', Candidate) and UsableClientFile(Candidate) then
+  begin
+    Binary := Candidate;
+    Result := True;
+    exit;
+  end;
+
+  SetArrayLength(Candidates, 5);
+  if '{#ProfileId}' = 'workbuddy-ai' then
+  begin
+    Candidates[0] := ExpandConstant('{localappdata}\Programs\WorkBuddyAI\' + Name);
+    Candidates[1] := ExpandConstant('{localappdata}\Programs\WorkBuddy AI\' + Name);
+    Candidates[2] := ExpandConstant('{pf}\WorkBuddyAI\' + Name);
+    Candidates[3] := ExpandConstant('{pf}\WorkBuddy AI\' + Name);
+    Candidates[4] := ExpandConstant('{pf32}\WorkBuddyAI\' + Name);
+  end
+  else
+  begin
+    Candidates[0] := ExpandConstant('{localappdata}\Programs\WorkBuddy\' + Name);
+    Candidates[1] := ExpandConstant('{localappdata}\WorkBuddy\' + Name);
+    Candidates[2] := ExpandConstant('{pf}\WorkBuddy\' + Name);
+    Candidates[3] := ExpandConstant('{pf32}\WorkBuddy\' + Name);
+    Candidates[4] := ExpandConstant('{userappdata}\WorkBuddy\' + Name);
+  end;
+  for Index := 0 to GetArrayLength(Candidates) - 1 do
+  begin
+    if UsableClientFile(Candidates[Index]) then
+    begin
+      Binary := Candidates[Index];
+      Result := True;
+      exit;
+    end;
+  end;
+end;
+
+procedure UpdateClientDetails();
+var
+  Candidate: String;
+begin
+  Candidate := Trim(ClientPage.Values[0]);
+  SelectedWorkBuddyVersion := '';
+  if UsableClientFile(Candidate) and GetVersionNumbersString(Candidate, SelectedWorkBuddyVersion) then
+    ClientVersionLabel.Caption := '检测到版本：' + SelectedWorkBuddyVersion
+  else if Candidate = '' then
+    ClientVersionLabel.Caption := '尚未选择客户端'
+  else if not FileExists(Candidate) then
+    ClientVersionLabel.Caption := '未找到这个文件'
+  else
+    ClientVersionLabel.Caption := '无法读取版本，安装时仍会保存所选路径';
+end;
+
+procedure ClientPathChanged(Sender: TObject);
+begin
+  UpdateClientDetails();
+end;
+
+procedure UseDetectedClient(Sender: TObject);
+begin
+  ClientPage.Values[0] := DetectedOfficialPath;
+  ClientSourceLabel.Caption := '已使用自动识别出的官方客户端。';
+  UpdateClientDetails();
+end;
+
+function ValidateClientSelection(const ShowError: Boolean): Boolean;
+begin
+  SelectedWorkBuddyPath := Trim(ClientPage.Values[0]);
+  Result := UsableClientFile(SelectedWorkBuddyPath);
+  if (not Result) and ShowError then
+    MsgBox('请选择要连接的 WorkBuddy .exe 主程序。', mbError, MB_OK);
+  if Result then
+    UpdateClientDetails();
+end;
+
+procedure InitializeWizard();
+var
+  DetectedPath: String;
+  DetectedVersion: String;
+  HasSavedClient: Boolean;
+  HasOfficialClient: Boolean;
+begin
+  ClientPage := CreateInputFilePage(
+    wpSelectDir,
+    'WorkBuddy 客户端',
+    '确认 WorkDaddy 要连接的客户端',
+    '安装程序会自动识别客户端。企业专享版或其他安装位置可以点击“浏览”修改。'
+  );
+  ClientPage.Add('客户端主程序：', '可执行文件 (*.exe)|*.exe|所有文件 (*.*)|*.*', '.exe');
+
+  ClientSourceLabel := TNewStaticText.Create(ClientPage);
+  ClientSourceLabel.Parent := ClientPage.Surface;
+  ClientSourceLabel.Left := 0;
+  ClientSourceLabel.Top := ClientPage.Edits[0].Top + ClientPage.Edits[0].Height + ScaleY(12);
+  ClientSourceLabel.Width := ClientPage.SurfaceWidth;
+  ClientSourceLabel.Height := ScaleY(18);
+  ClientSourceLabel.AutoSize := False;
+
+  ClientVersionLabel := TNewStaticText.Create(ClientPage);
+  ClientVersionLabel.Parent := ClientPage.Surface;
+  ClientVersionLabel.Left := 0;
+  ClientVersionLabel.Top := ClientSourceLabel.Top + ScaleY(24);
+  ClientVersionLabel.Width := ClientPage.SurfaceWidth;
+  ClientVersionLabel.Height := ScaleY(18);
+  ClientVersionLabel.AutoSize := False;
+
+  UseDetectedButton := TNewButton.Create(ClientPage);
+  UseDetectedButton.Parent := ClientPage.Surface;
+  UseDetectedButton.Left := 0;
+  UseDetectedButton.Top := ClientVersionLabel.Top + ScaleY(26);
+  UseDetectedButton.Width := ScaleX(126);
+  UseDetectedButton.Height := ScaleY(26);
+  UseDetectedButton.Caption := '使用自动识别路径';
+  UseDetectedButton.OnClick := @UseDetectedClient;
+  UseDetectedButton.Visible := False;
+
+  DetectedPath := '';
+  DetectedVersion := '';
+  DetectedOfficialPath := '';
+  HasSavedClient := ReadSavedClient(DetectedPath, DetectedVersion);
+  HasOfficialClient := DetectOfficialClient(DetectedOfficialPath);
+  if HasSavedClient then
+  begin
+    ClientSourceLabel.Caption := '已保留上次安装选择，可直接继续或修改。';
+    UseDetectedButton.Visible := HasOfficialClient and
+      (CompareText(DetectedPath, DetectedOfficialPath) <> 0);
+  end
+  else if HasOfficialClient then
+  begin
+    DetectedPath := DetectedOfficialPath;
+    ClientSourceLabel.Caption := '已自动识别官方客户端，可直接继续或修改。';
+  end
+  else
+    ClientSourceLabel.Caption := '未自动找到客户端，请点击“浏览”选择。';
+  ClientPage.Values[0] := DetectedPath;
+  ClientPage.Edits[0].OnChange := @ClientPathChanged;
+  UpdateClientDetails();
+end;
+
+function NextButtonClick(CurPageID: Integer): Boolean;
+begin
+  Result := True;
+  if CurPageID = ClientPage.ID then
+    Result := ValidateClientSelection(True);
+end;
+
+function SaveSelectedClient(): Boolean;
+var
+  NodePath: String;
+  ScriptPath: String;
+  DataDir: String;
+  Parameters: String;
+  ResultCode: Integer;
+begin
+  Result := False;
+  NodePath := ExpandConstant('{app}\scripts\runtime\node\node.exe');
+  ScriptPath := ExpandConstant('{app}\scripts\workbuddy-target.js');
+  DataDir := ExpandConstant('{userappdata}\WorkDaddy');
+  if '{#ProfileId}' = 'workbuddy-ai' then
+    DataDir := DataDir + '\profiles\workbuddy-ai';
+  Parameters := '"' + ScriptPath + '" --configure --profile "{#ProfileId}"' +
+    ' --binary "' + SelectedWorkBuddyPath + '" --version "' + SelectedWorkBuddyVersion + '"' +
+    ' --data-dir "' + DataDir + '"';
+  if not ExecAsOriginalUser(NodePath, Parameters, ExpandConstant('{app}\scripts'), SW_HIDE,
+    ewWaitUntilTerminated, ResultCode) then
+    exit;
+  Result := ResultCode = 0;
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  if CurStep = ssPostInstall then
+  begin
+    if not SaveSelectedClient() then
+      RaiseException('无法保存 WorkBuddy 客户端选择，安装已停止。');
+  end;
 end;
 
 function ShowWorkBuddyCloseDialog(): Integer;
@@ -175,7 +416,7 @@ begin
   Result := False;
   while True do
   begin
-    if not RunNativeHelper('--check-workbuddy', ResultCode) then
+    if not RunNativeHelper('--check-workbuddy --binary "' + SelectedWorkBuddyPath + '"', ResultCode) then
     begin
       MsgBox('无法启动 WorkBuddy 进程检测。请检查安全软件是否拦截安装程序。', mbError, MB_OK);
       exit;
@@ -195,7 +436,7 @@ begin
       exit;
     if Choice = mrYes then
     begin
-      if not RunNativeHelper('--terminate-workbuddy', ResultCode) then
+      if not RunNativeHelper('--terminate-workbuddy --binary "' + SelectedWorkBuddyPath + '"', ResultCode) then
       begin
         MsgBox('无法启动 WorkBuddy 结束进程操作。请检查安全软件是否拦截安装程序。', mbError, MB_OK);
         exit;
@@ -220,6 +461,11 @@ begin
   if IsAdminInstallMode then
   begin
     Result := '当前安装程序是以管理员权限运行的，无法继续安装。为避免 WorkDaddy 后台出现权限不一致，请点击“取消”，关闭安装程序后直接双击安装包重新运行；不要选择“以管理员身份运行”。UAC 无需关闭。';
+    exit;
+  end;
+  if not ValidateClientSelection(False) then
+  begin
+    Result := '没有可用的 WorkBuddy 客户端路径。请返回“WorkBuddy 客户端”页面选择 .exe 主程序。';
     exit;
   end;
   if not EnsureWorkBuddyClosed() then
