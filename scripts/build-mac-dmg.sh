@@ -45,6 +45,15 @@ echo "==> 产物: ${OUT}"
 chmod 755 "$APP/Contents/MacOS/launcher"
 echo "==> launcher 可执行位已保证: $(stat -f '%Sp' "$APP/Contents/MacOS/launcher")"
 
+APP_ICON="$DIR/scripts/assets/WorkDaddy.icns"
+if [ ! -f "$APP_ICON" ]; then
+  echo "错误：缺少应用图标 $APP_ICON" >&2
+  exit 1
+fi
+cp "$APP_ICON" "$APP/Contents/Resources/AppIcon.icns"
+chmod 644 "$APP/Contents/Resources/AppIcon.icns"
+echo "==> 应用图标已同步（背景 #e1e1e1）"
+
 # 2) 只覆盖前端代码（保留壳的其余一切：launcher/Info.plist/builtin/node_modules/theme-audit.js）
 for f in daemon.js session-db.js secure-transfer.js windows-process-boundary.js workbuddy-compat.js inject.js theme-patches.js credit-segments.js credit-resource-queries.js credit-request-usage.js credit-usage-store.js atomic-file-write.js ui-port.js checkin-result.js lib.js profiles.js workbuddy-target.js cdp-targets.js sentry-report.js install.sh relaunch-with-cdp.sh uninstall.sh apply-update.sh; do
   [ -f "scripts/$f" ] && cp "scripts/$f" "$APP/Contents/Resources/scripts/$f"
