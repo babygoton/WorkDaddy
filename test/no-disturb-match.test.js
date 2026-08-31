@@ -102,7 +102,7 @@ function runCase(desc, labels, opts) {
   const r = runCase('检测到受保护文件修改', ['允许', '本次会话内始终允许', '拒绝']);
   assert.strictEqual(r.acted, '1允许', 'once 按钮带序号前缀应被规范化并命中');
   assert.strictEqual(r.clicked, true, '命中按钮应被点击');
-  assert.deepStrictEqual(r.audit, ['once:允许']);
+  assert.deepStrictEqual(r.audit, ['once:允许', 'session:本次会话内始终允许']);
   console.log('✓ AI 拦截卡-受保护文件修改：自动点「1允许」');
 }
 // 2) 敏感凭据路径

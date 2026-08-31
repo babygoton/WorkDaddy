@@ -247,6 +247,41 @@
     }
   }
 
+  // Discover every mounted ConversationController by capability shape rather
+  // than volatile component/class names. Shared fibers are de-duplicated so a
+  // large conversation tree is walked once per fiber, not once per element.
+  function findConversationControllers(doc) {
+    if (!doc || typeof doc.querySelector !== 'function') return [];
+    var root = doc.querySelector('#root > div') || doc.querySelector('#root');
+    if (!root) return [];
+    var found = Object.create(null);
+    var fibers = typeof WeakSet !== 'undefined' ? new WeakSet() : null;
+    var stack = [root];
+    var visitedElements = 0;
+    while (stack.length && visitedElements++ < 1400) {
+      var element = stack.pop();
+      var fiber = reactFiber(element);
+      var seen = 0;
+      while (fiber && seen++ < 800) {
+        if (!fibers || !fibers.has(fiber)) {
+          if (fibers) fibers.add(fiber);
+          var props = fiber.memoizedProps;
+          var candidates = props && [props.value, props.controller, props.adapter];
+          for (var i = 0; candidates && i < candidates.length; i++) {
+            var candidate = candidates[i];
+            if (!isConversationController(candidate)) continue;
+            var id = String(candidate.conversationId || '').trim();
+            if (id && !found[id]) found[id] = candidate;
+          }
+        }
+        fiber = fiber.return;
+      }
+      var children = element && element.children || [];
+      for (var ci = 0; ci < children.length; ci++) stack.push(children[ci]);
+    }
+    return Object.keys(found).map(function (id) { return found[id]; });
+  }
+
   function findModernQueueAdapter(doc) {
     if (!doc || typeof doc.querySelector !== 'function') return null;
     try {
@@ -354,6 +389,7 @@
     findQueueAdapter: findQueueAdapter,
     findMessageNavigationAdapter: findMessageNavigationAdapter,
     findMessageNavigationSurface: findMessageNavigationSurface,
+    findConversationControllers: findConversationControllers,
     getSelectedConversationId: getSelectedConversationId,
     hasModernQueueSurface: hasModernQueueSurface,
     isComposerStore: isComposerStore,
