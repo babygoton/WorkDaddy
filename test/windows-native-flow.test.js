@@ -25,6 +25,14 @@ test('Windows native launcher is the packaged user-level entry point', () => {
   assert.match(source, /mbRetryCancel/);
 });
 
+test('Windows shortcuts use a versioned icon path to invalidate the shell icon cache', () => {
+  const installer = read('scripts/win/workdaddy.iss');
+  assert.match(installer, /DestName: "\{#PackageName\}-\{#AppVersion\}\.ico"/);
+  assert.match(installer, /IconFilename: "\{app\}\\scripts\\\{#PackageName\}-\{#AppVersion\}\.ico"/);
+  assert.match(installer, /\[InstallDelete\][\s\S]*WorkDaddy-\*\.ico/);
+  assert.doesNotMatch(installer, /IconFilename: "\{app\}\\scripts\\WorkDaddy\.ico"/);
+});
+
 test('normal Windows startup does not use Explorer de-elevation or CIM', () => {
   const launcher = read('scripts/win-launcher.js');
   const watchdog = read('scripts/watchdog.js');
@@ -55,6 +63,34 @@ test('installer waits for the exact profile client with a visible recheck dialog
   assert.match(installer, /runasoriginaluser/);
   assert.match(installer, /PrivilegesRequired=lowest/);
   assert.match(installer, /CloseApplications=no/);
+});
+
+test('installer does not expand the app directory while initializing the client page', () => {
+  const installer = read('scripts/win/workdaddy.iss');
+  const helperStart = installer.indexOf('function RunNativeHelper');
+  const helperEnd = installer.indexOf('\nfunction ', helperStart + 1);
+  const initializeStart = installer.indexOf('procedure InitializeWizard');
+  const initializeEnd = installer.indexOf('\nfunction ', initializeStart + 1);
+  assert.ok(helperStart >= 0 && helperEnd > helperStart);
+  assert.ok(initializeStart >= 0 && initializeEnd > initializeStart);
+  assert.doesNotMatch(installer.slice(helperStart, helperEnd), /ExpandConstant\('\{app\}'\)/);
+  assert.doesNotMatch(installer.slice(initializeStart, initializeEnd), /ExpandConstant\('\{app\}'\)/);
+  assert.match(installer, /--stop-lifecycle --app-dir "' \+ ExpandConstant\('\{app\}'\) \+ '"/);
+});
+
+test('installer prefers the newest registered official client without replacing enterprise targets', () => {
+  const installer = read('scripts/win/workdaddy.iss');
+  const native = read('scripts/windows-native/main.go');
+  assert.match(installer, /CurrentVersion\\Uninstall/);
+  assert.match(installer, /DisplayIcon/);
+  assert.match(installer, /InstallLocation/);
+  assert.match(installer, /for Index := Length\(Value\) downto 1 do/);
+  assert.match(installer, /ExtractFileExt\(Copy\(Value, 1, Marker - 1\)\)/);
+  assert.match(installer, /CompareClientFileVersions\(Candidate, BestCandidate\) > 0/);
+  assert.match(installer, /PreferDetectedOfficialClient/);
+  assert.match(installer, /CompareText\(SavedClientType, 'enterprise'\) = 0/);
+  assert.match(native, /ClientType\s+string\s+`json:"clientType"`/);
+  assert.match(native, /target\.Binary\+"\\r\\n"\+version\+"\\r\\n"\+clientType/);
 });
 
 test('Windows update opens the verified Setup visibly and keeps daemon alive', () => {

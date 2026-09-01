@@ -58,12 +58,17 @@ Name: "chinesesimplified"; MessagesFile: "ChineseSimplified.isl"
 [Files]
 Source: "{#StageRoot}\WorkDaddyLauncher.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#StageRoot}\WorkDaddyLauncher.exe"; Flags: dontcopy
-Source: "{#StageRoot}\scripts\*"; DestDir: "{app}\scripts"; Excludes: "runtime\node\*"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#StageRoot}\scripts\WorkDaddy.ico"; DestDir: "{app}\scripts"; DestName: "{#PackageName}-{#AppVersion}.ico"; Flags: ignoreversion
+Source: "{#StageRoot}\scripts\*"; DestDir: "{app}\scripts"; Excludes: "runtime\node\*,WorkDaddy.ico"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#StageRoot}\scripts\runtime\node\*"; DestDir: "{app}\scripts\runtime\node"; Flags: ignoreversion recursesubdirs createallsubdirs
 
+[InstallDelete]
+Type: files; Name: "{app}\scripts\WorkDaddy.ico"
+Type: files; Name: "{app}\scripts\WorkDaddy-*.ico"
+
 [Icons]
-Name: "{group}\{#ProductName}"; Filename: "{app}\WorkDaddyLauncher.exe"; WorkingDir: "{app}"; IconFilename: "{app}\scripts\WorkDaddy.ico"
-Name: "{userdesktop}\{#ProductName}"; Filename: "{app}\WorkDaddyLauncher.exe"; WorkingDir: "{app}"; IconFilename: "{app}\scripts\WorkDaddy.ico"
+Name: "{group}\{#ProductName}"; Filename: "{app}\WorkDaddyLauncher.exe"; WorkingDir: "{app}"; IconFilename: "{app}\scripts\{#PackageName}-{#AppVersion}.ico"
+Name: "{userdesktop}\{#ProductName}"; Filename: "{app}\WorkDaddyLauncher.exe"; WorkingDir: "{app}"; IconFilename: "{app}\scripts\{#PackageName}-{#AppVersion}.ico"
 
 [Registry]
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: none; ValueName: "WorkDaddy"; Flags: deletevalue
@@ -93,7 +98,7 @@ var
   Parameters: String;
 begin
   ExtractTemporaryFile('WorkDaddyLauncher.exe');
-  Parameters := Mode + ' --profile "{#ProfileId}" --app-dir "' + ExpandConstant('{app}') + '"';
+  Parameters := Mode + ' --profile "{#ProfileId}"';
   Result := ExecAsOriginalUser(
     ExpandConstant('{tmp}\WorkDaddyLauncher.exe'),
     Parameters,
@@ -118,7 +123,164 @@ begin
     (CompareText(ExtractFileExt(Candidate), '.exe') = 0);
 end;
 
-function ReadSavedClient(var Binary: String; var Version: String): Boolean;
+function OfficialClientFile(const Candidate: String): Boolean;
+begin
+  Result := UsableClientFile(Candidate) and
+    (CompareText(ExtractFileName(Candidate), ExpectedWorkBuddyName()) = 0);
+end;
+
+function NextVersionComponent(const Version: String; var Offset: Integer): Integer;
+var
+  StartAt: Integer;
+  SeparatorAt: Integer;
+  Remaining: String;
+begin
+  if Offset > Length(Version) then
+  begin
+    Result := 0;
+    exit;
+  end;
+  StartAt := Offset;
+  Remaining := Copy(Version, StartAt, Length(Version) - StartAt + 1);
+  SeparatorAt := Pos('.', Remaining);
+  if SeparatorAt = 0 then
+  begin
+    Result := StrToIntDef(Remaining, 0);
+    Offset := Length(Version) + 1;
+  end
+  else
+  begin
+    Result := StrToIntDef(Copy(Remaining, 1, SeparatorAt - 1), 0);
+    Offset := StartAt + SeparatorAt;
+  end;
+end;
+
+function CompareVersionStrings(const LeftVersion: String; const RightVersion: String): Integer;
+var
+  Index: Integer;
+  LeftOffset: Integer;
+  RightOffset: Integer;
+  LeftPart: Integer;
+  RightPart: Integer;
+begin
+  LeftOffset := 1;
+  RightOffset := 1;
+  Result := 0;
+  for Index := 0 to 3 do
+  begin
+    LeftPart := NextVersionComponent(LeftVersion, LeftOffset);
+    RightPart := NextVersionComponent(RightVersion, RightOffset);
+    if LeftPart > RightPart then
+    begin
+      Result := 1;
+      exit;
+    end;
+    if LeftPart < RightPart then
+    begin
+      Result := -1;
+      exit;
+    end;
+  end;
+end;
+
+function CompareClientFileVersions(const LeftPath: String; const RightPath: String): Integer;
+var
+  LeftVersion: String;
+  RightVersion: String;
+begin
+  LeftVersion := '';
+  RightVersion := '';
+  GetVersionNumbersString(LeftPath, LeftVersion);
+  GetVersionNumbersString(RightPath, RightVersion);
+  Result := CompareVersionStrings(LeftVersion, RightVersion);
+end;
+
+procedure ConsiderClientCandidate(const Candidate: String; var BestCandidate: String);
+begin
+  if not OfficialClientFile(Candidate) then
+    exit;
+  Log(Format('WorkDaddy installer candidate: %s (version comparison target: %s)', [Candidate, BestCandidate]));
+  if (BestCandidate = '') or
+    (CompareClientFileVersions(Candidate, BestCandidate) > 0) then
+    BestCandidate := Candidate;
+end;
+
+function ExecutableFromDisplayIcon(const DisplayIcon: String): String;
+var
+  Value: String;
+  Marker: Integer;
+  Index: Integer;
+begin
+  Result := '';
+  Value := Trim(DisplayIcon);
+  if Value = '' then
+    exit;
+  if Value[1] = '"' then
+  begin
+    Delete(Value, 1, 1);
+    Marker := Pos('"', Value);
+    if Marker > 0 then
+      Value := Copy(Value, 1, Marker - 1);
+  end;
+  Value := Trim(Value);
+  Marker := 0;
+  for Index := Length(Value) downto 1 do
+  begin
+    if Value[Index] = ',' then
+    begin
+      Marker := Index;
+      break;
+    end;
+  end;
+  if (Marker > 0) and
+    (CompareText(ExtractFileExt(Copy(Value, 1, Marker - 1)), '.exe') = 0) then
+    Value := Copy(Value, 1, Marker - 1);
+  Result := Trim(Value);
+end;
+
+procedure ConsiderUninstallClients(const RootKey: Integer; const BaseKey: String;
+  var BestCandidate: String);
+var
+  Names: TArrayOfString;
+  Index: Integer;
+  Key: String;
+  Value: String;
+  Candidate: String;
+begin
+  if not RegGetSubkeyNames(RootKey, BaseKey, Names) then
+  begin
+    Log(Format('WorkDaddy installer could not enumerate uninstall root %d', [RootKey]));
+    exit;
+  end;
+  Log(Format('WorkDaddy installer scanning uninstall root %d (%d entries)', [RootKey, GetArrayLength(Names)]));
+  for Index := 0 to GetArrayLength(Names) - 1 do
+  begin
+    Key := BaseKey + '\' + Names[Index];
+    Candidate := '';
+    if RegQueryStringValue(RootKey, Key, 'DisplayIcon', Value) then
+    begin
+      Candidate := ExecutableFromDisplayIcon(Value);
+      if Pos(Lowercase(ExpectedWorkBuddyName()), Lowercase(Value)) > 0 then
+      begin
+        if FileExists(Candidate) then
+          Log('WorkDaddy installer parsed uninstall DisplayIcon: ' + Candidate)
+        else
+          Log('WorkDaddy installer parsed missing uninstall DisplayIcon: ' + Candidate);
+      end;
+    end;
+    if not OfficialClientFile(Candidate) then
+    begin
+      if RegQueryStringValue(RootKey, Key, 'InstallLocation', Value) then
+        Candidate := AddBackslash(Trim(Value)) + ExpectedWorkBuddyName()
+      else
+        Candidate := '';
+    end;
+    ConsiderClientCandidate(Candidate, BestCandidate);
+  end;
+end;
+
+function ReadSavedClient(var Binary: String; var Version: String;
+  var ClientType: String): Boolean;
 var
   ResultCode: Integer;
   InfoFile: String;
@@ -137,6 +299,10 @@ begin
     Version := Trim(Lines[1])
   else
     Version := '';
+  if GetArrayLength(Lines) > 2 then
+    ClientType := Trim(Lines[2])
+  else
+    ClientType := '';
   { Keep a missing saved path visible so an update cannot silently switch an
     enterprise user back to the official client. The page will require them
     to browse to the new location before installation continues. }
@@ -147,25 +313,30 @@ function DetectOfficialClient(var Binary: String): Boolean;
 var
   Name: String;
   Key: String;
+  Value: String;
   Candidate: String;
   Candidates: TArrayOfString;
   Index: Integer;
 begin
   Result := False;
   Name := ExpectedWorkBuddyName();
+  Candidate := '';
+
+  ConsiderUninstallClients(HKCU,
+    'Software\Microsoft\Windows\CurrentVersion\Uninstall', Candidate);
+  if IsWin64 then
+    ConsiderUninstallClients(HKLM64,
+      'Software\Microsoft\Windows\CurrentVersion\Uninstall', Candidate);
+  ConsiderUninstallClients(HKLM32,
+    'Software\Microsoft\Windows\CurrentVersion\Uninstall', Candidate);
+
   Key := 'Software\Microsoft\Windows\CurrentVersion\App Paths\' + Name;
-  if RegQueryStringValue(HKCU, Key, '', Candidate) and UsableClientFile(Candidate) then
-  begin
-    Binary := Candidate;
-    Result := True;
-    exit;
-  end;
-  if RegQueryStringValue(HKLM, Key, '', Candidate) and UsableClientFile(Candidate) then
-  begin
-    Binary := Candidate;
-    Result := True;
-    exit;
-  end;
+  if RegQueryStringValue(HKCU, Key, '', Value) then
+    ConsiderClientCandidate(Value, Candidate);
+  if IsWin64 and RegQueryStringValue(HKLM64, Key, '', Value) then
+    ConsiderClientCandidate(Value, Candidate);
+  if RegQueryStringValue(HKLM32, Key, '', Value) then
+    ConsiderClientCandidate(Value, Candidate);
 
   SetArrayLength(Candidates, 5);
   if '{#ProfileId}' = 'workbuddy-ai' then
@@ -185,14 +356,25 @@ begin
     Candidates[4] := ExpandConstant('{userappdata}\WorkBuddy\' + Name);
   end;
   for Index := 0 to GetArrayLength(Candidates) - 1 do
-  begin
-    if UsableClientFile(Candidates[Index]) then
-    begin
-      Binary := Candidates[Index];
-      Result := True;
-      exit;
-    end;
-  end;
+    ConsiderClientCandidate(Candidates[Index], Candidate);
+
+  Binary := Candidate;
+  Result := Binary <> '';
+  if Result then
+    Log('WorkDaddy installer selected official client: ' + Binary)
+  else
+    Log('WorkDaddy installer did not find an official client for ' + Name);
+end;
+
+function PreferDetectedOfficialClient(const SavedPath: String;
+  const SavedClientType: String; const DetectedPath: String): Boolean;
+begin
+  Result := False;
+  if (CompareText(SavedClientType, 'official') <> 0) or
+    (not OfficialClientFile(DetectedPath)) then
+    exit;
+  Result := (not UsableClientFile(SavedPath)) or
+    (CompareClientFileVersions(DetectedPath, SavedPath) > 0);
 end;
 
 procedure UpdateClientDetails();
@@ -237,6 +419,7 @@ procedure InitializeWizard();
 var
   DetectedPath: String;
   DetectedVersion: String;
+  SavedClientType: String;
   HasSavedClient: Boolean;
   HasOfficialClient: Boolean;
 begin
@@ -276,19 +459,32 @@ begin
 
   DetectedPath := '';
   DetectedVersion := '';
+  SavedClientType := '';
   DetectedOfficialPath := '';
-  HasSavedClient := ReadSavedClient(DetectedPath, DetectedVersion);
+  HasSavedClient := ReadSavedClient(DetectedPath, DetectedVersion, SavedClientType);
   HasOfficialClient := DetectOfficialClient(DetectedOfficialPath);
-  if HasSavedClient then
+  if HasSavedClient and
+    (CompareText(SavedClientType, 'enterprise') = 0) then
   begin
     ClientSourceLabel.Caption := '已保留上次安装选择，可直接继续或修改。';
     UseDetectedButton.Visible := HasOfficialClient and
       (CompareText(DetectedPath, DetectedOfficialPath) <> 0);
   end
-  else if HasOfficialClient then
+  else if HasOfficialClient and
+    ((not HasSavedClient) or PreferDetectedOfficialClient(
+      DetectedPath, SavedClientType, DetectedOfficialPath)) then
   begin
     DetectedPath := DetectedOfficialPath;
-    ClientSourceLabel.Caption := '已自动识别官方客户端，可直接继续或修改。';
+    if HasSavedClient then
+      ClientSourceLabel.Caption := '检测到更新的官方客户端，已自动使用新路径。'
+    else
+      ClientSourceLabel.Caption := '已自动识别官方客户端，可直接继续或修改。';
+  end
+  else if HasSavedClient then
+  begin
+    ClientSourceLabel.Caption := '已保留上次安装选择，可直接继续或修改。';
+    UseDetectedButton.Visible := HasOfficialClient and
+      (CompareText(DetectedPath, DetectedOfficialPath) <> 0);
   end
   else
     ClientSourceLabel.Caption := '未自动找到客户端，请点击“浏览”选择。';
@@ -474,7 +670,10 @@ begin
     exit;
   end;
 
-  if not RunNativeHelper('--stop-lifecycle', ResultCode) then
+  if not RunNativeHelper(
+    '--stop-lifecycle --app-dir "' + ExpandConstant('{app}') + '"',
+    ResultCode
+  ) then
   begin
     Result := '无法启动 WorkDaddy 后台进程清理。可能原因是安装器原始用户权限不可用、安全软件拦截了临时 helper，或临时目录不可写。请点击“取消”，关闭安装程序后直接双击安装包重新运行；不要选择“以管理员身份运行”。UAC 无需关闭。';
     exit;

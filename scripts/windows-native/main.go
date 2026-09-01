@@ -93,6 +93,7 @@ type lockOwner struct {
 
 type workBuddyTarget struct {
 	ProfileID    string   `json:"profileId"`
+	ClientType   string   `json:"clientType"`
 	Binary       string   `json:"binary"`
 	Version      string   `json:"version"`
 	ProcessName  string   `json:"processName"`
@@ -792,10 +793,11 @@ func helperMain(appDir, profile string) (bool, int) {
 		if version == "" {
 			version = fileVersion(target.Binary)
 		}
-		if strings.ContainsAny(version, "\r\n") {
+		clientType := strings.TrimSpace(target.ClientType)
+		if strings.ContainsAny(version, "\r\n") || strings.ContainsAny(clientType, "\r\n") {
 			return true, exitFailure
 		}
-		if os.WriteFile(output, []byte(target.Binary+"\r\n"+version+"\r\n"), 0600) != nil {
+		if os.WriteFile(output, []byte(target.Binary+"\r\n"+version+"\r\n"+clientType+"\r\n"), 0600) != nil {
 			return true, exitFailure
 		}
 		return true, 0

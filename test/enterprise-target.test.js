@@ -281,8 +281,11 @@ test('the existing Windows installer owns the single client selection flow', () 
   assert.match(native, /workbuddy-target\.json/);
   assert.match(native, /ProcessNames/);
   assert.match(native, /--target-info/);
+  assert.match(native, /ClientType\s+string\s+`json:"clientType"`/);
   assert.match(installer, /CreateInputFilePage/);
   assert.match(installer, /DetectOfficialClient/);
+  assert.match(installer, /CurrentVersion\\Uninstall/);
+  assert.match(installer, /CompareClientFileVersions/);
   assert.match(installer, /ReadSavedClient/);
   assert.match(installer, /使用自动识别路径/);
   assert.match(installer, /SaveSelectedClient/);
