@@ -26,3 +26,11 @@ test('Windows application icon applies a rounded alpha mask', () => {
   assert.match(generator, /'CopyOpacity'/);
   assert.match(generator, /render_base\(magick, base, rounded=True\)/);
 });
+
+test('macOS application icon also masks the background instead of embedding a square canvas', () => {
+  const macBuilder = generator.slice(
+    generator.indexOf('def build_mac_icon'),
+    generator.indexOf('def build_windows_icon'),
+  );
+  assert.match(macBuilder, /render_base\(magick, base, rounded=True\)/);
+});

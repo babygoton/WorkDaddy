@@ -53,7 +53,7 @@ def build_mac_icon(magick, iconutil, temp_dir):
     base = os.path.join(temp_dir, 'mac-base.png')
     iconset = os.path.join(temp_dir, 'AppIcon.iconset')
     os.makedirs(iconset)
-    render_base(magick, base, rounded=False)
+    render_base(magick, base, rounded=True)
     iconset_entries = [
         ('icon_16x16.png', 16),
         ('icon_16x16@2x.png', 32),
