@@ -18,6 +18,7 @@ test('macOS packaging synchronizes the tracked application icon', () => {
   const buildSource = fs.readFileSync(path.join(repoRoot, 'scripts', 'build-mac-dmg.sh'), 'utf8');
   assert.match(buildSource, /APP_ICON="\$DIR\/scripts\/assets\/WorkDaddy\.icns"/);
   assert.match(buildSource, /cp "\$APP_ICON" "\$APP\/Contents\/Resources\/AppIcon\.icns"/);
+  assert.match(buildSource, /CFBundleIconName/);
 });
 
 test('Windows application icon applies a rounded alpha mask', () => {

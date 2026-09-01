@@ -109,6 +109,14 @@ trap cleanup_dmg_build EXIT
 
 PACKAGE_APP="$STAGE/${PACKAGE_APP_NAME}.app"
 cp -R "$APP" "$PACKAGE_APP"
+# Modern macOS uses CFBundleIconName when resolving an ICNS application icon.
+# Keep it aligned with CFBundleIconFile so LaunchServices does not wrap the
+# custom artwork in the generic gray application icon.
+if /usr/libexec/PlistBuddy -c 'Print :CFBundleIconName' "$PACKAGE_APP/Contents/Info.plist" >/dev/null 2>&1; then
+  /usr/libexec/PlistBuddy -c 'Set :CFBundleIconName AppIcon' "$PACKAGE_APP/Contents/Info.plist"
+else
+  /usr/libexec/PlistBuddy -c 'Add :CFBundleIconName string AppIcon' "$PACKAGE_APP/Contents/Info.plist"
+fi
 sed -i.bak "s|^PROFILE=.*|PROFILE=\"${PROFILE}\"|" "$PACKAGE_APP/Contents/MacOS/launcher"
 rm -f "$PACKAGE_APP/Contents/MacOS/launcher.bak"
 # 启动器只能复用当前 profile 的 WorkBuddy CDP；否则 CN 包会把 WorkBuddy AI 的端口
