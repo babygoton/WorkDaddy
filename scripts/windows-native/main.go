@@ -81,9 +81,10 @@ type processEntry32 struct {
 }
 
 type processRecord struct {
-	PID  uint32 `json:"pid"`
-	Name string `json:"name"`
-	Path string `json:"path,omitempty"`
+	PID       uint32 `json:"pid"`
+	Name      string `json:"name"`
+	Path      string `json:"path,omitempty"`
+	ParentPID uint32 `json:"-"`
 }
 
 type lockOwner struct {
@@ -359,7 +360,9 @@ func enumerateProcesses() ([]processRecord, error) {
 	var records []processRecord
 	for {
 		name := syscall.UTF16ToString(entry.ExeFile[:])
-		records = append(records, processRecord{PID: entry.ProcessID, Name: name, Path: queryProcessPath(entry.ProcessID)})
+		records = append(records, processRecord{
+			PID: entry.ProcessID, Name: name, Path: queryProcessPath(entry.ProcessID), ParentPID: entry.ParentProcessID,
+		})
 		entry.Size = uint32(unsafe.Sizeof(processEntry32{}))
 		result, _, _ = procProcess32NextW.Call(snapshot, uintptr(unsafe.Pointer(&entry)))
 		if result == 0 {
@@ -488,6 +491,9 @@ func terminateExactProcess(pid int, expectedPath string, label string) (bool, in
 	defer syscall.CloseHandle(handle)
 	result, _, callErr := procTerminateProcess.Call(uintptr(handle), 0)
 	if result == 0 {
+		if errors.Is(callErr, syscall.ERROR_ACCESS_DENIED) {
+			return false, exitAccessDenied, fmt.Errorf("PID %d %s cannot be terminated at standard privilege", pid, label)
+		}
 		return false, exitFailure, callErr
 	}
 	waitResult, _, callErr := procWaitForSingleObject.Call(uintptr(handle), 15000)
@@ -597,6 +603,46 @@ func terminateWorkBuddy(profile string) int {
 	return terminateWorkBuddyTarget(profile, configuredTarget(profile))
 }
 
+// recoverWatchdogPID uses the process tree only as a recovery proof when the
+// user-writable watchdog.pid disappeared during an install/update race. The
+// daemon PID comes from the profile lock file and both processes must use the
+// exact bundled Node executable. Any ambiguity remains fail-closed.
+func recoverWatchdogPID(records []processRecord, expectedNode string, daemonPID int) (int, error) {
+	if daemonPID <= 0 {
+		return 0, nil
+	}
+	var daemon *processRecord
+	for index := range records {
+		record := &records[index]
+		if record.PID == uint32(daemonPID) && samePath(record.Path, expectedNode) {
+			if daemon != nil {
+				return 0, fmt.Errorf("daemon PID %d appears more than once", daemonPID)
+			}
+			daemon = record
+		}
+	}
+	if daemon == nil || daemon.ParentPID == 0 {
+		return 0, nil
+	}
+	candidates := make([]processRecord, 0, 1)
+	for _, record := range records {
+		if record.PID == daemon.ParentPID && samePath(record.Path, expectedNode) {
+			candidates = append(candidates, record)
+		}
+	}
+	if len(candidates) != 1 {
+		if len(candidates) > 1 {
+			return 0, fmt.Errorf("daemon PID %d has multiple bundled Node parents", daemonPID)
+		}
+		return 0, nil
+	}
+	candidate := candidates[0]
+	if strings.TrimSpace(candidate.Path) == "" {
+		return 0, nil
+	}
+	return int(candidate.PID), nil
+}
+
 func stopLifecycle(profile, appDir string) int {
 	dir, err := dataDir(profile)
 	if err != nil {
@@ -604,12 +650,49 @@ func stopLifecycle(profile, appDir string) int {
 		return exitFailure
 	}
 	expectedNode := filepath.Join(appDir, "scripts", "runtime", "node", "node.exe")
+	watchdogPath := filepath.Join(dir, "watchdog.pid")
+	watchdogPID := readPID(watchdogPath)
+	watchdogPresent := false
+	if _, statErr := os.Stat(watchdogPath); statErr == nil {
+		watchdogPresent = true
+	} else if !os.IsNotExist(statErr) {
+		fmt.Fprintln(os.Stderr, statErr)
+		return exitFailure
+	}
+	if watchdogPresent && watchdogPID <= 0 {
+		fmt.Fprintln(os.Stderr, "watchdog.pid 内容无效")
+		return exitIdentityMismatch
+	}
+	daemonPID := readLockPID(filepath.Join(dir, ".daemon.lock"))
+	if !watchdogPresent && daemonPID > 0 {
+		records, enumerateErr := enumerateProcesses()
+		if enumerateErr != nil {
+			fmt.Fprintln(os.Stderr, enumerateErr)
+			return exitFailure
+		}
+		recovered, recoverErr := recoverWatchdogPID(records, expectedNode, daemonPID)
+		if recoverErr != nil {
+			fmt.Fprintln(os.Stderr, recoverErr)
+			return exitIdentityMismatch
+		}
+		if recovered > 0 {
+			watchdogPID = recovered
+			watchdogPresent = true
+		} else {
+			for _, record := range records {
+				if record.PID == uint32(daemonPID) && samePath(record.Path, expectedNode) {
+					fmt.Fprintln(os.Stderr, "watchdog.pid 缺失且无法证明当前 daemon 的唯一 watchdog，已拒绝只停止 daemon")
+					return exitIdentityMismatch
+				}
+			}
+		}
+	}
 	pidFiles := []struct {
 		path string
 		pid  int
 	}{
-		{filepath.Join(dir, "watchdog.pid"), readPID(filepath.Join(dir, "watchdog.pid"))},
-		{filepath.Join(dir, ".daemon.lock"), readLockPID(filepath.Join(dir, ".daemon.lock"))},
+		{watchdogPath, watchdogPID},
+		{filepath.Join(dir, ".daemon.lock"), daemonPID},
 	}
 	seen := map[int]bool{}
 	for _, candidate := range pidFiles {

@@ -131,6 +131,23 @@ test('native lifecycle cleanup accepts a PID that exits during exact inspection'
   assert.match(source.slice(exitedCheck, mismatch), /waitResult == waitObject0[\s\S]*return false, 0, nil/);
 });
 
+test('native lifecycle can recover a missing watchdog PID only from a unique daemon parent', () => {
+  const source = read('scripts/windows-native/main.go');
+  assert.match(source, /ParentPID\s+uint32/);
+  assert.match(source, /ParentPID:\s*entry\.ParentProcessID/);
+  assert.match(source, /func recoverWatchdogPID\(/);
+  assert.match(source, /daemonPID\s*int/);
+  assert.match(source, /len\(candidates\) != 1/);
+  assert.match(source, /candidate\.Path/);
+  const stopStart = source.indexOf('func stopLifecycle(profile, appDir string) int');
+  const stopEnd = source.indexOf('\nfunc appendLog(', stopStart);
+  assert.ok(stopStart >= 0 && stopEnd > stopStart);
+  const stop = source.slice(stopStart, stopEnd);
+  assert.match(stop, /recoverWatchdogPID\(/);
+  assert.match(stop, /readLockPID\(/);
+  assert.match(stop, /watchdog\.pid[\s\S]*无法证明当前 daemon 的唯一 watchdog[\s\S]*return exitIdentityMismatch/);
+});
+
 test('installer lifecycle cleanup releases only the exact installed native launcher', () => {
   const source = read('scripts/windows-native/main.go');
   const stopStart = source.indexOf('func stopInstalledLauncher(appDir string) int');
