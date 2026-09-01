@@ -28,12 +28,12 @@ test('Windows application icon applies a rounded alpha mask', () => {
   assert.match(generator, /render_base\(magick, base, rounded=True\)/);
 });
 
-test('macOS application icon also masks the background instead of embedding a square canvas', () => {
+test('macOS application icon leaves the background to the system mask', () => {
   const macBuilder = generator.slice(
     generator.indexOf('def build_mac_icon'),
     generator.indexOf('def build_windows_icon'),
   );
-  assert.match(macBuilder, /render_base\(magick, base, rounded=True\)/);
+  assert.match(macBuilder, /render_base\(magick, base, rounded=False, with_background=False\)/);
 });
 
 test('iconutil inputs use full RGBA PNGs so macOS keeps every icon size', () => {

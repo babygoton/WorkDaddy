@@ -27,10 +27,11 @@ def require_tool(name):
     return path
 
 
-def render_base(magick, output, rounded):
+def render_base(magick, output, rounded, with_background=True):
+    canvas = f'xc:{BACKGROUND}' if with_background else 'xc:none'
     args = [
         magick,
-        '-size', '1024x1024', f'xc:{BACKGROUND}',
+        '-size', '1024x1024', canvas,
         SOURCE,
         '-compose', 'over', '-composite',
     ]
@@ -63,7 +64,9 @@ def build_mac_icon(magick, iconutil, temp_dir):
     base = os.path.join(temp_dir, 'mac-base.png')
     iconset = os.path.join(temp_dir, 'AppIcon.iconset')
     os.makedirs(iconset)
-    render_base(magick, base, rounded=True)
+    # macOS supplies the standard rounded app background. Supplying another
+    # background here creates a visible nested square in Finder/Get Info.
+    render_base(magick, base, rounded=False, with_background=False)
     iconset_entries = [
         ('icon_16x16.png', 16),
         ('icon_16x16@2x.png', 32),
