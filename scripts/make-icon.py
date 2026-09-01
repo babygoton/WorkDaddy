@@ -41,12 +41,22 @@ def render_base(magick, output, rounded):
             '-draw', f'roundrectangle 0,0 1023,1023 {radius},{radius}', ')',
             '-alpha', 'off', '-compose', 'CopyOpacity', '-composite',
         ]
+    # iconutil expects full RGBA PNGs; grayscale-alpha inputs can collapse to a
+    # single low-resolution icns layer and make macOS show its generic wrapper.
+    args += ['-alpha', 'on', '-colorspace', 'sRGB', '-type', 'TrueColorAlpha']
     args.append(output)
     run(*args)
 
 
 def render_size(magick, source, size, output):
-    run(magick, source, '-filter', 'Lanczos', '-resize', f'{size}x{size}', output)
+    run(
+        magick,
+        source,
+        '-filter', 'Lanczos',
+        '-resize', f'{size}x{size}',
+        '-alpha', 'on', '-colorspace', 'sRGB', '-type', 'TrueColorAlpha',
+        output,
+    )
 
 
 def build_mac_icon(magick, iconutil, temp_dir):

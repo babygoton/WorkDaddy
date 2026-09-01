@@ -34,3 +34,8 @@ test('macOS application icon also masks the background instead of embedding a sq
   );
   assert.match(macBuilder, /render_base\(magick, base, rounded=True\)/);
 });
+
+test('iconutil inputs use full RGBA PNGs so macOS keeps every icon size', () => {
+  assert.match(generator, /-type', 'TrueColorAlpha'/);
+  assert.match(generator, /-colorspace', 'sRGB'/);
+});
