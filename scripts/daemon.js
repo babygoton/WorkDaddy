@@ -104,6 +104,7 @@ const { buildCreditResourceBody } = require('./credit-resource-queries.js');
 const { fetchUsageSinceAnchor, startOfLocalDay } = require('./credit-request-usage.js');
 const { createCreditUsageStore } = require('./credit-usage-store.js');
 const { classifyCheckinResult } = require('./checkin-result.js');
+const { fetchGrowthTodayActive } = require('./growth-active.js');
 const {
   captureException,
   captureMessage,
@@ -230,8 +231,9 @@ const DATA_DIR = defaultDataDir();
 // 1.1.25：内置官方壁纸更新时刷新数据目录旧副本；新 profile 默认启用 WorkDaddy 壁纸主题。
 // 1.1.26：daemon 启动 30 秒后补签，并将全账号签到兜底周期缩短为 1 小时。
 // 1.1.27：修复 Windows 原生启动路径发现、旧托管 Node 升级和首次会话播种失败；补充脱敏启动诊断与匿名安装 ID。
-const DAEMON_VERSION = '1.1.27';
-const DAEMON_BUILD_ID = 'release-1.1.27-20260831-windows-sentry-diagnostics';
+// 1.1.28：新增「今日活跃」查询接口（成长中心热力墙 is_active），复用签到 Bearer 鉴权与 profile 归属域名。
+const DAEMON_VERSION = '1.1.28';
+const DAEMON_BUILD_ID = 'release-1.1.28-20260901-windows-growth-active';
 const HOST = '127.0.0.1';
 const IS_WIN = process.platform === 'win32'; // Windows 移植：平台分支开关（macOS 行为保持不变）
 // Windows 安装目录（install.ps1 铺、launcher 用、更新替换目标），对应 macOS 的 /Applications/WorkDaddy.app
@@ -5780,6 +5782,26 @@ function handleApi(req, res) {
         return json(res, 200, payload);
       } catch (e) {
         log(`[credits] 查询 ${uid} 积分失败: ${e.message}`);
+        return json(res, 500, { ok: false, error: e.message });
+      }
+    });
+  }
+
+  // 查询指定账号今日是否活跃（成长中心热力墙 is_active）
+  if (req.method === 'POST' && p === '/api/growth/today-active') {
+    return readBody(req).then(async (body) => {
+      const uid = (body.uid || '').trim();
+      if (!uid) return json(res, 400, { ok: false, error: '缺少 uid' });
+      try {
+        const file = path.join(DATA_DIR, 'accounts', `${uid}.info`);
+        if (!fs.existsSync(file)) return json(res, 404, { ok: false, error: '账号备份不存在' });
+        const j = JSON.parse(fs.readFileSync(file, 'utf8'));
+        const tk = j.auth && j.auth.accessToken;
+        if (!tk) return json(res, 400, { ok: false, error: '备份中无 accessToken' });
+        const today = await fetchGrowthTodayActive(tk, { apiHost: PROFILE.apiHost });
+        return json(res, 200, { ok: true, uid, ...today });
+      } catch (e) {
+        log(`[growth] 查询 ${uid} 今日活跃失败: ${e.message}`);
         return json(res, 500, { ok: false, error: e.message });
       }
     });
