@@ -414,7 +414,7 @@ function ensureAutoCopyMeta(meta) {
   // 1.0.15 stored rules under sourceUid. Convert them once to global session lineages
   // and global workspace paths so a migration/copy keeps the same shared identity.
   const legacy = current && typeof current === 'object' && !Array.isArray(current) ? current : {};
-  const next = { version: 2, sessions: {}, sessionIndex: {}, workspaces: {}, copies: {} };
+  const next = { version: 2, allSessions: false, sessions: {}, sessionIndex: {}, workspaces: {}, copies: {} };
   const legacySessions = legacy.sessions && typeof legacy.sessions === 'object' ? legacy.sessions : {};
   for (const sourceUid of Object.keys(legacySessions)) {
     const bucket = legacySessions[sourceUid];
@@ -457,6 +457,7 @@ function readAutoCopyConfig(dataDir) {
   const autoCopy = ensureAutoCopyMeta(meta);
   if (!wasCurrent) writeMeta(dataDir, meta);
   return {
+    allSessions: autoCopy.allSessions === true,
     sessions: autoCopy.sessions,
     sessionIndex: autoCopy.sessionIndex,
     workspaces: autoCopy.workspaces,
@@ -483,10 +484,29 @@ function getAutoCopyRules(dataDir, uid) {
     }
   }
   return {
+    allSessions: config.allSessions === true,
     sessionIds,
     lineages,
     workspaces: Object.keys(config.workspaces),
   };
+}
+
+function setAutoCopyAllSessions(dataDir, enabled) {
+  const meta = readMeta(dataDir);
+  const config = ensureAutoCopyMeta(meta);
+  config.allSessions = enabled === true;
+  writeMeta(dataDir, meta);
+  return { allSessions: config.allSessions };
+}
+
+function isAutoCopySessionSelected(rules, session) {
+  if (rules && rules.allSessions === true) return true;
+  const sessionId = String(session && session.id || '');
+  const workspace = canonicalWorkspace(session && session.cwd);
+  const sessionIds = rules && Array.isArray(rules.sessionIds) ? rules.sessionIds : [];
+  const workspaces = rules && Array.isArray(rules.workspaces) ? rules.workspaces : [];
+  return sessionIds.some((id) => String(id) === sessionId)
+    || workspaces.some((cwd) => canonicalWorkspace(cwd) === workspace);
 }
 
 function setAutoCopyRule(dataDir, { uid, kind, key, enabled }) {
@@ -599,22 +619,34 @@ function selectLatestAutoCopyMember(members) {
   return best ? members[best.memberIndex] : null;
 }
 
-function ensureAutoCopySession(dataDir, uid, sessionId) {
+function ensureAutoCopySessions(dataDir, uid, sessionIds, options) {
   const meta = readMeta(dataDir);
   const config = ensureAutoCopyMeta(meta);
   const sourceUid = String(uid || '').trim();
-  const id = String(sessionId || '').trim();
-  if (!sourceUid || !id) throw new Error('缺少共享会话标识');
+  const ids = Array.from(new Set((Array.isArray(sessionIds) ? sessionIds : [sessionIds])
+    .map((id) => String(id || '').trim())
+    .filter(Boolean)));
+  if (!sourceUid || !ids.length) throw new Error('缺少共享会话标识');
   if (!config.sessionIndex[sourceUid]) config.sessionIndex[sourceUid] = {};
-  let lineageId = config.sessionIndex[sourceUid][id];
-  if (!lineageId || !config.sessions[lineageId]) {
-    lineageId = crypto.randomUUID();
-    config.sessions[lineageId] = { enabled: true, members: [], createdAt: Date.now() };
-    config.sessionIndex[sourceUid][id] = lineageId;
-  }
-  addLineageMember(config.sessions[lineageId], sourceUid, id);
+  const lineages = {};
+  ids.forEach((id) => {
+    let lineageId = config.sessionIndex[sourceUid][id];
+    if (!lineageId || !config.sessions[lineageId]) {
+      lineageId = crypto.randomUUID();
+      config.sessions[lineageId] = { enabled: !(options && options.enabled === false), members: [], createdAt: Date.now() };
+      config.sessionIndex[sourceUid][id] = lineageId;
+    }
+    addLineageMember(config.sessions[lineageId], sourceUid, id);
+    lineages[id] = lineageId;
+  });
   writeMeta(dataDir, meta);
-  return lineageId;
+  return lineages;
+}
+
+function ensureAutoCopySession(dataDir, uid, sessionId, options) {
+  const id = String(sessionId || '').trim();
+  if (!id) throw new Error('缺少共享会话标识');
+  return ensureAutoCopySessions(dataDir, uid, [id], options)[id];
 }
 
 function addAutoCopySessionMember(dataDir, lineageId, uid, sessionId) {
@@ -1087,10 +1119,13 @@ module.exports = {
   canonicalWorkspace,
   getAutoCopyRules,
   setAutoCopyRule,
+  setAutoCopyAllSessions,
+  isAutoCopySessionSelected,
   getAutoCopySession,
   getAutoCopySessionMembers,
   getAutoCopySessionMemberRecords,
   selectLatestAutoCopyMember,
+  ensureAutoCopySessions,
   ensureAutoCopySession,
   addAutoCopySessionMember,
   removeAutoCopySessionMember,
