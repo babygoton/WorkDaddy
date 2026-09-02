@@ -2107,7 +2107,13 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       }
 
       function ensureRoot() {
-        if (root && root.isConnected) return;
+        if (root && root.isConnected) {
+          if (surface && surface.scrollElement && root.parentNode !== surface.scrollElement &&
+              typeof surface.scrollElement.appendChild === 'function') {
+            surface.scrollElement.appendChild(root);
+          }
+          return;
+        }
         root = document.createElement('div');
         root.className = 'wbs-message-nav-root';
         renderedSignature = '';
@@ -2122,7 +2128,9 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         tooltip.hidden = true;
         root.appendChild(rail);
         root.appendChild(tooltip);
-        document.body.appendChild(root);
+        var mount = surface && surface.scrollElement;
+        if (!mount || typeof mount.appendChild !== 'function') mount = document.body;
+        mount.appendChild(root);
         listen(root, 'pointerover', onPointerOver);
         listen(root, 'pointerout', onPointerOut);
         listen(root, 'focusin', onFocusIn);

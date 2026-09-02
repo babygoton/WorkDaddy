@@ -7,23 +7,22 @@ const test = require('node:test');
 
 const compat = require('../scripts/workbuddy-compat.js');
 
-test('modern conversation surface is discovered without treating mounted virtual items as the message source', () => {
-  const conversationElement = { name: 'conversation' };
-  const scrollElement = { name: 'scroll' };
-  const viewportElement = { name: 'viewport' };
-  const contentElement = { name: 'content' };
+test('message navigation uses cr-message-list as the single stable surface seam', () => {
+  const messageList = { name: 'message-list' };
   const documentLike = {
     querySelector(selector) {
-      if (selector === '.cr-message-list') return scrollElement;
-      if (selector === '.cr-message-list-viewport') return viewportElement;
-      if (selector === '.cr-message-list__content') return contentElement;
-      if (selector === '.cr-document[data-root-id]') return conversationElement;
+      if (selector === 'div.cr-message-list') return messageList;
       return null;
     },
   };
 
   const surface = compat.findMessageNavigationSurface(documentLike);
-  assert.deepEqual(surface, { scrollElement, viewportElement, contentElement, conversationElement });
+  assert.deepEqual(surface, {
+    scrollElement: messageList,
+    viewportElement: messageList,
+    contentElement: messageList,
+    conversationElement: messageList,
+  });
 });
 
 test('all navigation turns are built from the structured message store regardless of DOM virtualization', () => {
@@ -81,10 +80,7 @@ test('message navigation adapter discovers the complete store and official virtu
   const contentElement = {};
   const documentLike = {
     querySelector(selector) {
-      if (selector === '.cr-message-list') return scrollElement;
-      if (selector === '.cr-message-list-viewport') return viewportElement;
-      if (selector === '.cr-message-list__content') return contentElement;
-      if (selector === '.cr-document[data-root-id]') return conversationElement;
+      if (selector === 'div.cr-message-list') return scrollElement;
       return null;
     },
   };
