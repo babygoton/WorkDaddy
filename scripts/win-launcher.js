@@ -1113,7 +1113,10 @@ function launchWorkBuddy(wb) {
     ? { ...process.env, WORKBUDDY_REMOTE_DEBUGGING_PORT: String(CDP_PORT) }
     : process.env;
   const child = spawn(wb, args, {
-    cwd: path.dirname(wb), detached: true, stdio: 'ignore', windowsHide: true, env,
+    // WorkBuddy 是 GUI 程序：windowsHide:true 会把 STARTUPINFO 的 wShowWindow 置为 SW_HIDE，
+    // 新版 Electron 主窗口显示走 ShowWindow(SW_SHOWDEFAULT) 会继承该值，导致主窗口隐藏启动、
+    // 只剩托盘图标。windowsHide 只应用于控制台子进程防黑窗。
+    cwd: path.dirname(wb), detached: true, stdio: 'ignore', windowsHide: false, env,
   });
   const state = { method: 'node-spawn', pid: Number.isSafeInteger(child.pid) ? child.pid : null, errorCode: null, exitCode: null, signal: null };
   child.on('error', (e) => {
