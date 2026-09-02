@@ -106,6 +106,7 @@ const { buildCreditResourceBody } = require('./credit-resource-queries.js');
 const { fetchUsageSinceAnchor, startOfLocalDay } = require('./credit-request-usage.js');
 const { createCreditUsageStore } = require('./credit-usage-store.js');
 const { classifyCheckinResult } = require('./checkin-result.js');
+const { fetchGrowthTodayActive, activateGrowthAccount } = require('./growth-active.js');
 const {
   captureException,
   captureMessage,
@@ -235,8 +236,11 @@ const DATA_DIR = defaultDataDir();
 // 1.1.28：Windows 安装向导支持选择并锁定 WorkBuddy 客户端，企业版使用进程级环境变量 CDP。
 // 1.1.28：修复首次会话播种的 profile 目录缺失，以及 native lifecycle helper 误计自身进程。
 // 1.1.29：自动复制会话按 lineage 内最新消息文件做双向全成员同步，避免跨账号往返后历史分叉。
-const DAEMON_VERSION = '1.1.29';
-const DAEMON_BUILD_ID = 'release-1.1.29-20260831-merged-release';
+// 1.1.30：新增「今日活跃」查询接口（成长中心热力墙 is_active），复用签到 Bearer 鉴权与 profile 归属域名。
+// 1.1.31：支持用备份账号 token 独立创建 cloud conversation 并发送最小 prompt，不切换当前登录账号。
+// 1.1.32：主题页支持独立调节背景毛玻璃模糊程度。
+const DAEMON_VERSION = '1.1.32';
+const DAEMON_BUILD_ID = 'release-1.1.32-20260902-background-blur';
 const HOST = '127.0.0.1';
 const IS_WIN = process.platform === 'win32'; // Windows 移植：平台分支开关（macOS 行为保持不变）
 // Windows 安装目录（install.ps1 铺、launcher 用、更新替换目标），对应 macOS 的 /Applications/WorkDaddy.app
@@ -252,6 +256,8 @@ const CDP_PORT_HINT = process.env.WBSWITCH_CDP_PORT
 const CDP_PORT_FILE = path.join(DATA_DIR, 'cdp-port.json');
 const UI_PORT_FILE = path.join(DATA_DIR, 'ui-port.json');
 const API_TOKEN_FILE = path.join(DATA_DIR, '.api-token');
+const BACKGROUND_BLUR_FILE = path.join(DATA_DIR, 'background-blur.json');
+const MAX_BACKGROUND_BLUR_PX = 32;
 const CREDIT_USAGE_DB_FILE = path.join(DATA_DIR, 'credit-usage.db');
 const CREDIT_USAGE_STORE = createCreditUsageStore({ dbPath: CREDIT_USAGE_DB_FILE, profileId: PROFILE.id });
 const CREDIT_USAGE_REFRESH_MS = 15000;
@@ -4035,6 +4041,14 @@ function currentAccount() {
   }
 }
 
+function accountBackupFile(uid) {
+  const value = String(uid || '').trim();
+  if (!/^[A-Za-z0-9_-]{1,128}$/.test(value)) {
+    throw new Error('uid 格式无效');
+  }
+  return path.join(DATA_DIR, 'accounts', `${value}.info`);
+}
+
 /* ================= 暂存提示词（stash）辅助 ================= */
 
 function stashDir() {
@@ -4271,7 +4285,12 @@ function initBuiltinAssets() {
       fs.writeFileSync(maskFile, JSON.stringify({ opacity: 0.1 }, null, 2));
       log('[init] 首次初始化：背景蒙版默认 10% -> mask.json');
     }
-    // 4) 默认主题 → WorkDaddy 壁纸主题（仅当 profile 从未设置过主题）
+    // 4) 背景毛玻璃默认关闭（仅当配置不存在，不覆盖用户设置）
+    if (!fs.existsSync(BACKGROUND_BLUR_FILE)) {
+      fs.writeFileSync(BACKGROUND_BLUR_FILE, JSON.stringify({ blur: 0 }, null, 2));
+      log('[init] 首次初始化：背景毛玻璃默认 0% -> background-blur.json');
+    }
+    // 5) 默认主题 → WorkDaddy 壁纸主题（仅当 profile 从未设置过主题）
     const curFile = path.join(DATA_DIR, 'current-theme.json');
     if (!fs.existsSync(curFile)) {
       fs.writeFileSync(curFile, JSON.stringify({ id: 'nebula', at: new Date().toISOString() }, null, 2));
@@ -4600,6 +4619,17 @@ function themeVarsCss(isDark) {
   return out;
 }
 
+function readBackgroundBlur() {
+  let blur = 0;
+  try {
+    if (fs.existsSync(BACKGROUND_BLUR_FILE)) {
+      const value = parseFloat(JSON.parse(fs.readFileSync(BACKGROUND_BLUR_FILE, 'utf8')).blur);
+      if (!Number.isNaN(value)) blur = Math.min(1, Math.max(0, value));
+    }
+  } catch (_) {}
+  return blur;
+}
+
 async function applyThemeByCdp(id) {
   if (!PROFILE.capabilities.theme) throw new Error(`${PROFILE.name} 暂不支持主题功能`);
   if (!cdp.connected) throw new Error('CDP 未连接');
@@ -4661,13 +4691,18 @@ async function applyThemeByCdp(id) {
             if (!Number.isNaN(v)) mask = Math.min(1, Math.max(0, v));
           }
         } catch (_) {}
+        const blur = readBackgroundBlur();
+        const blurPx = Math.round(blur * MAX_BACKGROUND_BLUR_PX * 10) / 10;
+        const blurCss = blurPx > 0
+          ? 'backdrop-filter:blur(' + blurPx + 'px);-webkit-backdrop-filter:blur(' + blurPx + 'px);'
+          : 'backdrop-filter:none;-webkit-backdrop-filter:none;';
         bgCssStr = [
           '#root{background:',
           'linear-gradient(rgba(0,0,0,' + mask + '),rgba(0,0,0,' + mask + ')),',
           'linear-gradient(90deg,color-mix(in srgb,var(--wb-bg-primary) 40%,transparent) 0 18%,transparent 42%),',
           'linear-gradient(180deg,transparent 0 58%,color-mix(in srgb,var(--wb-bg-primary) 50%,transparent) 100%),',
           'url(' + dataUrl + ') right center / cover no-repeat fixed !important;}',
-          'body[data-vscode-theme-name] .teams-container,body[data-vscode-theme-name] .teams-container.is-mac{background:transparent !important}',
+          'body[data-vscode-theme-name] .teams-container,body[data-vscode-theme-name] .teams-container.is-mac{background:transparent !important;' + blurCss + '}',
           'body[data-vscode-theme-name] [data-view-id]{background:transparent !important}',
           'body[data-vscode-theme-name] .main-content{background:transparent !important}',
           // 左侧菜单（会话列表）透明（用户 08-30 00:46 要求去掉毛玻璃，连同子组件全透明，背景图直接透出）
@@ -5654,6 +5689,7 @@ function handleApi(req, res) {
     return readBody(req).then((body) => {
       const uid = (body.uid || '').trim();
       if (!uid) return json(res, 400, { ok: false, error: '缺少 uid' });
+      if (!/^[A-Za-z0-9_-]{1,128}$/.test(uid)) return json(res, 400, { ok: false, error: 'uid 格式无效' });
       try {
         const r = deleteAccount(DATA_DIR, uid);
         const rulesRemoved = removeAutoCopyAccount(DATA_DIR, uid);
@@ -5867,8 +5903,9 @@ function handleApi(req, res) {
     return readBody(req).then(async (body) => {
       const uid = (body.uid || '').trim();
       if (!uid) return json(res, 400, { ok: false, error: '缺少 uid' });
+      if (!/^[A-Za-z0-9_-]{1,128}$/.test(uid)) return json(res, 400, { ok: false, error: 'uid 格式无效' });
       try {
-        const file = path.join(DATA_DIR, 'accounts', `${uid}.info`);
+        const file = accountBackupFile(uid);
         if (!fs.existsSync(file)) return json(res, 404, { ok: false, error: '账号备份不存在' });
         const j = JSON.parse(fs.readFileSync(file, 'utf8'));
         const tk = j.auth && j.auth.accessToken;
@@ -5902,6 +5939,58 @@ function handleApi(req, res) {
         return json(res, 200, payload);
       } catch (e) {
         log(`[credits] 查询 ${uid} 积分失败: ${e.message}`);
+        return json(res, 500, { ok: false, error: e.message });
+      }
+    });
+  }
+
+  // 查询指定账号今日是否活跃（成长中心热力墙 is_active）
+  if (req.method === 'POST' && p === '/api/growth/today-active') {
+    return readBody(req).then(async (body) => {
+      const uid = (body.uid || '').trim();
+      if (!uid) return json(res, 400, { ok: false, error: '缺少 uid' });
+      if (!/^[A-Za-z0-9_-]{1,128}$/.test(uid)) return json(res, 400, { ok: false, error: 'uid 格式无效' });
+      try {
+        const file = accountBackupFile(uid);
+        if (!fs.existsSync(file)) return json(res, 404, { ok: false, error: '账号备份不存在' });
+        const j = JSON.parse(fs.readFileSync(file, 'utf8'));
+        const tk = j.auth && j.auth.accessToken;
+        if (!tk) return json(res, 400, { ok: false, error: '备份中无 accessToken' });
+        const today = await fetchGrowthTodayActive(tk, { apiHost: PROFILE.apiHost });
+        return json(res, 200, { ok: true, uid, ...today });
+      } catch (e) {
+        log(`[growth] 查询 ${uid} 今日活跃失败: ${e.message}`);
+        return json(res, 500, { ok: false, error: e.message });
+      }
+    });
+  }
+
+  // 使用备份账号 token 独立发起一次最小 cloud conversation，达到今日活跃。
+  // 不修改当前 auth 文件，不通过 CDP 输入，也不改变当前 renderer 的登录态。
+  if (req.method === 'POST' && p === '/api/growth/activate') {
+    return readBody(req).then(async (body) => {
+      const uid = String(body && body.uid || '').trim();
+      if (!uid) return json(res, 400, { ok: false, error: '缺少 uid' });
+      if (!/^[A-Za-z0-9_-]{1,128}$/.test(uid)) return json(res, 400, { ok: false, error: 'uid 格式无效' });
+      try {
+        const file = accountBackupFile(uid);
+        if (!fs.existsSync(file)) return json(res, 404, { ok: false, error: '账号备份不存在' });
+        const j = JSON.parse(fs.readFileSync(file, 'utf8'));
+        const tk = j.auth && j.auth.accessToken;
+        if (!tk) return json(res, 400, { ok: false, error: '备份中无 accessToken' });
+        const before = await fetchGrowthTodayActive(tk, { apiHost: PROFILE.apiHost });
+        if (before.is_active) return json(res, 200, { ok: true, uid, activated: false, alreadyActive: true, ...before });
+        const created = await activateGrowthAccount(tk, { apiHost: PROFILE.apiHost });
+        let after = before;
+        for (let attempt = 0; attempt < 3; attempt++) {
+          after = await fetchGrowthTodayActive(tk, { apiHost: PROFILE.apiHost });
+          if (after.is_active || attempt === 2) break;
+          await new Promise((resolve) => setTimeout(resolve, 500));
+        }
+        log(`[growth] 账号 ${uid} 已通过独立会话发起活跃探测（active=${after.is_active}）`);
+        return json(res, 200, { ok: true, uid, activated: after.is_active, alreadyActive: false, conversationId: created.conversationId, ...after });
+      } catch (e) {
+        log(`[growth] 账号 ${uid} 独立会话活跃失败: ${e.message}`);
         return json(res, 500, { ok: false, error: e.message });
       }
     });
@@ -6131,6 +6220,31 @@ function handleApi(req, res) {
         return applyThemeByCdp(cur)
           .then((info) => json(res, 200, { ok: true, opacity, applied: info.ok }))
           .catch((e) => json(res, 500, { ok: false, error: '蒙版已保存但应用失败: ' + e.message }));
+      } catch (e) {
+        return json(res, 500, { ok: false, error: e.message });
+      }
+    });
+  }
+
+  // 背景图毛玻璃模糊程度（0~1，默认 0）：GET 读取、POST 保存并重应用当前主题。
+  // 百分比到像素的映射只在主题应用时执行，避免把 CSS 实现细节暴露给前端。
+  if (req.method === 'GET' && p === '/api/blur') {
+    return json(res, 200, { ok: true, blur: readBackgroundBlur() });
+  }
+  if (req.method === 'POST' && p === '/api/blur') {
+    return readBody(req).then((body) => {
+      try {
+        const blur = Math.min(1, Math.max(0, parseFloat(body && body.blur)));
+        if (Number.isNaN(blur)) return json(res, 400, { ok: false, error: 'blur 必须是数字' });
+        fs.writeFileSync(BACKGROUND_BLUR_FILE, JSON.stringify({ blur }, null, 2));
+        log('[theme] 背景毛玻璃模糊程度 -> ' + blur);
+        const cur = fs.existsSync(path.join(DATA_DIR, 'current-theme.json'))
+          ? JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'current-theme.json'), 'utf8')).id
+          : 'default';
+        if (cur === 'default') return json(res, 200, { ok: true, blur, applied: false });
+        return applyThemeByCdp(cur)
+          .then((info) => json(res, 200, { ok: true, blur, applied: info.ok }))
+          .catch((e) => json(res, 500, { ok: false, error: '模糊设置已保存但应用失败: ' + e.message }));
       } catch (e) {
         return json(res, 500, { ok: false, error: e.message });
       }

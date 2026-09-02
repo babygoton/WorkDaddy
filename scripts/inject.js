@@ -5,7 +5,7 @@
  *  1. 右下角圆形黑色悬浮按钮（hover 展开为胶囊显示"WorkDaddy"）
  *  2. 点击按钮弹出账号面板（白色主题）：面板右下角与按钮右下角重叠；面板打开时按钮隐藏，关闭后恢复
  *  3. 账号列表展示 昵称 / 手机（明文） / Token 过期时间（<7 天红字）；不展示 uid/uin/上次登录
- *  4. 每账号右侧为「切换」「删除」纯图标按钮（当前登录账号隐藏这两个按钮）；「删除」红色、二次确认永久删除
+ *  4. 每账号右侧为「发起会话」「切换」「删除」纯图标按钮；发起会话使用备份 token，不切换当前账号
  *  5. 面板底部「退出登录」（假退出：仅退回登录页，token 不过期，可随时切回）
  *  6. 每日签到改为打开面板即自动调接口（见 daemon 的 claimDailyForAll），带每日缓存，无需按钮
  *  6. 备份由守护进程自动完成，面板不提供备份按钮
@@ -582,6 +582,9 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
   var SWITCH_SVG =
     '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
     '<path d="M16 3l4 4-4 4"/><path d="M20 7H8"/><path d="M8 21l-4-4 4-4"/><path d="M4 17h12"/></svg>';
+  var GROWTH_ACTIVATE_SVG =
+    '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+    '<path d="M12 3v18M3 12h18"/><path d="m19 5-2 2M5 5l2 2M19 19l-2-2M5 19l2-2"/></svg>';
   var AUTO_COPY_SVG =
     '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
     '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M4 16V6a2 2 0 0 1 2-2h10"/><path d="M15 3l3 1-1 3"/></svg>';
@@ -3774,7 +3777,11 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       var panes = root.querySelectorAll('.wbs-pane');
       for (var i = 0; i < tabs.length; i++) tabs[i].classList.toggle('active', tabs[i].getAttribute('data-tab') === name);
       for (var j = 0; j < panes.length; j++) panes[j].classList.toggle('active', panes[j].getAttribute('data-pane') === name);
-      if (name === 'theme') { if (themePane && !themePane.dataset.built) buildThemePane(); loadWallpapers(); }
+      if (name === 'theme') {
+        if (themePane && !themePane.dataset.built) buildThemePane();
+        var themeBtn = themePane && themePane.querySelector('.wbs-theme-opt.active');
+        syncWallpaperCardVisibility(themeBtn ? themeBtn.getAttribute('data-theme') : 'default');
+      }
       if (name === 'sessions' && sessionsPane && !sessionsPane.dataset.built) buildSessionsPane();
       if (name === 'models' && modelsPane && !modelsPane.dataset.built) buildModelsPane();
       if (name === 'enhance' && enhancePane && !enhancePane.dataset.built) buildEnhancePane();
@@ -4724,7 +4731,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       };
     }
 
-    // ===== 主题 pane（构建：主题选择 + 背景图来源切换[官方壁纸/自定义上传] + 毛玻璃 + 头像）=====
+    // ===== 主题 pane（构建：主题选择 + 头像 + WorkDaddy 壁纸）=====
     function buildThemePane() {
       if (!themePane) return;
       themePane.dataset.built = '1';
@@ -4738,8 +4745,17 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         '<button class="wbs-theme-opt" type="button" data-theme="nebula">' + WBS_BRAND + '</button>' +
         '</div>' +
         '</div>' +
-        '<div class="wbs-pcard">' +
-        '<div class="wbs-pcard-title">背景与头像</div>' +
+        '<div class="wbs-pcard wbs-avatar-card">' +
+        '<div class="wbs-pcard-title">头像</div>' +
+        '<div class="wbs-avatar-row">' +
+        '<img class="wbs-avatar-preview" id="wbs-avatar-preview" alt="头像预览" title="点击恢复官方头像">' +
+        '<button class="wbs-theme-upload" id="wbs-avatar-upload" type="button" title="上传图片替换左下角头像">更换头像</button>' +
+        '<button class="wbs-theme-upload" id="wbs-avatar-reset" type="button" title="恢复 WorkBuddy 官方头像">恢复默认</button>' +
+        '<input type="file" id="wbs-avatar-file" accept="image/png,image/jpeg,image/webp" style="display:none">' +
+        '</div>' +
+        '</div>' +
+        '<div class="wbs-pcard wbs-wallpaper-card" id="wbs-wallpaper-card" style="display:none">' +
+        '<div class="wbs-pcard-title">壁纸</div>' +
         '<div class="wbs-bg-source">' +
         '<button class="wbs-bg-src active" type="button" data-src="official">' + WBS_BRAND + ' 壁纸</button>' +
         '<button class="wbs-bg-src" type="button" data-src="custom">自定义壁纸</button>' +
@@ -4752,16 +4768,15 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         '<div class="wbs-wallpapers wbs-custom-wallpapers" id="wbs-custom-wallpapers"><div class="wbs-wp-loading">壁纸加载中…</div></div>' +
         '<input type="file" id="wbs-theme-file" accept="image/png,image/jpeg,image/webp" style="display:none">' +
         '</div>' +
-        '<div class="wbs-avatar-row">' +
-        '<img class="wbs-avatar-preview" id="wbs-avatar-preview" alt="头像预览" title="点击恢复官方头像">' +
-        '<button class="wbs-theme-upload" id="wbs-avatar-upload" type="button" title="上传图片替换左下角头像">更换头像</button>' +
-        '<button class="wbs-theme-upload" id="wbs-avatar-reset" type="button" title="恢复 WorkBuddy 官方头像">恢复默认</button>' +
-        '<input type="file" id="wbs-avatar-file" accept="image/png,image/jpeg,image/webp" style="display:none">' +
-        '</div>' +
         '<div class="wbs-mask-row">' +
         '<label class="wbs-blur-label" for="wbs-mask-range">背景蒙版<span class="wbs-blur-hint">黑色半透明遮罩，压暗背景图</span></label>' +
         '<input type="range" id="wbs-mask-range" min="0" max="100" step="1" value="30">' +
         '<span class="wbs-mask-val" id="wbs-mask-val">30%</span>' +
+        '</div>' +
+        '<div class="wbs-mask-row">' +
+        '<label class="wbs-blur-label" for="wbs-bg-blur-range">背景毛玻璃<span class="wbs-blur-hint">0% 不调节背景图</span></label>' +
+        '<input type="range" id="wbs-bg-blur-range" min="0" max="100" step="1" value="0">' +
+        '<span class="wbs-mask-val" id="wbs-bg-blur-val">0%</span>' +
         '</div>' +
         '</div>';
       wireThemePane();
@@ -5327,6 +5342,15 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       });
     }
 
+    function syncWallpaperCardVisibility(themeId) {
+      if (!themePane) return;
+      var card = themePane.querySelector('#wbs-wallpaper-card');
+      if (!card) return;
+      var visible = themeId === 'nebula';
+      card.style.display = visible ? '' : 'none';
+      if (visible) loadWallpapers();
+    }
+
     // 主题 pane 事件绑定（元素在 buildThemePane 之后才存在，延迟到首次切换时绑定）
     function wireThemePane() {
       // 主题选择：segmented 按钮直接切换
@@ -5338,11 +5362,13 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
           // 不做 active 拦截：即使当前已是该主题也强制重新应用（保证「切换到默认主题=强制浅色 / 切换到 WorkDaddy 主题=强制深色」始终生效，面板状态与真实主题不一致时也能纠正）
           var previous = themePane.querySelector('.wbs-theme-opt.active');
           themePane.querySelectorAll('.wbs-theme-opt').forEach(function (b) { b.classList.toggle('active', b === segBtn); });
+          syncWallpaperCardVisibility(id);
           applyTheme(id).then(function () {
             var names = { 'default': '默认', 'nebula': WBS_BRAND + ' 主题', 'eye-care': '护眼绿', 'cyber-purple': '赛博紫' };
             toast('已应用主题「' + (names[id] || id) + '」', false, root);
           }).catch(function (er) {
             themePane.querySelectorAll('.wbs-theme-opt').forEach(function (b) { b.classList.toggle('active', b === previous); });
+            syncWallpaperCardVisibility(previous ? previous.getAttribute('data-theme') : 'default');
             toast('应用主题失败: ' + (er.message || er), true, root);
           });
           return;
@@ -5435,6 +5461,33 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
             var pct = Math.round(d.opacity * 100);
             maskRange.value = String(pct);
             if (maskVal) maskVal.textContent = pct + '%';
+          }
+        }).catch(function () {});
+      }
+      // 背景毛玻璃滑块：拖动防抖 300ms 调 /api/blur（daemon 保存 + 重应用主题）
+      var blurRange = themePane.querySelector('#wbs-bg-blur-range');
+      var blurVal = themePane.querySelector('#wbs-bg-blur-val');
+      var blurTimer = null;
+      if (blurRange) {
+        blurRange.addEventListener('input', function () {
+          var pct = parseInt(this.value, 10) || 0;
+          if (blurVal) blurVal.textContent = pct + '%';
+          clearTimeout(blurTimer);
+          blurTimer = setBuildTimeout(function () {
+            api('/api/blur', {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ blur: pct / 100 }),
+            }).catch(function (e) {
+              toast('毛玻璃设置失败: ' + (e.message || e), true, root);
+            });
+          }, 300);
+        });
+        api('/api/blur').then(function (d) {
+          if (d && typeof d.blur === 'number') {
+            var pct = Math.round(d.blur * 100);
+            blurRange.value = String(pct);
+            if (blurVal) blurVal.textContent = pct + '%';
           }
         }).catch(function () {});
       }
@@ -5868,6 +5921,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
           seg.querySelectorAll('.wbs-theme-opt').forEach(function (b) {
             b.classList.toggle('active', b.getAttribute('data-theme') === cur);
           });
+          syncWallpaperCardVisibility(cur);
           // 若当前主题不在允许列表（如之前应用了自定义主题），回退到默认主题
           if (d.current && ALLOWED_THEMES.indexOf(d.current) < 0 && cur === 'default') {
             applyTheme('default').catch(function () {});
@@ -8715,12 +8769,12 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         var curMark = isCur ? '<span class="wbs-cur-marker" title="当前使用中">' + CUR_MARK_SVG + '</span>' : '';
         // 当前登录账号隐藏操作；认证已过期的账号保留删除，但隐藏切换，避免进入登录页。
         var expired = isIdentityExpired(a);
-        var ops = isCur
+        var growthAction = expired ? '' : '<button class="wbs-icon-btn wbs-growth-activate" type="button" title="发起独立会话（不切换账号）" data-uid="' + escAttr(a.uid) + '" data-name="' + escAttr(a.nickname || '未命名') + '">' + GROWTH_ACTIVATE_SVG + '</button>';
+        var ops = growthAction + (isCur
           ? ''
-          : '<div class="wbs-ops">' +
-            (expired ? '' : '<button class="wbs-icon-btn wbs-acc-switch" type="button" title="切换" data-uid="' + escAttr(a.uid) + '" data-name="' + escAttr(a.nickname || '未命名') + '">' + SWITCH_SVG + '</button>') +
-            '<button class="wbs-icon-btn wbs-del" type="button" title="删除" data-uid="' + escAttr(a.uid) + '" data-name="' + escAttr(a.nickname || '未命名') + '">' + TRASH_SVG + '</button>' +
-            '</div>';
+          : (expired ? '' : '<button class="wbs-icon-btn wbs-acc-switch" type="button" title="切换" data-uid="' + escAttr(a.uid) + '" data-name="' + escAttr(a.nickname || '未命名') + '">' + SWITCH_SVG + '</button>') +
+            '<button class="wbs-icon-btn wbs-del" type="button" title="删除" data-uid="' + escAttr(a.uid) + '" data-name="' + escAttr(a.nickname || '未命名') + '">' + TRASH_SVG + '</button>');
+        ops = ops ? '<div class="wbs-ops">' + ops + '</div>' : '';
         // 国际版没有手机号：用 UIN（账号唯一数字标识）替代展示；国内版仍显示手机。
         // UIN 与手机号共用同一标签和值间距，确保与“剩余”额度列对齐。
         var isUinMode = !a.phone;
@@ -8782,6 +8836,31 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
             })
             .catch(function (e) { toast('切换失败: ' + e.message, true, root); })
             .finally(function () { btn.disabled = false; btn.setAttribute('title', prevTitle || '切换'); });
+        });
+      });
+      // 发起独立云端会话：使用目标备份账号 token，不改当前登录态；按钮单击即执行，避免误把它当作账号切换。
+      list.querySelectorAll('.wbs-growth-activate').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          if (btn.disabled) return;
+          btn.disabled = true;
+          var previousTitle = btn.getAttribute('title');
+          btn.setAttribute('title', '发起中…');
+          api('/api/growth/activate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ uid: btn.dataset.uid }),
+          }).then(function (r) {
+            var name = r && (r.nickname || btn.dataset.name || r.uid) || '账号';
+            if (r && r.alreadyActive) toast('「' + name + '」今日已活跃', false, root);
+            else if (r && r.activated) toast('已为「' + name + '」发起独立会话，今日已活跃', false, root);
+            else toast('「' + name + '」会话已发起，活跃状态稍后同步', false, root);
+            setBuildTimeout(refresh, 900);
+          }).catch(function (e) {
+            toast('发起会话失败: ' + e.message, true, root);
+          }).finally(function () {
+            btn.disabled = false;
+            btn.setAttribute('title', previousTitle || '发起独立会话（不切换账号）');
+          });
         });
       });
       // 删除按钮：二次确认（永久删除本地备份）
@@ -9407,6 +9486,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     /* 账号切换按钮（wbs-acc-switch，与开关 .wbs-switch 区分）：与删除按钮同尺寸同风格 */
     '.wbs-acc-switch:hover{background:var(--wb-bg-hover,#e8e9eb);color:var(--wb-color-text-primary,#1f1f1f)}',
     '.wbs-acc-switch.armed{background:#141416;color:#fff}',
+    '.wbs-growth-activate:hover{background:color-mix(in srgb,var(--wb-accent-blue,#4f86ff) 14%,var(--wb-bg-hover,#f7f8fa));color:var(--wb-accent-blue,#4f86ff)}',
     /* 删除按钮：与切换按钮同风格（灰底图标），hover/armed 才显红 */
     '.wbs-del{background:var(--wb-bg-hover,#f7f8fa);color:var(--wb-icon-secondary,#555);border-color:transparent}',
     '.wbs-del:hover{background:#ffecec;color:#f53f3f;border-color:transparent}',

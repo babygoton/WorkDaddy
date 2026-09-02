@@ -47,6 +47,19 @@ test('normal Windows startup does not use Explorer de-elevation or CIM', () => {
   assert.doesNotMatch(watchdog, /Get-CimInstance|windows-process-boundary|pending\.json/);
 });
 
+test('WorkBuddy GUI startup stays visible while the watchdog stays hidden', () => {
+  const launcher = read('scripts/win-launcher.js');
+  const watchdog = read('scripts/watchdog.js');
+  const start = launcher.indexOf('function launchWorkBuddy(wb)');
+  const end = launcher.indexOf('\nasync function waitForWorkBuddyCdp', start);
+  assert.ok(start >= 0 && end > start);
+
+  const launchBlock = launcher.slice(start, end);
+  assert.match(launchBlock, /stdio: 'ignore', windowsHide: false, env/);
+  assert.doesNotMatch(launchBlock, /stdio: 'ignore', windowsHide: true, env/);
+  assert.match(watchdog, /spawn\(process\.execPath, args, \{ stdio: 'ignore', windowsHide: true/);
+});
+
 test('installer waits for the exact profile client with a visible recheck dialog', () => {
   const installer = read('scripts/win/workdaddy.iss');
 
