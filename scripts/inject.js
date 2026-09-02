@@ -3826,15 +3826,13 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         '<button class="wbs-sess-seg-btn" type="button" data-range="all">全部</button>' +
         '</div></div>' +
         '</div>' +
-        '<button class="wbs-sess-auto-all" type="button" id="wbs-sess-auto-all" aria-pressed="false" title="切换账号时自动复制当前账号的所有会话，包括之后新增的会话">' +
-        '<span class="wbs-sess-auto-all-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M4 16H3a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/><path d="M18 2v4M16 4h4"/></svg></span>' +
-        '<span class="wbs-sess-auto-all-label">自动复制所有会话</span>' +
-        '<span class="wbs-sess-auto-all-status">已关闭</span>' +
-        '<span class="wbs-sess-auto-all-switch" aria-hidden="true"><span></span></span>' +
-        '</button>' +
         '<div class="wbs-sess-toolbar">' +
         '<button class="wbs-sess-bbtn" type="button" id="wbs-sess-batch">批量操作</button>' +
         '<button class="wbs-sess-bbtn" type="button" id="wbs-sess-import" title="从加密文件导入会话">' + IMPORT_ICON + '<span>导入</span></button>' +
+        '<button class="wbs-sess-auto-all" type="button" id="wbs-sess-auto-all" role="checkbox" aria-checked="false" aria-label="自动复制所有会话" title="切换账号时自动复制当前账号的所有会话，包括之后新增的会话">' +
+        '<span class="wbs-sess-auto-all-box" aria-hidden="true"><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="12" height="12" rx="2"/><path class="wbs-sess-auto-all-check" d="m4.5 8 2.2 2.2L11.5 5.5"/></svg></span>' +
+        '<span class="wbs-sess-auto-all-label">自动复制所有会话</span>' +
+        '</button>' +
         '<span class="wbs-sess-count" id="wbs-sess-count"></span>' +
         '<div class="wbs-sess-batchbar" id="wbs-sess-batchbar" style="display:none">' +
         '<button class="wbs-sess-bbtn wbs-sess-check-all" type="button" id="wbs-sess-check-all">全选</button>' +
@@ -4031,11 +4029,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       if (!button) return;
       var enabled = !!sessionsState.autoCopyAll;
       button.classList.toggle('active', enabled);
-      button.setAttribute('aria-pressed', enabled ? 'true' : 'false');
-      var status = button.querySelector('.wbs-sess-auto-all-status');
-      if (status) status.textContent = enabled ? '已开启' : '已关闭';
-      var toggle = button.querySelector('.wbs-sess-auto-all-switch');
-      if (toggle) toggle.classList.toggle('on', enabled);
+      button.setAttribute('aria-checked', enabled ? 'true' : 'false');
     }
     function toggleAutoCopyAll(enabled) {
       var button = sessionsPane && sessionsPane.querySelector('#wbs-sess-auto-all');
@@ -4221,9 +4215,11 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       var bar = sessionsPane.querySelector('#wbs-sess-batchbar');
       var bb = sessionsPane.querySelector('#wbs-sess-batch');
       var importBtn = sessionsPane.querySelector('#wbs-sess-import');
+      var autoCopyAllBtn = sessionsPane.querySelector('#wbs-sess-auto-all');
       var cnt = sessionsPane.querySelector('#wbs-sess-count');
       if (bb) { bb.style.display = on ? 'none' : ''; bb.classList.toggle('active', on); }
       if (importBtn) importBtn.style.display = on ? 'none' : '';
+      if (autoCopyAllBtn) autoCopyAllBtn.style.display = on ? 'none' : '';
       if (cnt) cnt.style.display = on ? 'none' : '';
       if (bar) bar.style.display = on ? 'flex' : 'none';
     }
@@ -4232,7 +4228,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       var autoCopyAllBtn = sessionsPane.querySelector('#wbs-sess-auto-all');
       if (autoCopyAllBtn) {
         autoCopyAllBtn.addEventListener('click', function () {
-          toggleAutoCopyAll(autoCopyAllBtn.getAttribute('aria-pressed') !== 'true');
+          toggleAutoCopyAll(autoCopyAllBtn.getAttribute('aria-checked') !== 'true');
         });
       }
       // 时间 Segment 组件
@@ -9636,23 +9632,22 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '.wbs-sess-seg-btn{flex:1;padding:6px 4px;border:none;border-radius:8px;background:transparent;color:var(--wb-icon-secondary,#666);font-size:12px;font-weight:600;cursor:pointer;transition:all .15s;font-family:inherit;white-space:nowrap}',
     '.wbs-sess-seg-btn:hover{color:var(--wb-color-text-primary,#1f1f1f)}',
     '.wbs-sess-seg-btn.active{background:var(--wb-button-primary-bg,#1f1f1f);color:var(--wb-button-primary-fg,#fff);box-shadow:0 1px 4px rgba(0,0,0,.2)}',
-    '.wbs-sess-auto-all{box-sizing:border-box;display:flex;align-items:center;width:100%;height:34px;gap:7px;margin:0 0 8px;padding:0 9px;border:1px solid var(--wb-border-default,#e5e5e5);border-radius:9px;background:color-mix(in srgb,var(--wb-bg-tertiary,#f0f0f0) 58%,transparent);color:var(--wb-icon-secondary,#666);font:inherit;cursor:pointer;transition:background .15s,color .15s,border-color .15s,box-shadow .15s}',
-    '.wbs-sess-auto-all:hover{border-color:var(--wb-border-strong,#bbb);background:var(--wb-bg-hover,#f5f5f5);color:var(--wb-color-text-primary,#1f1f1f)}',
-    '.wbs-sess-auto-all.active{border-color:var(--wb-button-primary-bg,#1f1f1f);background:var(--wb-button-primary-bg,#1f1f1f);color:var(--wb-button-primary-fg,#fff);box-shadow:0 1px 4px color-mix(in srgb,var(--wb-button-primary-bg,#1f1f1f) 22%,transparent)}',
-    '.wbs-sess-auto-all:disabled{opacity:.58;cursor:wait}',
-    '.wbs-sess-auto-all-icon{display:inline-flex;align-items:center;justify-content:center;flex:0 0 18px}',
-    '.wbs-sess-auto-all-label{min-width:0;flex:1;text-align:left;font-size:12px;font-weight:650;white-space:nowrap}',
-    '.wbs-sess-auto-all-status{flex:0 0 auto;font-size:10px;opacity:.7;white-space:nowrap}',
-    '.wbs-sess-auto-all-switch{position:relative;display:inline-flex;align-items:center;width:26px;height:16px;flex:0 0 26px;border-radius:999px;background:var(--wb-bg-tertiary,#d9d9d9);transition:background .15s}',
-    '.wbs-sess-auto-all-switch span{width:12px;height:12px;margin-left:2px;border-radius:50%;background:var(--wb-bg-popover,#fff);box-shadow:0 1px 2px rgba(0,0,0,.2);transition:transform .15s}',
-    '.wbs-sess-auto-all.active .wbs-sess-auto-all-switch{background:color-mix(in srgb,var(--wb-button-primary-fg,#fff) 32%,transparent)}',
-    '.wbs-sess-auto-all-switch.on span{transform:translateX(10px);background:var(--wb-button-primary-fg,#fff)}',
     '.wbs-sess-toolbar{display:flex;align-items:center;gap:6px;margin-bottom:8px}',
     '.wbs-sess-refresh{display:flex;align-items:center;justify-content:center;flex-shrink:0;padding:7px;border:1px solid var(--wb-border-default,#e5e5e5);border-radius:9px;background:var(--wb-bg-popover,#fff);color:var(--wb-icon-secondary,#555);font-size:12px;cursor:pointer;line-height:1;transition:all .15s}',
     '.wbs-sess-refresh:hover{background:var(--wb-bg-hover,#f5f5f5);color:var(--wb-color-text-primary,#1f1f1f)}',
     '.wbs-sess-bbtn{display:inline-flex;align-items:center;justify-content:center;gap:4px;padding:7px 12px;border:1px solid var(--wb-border-default,#e5e5e5);border-radius:9px;background:var(--wb-bg-popover,#fff);color:var(--wb-icon-secondary,#555);font-size:12px;cursor:pointer;line-height:1;transition:all .15s}',
     '.wbs-sess-bbtn:hover{background:var(--wb-bg-hover,#f5f5f5);color:var(--wb-color-text-primary,#1f1f1f)}',
     '.wbs-sess-bbtn.active{background:#fff;color:#1f1f1f;border-color:#fff}',
+    '.wbs-sess-auto-all{display:inline-flex;align-items:center;justify-content:center;gap:5px;height:30px;flex:0 0 auto;padding:0 8px;border:1px solid transparent;border-radius:7px;background:transparent;color:var(--wb-icon-secondary,#555);font:inherit;font-size:11px;font-weight:600;line-height:1;cursor:pointer;transition:background .15s,color .15s,border-color .15s}',
+    '.wbs-sess-auto-all:hover{background:var(--wb-bg-hover,#f5f5f5);color:var(--wb-color-text-primary,#1f1f1f)}',
+    '.wbs-sess-auto-all.active{background:color-mix(in srgb,var(--wb-button-primary-bg,#1f1f1f) 10%,transparent);border-color:color-mix(in srgb,var(--wb-button-primary-bg,#1f1f1f) 28%,transparent);color:var(--wb-button-primary-bg,#1f1f1f)}',
+    '.wbs-sess-auto-all:disabled{opacity:.58;cursor:wait}',
+    '.wbs-sess-auto-all-box{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;flex:0 0 16px;color:var(--wb-icon-tertiary,#999)}',
+    '.wbs-sess-auto-all-box svg{display:block}',
+    '.wbs-sess-auto-all-check{opacity:0;transition:opacity .15s}',
+    '.wbs-sess-auto-all.active .wbs-sess-auto-all-box{color:var(--wb-button-primary-bg,#1f1f1f)}',
+    '.wbs-sess-auto-all.active .wbs-sess-auto-all-check{opacity:1}',
+    '.wbs-sess-auto-all-label{white-space:nowrap}',
     '.wbs-sess-batchbar{display:flex;align-items:center;gap:5px;flex-wrap:nowrap;margin:0;padding:0;border:none;background:transparent}',
     '.wbs-sess-done{margin-left:auto;color:#fff;background:#141416;border-color:#141416}',
     '.wbs-sess-done:hover{background:#2a2a2e;color:#fff}',

@@ -1035,6 +1035,12 @@ test('session copy-all is a separate override with a distinct toggle and hidden 
   assert.match(daemon, /POST' && p === '\/api\/sessions\/auto-copy-all'/);
   assert.match(daemon, /sourceRules\.allSessions/);
   assert.match(inject, /id="wbs-sess-auto-all"/);
+  assert.match(inject, /id="wbs-sess-import"[\s\S]*id="wbs-sess-auto-all"/);
+  assert.match(inject, /id="wbs-sess-auto-all"[^>]*role="checkbox"[^>]*aria-checked="false"/);
+  assert.match(inject, /wbs-sess-auto-all-box/);
+  assert.match(inject, /getAttribute\('aria-checked'\)/);
+  assert.match(inject, /\.wbs-sess-auto-all\{display:inline-flex/);
+  assert.doesNotMatch(inject, /wbs-sess-auto-all-switch/);
   assert.match(inject, /自动复制所有会话/);
   assert.match(inject, /sessionsState\.autoCopyAll/);
   assert.match(inject, /if \(sessionsState\.autoCopyAll \|\| !canEditAutoCopy\(uid\)\) return ''/);
