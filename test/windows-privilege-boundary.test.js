@@ -293,8 +293,9 @@ test('logout and restart paths refuse unverified profile processes', () => {
   assert.match(quitFunction, /revalidateWindowsWorkBuddyProcess[\s\S]*taskkill[\s\S]*revalidateWindowsWorkBuddyProcess[\s\S]*taskkill/);
   const logoutStart = daemonSource.indexOf("p === '/api/logout'");
   const quitIndex = daemonSource.indexOf('await quitWorkBuddy()', logoutStart);
-  const unlinkIndex = daemonSource.indexOf('fs.unlinkSync(AUTH_FILE)', logoutStart);
-  assert.ok(logoutStart >= 0 && quitIndex > logoutStart && unlinkIndex > quitIndex);
+  const listIndex = daemonSource.indexOf('const authFiles = listAuthFiles()', logoutStart);
+  const unlinkIndex = daemonSource.indexOf('fs.unlinkSync(file)', logoutStart);
+  assert.ok(logoutStart >= 0 && quitIndex > logoutStart && listIndex > quitIndex && unlinkIndex > listIndex);
 });
 
 test('Windows self-check includes the shared boundary and old admin comments are removed', () => {
