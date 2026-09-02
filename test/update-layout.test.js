@@ -694,6 +694,9 @@ test('account cards keep the compact three-row layout', () => {
   assert.match(script, /row0\.insertBefore\(stashBtn, row0\.firstChild\)/);
   assert.match(script, /wbs-credit-hidden/);
   assert.match(script, /var expired = isIdentityExpired\(a\)/);
+  assert.match(script, /wbs-growth-activate/);
+  assert.match(script, /api\('\/api\/growth\/activate'/);
+  assert.match(script, /发起独立会话（不切换账号）/);
   assert.match(script, /expired \? '' : '<button class="wbs-icon-btn wbs-acc-switch"/);
   assert.match(script, /switchBtn\.style\.display = hidden \? 'none' : ''/);
   assert.match(script, /height:5px;min-height:5px/);
@@ -1035,6 +1038,12 @@ test('session copy-all is a separate override with a distinct toggle and hidden 
   assert.match(daemon, /POST' && p === '\/api\/sessions\/auto-copy-all'/);
   assert.match(daemon, /sourceRules\.allSessions/);
   assert.match(inject, /id="wbs-sess-auto-all"/);
+  assert.match(inject, /id="wbs-sess-import"[\s\S]*id="wbs-sess-auto-all"/);
+  assert.match(inject, /id="wbs-sess-auto-all"[^>]*role="checkbox"[^>]*aria-checked="false"/);
+  assert.match(inject, /wbs-sess-auto-all-box/);
+  assert.match(inject, /getAttribute\('aria-checked'\)/);
+  assert.match(inject, /\.wbs-sess-auto-all\{display:inline-flex/);
+  assert.doesNotMatch(inject, /wbs-sess-auto-all-switch/);
   assert.match(inject, /自动复制所有会话/);
   assert.match(inject, /sessionsState\.autoCopyAll/);
   assert.match(inject, /if \(sessionsState\.autoCopyAll \|\| !canEditAutoCopy\(uid\)\) return ''/);
