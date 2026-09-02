@@ -106,6 +106,7 @@ const { buildCreditResourceBody } = require('./credit-resource-queries.js');
 const { fetchUsageSinceAnchor, startOfLocalDay } = require('./credit-request-usage.js');
 const { createCreditUsageStore } = require('./credit-usage-store.js');
 const { classifyCheckinResult } = require('./checkin-result.js');
+const { fetchGrowthTodayActive } = require('./growth-active.js');
 const {
   captureException,
   captureMessage,
@@ -235,8 +236,9 @@ const DATA_DIR = defaultDataDir();
 // 1.1.28：Windows 安装向导支持选择并锁定 WorkBuddy 客户端，企业版使用进程级环境变量 CDP。
 // 1.1.28：修复首次会话播种的 profile 目录缺失，以及 native lifecycle helper 误计自身进程。
 // 1.1.29：自动复制会话按 lineage 内最新消息文件做双向全成员同步，避免跨账号往返后历史分叉。
-const DAEMON_VERSION = '1.1.29';
-const DAEMON_BUILD_ID = 'release-1.1.29-20260831-merged-release';
+// 1.1.30：新增「今日活跃」查询接口（成长中心热力墙 is_active），复用签到 Bearer 鉴权与 profile 归属域名。
+const DAEMON_VERSION = '1.1.30';
+const DAEMON_BUILD_ID = 'release-1.1.30-20260901-growth-active';
 const HOST = '127.0.0.1';
 const IS_WIN = process.platform === 'win32'; // Windows 移植：平台分支开关（macOS 行为保持不变）
 // Windows 安装目录（install.ps1 铺、launcher 用、更新替换目标），对应 macOS 的 /Applications/WorkDaddy.app
@@ -5902,6 +5904,26 @@ function handleApi(req, res) {
         return json(res, 200, payload);
       } catch (e) {
         log(`[credits] 查询 ${uid} 积分失败: ${e.message}`);
+        return json(res, 500, { ok: false, error: e.message });
+      }
+    });
+  }
+
+  // 查询指定账号今日是否活跃（成长中心热力墙 is_active）
+  if (req.method === 'POST' && p === '/api/growth/today-active') {
+    return readBody(req).then(async (body) => {
+      const uid = (body.uid || '').trim();
+      if (!uid) return json(res, 400, { ok: false, error: '缺少 uid' });
+      try {
+        const file = path.join(DATA_DIR, 'accounts', `${uid}.info`);
+        if (!fs.existsSync(file)) return json(res, 404, { ok: false, error: '账号备份不存在' });
+        const j = JSON.parse(fs.readFileSync(file, 'utf8'));
+        const tk = j.auth && j.auth.accessToken;
+        if (!tk) return json(res, 400, { ok: false, error: '备份中无 accessToken' });
+        const today = await fetchGrowthTodayActive(tk, { apiHost: PROFILE.apiHost });
+        return json(res, 200, { ok: true, uid, ...today });
+      } catch (e) {
+        log(`[growth] 查询 ${uid} 今日活跃失败: ${e.message}`);
         return json(res, 500, { ok: false, error: e.message });
       }
     });
