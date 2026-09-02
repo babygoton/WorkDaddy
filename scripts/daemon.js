@@ -85,6 +85,7 @@ const {
   selectLatestAutoCopyMember,
   ensureAutoCopySessions,
   ensureAutoCopySession,
+  normalizeAutoCopyLineages,
   addAutoCopySessionMember,
   moveAutoCopySession,
   removeAutoCopySession,
@@ -245,8 +246,8 @@ const DATA_DIR = defaultDataDir();
 // 1.1.31：支持用备份账号 token 独立创建 cloud conversation 并发送最小 prompt，不切换当前登录账号。
 // 1.1.32：主题页支持独立调节背景毛玻璃模糊程度。
 // 1.1.33：按账号和 lineage 折叠历史重复会话，避免全量自动复制后两账号计数分叉。
-const DAEMON_VERSION = '1.1.32';
-const DAEMON_BUILD_ID = 'release-1.1.32-20260902-background-blur';
+const DAEMON_VERSION = '1.1.33';
+const DAEMON_BUILD_ID = 'release-1.1.33-20260903-auto-copy-lineage';
 const HOST = '127.0.0.1';
 const IS_WIN = process.platform === 'win32'; // Windows 移植：平台分支开关（macOS 行为保持不变）
 // Windows 安装目录（install.ps1 铺、launcher 用、更新替换目标），对应 macOS 的 /Applications/WorkDaddy.app
@@ -3164,6 +3165,7 @@ async function buildAutoCopyPlan(sourceUid, targetUid) {
   const source = String(sourceUid || '').trim();
   const target = String(targetUid || '').trim();
   if (!source || !target || source === target) return [];
+  normalizeAutoCopyLineages(DATA_DIR);
   const rules = getAutoCopyRules(DATA_DIR, source);
   if (!rules.allSessions && !rules.sessionIds.length && !rules.workspaces.length) return [];
   const rows = await sqliteQuery(
@@ -6280,6 +6282,7 @@ function handleApi(req, res) {
 
   // 会话列表：GET /api/sessions?uid=<账号uid>&range=today|7d|30d|all（uid 缺省=当前账号；uid=空=全部账号）
   if (req.method === 'GET' && p === '/api/sessions') {
+    normalizeAutoCopyLineages(DATA_DIR);
     const uidParam = url.searchParams.get('uid');
     const uid = uidParam === null ? (((currentAccount() || {}).uid || '').trim()) : uidParam.trim();
     const range = url.searchParams.get('range') || '7d';

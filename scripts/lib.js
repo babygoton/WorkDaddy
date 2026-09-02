@@ -670,6 +670,43 @@ function ensureAutoCopySession(dataDir, uid, sessionId, options) {
   return ensureAutoCopySessions(dataDir, uid, [id], options)[id];
 }
 
+// Keep the core lineage invariant: one physical session per account in each
+// lineage. Older copy jobs could append a second session for the same account
+// when a mapping was stale. Preserve every physical row, but move duplicates
+// to their own lineage so the next all-session reconciliation can pair them.
+function normalizeAutoCopyLineages(dataDir) {
+  const meta = readMeta(dataDir);
+  const config = ensureAutoCopyMeta(meta);
+  let changed = false;
+  for (const lineageId of Object.keys(config.sessions)) {
+    const lineage = config.sessions[lineageId];
+    if (!lineage || !Array.isArray(lineage.members)) continue;
+    const seenUids = new Set();
+    const kept = [];
+    for (const member of lineage.members) {
+      const uid = String(member && member.uid || '').trim();
+      const id = String(member && member.id || '').trim();
+      if (!uid || !id || !seenUids.has(uid)) {
+        if (uid) seenUids.add(uid);
+        kept.push(member);
+        continue;
+      }
+      const replacementId = crypto.randomUUID();
+      config.sessions[replacementId] = {
+        enabled: lineage.enabled !== false,
+        members: [{ uid, id }],
+        createdAt: Date.now(),
+      };
+      if (!config.sessionIndex[uid]) config.sessionIndex[uid] = {};
+      config.sessionIndex[uid][id] = replacementId;
+      changed = true;
+    }
+    if (kept.length !== lineage.members.length) lineage.members = kept;
+  }
+  if (changed) writeMeta(dataDir, meta);
+  return changed;
+}
+
 function addAutoCopySessionMember(dataDir, lineageId, uid, sessionId) {
   const meta = readMeta(dataDir);
   const config = ensureAutoCopyMeta(meta);
@@ -1149,6 +1186,7 @@ module.exports = {
   selectLatestAutoCopyMember,
   ensureAutoCopySessions,
   ensureAutoCopySession,
+  normalizeAutoCopyLineages,
   addAutoCopySessionMember,
   removeAutoCopySessionMember,
   moveAutoCopySession,

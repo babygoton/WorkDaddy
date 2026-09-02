@@ -18,6 +18,7 @@ const {
   getAutoCopySession,
   ensureAutoCopySession,
   ensureAutoCopySessions,
+  normalizeAutoCopyLineages,
   getAutoCopySessionMembers,
   addAutoCopySessionMember,
   removeAutoCopySessionMember,
@@ -211,6 +212,22 @@ test('duplicate session rows sharing one lineage collapse per account without de
     { id: 'a-copy', user_id: 'account-a' },
     { id: 'unmarked', user_id: 'account-s' },
   ]);
+});
+
+test('normalizing lineages separates duplicate physical sessions without deleting them', () => {
+  const dataDir = tempDataDir();
+  const lineageId = ensureAutoCopySession(dataDir, 'source', 'source-session');
+  addAutoCopySessionMember(dataDir, lineageId, 'target', 'target-old');
+  addAutoCopySessionMember(dataDir, lineageId, 'target', 'target-new');
+
+  assert.equal(normalizeAutoCopyLineages(dataDir), true);
+  const meta = JSON.parse(fs.readFileSync(metaFile(dataDir), 'utf8'));
+  const targetLineages = Object.keys(meta.autoCopy.sessions).filter((id) =>
+    (meta.autoCopy.sessions[id].members || []).some((member) => member.uid === 'target'));
+  assert.equal(targetLineages.length, 2);
+  assert.deepEqual(targetLineages.map((id) =>
+    meta.autoCopy.sessions[id].members.filter((member) => member.uid === 'target').length), [1, 1]);
+  assert.notEqual(meta.autoCopy.sessionIndex.target['target-old'], meta.autoCopy.sessionIndex.target['target-new']);
 });
 
 test('long account chains reuse one lineage and clean up without duplicate members', () => {
