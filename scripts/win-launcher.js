@@ -1261,28 +1261,6 @@ function runNativeHelper(args, options = {}) {
   return result;
 }
 
-function comparableVersion(value) {
-  const parts = String(value || '').trim().split('.').map((part) => Number(part));
-  if (!parts.length || parts.some((part) => !Number.isInteger(part) || part < 0)) return '';
-  while (parts.length > 2 && parts[parts.length - 1] === 0) parts.pop();
-  return parts.join('.');
-}
-
-function nativeFileVersion(binary) {
-  const result = runNativeHelper(['--file-version', '--binary', binary], { timeout: 10000 });
-  if (result.status !== 0) return '';
-  return String(result.stdout || '').trim();
-}
-
-function verifyConfiguredWorkBuddyVersion(binary) {
-  if (!PROFILE.configuredTarget || !PROFILE.lockTargetVersion || !PROFILE.targetVersion) return;
-  const actual = nativeFileVersion(binary);
-  if (!actual) throw new Error('无法读取所选 WorkBuddy 的版本，已停止启动；请重新运行 WorkDaddy 安装程序确认客户端路径');
-  if (comparableVersion(actual) !== comparableVersion(PROFILE.targetVersion)) {
-    throw new Error(`所选 WorkBuddy 版本已变化（期望 ${PROFILE.targetVersion}，实际 ${actual}），请重新运行 WorkDaddy 安装程序确认新版本`);
-  }
-}
-
 let nativeDiscoveryState = null;
 let nativeWatchdogAttempts = [];
 let nativeLaunchState = null;
@@ -1412,7 +1390,8 @@ function findWorkBuddyNative() {
     try {
       if (!fs.statSync(item.path).isFile()) continue;
       if (!PROFILE_BINARY_NAMES.has(path.win32.basename(item.path).toLowerCase())) continue;
-      if (PROFILE.customTarget && !sameWindowsPath(path.win32.dirname(item.path), path.win32.dirname(PROFILE.appPath))) continue;
+      if (PROFILE.configuredTarget &&
+          !sameWindowsPath(path.win32.dirname(item.path), path.win32.dirname(PROFILE.appPath))) continue;
       summary.validCandidateCount += 1;
       summary.selectedSource = item.source;
       summary.completed = true;
@@ -1640,7 +1619,6 @@ async function nativeStartupMain() {
 
   await configureCdpPort();
   await configureUiPort();
-  verifyConfiguredWorkBuddyVersion(PROFILE.appPath);
   let wb = null;
   if (!(await isWorkBuddyCdp())) {
     wb = findWorkBuddyNative();
