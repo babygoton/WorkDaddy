@@ -75,6 +75,7 @@ const {
   updateMeta,
   canonicalWorkspace,
   getAutoCopyRules,
+  dedupeAutoCopySessionRows,
   setAutoCopyRule,
   setAutoCopyAllSessions,
   isAutoCopySessionSelected,
@@ -239,8 +240,9 @@ const DATA_DIR = defaultDataDir();
 // 1.1.28：修复首次会话播种的 profile 目录缺失，以及 native lifecycle helper 误计自身进程。
 // 1.1.29：自动复制会话按 lineage 内最新消息文件做双向全成员同步，避免跨账号往返后历史分叉。
 // 1.1.30：会话页支持独立的全量自动复制覆盖开关，新会话在切换账号时自动进入幂等复制计划。
-const DAEMON_VERSION = '1.1.30';
-const DAEMON_BUILD_ID = 'release-1.1.30-20260902-auto-copy-all-sessions';
+// 1.1.31：按账号和 lineage 折叠历史重复会话，避免全量自动复制后两账号计数分叉。
+const DAEMON_VERSION = '1.1.31';
+const DAEMON_BUILD_ID = 'release-1.1.31-20260903-auto-copy-dedupe';
 const HOST = '127.0.0.1';
 const IS_WIN = process.platform === 'win32'; // Windows 移植：平台分支开关（macOS 行为保持不变）
 // Windows 安装目录（install.ps1 铺、launcher 用、更新替换目标），对应 macOS 的 /Applications/WorkDaddy.app
@@ -3164,7 +3166,8 @@ async function buildAutoCopyPlan(sourceUid, targetUid) {
     [source]
   );
   const workspaceSet = new Set(rules.workspaces.map(canonicalWorkspace));
-  const selectedRows = rows.filter((row) => isAutoCopySessionSelected(rules, row));
+  const selectedRows = dedupeAutoCopySessionRows(rows, { [source]: rules.allLineages })
+    .filter((row) => isAutoCopySessionSelected(rules, row));
   // Full-copy and workspace matches need stable hidden lineages for idempotent
   // repeated switches. Prepare the whole batch with one metadata write.
   const lineageSessionIds = selectedRows
@@ -3174,7 +3177,7 @@ async function buildAutoCopyPlan(sourceUid, targetUid) {
     ? ensureAutoCopySessions(DATA_DIR, source, lineageSessionIds, { enabled: !rules.allSessions })
     : {};
   return selectedRows.map((row) => Object.assign({}, row, {
-    lineageId: rules.lineages[String(row.id)] || ensuredLineages[String(row.id)] || null,
+    lineageId: rules.allLineages[String(row.id)] || ensuredLineages[String(row.id)] || null,
   }));
 }
 
@@ -6180,9 +6183,11 @@ function handleApi(req, res) {
           const owner = String(row.user_id || '').trim();
           if (!owner || rulesByUid[owner]) return;
           const rules = getAutoCopyRules(DATA_DIR, owner);
-          rulesByUid[owner] = { allSessions: rules.allSessions, sessions: new Set(rules.sessionIds), workspaces: new Set(rules.workspaces) };
+          rulesByUid[owner] = { allSessions: rules.allSessions, sessions: new Set(rules.sessionIds), workspaces: new Set(rules.workspaces), lineages: rules.allLineages };
         });
-        const sessions = rows.map((row) => {
+        const lineagesByUid = {};
+        Object.keys(rulesByUid).forEach((owner) => { lineagesByUid[owner] = rulesByUid[owner].lineages; });
+        const sessions = dedupeAutoCopySessionRows(rows, lineagesByUid).map((row) => {
           const rules = rulesByUid[String(row.user_id || '').trim()] || { sessions: new Set(), workspaces: new Set() };
           return Object.assign({}, row, {
             autoCopySession: rules.sessions.has(String(row.id)),
@@ -6192,7 +6197,7 @@ function handleApi(req, res) {
         const currentRules = uid
           ? (rulesByUid[uid] || (() => {
               const rules = getAutoCopyRules(DATA_DIR, uid);
-              return { allSessions: rules.allSessions, sessions: new Set(rules.sessionIds), workspaces: new Set(rules.workspaces) };
+              return { allSessions: rules.allSessions, sessions: new Set(rules.sessionIds), workspaces: new Set(rules.workspaces), lineages: rules.allLineages };
             })())
           : null;
         return json(res, 200, {

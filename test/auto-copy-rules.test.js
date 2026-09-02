@@ -14,6 +14,7 @@ const {
   setAutoCopyRule,
   setAutoCopyAllSessions,
   isAutoCopySessionSelected,
+  dedupeAutoCopySessionRows,
   getAutoCopySession,
   ensureAutoCopySession,
   ensureAutoCopySessions,
@@ -192,6 +193,24 @@ test('copy-all can prepare hidden lineages for a session batch without enabling 
   assert.deepEqual(Object.keys(lineages).sort(), ['new-a', 'new-b']);
   assert.notEqual(lineages['new-a'], lineages['new-b']);
   assert.deepEqual(getAutoCopyRules(dataDir, 'source').sessionIds, []);
+});
+
+test('duplicate session rows sharing one lineage collapse per account without deleting rows', () => {
+  const rows = [
+    { id: 's-new', user_id: 'account-s' },
+    { id: 's-old', user_id: 'account-s' },
+    { id: 'a-copy', user_id: 'account-a' },
+    { id: 'unmarked', user_id: 'account-s' },
+  ];
+  const lineagesByUid = {
+    'account-s': { 's-new': 'lineage-1', 's-old': 'lineage-1' },
+    'account-a': { 'a-copy': 'lineage-1' },
+  };
+  assert.deepEqual(dedupeAutoCopySessionRows(rows, lineagesByUid), [
+    { id: 's-new', user_id: 'account-s' },
+    { id: 'a-copy', user_id: 'account-a' },
+    { id: 'unmarked', user_id: 'account-s' },
+  ]);
 });
 
 test('long account chains reuse one lineage and clean up without duplicate members', () => {

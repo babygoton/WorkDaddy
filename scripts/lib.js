@@ -475,9 +475,11 @@ function getAutoCopyRules(dataDir, uid) {
   const index = config.sessionIndex[sourceUid] || {};
   const sessionIds = [];
   const lineages = {};
+  const allLineages = {};
   for (const sessionId of Object.keys(index)) {
     const lineageId = index[sessionId];
     const lineage = config.sessions[lineageId];
+    if (lineage) allLineages[sessionId] = lineageId;
     if (lineage && lineage.enabled !== false) {
       sessionIds.push(sessionId);
       lineages[sessionId] = lineageId;
@@ -487,8 +489,27 @@ function getAutoCopyRules(dataDir, uid) {
     allSessions: config.allSessions === true,
     sessionIds,
     lineages,
+    allLineages,
     workspaces: Object.keys(config.workspaces),
   };
+}
+
+// A lineage represents one logical session per account. Older copies can
+// leave multiple physical rows indexed under the same lineage; keep the first
+// row (the SQL callers order newest activity first) for plans and UI counts.
+function dedupeAutoCopySessionRows(rows, lineagesByUid) {
+  if (!Array.isArray(rows)) return [];
+  const seen = new Set();
+  return rows.filter((row) => {
+    const uid = String(row && row.user_id || '').trim();
+    const id = String(row && row.id || '').trim();
+    const lineageId = lineagesByUid && lineagesByUid[uid] && lineagesByUid[uid][id];
+    if (!lineageId) return true;
+    const key = uid + '::' + String(lineageId);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 function setAutoCopyAllSessions(dataDir, enabled) {
@@ -1118,6 +1139,7 @@ module.exports = {
   updateMeta,
   canonicalWorkspace,
   getAutoCopyRules,
+  dedupeAutoCopySessionRows,
   setAutoCopyRule,
   setAutoCopyAllSessions,
   isAutoCopySessionSelected,
