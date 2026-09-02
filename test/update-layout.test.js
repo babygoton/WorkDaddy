@@ -694,9 +694,9 @@ test('account cards keep the compact three-row layout', () => {
   assert.match(script, /row0\.insertBefore\(stashBtn, row0\.firstChild\)/);
   assert.match(script, /wbs-credit-hidden/);
   assert.match(script, /var expired = isIdentityExpired\(a\)/);
-  assert.match(script, /wbs-growth-activate/);
-  assert.match(script, /api\('\/api\/growth\/activate'/);
-  assert.match(script, /发起独立会话（不切换账号）/);
+  // 账号页暂不展示“发起独立会话保持活跃”入口；daemon 接口保留供内部/后续流程使用。
+  assert.doesNotMatch(script, /wbs-growth-activate/);
+  assert.doesNotMatch(script, /api\('\/api\/growth\/activate'/);
   assert.match(script, /expired \? '' : '<button class="wbs-icon-btn wbs-acc-switch"/);
   assert.match(script, /switchBtn\.style\.display = hidden \? 'none' : ''/);
   assert.match(script, /height:5px;min-height:5px/);

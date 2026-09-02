@@ -582,9 +582,6 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
   var SWITCH_SVG =
     '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
     '<path d="M16 3l4 4-4 4"/><path d="M20 7H8"/><path d="M8 21l-4-4 4-4"/><path d="M4 17h12"/></svg>';
-  var GROWTH_ACTIVATE_SVG =
-    '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
-    '<path d="M12 3v18M3 12h18"/><path d="m19 5-2 2M5 5l2 2M19 19l-2-2M5 19l2-2"/></svg>';
   var AUTO_COPY_SVG =
     '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
     '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M4 16V6a2 2 0 0 1 2-2h10"/><path d="M15 3l3 1-1 3"/></svg>';
@@ -8830,8 +8827,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         var curMark = isCur ? '<span class="wbs-cur-marker" title="当前使用中">' + CUR_MARK_SVG + '</span>' : '';
         // 当前登录账号隐藏操作；认证已过期的账号保留删除，但隐藏切换，避免进入登录页。
         var expired = isIdentityExpired(a);
-        var growthAction = expired ? '' : '<button class="wbs-icon-btn wbs-growth-activate" type="button" title="发起独立会话（不切换账号）" data-uid="' + escAttr(a.uid) + '" data-name="' + escAttr(a.nickname || '未命名') + '">' + GROWTH_ACTIVATE_SVG + '</button>';
-        var ops = growthAction + (isCur
+        var ops = (isCur
           ? ''
           : (expired ? '' : '<button class="wbs-icon-btn wbs-acc-switch" type="button" title="切换" data-uid="' + escAttr(a.uid) + '" data-name="' + escAttr(a.nickname || '未命名') + '">' + SWITCH_SVG + '</button>') +
             '<button class="wbs-icon-btn wbs-del" type="button" title="删除" data-uid="' + escAttr(a.uid) + '" data-name="' + escAttr(a.nickname || '未命名') + '">' + TRASH_SVG + '</button>');
@@ -8897,31 +8893,6 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
             })
             .catch(function (e) { toast('切换失败: ' + e.message, true, root); })
             .finally(function () { btn.disabled = false; btn.setAttribute('title', prevTitle || '切换'); });
-        });
-      });
-      // 发起独立云端会话：使用目标备份账号 token，不改当前登录态；按钮单击即执行，避免误把它当作账号切换。
-      list.querySelectorAll('.wbs-growth-activate').forEach(function (btn) {
-        btn.addEventListener('click', function () {
-          if (btn.disabled) return;
-          btn.disabled = true;
-          var previousTitle = btn.getAttribute('title');
-          btn.setAttribute('title', '发起中…');
-          api('/api/growth/activate', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ uid: btn.dataset.uid }),
-          }).then(function (r) {
-            var name = r && (r.nickname || btn.dataset.name || r.uid) || '账号';
-            if (r && r.alreadyActive) toast('「' + name + '」今日已活跃', false, root);
-            else if (r && r.activated) toast('已为「' + name + '」发起独立会话，今日已活跃', false, root);
-            else toast('「' + name + '」会话已发起，活跃状态稍后同步', false, root);
-            setBuildTimeout(refresh, 900);
-          }).catch(function (e) {
-            toast('发起会话失败: ' + e.message, true, root);
-          }).finally(function () {
-            btn.disabled = false;
-            btn.setAttribute('title', previousTitle || '发起独立会话（不切换账号）');
-          });
         });
       });
       // 删除按钮：二次确认（永久删除本地备份）
@@ -9547,7 +9518,6 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     /* 账号切换按钮（wbs-acc-switch，与开关 .wbs-switch 区分）：与删除按钮同尺寸同风格 */
     '.wbs-acc-switch:hover{background:var(--wb-bg-hover,#e8e9eb);color:var(--wb-color-text-primary,#1f1f1f)}',
     '.wbs-acc-switch.armed{background:#141416;color:#fff}',
-    '.wbs-growth-activate:hover{background:color-mix(in srgb,var(--wb-accent-blue,#4f86ff) 14%,var(--wb-bg-hover,#f7f8fa));color:var(--wb-accent-blue,#4f86ff)}',
     /* 删除按钮：与切换按钮同风格（灰底图标），hover/armed 才显红 */
     '.wbs-del{background:var(--wb-bg-hover,#f7f8fa);color:var(--wb-icon-secondary,#555);border-color:transparent}',
     '.wbs-del:hover{background:#ffecec;color:#f53f3f;border-color:transparent}',
