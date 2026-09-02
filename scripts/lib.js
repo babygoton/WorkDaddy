@@ -57,7 +57,121 @@ const AUTH_FILE = process.env.WBSWITCH_AUTH_FILE !== undefined
         'Library/Application Support/CodeBuddyExtension/Data/Public/auth/workbuddy-desktop.info'
       ))));
 
-const LOGOUT_MARKER = `${AUTH_FILE}.logged-out`;
+const DYNAMIC_AUTH_PROFILE = ACTIVE_PROFILE.id === 'workbuddy-ai' && process.env.WBSWITCH_AUTH_FILE === undefined;
+const WORKBUDDY_AI_AUTH_DOMAINS = new Set(['www.workbuddy.ai', 'www.workbuddy.cn', 'www.codebuddy.cn']);
+
+function authDir() {
+  return AUTH_FILE ? path.dirname(AUTH_FILE) : null;
+}
+
+function normalizeAuthDomain(value) {
+  let text = String(value || '').trim().toLowerCase();
+  if (!text) return '';
+  try {
+    if (!/^https?:\/\//i.test(text)) text = 'https://' + text;
+    return new URL(text).hostname.toLowerCase();
+  } catch (_) {
+    return '';
+  }
+}
+
+function tokenIssuerOrigin(accessToken) {
+  try {
+    const part = String(accessToken || '').split('.')[1];
+    if (!part) return '';
+    const padded = part.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - (part.length % 4)) % 4);
+    const payload = JSON.parse(Buffer.from(padded, 'base64').toString('utf8'));
+    const parsed = new URL(String(payload.iss || ''));
+    return parsed.origin;
+  } catch (_) {
+    return '';
+  }
+}
+
+function isTimestampedAuthSnapshot(name) {
+  return /\.\d{4}-\d{2}-\d{2}T[\d-]+Z\./i.test(String(name || ''));
+}
+
+function safeAuthFileName(name) {
+  const value = String(name || '');
+  return value.length > 0 && value.length <= 255 && path.basename(value) === value &&
+    /\.info$/i.test(value) && !isTimestampedAuthSnapshot(value);
+}
+
+function parseAuthFile(file) {
+  let json;
+  try {
+    json = JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch (_) {
+    return null;
+  }
+  if (!json || typeof json !== 'object' || Array.isArray(json)) return null;
+  const acct = json.account || (Array.isArray(json.accounts) && json.accounts[0]) || null;
+  if (!acct || !acct.uid) return null;
+  const auth = json.auth && typeof json.auth === 'object' ? json.auth : {};
+  let mtimeMs = 0;
+  try { mtimeMs = fs.statSync(file).mtimeMs; } catch (_) {}
+  return {
+    uid: String(acct.uid),
+    nickname: acct.nickname || '',
+    uin: acct.uin || '',
+    phone: acct.phoneNumber || '',
+    type: acct.type || '',
+    raw: json,
+    file,
+    authFileName: path.basename(file),
+    authDomain: normalizeAuthDomain(auth.domain),
+    authIssuer: tokenIssuerOrigin(auth.accessToken),
+    lastLogin: acct.lastLogin === true,
+    lastRefreshTime: Number(auth.lastRefreshTime) || 0,
+    mtimeMs,
+  };
+}
+
+function dynamicAuthFileAllowed(file, info) {
+  if (!DYNAMIC_AUTH_PROFILE) return samePath(file, AUTH_FILE);
+  if (samePath(file, AUTH_FILE)) return true;
+  const name = path.basename(file).toLowerCase();
+  // The domestic WorkBuddy profile owns this stable file. Do not mix it into WorkDaddy AI.
+  if (name === 'workbuddy-desktop.info') return false;
+  return !!info && WORKBUDDY_AI_AUTH_DOMAINS.has(info.authDomain);
+}
+
+function listAuthFiles() {
+  if (!AUTH_FILE) return [];
+  if (process.env.WBSWITCH_AUTH_FILE !== undefined || !DYNAMIC_AUTH_PROFILE) {
+    return fs.existsSync(AUTH_FILE) ? [AUTH_FILE] : [];
+  }
+  const dir = authDir();
+  let names = [];
+  try { names = fs.readdirSync(dir); } catch (_) { return []; }
+  const records = [];
+  for (const name of names) {
+    if (!safeAuthFileName(name)) continue;
+    const file = path.join(dir, name);
+    let stat;
+    try { stat = fs.statSync(file); } catch (_) { continue; }
+    if (!stat.isFile()) continue;
+    const info = parseAuthFile(file);
+    if (!info || !dynamicAuthFileAllowed(file, info)) continue;
+    records.push(info);
+  }
+  records.sort((a, b) => {
+    const aScore = (a.lastLogin ? 1e15 : 0) + (a.lastRefreshTime || a.mtimeMs || 0);
+    const bScore = (b.lastLogin ? 1e15 : 0) + (b.lastRefreshTime || b.mtimeMs || 0);
+    return aScore - bScore;
+  });
+  return records.map((item) => item.file);
+}
+
+function currentAuthFile() {
+  const files = listAuthFiles();
+  return files.length ? files[files.length - 1] : AUTH_FILE;
+}
+
+function logoutMarkerFor(file = AUTH_FILE) {
+  return file ? `${file}.logged-out` : null;
+}
 
 function defaultDataDir() {
   // 旧版 launchd 可能把 WBSWITCH_DATA_DIR 设成 HelloBuddy；新版本始终落到 WorkDaddy，
@@ -781,11 +895,12 @@ function backupPath(dataDir, uid) {
 }
 
 /** WorkBuddy ignores auth files while this marker exists; retire it after a switch. */
-function retireLogoutMarker(log = () => {}) {
-  if (!fs.existsSync(LOGOUT_MARKER)) return false;
+function retireLogoutMarker(log = () => {}, authFile = AUTH_FILE) {
+  const marker = logoutMarkerFor(authFile);
+  if (!marker || !fs.existsSync(marker)) return false;
   try {
-    const retired = `${LOGOUT_MARKER}.retired.${process.pid}.${Date.now()}`;
-    fs.renameSync(LOGOUT_MARKER, retired);
+    const retired = `${marker}.retired.${process.pid}.${Date.now()}`;
+    fs.renameSync(marker, retired);
     try {
       fs.unlinkSync(retired);
     } catch (_) {
@@ -800,12 +915,12 @@ function retireLogoutMarker(log = () => {}) {
     // WorkBuddy may launch the daemon in a sandbox that cannot unlink auth files.
     try {
       const { execFileSync } = require('child_process');
-      const markerQ = LOGOUT_MARKER.replace(/"/g, '\\"');
+      const markerQ = marker.replace(/"/g, '\\"');
       execFileSync('osascript', ['-e', `do shell script "rm -f \\\"${markerQ}\\\""`], {
         timeout: 15000,
         stdio: 'pipe',
       });
-      if (fs.existsSync(LOGOUT_MARKER)) throw new Error('标记仍然存在');
+      if (fs.existsSync(marker)) throw new Error('标记仍然存在');
       log('[switch] 已通过系统授权清理 WorkBuddy 登录退出标记');
       return true;
     } catch (e2) {
@@ -874,27 +989,14 @@ function ensureDirs(dataDir, log = () => {}) {
 }
 
 /** 读取登录信息文件并抽取账号关键字段（不返回令牌内容） */
-function readAuthFile() {
+function readAuthFile(file = currentAuthFile()) {
   if (!ACTIVE_PROFILE.authFile && !process.env.WBSWITCH_AUTH_FILE) {
     throw new Error(`${ACTIVE_PROFILE.name} 没有可读取的明文认证文件`);
   }
-  const raw = fs.readFileSync(AUTH_FILE, 'utf8');
-  const json = JSON.parse(raw);
-  if (!json || typeof json !== 'object') {
-    throw new Error('auth 文件不是有效的 JSON 对象');
-  }
-  const acct = json.account || (Array.isArray(json.accounts) && json.accounts[0]) || null;
-  if (!acct || !acct.uid) {
-    throw new Error('auth 文件中未找到 account.uid');
-  }
-  return {
-    uid: acct.uid,
-    nickname: acct.nickname || '',
-    uin: acct.uin || '',
-    phone: acct.phoneNumber || '',
-    type: acct.type || '',
-    raw: json,
-  };
+  if (!file) throw new Error('未找到登录信息文件');
+  const info = parseAuthFile(file);
+  if (!info) throw new Error(`auth 文件无效或缺少 account.uid: ${path.basename(file)}`);
+  return info;
 }
 
 /** 更新 meta.json（uid -> nickname/uin/phone/时间） */
@@ -907,6 +1009,9 @@ function updateMeta(dataDir, info) {
     nickname: info.nickname || prev.nickname || '',
     uin: info.uin || prev.uin || '',
     phone: info.phone || prev.phone || '',
+    authFileName: info.authFileName || prev.authFileName || '',
+    authDomain: normalizeAuthDomain(info.authDomain || prev.authDomain || ''),
+    authIssuer: info.authIssuer || prev.authIssuer || '',
     firstSeen: prev.firstSeen || now,
     lastSeen: now,
   };
@@ -914,21 +1019,31 @@ function updateMeta(dataDir, info) {
   return meta;
 }
 
-/** 把当前登录信息备份到 accounts/<uid>.info（原子写入，0600） */
-function backupCurrent(dataDir, log = () => {}) {
-  if (!ACTIVE_PROFILE.capabilities.accounts) throw new Error(`${ACTIVE_PROFILE.name} 暂不支持账号文件备份`);
-  ensureDirs(dataDir, log);
-  const info = readAuthFile();
+function backupAuthFile(dataDir, file, log = () => {}) {
+  const info = readAuthFile(file);
   const dest = backupPath(dataDir, info.uid);
   const tmp = dest + '.tmp';
-  fs.writeFileSync(tmp, fs.readFileSync(AUTH_FILE), { mode: 0o600 });
+  fs.writeFileSync(tmp, fs.readFileSync(file), { mode: 0o600 });
   fs.renameSync(tmp, dest);
   fs.chmodSync(dest, 0o600);
   updateMeta(dataDir, info);
-  log(
-    `[sync] 已备份账号 ${info.nickname || info.uid} (${info.uid}) -> ${dest}`
-  );
+  log(`[sync] 已备份账号 ${info.nickname || info.uid} (${info.uid}) <- ${info.authFileName}`);
   return info;
+}
+
+/** 把当前 profile 的活动登录信息备份到 accounts/<uid>.info（原子写入，0600）。 */
+function backupCurrent(dataDir, log = () => {}) {
+  if (!ACTIVE_PROFILE.capabilities.accounts) throw new Error(`${ACTIVE_PROFILE.name} 暂不支持账号文件备份`);
+  ensureDirs(dataDir, log);
+  const files = listAuthFiles();
+  if (!files.length) throw new Error(`未找到登录信息文件${authDir() ? `（${authDir()}）` : ''}`);
+  const current = currentAuthFile();
+  let result = null;
+  for (const file of files) {
+    const info = backupAuthFile(dataDir, file, log);
+    if (!result || samePath(file, current)) result = info;
+  }
+  return result;
 }
 
 /** 列出所有已备份账号（直接读备份文件提取展示字段，按最近刷新时间倒序） */
@@ -1004,6 +1119,42 @@ function deleteAccount(dataDir, uid) {
   return { deleted: deletedFile, uid };
 }
 
+function knownAuthFileNameForDomain(domain) {
+  const host = normalizeAuthDomain(domain);
+  if (!DYNAMIC_AUTH_PROFILE) return path.basename(AUTH_FILE || '');
+  if (host === 'www.workbuddy.ai') return path.basename(AUTH_FILE);
+  if (host === 'www.codebuddy.cn') return 'Tencent-Cloud.coding-copilot.info';
+  return '';
+}
+
+function resolveAuthTarget(dataDir, uid, authJson) {
+  if (!AUTH_FILE || !DYNAMIC_AUTH_PROFILE) return AUTH_FILE;
+  const meta = readMeta(dataDir);
+  const record = meta.accounts[uid] || {};
+  const backupDomain = normalizeAuthDomain(authJson && authJson.auth && authJson.auth.domain);
+  const recordDomain = normalizeAuthDomain(record.authDomain);
+  const recordedNameAllowed = safeAuthFileName(record.authFileName) &&
+    String(record.authFileName).toLowerCase() !== 'workbuddy-desktop.info' &&
+    (!recordDomain || WORKBUDDY_AI_AUTH_DOMAINS.has(recordDomain)) &&
+    (!backupDomain || !recordDomain || backupDomain === recordDomain);
+  if (recordedNameAllowed) {
+    return path.join(authDir(), record.authFileName);
+  }
+  const domain = backupDomain || recordDomain;
+  if (domain) {
+    const matches = listAuthFiles()
+      .map((file) => parseAuthFile(file))
+      .filter((info) => info && info.authDomain === domain);
+    if (matches.length) return matches[matches.length - 1].file;
+    const knownName = knownAuthFileNameForDomain(domain);
+    if (knownName) return path.join(authDir(), knownName);
+    if (WORKBUDDY_AI_AUTH_DOMAINS.has(domain)) {
+      throw new Error(`账号认证域 ${domain} 缺少可确认的 authenticationId；请先通过该渠道登录一次再切换`);
+    }
+  }
+  return AUTH_FILE;
+}
+
 /** 切换登录账号：把备份文件复制回登录信息文件（先校验 uid 匹配） */
 function switchTo(dataDir, uid, log = () => {}) {
   if (!ACTIVE_PROFILE.capabilities.accounts) throw new Error(`${ACTIVE_PROFILE.name} 暂不支持账号切换`);
@@ -1018,11 +1169,13 @@ function switchTo(dataDir, uid, log = () => {}) {
   if (!acct || acct.uid !== uid) {
     throw new Error('备份文件校验失败：uid 不匹配，已中止切换');
   }
-  const tmp = AUTH_FILE + '.wbswitch.tmp';
+  const target = resolveAuthTarget(dataDir, uid, json);
+  if (!target) throw new Error('当前 profile 没有可写入的认证文件');
+  const tmp = target + '.wbswitch.tmp';
   try {
     fs.writeFileSync(tmp, raw, { mode: 0o600 });
-    fs.renameSync(tmp, AUTH_FILE);
-    fs.chmodSync(AUTH_FILE, 0o600);
+    fs.renameSync(tmp, target);
+    fs.chmodSync(target, 0o600);
   } catch (e) {
     // 沙箱环境（如从 WorkBuddy 托管后台运行）直接写系统目录会 EPERM。
     // macOS 回退：osascript 委托 GUI 会话复制（不涉及内容转义，只传路径）。
@@ -1034,9 +1187,9 @@ function switchTo(dataDir, uid, log = () => {}) {
     }
     log(`[switch] 直写失败(${e.code})，改用 osascript 委托写入`);
     const bridge = path.join(dataDir, '.auth-switch-bridge.tmp');
-    const authBridge = AUTH_FILE + '.wbswitch.tmp';
+    const authBridge = target + '.wbswitch.tmp';
     const bridgeQ = bridge.replace(/"/g, '\\"');
-    const authQ = AUTH_FILE.replace(/"/g, '\\"');
+    const authQ = target.replace(/"/g, '\\"');
     const tmpQ = authBridge.replace(/"/g, '\\"');
     try {
       // 1) 本进程写 bridge（数据目录可写）
@@ -1050,14 +1203,30 @@ function switchTo(dataDir, uid, log = () => {}) {
       throw new Error(`写入登录文件失败: ${(e2.message || e2).toString().slice(0, 200)}`);
     }
   }
-  retireLogoutMarker(log);
-  log(`[switch] 已切换登录账号为 ${acct.nickname || uid} (${uid})`);
-  return { uid: acct.uid, nickname: acct.nickname || '', uin: acct.uin || '' };
+  retireLogoutMarker(log, target);
+  updateMeta(dataDir, {
+    uid: acct.uid,
+    nickname: acct.nickname || '',
+    uin: acct.uin || '',
+    phone: acct.phoneNumber || '',
+    authFileName: path.basename(target),
+    authDomain: normalizeAuthDomain(json.auth && json.auth.domain),
+    authIssuer: tokenIssuerOrigin(json.auth && json.auth.accessToken),
+  });
+  log(`[switch] 已切换登录账号为 ${acct.nickname || uid} (${uid}) -> ${path.basename(target)}`);
+  return { uid: acct.uid, nickname: acct.nickname || '', uin: acct.uin || '', authFile: target };
 }
 
 module.exports = {
   AUTH_FILE,
   ACTIVE_PROFILE,
+  authDir,
+  listAuthFiles,
+  currentAuthFile,
+  parseAuthFile,
+  normalizeAuthDomain,
+  tokenIssuerOrigin,
+  resolveAuthTarget,
   defaultDataDir,
   migrateLegacyDataDir,
   accountsDir,
