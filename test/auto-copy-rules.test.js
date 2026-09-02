@@ -12,7 +12,11 @@ const {
   canonicalWorkspace,
   getAutoCopyRules,
   setAutoCopyRule,
+  setAutoCopyAllSessions,
+  isAutoCopySessionSelected,
   getAutoCopySession,
+  ensureAutoCopySession,
+  ensureAutoCopySessions,
   getAutoCopySessionMembers,
   addAutoCopySessionMember,
   removeAutoCopySessionMember,
@@ -149,6 +153,45 @@ test('workspace rules are global across source accounts', () => {
   assert.deepEqual(getAutoCopyRules(dataDir, 's').workspaces, [expectedWorkspace]);
   setAutoCopyRule(dataDir, { uid: 's', kind: 'workspace', key: '/Users/h/Repo', enabled: false });
   assert.deepEqual(getAutoCopyRules(dataDir, 'h').workspaces, []);
+});
+
+test('copy-all defaults off and never rewrites existing per-session rules', () => {
+  const dataDir = tempDataDir();
+  setAutoCopyRule(dataDir, { uid: 'source', kind: 'session', key: 'marked-session', enabled: true });
+
+  assert.equal(getAutoCopyRules(dataDir, 'source').allSessions, false);
+  assert.equal(setAutoCopyAllSessions(dataDir, true).allSessions, true);
+  assert.deepEqual(getAutoCopyRules(dataDir, 'source').sessionIds, ['marked-session']);
+
+  const hiddenLineageId = ensureAutoCopySession(dataDir, 'source', 'unmarked-session', { enabled: false });
+  assert.ok(hiddenLineageId);
+  assert.deepEqual(getAutoCopyRules(dataDir, 'source').sessionIds, ['marked-session']);
+
+  assert.equal(setAutoCopyAllSessions(dataDir, false).allSessions, false);
+  assert.deepEqual(getAutoCopyRules(dataDir, 'source').sessionIds, ['marked-session']);
+});
+
+test('copy-all selects newly created unmarked sessions only while the override is enabled', () => {
+  const markedRules = {
+    allSessions: false,
+    sessionIds: ['marked-session'],
+    workspaces: ['/Users/h/Marked'],
+  };
+  const newSession = { id: 'new-session', cwd: '/Users/h/New' };
+
+  assert.equal(isAutoCopySessionSelected(markedRules, newSession), false);
+  assert.equal(isAutoCopySessionSelected({ ...markedRules, allSessions: true }, newSession), true);
+  assert.equal(isAutoCopySessionSelected(markedRules, { id: 'marked-session', cwd: '/Users/h/New' }), true);
+  assert.equal(isAutoCopySessionSelected(markedRules, { id: 'other-session', cwd: '/Users/h/Marked/' }), true);
+});
+
+test('copy-all can prepare hidden lineages for a session batch without enabling row markers', () => {
+  const dataDir = tempDataDir();
+  const lineages = ensureAutoCopySessions(dataDir, 'source', ['new-a', 'new-b', 'new-a'], { enabled: false });
+
+  assert.deepEqual(Object.keys(lineages).sort(), ['new-a', 'new-b']);
+  assert.notEqual(lineages['new-a'], lineages['new-b']);
+  assert.deepEqual(getAutoCopyRules(dataDir, 'source').sessionIds, []);
 });
 
 test('long account chains reuse one lineage and clean up without duplicate members', () => {

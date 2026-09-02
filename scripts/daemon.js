@@ -76,10 +76,13 @@ const {
   canonicalWorkspace,
   getAutoCopyRules,
   setAutoCopyRule,
+  setAutoCopyAllSessions,
+  isAutoCopySessionSelected,
   getAutoCopySession,
   getAutoCopySessionMembers,
   getAutoCopySessionMemberRecords,
   selectLatestAutoCopyMember,
+  ensureAutoCopySessions,
   ensureAutoCopySession,
   addAutoCopySessionMember,
   moveAutoCopySession,
@@ -236,6 +239,7 @@ const DATA_DIR = defaultDataDir();
 // 1.1.28：Windows 安装向导支持选择并锁定 WorkBuddy 客户端，企业版使用进程级环境变量 CDP。
 // 1.1.28：修复首次会话播种的 profile 目录缺失，以及 native lifecycle helper 误计自身进程。
 // 1.1.29：自动复制会话按 lineage 内最新消息文件做双向全成员同步，避免跨账号往返后历史分叉。
+// 1.1.30：会话页支持独立的全量自动复制覆盖开关，新会话在切换账号时自动进入幂等复制计划。
 // 1.1.30：新增「今日活跃」查询接口（成长中心热力墙 is_active），复用签到 Bearer 鉴权与 profile 归属域名。
 // 1.1.31：支持用备份账号 token 独立创建 cloud conversation 并发送最小 prompt，不切换当前登录账号。
 // 1.1.32：主题页支持独立调节背景毛玻璃模糊程度。
@@ -3159,26 +3163,25 @@ async function buildAutoCopyPlan(sourceUid, targetUid) {
   const target = String(targetUid || '').trim();
   if (!source || !target || source === target) return [];
   const rules = getAutoCopyRules(DATA_DIR, source);
-  if (!rules.sessionIds.length && !rules.workspaces.length) return [];
+  if (!rules.allSessions && !rules.sessionIds.length && !rules.workspaces.length) return [];
   const rows = await sqliteQuery(
     'SELECT id, cwd, user_id, title, custom_title, status, created_at, updated_at, last_activity_at, is_playground, source_mode, is_background_automation, mode, model, expert_id, expert_locale, expert_runtime_identity, expert_marketplace, permission_mode, use_sandbox_cli, project_id ' +
     'FROM sessions WHERE deleted_at IS NULL AND user_id = ? ORDER BY created_at DESC;',
     [source]
   );
-  const sessionSet = new Set(rules.sessionIds);
   const workspaceSet = new Set(rules.workspaces.map(canonicalWorkspace));
-  return rows
-    .filter((row) => sessionSet.has(String(row.id)) || workspaceSet.has(canonicalWorkspace(row.cwd)))
-    .map((row) => {
-      let lineageId = rules.lineages[String(row.id)] || null;
-      // Workspace rules also represent shared sessions.  Give each matching
-      // row a lineage so later switches reuse one target and reconcile its
-      // newest snapshot instead of inserting a duplicate every time.
-      if (!lineageId && workspaceSet.has(canonicalWorkspace(row.cwd))) {
-        lineageId = ensureAutoCopySession(DATA_DIR, source, row.id);
-      }
-      return Object.assign({}, row, { lineageId });
-    });
+  const selectedRows = rows.filter((row) => isAutoCopySessionSelected(rules, row));
+  // Full-copy and workspace matches need stable hidden lineages for idempotent
+  // repeated switches. Prepare the whole batch with one metadata write.
+  const lineageSessionIds = selectedRows
+    .filter((row) => rules.allSessions || workspaceSet.has(canonicalWorkspace(row.cwd)))
+    .map((row) => row.id);
+  const ensuredLineages = lineageSessionIds.length
+    ? ensureAutoCopySessions(DATA_DIR, source, lineageSessionIds, { enabled: !rules.allSessions })
+    : {};
+  return selectedRows.map((row) => Object.assign({}, row, {
+    lineageId: rules.lineages[String(row.id)] || ensuredLineages[String(row.id)] || null,
+  }));
 }
 
 const autoCopyJobs = new Map();
@@ -6285,12 +6288,13 @@ function handleApi(req, res) {
     // 时间筛选和排序按最近活动/修改时间；旧记录缺字段时回退到创建时间。
     return sqliteQuery("SELECT id, cwd, user_id, title, custom_title, status, created_at, updated_at, last_activity_at, is_playground, project_id FROM sessions WHERE " + clauses.join(' AND ') + " ORDER BY COALESCE(last_activity_at, updated_at, created_at) DESC, created_at DESC;", params)
       .then((rows) => {
+        const autoCopyAll = getAutoCopyRules(DATA_DIR, uid).allSessions;
         const rulesByUid = {};
         rows.forEach((row) => {
           const owner = String(row.user_id || '').trim();
           if (!owner || rulesByUid[owner]) return;
           const rules = getAutoCopyRules(DATA_DIR, owner);
-          rulesByUid[owner] = { sessions: new Set(rules.sessionIds), workspaces: new Set(rules.workspaces) };
+          rulesByUid[owner] = { allSessions: rules.allSessions, sessions: new Set(rules.sessionIds), workspaces: new Set(rules.workspaces) };
         });
         const sessions = rows.map((row) => {
           const rules = rulesByUid[String(row.user_id || '').trim()] || { sessions: new Set(), workspaces: new Set() };
@@ -6302,7 +6306,7 @@ function handleApi(req, res) {
         const currentRules = uid
           ? (rulesByUid[uid] || (() => {
               const rules = getAutoCopyRules(DATA_DIR, uid);
-              return { sessions: new Set(rules.sessionIds), workspaces: new Set(rules.workspaces) };
+              return { allSessions: rules.allSessions, sessions: new Set(rules.sessionIds), workspaces: new Set(rules.workspaces) };
             })())
           : null;
         return json(res, 200, {
@@ -6311,6 +6315,7 @@ function handleApi(req, res) {
           count: sessions.length,
           uid,
           range,
+          autoCopyAll,
           autoCopy: currentRules ? { sessionIds: Array.from(currentRules.sessions), workspaces: Array.from(currentRules.workspaces) } : null,
         });
       })
@@ -6495,6 +6500,18 @@ function handleApi(req, res) {
         }
         const rules = setAutoCopyRule(DATA_DIR, { uid, kind, key, enabled: body.enabled !== false });
         return json(res, 200, { ok: true, uid, kind, key: kind === 'workspace' ? canonicalWorkspace(key) : key, rules });
+      } catch (e) {
+        return json(res, 400, { ok: false, error: e.message });
+      }
+    });
+  }
+  // 全量自动复制覆盖：独立于逐会话/空间规则，关闭后原规则原样恢复。
+  if (req.method === 'POST' && p === '/api/sessions/auto-copy-all') {
+    return readBody(req).then((body) => {
+      try {
+        if (!body || typeof body.enabled !== 'boolean') return json(res, 400, { ok: false, error: '缺少全量自动复制开关状态' });
+        const result = setAutoCopyAllSessions(DATA_DIR, body.enabled);
+        return json(res, 200, { ok: true, autoCopyAll: result.allSessions });
       } catch (e) {
         return json(res, 400, { ok: false, error: e.message });
       }
@@ -7147,8 +7164,8 @@ function handleApi(req, res) {
         }
         // 空间规则可能因切换前后的会话索引时序暂时无法生成初始计划，但规则本身仍需触发复制任务；
         // 任务规则通常能直接命中，所以旧逻辑只表现为“任务能复制、空间不复制”。
-        const sourceRules = sourceUid ? getAutoCopyRules(DATA_DIR, sourceUid) : { sessionIds: [], workspaces: [] };
-        const hasSourceAutoCopyRules = !!(sourceRules.sessionIds.length || sourceRules.workspaces.length);
+        const sourceRules = sourceUid ? getAutoCopyRules(DATA_DIR, sourceUid) : { allSessions: false, sessionIds: [], workspaces: [] };
+        const hasSourceAutoCopyRules = !!(sourceRules.allSessions || sourceRules.sessionIds.length || sourceRules.workspaces.length);
         const autoCopyJob = (autoCopyPlan.length || hasSourceAutoCopyRules || hasPendingAutoCopyTo(sourceUid))
           ? startAutoCopyJob(sourceUid, uid, autoCopyPlan)
           : null;
