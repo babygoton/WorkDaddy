@@ -8,7 +8,8 @@ const test = require('node:test');
 const compat = require('../scripts/workbuddy-compat.js');
 
 test('message navigation uses cr-message-list as the single stable surface seam', () => {
-  const messageList = { name: 'message-list' };
+  const viewport = { name: 'viewport' };
+  const messageList = { name: 'message-list', parentElement: viewport };
   const documentLike = {
     querySelector(selector) {
       if (selector === 'div.cr-message-list') return messageList;
@@ -19,7 +20,7 @@ test('message navigation uses cr-message-list as the single stable surface seam'
   const surface = compat.findMessageNavigationSurface(documentLike);
   assert.deepEqual(surface, {
     scrollElement: messageList,
-    viewportElement: messageList,
+    viewportElement: viewport,
     contentElement: messageList,
     conversationElement: messageList,
   });
@@ -122,7 +123,7 @@ test('injected navigation rail is theme-aware, glassy, accessible, and profile a
   assert.doesNotMatch(navigationSource, /WBS_PROFILE_IS_AI|PROFILE_ID/);
   assert.doesNotMatch(navigationSource, /scrollIntoView/);
   assert.match(navigationSource, /scrollToMessage\(turn\.messageId, \{ behavior: 'auto'/);
-  assert.match(navigationSource, /surface\.scrollElement\.getBoundingClientRect\(\)/);
+  assert.match(navigationSource, /surface\.viewportElement\.getBoundingClientRect\(\)/);
   assert.match(navigationSource, /rect\.left \+ 12/);
   assert.doesNotMatch(navigationSource, /rect\.height \* 0\.7|420/);
   assert.match(navigationSource, /Math\.min\(desiredRailHeight, rect\.height\)/);
@@ -139,6 +140,7 @@ test('injected navigation rail is theme-aware, glassy, accessible, and profile a
   assert.match(inject, /localStorage\.getItem\(MESSAGE_NAV_ENABLED_KEY\) !== '0'/);
   assert.match(navigationSource, /function setEnabled\(enabled\)/);
   assert.match(inject, /messageNavigation\.setEnabled\(sessState\.messageNav\)/);
+  assert.match(inject, /mount = surface && surface\.viewportElement/);
 
   const stashSwitch = inject.indexOf('id="wbs-sess-stash"');
   const navigationSwitch = inject.indexOf('id="wbs-sess-message-nav"');

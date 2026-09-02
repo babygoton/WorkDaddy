@@ -57,9 +57,10 @@
       // may disappear even while the message list remains mounted.
       var messageList = doc.querySelector('div.cr-message-list');
       if (!messageList) return null;
+      var viewportElement = messageList.parentElement || messageList;
       return {
         scrollElement: messageList,
-        viewportElement: messageList,
+        viewportElement: viewportElement,
         contentElement: messageList,
         conversationElement: messageList,
       };

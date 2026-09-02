@@ -2108,9 +2108,9 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
 
       function ensureRoot() {
         if (root && root.isConnected) {
-          if (surface && surface.scrollElement && root.parentNode !== surface.scrollElement &&
-              typeof surface.scrollElement.appendChild === 'function') {
-            surface.scrollElement.appendChild(root);
+          if (surface && surface.viewportElement && root.parentNode !== surface.viewportElement &&
+              typeof surface.viewportElement.appendChild === 'function') {
+            surface.viewportElement.appendChild(root);
           }
           return;
         }
@@ -2128,7 +2128,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         tooltip.hidden = true;
         root.appendChild(rail);
         root.appendChild(tooltip);
-        var mount = surface && surface.scrollElement;
+        var mount = surface && surface.viewportElement;
         if (!mount || typeof mount.appendChild !== 'function') mount = document.body;
         mount.appendChild(root);
         listen(root, 'pointerover', onPointerOver);
@@ -2145,8 +2145,8 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       }
 
       function position() {
-        if (!root || !surface || !surface.scrollElement || hidden) return;
-        var rect = surface.scrollElement.getBoundingClientRect();
+        if (!root || !surface || !surface.viewportElement || hidden) return;
+        var rect = surface.viewportElement.getBoundingClientRect();
         if (!rect || rect.width <= 0 || rect.height <= 0) {
           root.style.display = 'none';
           return;
@@ -2354,8 +2354,9 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
           }
           if (typeof ResizeObserver !== 'undefined' && !resizeObserver) {
             resizeObserver = new ResizeObserver(position);
-            resizeObserver.observe(surface.scrollElement);
+            resizeObserver.observe(surface.viewportElement);
           }
+          if (root && root.parentNode !== surface.viewportElement) ensureRoot();
           if (scrollElement !== surface.scrollElement) {
             if (scrollElement) scrollElement.removeEventListener('scroll', scheduleActive);
             scrollElement = surface.scrollElement;
