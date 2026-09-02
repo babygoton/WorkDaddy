@@ -2108,9 +2108,12 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
 
       function ensureRoot() {
         if (root && root.isConnected) {
-          if (surface && surface.viewportElement && root.parentNode !== surface.viewportElement &&
-              typeof surface.viewportElement.appendChild === 'function') {
-            surface.viewportElement.appendChild(root);
+          // 挂载点必须是无 transform 祖先链的 document.body：
+          // WorkBuddy 网格容器（如 _gridViewItem_*）带 transform: matrix(...)，
+          // 会把 position:fixed 的 containing block 从视口改到该容器，
+          // 导致视口坐标系（position() 计算的 left/top）被整体平移错位。
+          if (root.parentNode !== document.body && typeof document.body.appendChild === 'function') {
+            document.body.appendChild(root);
           }
           return;
         }
@@ -2128,8 +2131,11 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         tooltip.hidden = true;
         root.appendChild(rail);
         root.appendChild(tooltip);
-        var mount = surface && surface.viewportElement;
-        if (!mount || typeof mount.appendChild !== 'function') mount = document.body;
+        // 挂 document.body：view 容器祖先里的 transform（_gridViewItem_* 恒等矩阵）
+        // 会劫持 position:fixed 的 containing block，使视口坐标偏移。
+        var mount = document.body;
+        if (!mount || typeof mount.appendChild !== 'function') mount = surface && surface.viewportElement;
+        if (!mount || typeof mount.appendChild !== 'function') mount = null;
         mount.appendChild(root);
         listen(root, 'pointerover', onPointerOver);
         listen(root, 'pointerout', onPointerOut);
@@ -2356,7 +2362,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
             resizeObserver = new ResizeObserver(position);
             resizeObserver.observe(surface.viewportElement);
           }
-          if (root && root.parentNode !== surface.viewportElement) ensureRoot();
+          if (root && root.parentNode !== document.body) ensureRoot();
           if (scrollElement !== surface.scrollElement) {
             if (scrollElement) scrollElement.removeEventListener('scroll', scheduleActive);
             scrollElement = surface.scrollElement;
