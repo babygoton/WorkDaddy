@@ -4792,7 +4792,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         '<button class="wbs-theme-opt active" type="button" data-theme="default">默认</button>' +
         '<button class="wbs-theme-opt" type="button" data-theme="eye-care">护眼绿</button>' +
         '<button class="wbs-theme-opt" type="button" data-theme="cyber-purple">赛博紫</button>' +
-        '<button class="wbs-theme-opt" type="button" data-theme="nebula">' + WBS_BRAND + '</button>' +
+        '<button class="wbs-theme-opt" type="button" data-theme="nebula">' + WBS_BRAND + ' 主题</button>' +
         '</div>' +
         '</div>' +
         '<div class="wbs-pcard wbs-avatar-card">' +
@@ -4824,7 +4824,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         '<span class="wbs-mask-val" id="wbs-mask-val">30%</span>' +
         '</div>' +
         '<div class="wbs-mask-row">' +
-        '<label class="wbs-blur-label" for="wbs-bg-blur-range">背景毛玻璃<span class="wbs-blur-hint">0% 不调节背景图</span></label>' +
+        '<label class="wbs-blur-label" for="wbs-bg-blur-range">背景毛玻璃</label>' +
         '<input type="range" id="wbs-bg-blur-range" min="0" max="100" step="1" value="0">' +
         '<span class="wbs-mask-val" id="wbs-bg-blur-val">0%</span>' +
         '</div>' +

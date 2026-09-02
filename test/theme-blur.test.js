@@ -32,3 +32,9 @@ test('theme pane keeps avatar controls visible and gates wallpaper controls to W
   assert.match(inject, /syncWallpaperCardVisibility\(id\)/);
   assert.match(inject, /syncWallpaperCardVisibility\(cur\)/);
 });
+
+test('theme pane uses the requested WorkDaddy and blur labels', () => {
+  assert.match(inject, /data-theme="nebula">' \+ WBS_BRAND \+ ' 主题<\/button>/);
+  assert.doesNotMatch(inject, /背景毛玻璃<span class="wbs-blur-hint">0% 不调节背景图<\/span>/);
+  assert.match(inject, /<label class="wbs-blur-label" for="wbs-bg-blur-range">背景毛玻璃<\/label>/);
+});
