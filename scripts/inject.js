@@ -3789,7 +3789,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     }
 
     // ===== 会话 pane（构建：账号/时间筛选 + 按空间分组[默认2条/展开10条] + 刷新 + 批量操作[迁移/删除]）=====
-    var sessionsState = { uid: undefined, currentUid: '', range: '7d', list: [], selected: {}, wsExpanded: {}, accounts: [], batchMode: false, autoCopy: null };
+    var sessionsState = { uid: undefined, currentUid: '', range: '7d', list: [], selected: {}, wsExpanded: {}, accounts: [], batchMode: false, autoCopy: null, autoCopyAll: false };
     function isTaskSessionRecordUI(s) {
       // 任务（未选择项目/一次性）会话：以官方 is_playground=1 为准。
       // 普通工作区也用 WorkBuddy\\YYYY-MM-DD-HH-MM-SS 命名，仅凭 cwd 无法区分。
@@ -3826,6 +3826,12 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         '<button class="wbs-sess-seg-btn" type="button" data-range="all">全部</button>' +
         '</div></div>' +
         '</div>' +
+        '<button class="wbs-sess-auto-all" type="button" id="wbs-sess-auto-all" aria-pressed="false" title="切换账号时自动复制当前账号的所有会话，包括之后新增的会话">' +
+        '<span class="wbs-sess-auto-all-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M4 16H3a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/><path d="M18 2v4M16 4h4"/></svg></span>' +
+        '<span class="wbs-sess-auto-all-label">自动复制所有会话</span>' +
+        '<span class="wbs-sess-auto-all-status">已关闭</span>' +
+        '<span class="wbs-sess-auto-all-switch" aria-hidden="true"><span></span></span>' +
+        '</button>' +
         '<div class="wbs-sess-toolbar">' +
         '<button class="wbs-sess-bbtn" type="button" id="wbs-sess-batch">批量操作</button>' +
         '<button class="wbs-sess-bbtn" type="button" id="wbs-sess-import" title="从加密文件导入会话">' + IMPORT_ICON + '<span>导入</span></button>' +
@@ -3899,6 +3905,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         // 任务会话（is_playground=1）保留在列表中，由渲染层归入「任务」分组展示与操作。
         sessionsState.list = ((d && d.sessions) || []);
         sessionsState.autoCopy = (d && d.autoCopy) || null;
+        sessionsState.autoCopyAll = !!(d && d.autoCopyAll);
         sessionsState.selected = {};
         sessionsState.wsExpanded = {};
         renderSessions();
@@ -3918,14 +3925,15 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       var listEl = sessionsPane.querySelector('#wbs-sess-list');
       var countEl = sessionsPane.querySelector('#wbs-sess-count');
       if (!listEl) return;
+      updateAutoCopyAllButton();
       if (!sessionsState.list.length) {
         listEl.innerHTML = '<div class="wbs-empty">当前筛选下没有会话</div>';
-        if (countEl) countEl.textContent = '0 个会话';
+        updateSessionSummary(countEl);
         return;
       }
       function canEditAutoCopy(uid) { return sessionsState.uid !== '' && !!uid; }
       function autoCopyButton(kind, key, uid, enabled, inherited) {
-        if (!canEditAutoCopy(uid)) return '';
+        if (sessionsState.autoCopyAll || !canEditAutoCopy(uid)) return '';
         var title = inherited ? '随空间自动复制' : (enabled ? '取消自动复制' : '切换账号时自动复制');
         var disabled = inherited ? ' disabled' : '';
         return '<button class="wbs-sess-auto' + (enabled ? ' active' : '') + (inherited ? ' inherited' : '') + '" type="button" data-auto-kind="' + kind + '" data-auto-key="' + escAttr(key) + '" data-auto-uid="' + escAttr(uid) + '" aria-label="' + escAttr(title) + '" title="' + escAttr(title) + '" aria-pressed="' + (enabled ? 'true' : 'false') + '"' + disabled + '><span class="wbs-sess-auto-label">自动复制</span><span class="wbs-sess-auto-switch' + (enabled ? ' on' : '') + '" aria-hidden="true"><span></span></span></button>';
@@ -4007,6 +4015,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       bindSessEvents(listEl);
     }
     function activeAutoCopyCount() {
+      if (sessionsState.autoCopyAll) return sessionsState.list.length;
       return sessionsState.list.filter(function (s) {
         return !!s.autoCopySession || !!s.autoCopyWorkspace;
       }).length;
@@ -4015,6 +4024,41 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       if (!countEl) return;
       countEl.innerHTML = '<span class="wbs-sess-summary-tag">共 ' + sessionsState.list.length + ' 个会话</span>' +
         '<span class="wbs-sess-summary-tag wbs-sess-summary-auto">自动复制 ' + activeAutoCopyCount() + '</span>';
+    }
+    function updateAutoCopyAllButton() {
+      if (!sessionsPane) return;
+      var button = sessionsPane.querySelector('#wbs-sess-auto-all');
+      if (!button) return;
+      var enabled = !!sessionsState.autoCopyAll;
+      button.classList.toggle('active', enabled);
+      button.setAttribute('aria-pressed', enabled ? 'true' : 'false');
+      var status = button.querySelector('.wbs-sess-auto-all-status');
+      if (status) status.textContent = enabled ? '已开启' : '已关闭';
+      var toggle = button.querySelector('.wbs-sess-auto-all-switch');
+      if (toggle) toggle.classList.toggle('on', enabled);
+    }
+    function toggleAutoCopyAll(enabled) {
+      var button = sessionsPane && sessionsPane.querySelector('#wbs-sess-auto-all');
+      if (!button || button.disabled) return;
+      var previous = !!sessionsState.autoCopyAll;
+      sessionsState.autoCopyAll = !!enabled;
+      button.disabled = true;
+      renderSessions();
+      api('/api/sessions/auto-copy-all', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ enabled: !!enabled }),
+      }).then(function (response) {
+        sessionsState.autoCopyAll = !!(response && response.autoCopyAll);
+        button.disabled = false;
+        renderSessions();
+        toast(sessionsState.autoCopyAll ? '已开启自动复制所有会话' : '已关闭自动复制所有会话', false, root);
+      }).catch(function (e) {
+        sessionsState.autoCopyAll = previous;
+        button.disabled = false;
+        renderSessions();
+        toast('自动复制所有会话设置失败: ' + (e.message || e), true, root);
+      });
     }
     function shortWs(w) {
       var parts = String(w || '').replace(/\\/g, '/').split('/').filter(Boolean);
@@ -4185,6 +4229,12 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     }
 
     function wireSessionsPane() {
+      var autoCopyAllBtn = sessionsPane.querySelector('#wbs-sess-auto-all');
+      if (autoCopyAllBtn) {
+        autoCopyAllBtn.addEventListener('click', function () {
+          toggleAutoCopyAll(autoCopyAllBtn.getAttribute('aria-pressed') !== 'true');
+        });
+      }
       // 时间 Segment 组件
       var rangeSeg = sessionsPane.querySelector('#wbs-sess-range-seg');
       if (rangeSeg) {
@@ -9586,6 +9636,17 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '.wbs-sess-seg-btn{flex:1;padding:6px 4px;border:none;border-radius:8px;background:transparent;color:var(--wb-icon-secondary,#666);font-size:12px;font-weight:600;cursor:pointer;transition:all .15s;font-family:inherit;white-space:nowrap}',
     '.wbs-sess-seg-btn:hover{color:var(--wb-color-text-primary,#1f1f1f)}',
     '.wbs-sess-seg-btn.active{background:var(--wb-button-primary-bg,#1f1f1f);color:var(--wb-button-primary-fg,#fff);box-shadow:0 1px 4px rgba(0,0,0,.2)}',
+    '.wbs-sess-auto-all{box-sizing:border-box;display:flex;align-items:center;width:100%;height:34px;gap:7px;margin:0 0 8px;padding:0 9px;border:1px solid var(--wb-border-default,#e5e5e5);border-radius:9px;background:color-mix(in srgb,var(--wb-bg-tertiary,#f0f0f0) 58%,transparent);color:var(--wb-icon-secondary,#666);font:inherit;cursor:pointer;transition:background .15s,color .15s,border-color .15s,box-shadow .15s}',
+    '.wbs-sess-auto-all:hover{border-color:var(--wb-border-strong,#bbb);background:var(--wb-bg-hover,#f5f5f5);color:var(--wb-color-text-primary,#1f1f1f)}',
+    '.wbs-sess-auto-all.active{border-color:var(--wb-button-primary-bg,#1f1f1f);background:var(--wb-button-primary-bg,#1f1f1f);color:var(--wb-button-primary-fg,#fff);box-shadow:0 1px 4px color-mix(in srgb,var(--wb-button-primary-bg,#1f1f1f) 22%,transparent)}',
+    '.wbs-sess-auto-all:disabled{opacity:.58;cursor:wait}',
+    '.wbs-sess-auto-all-icon{display:inline-flex;align-items:center;justify-content:center;flex:0 0 18px}',
+    '.wbs-sess-auto-all-label{min-width:0;flex:1;text-align:left;font-size:12px;font-weight:650;white-space:nowrap}',
+    '.wbs-sess-auto-all-status{flex:0 0 auto;font-size:10px;opacity:.7;white-space:nowrap}',
+    '.wbs-sess-auto-all-switch{position:relative;display:inline-flex;align-items:center;width:26px;height:16px;flex:0 0 26px;border-radius:999px;background:var(--wb-bg-tertiary,#d9d9d9);transition:background .15s}',
+    '.wbs-sess-auto-all-switch span{width:12px;height:12px;margin-left:2px;border-radius:50%;background:var(--wb-bg-popover,#fff);box-shadow:0 1px 2px rgba(0,0,0,.2);transition:transform .15s}',
+    '.wbs-sess-auto-all.active .wbs-sess-auto-all-switch{background:color-mix(in srgb,var(--wb-button-primary-fg,#fff) 32%,transparent)}',
+    '.wbs-sess-auto-all-switch.on span{transform:translateX(10px);background:var(--wb-button-primary-fg,#fff)}',
     '.wbs-sess-toolbar{display:flex;align-items:center;gap:6px;margin-bottom:8px}',
     '.wbs-sess-refresh{display:flex;align-items:center;justify-content:center;flex-shrink:0;padding:7px;border:1px solid var(--wb-border-default,#e5e5e5);border-radius:9px;background:var(--wb-bg-popover,#fff);color:var(--wb-icon-secondary,#555);font-size:12px;cursor:pointer;line-height:1;transition:all .15s}',
     '.wbs-sess-refresh:hover{background:var(--wb-bg-hover,#f5f5f5);color:var(--wb-color-text-primary,#1f1f1f)}',
@@ -9600,8 +9661,9 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '.wbs-sess-delbtn:hover{color:#ff6b6b;border-color:color-mix(in srgb,#ff6b6b 45%,transparent);background:color-mix(in srgb,#ff6b6b 8%,transparent)}',
     '.wbs-sess-delbtn.armed{color:#fff;background:#ff6b6b;border-color:#ff6b6b}',
     '.wbs-sess-count{display:flex;align-items:center;gap:5px;margin-left:auto;min-width:0}',
-    '.wbs-sess-summary-tag{display:inline-flex;align-items:center;min-height:22px;padding:0 8px;border:1px solid var(--wb-border-default,#e5e5e5);border-radius:999px;background:color-mix(in srgb,var(--wb-bg-tertiary,#f0f0f0) 70%,transparent);color:var(--wb-icon-secondary,#666);font-size:11px;white-space:nowrap}',
-    '.wbs-sess-summary-auto{border-color:color-mix(in srgb,var(--wb-button-primary-bg,#1f1f1f) 24%,var(--wb-border-default,#e5e5e5));color:var(--wb-button-primary-bg,#1f1f1f);background:color-mix(in srgb,var(--wb-button-primary-bg,#1f1f1f) 8%,transparent)}',
+    '.wbs-sess-summary-tag{display:inline-flex;align-items:center;padding:0;border:0;border-radius:0;background:transparent;color:var(--wb-icon-tertiary,#999);font-size:10px;line-height:22px;white-space:nowrap}',
+    '.wbs-sess-summary-auto{color:var(--wb-icon-tertiary,#999)}',
+    '.wbs-sess-summary-auto::before{content:"·";margin-right:5px;opacity:.7}',
     '.wbs-sess-summary-selected{font-size:11px;color:var(--wb-icon-tertiary,#999);white-space:nowrap}',
     '.wbs-model-card{display:flex;flex:1;flex-direction:column;min-height:0;padding:10px 12px 12px}',
     '.wbs-model-tabs{display:flex;gap:4px;padding:3px;margin-bottom:10px;border-radius:10px;background:var(--wb-bg-tertiary,#f0f0f0)}',
@@ -9899,7 +9961,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '.wbs-transfer-copy{display:flex;min-width:0;flex:1;flex-direction:column;gap:2px}',
     '.wbs-transfer-title{overflow:hidden;color:var(--wb-color-text-primary,#1f1f1f);font-size:12px;font-weight:650;line-height:1.35;text-overflow:ellipsis;white-space:nowrap}',
     '.wbs-transfer-sub{overflow:hidden;color:var(--wb-icon-tertiary,#888);font-size:11px;line-height:1.35;text-overflow:ellipsis;white-space:nowrap}',
-    '.wbs-transfer-option:focus-within,.wbs-transfer-toggle:focus-visible,.wbs-modal-btn:focus-visible,.wbs-sess-bbtn:focus-visible,.wbs-acct-io:focus-visible{outline:2px solid var(--wb-accent-blue,#4f86ff);outline-offset:2px}',
+    '.wbs-transfer-option:focus-within,.wbs-transfer-toggle:focus-visible,.wbs-modal-btn:focus-visible,.wbs-sess-bbtn:focus-visible,.wbs-sess-auto-all:focus-visible,.wbs-acct-io:focus-visible{outline:2px solid var(--wb-accent-blue,#4f86ff);outline-offset:2px}',
     '.wbs-login-body{display:flex;flex-direction:column;gap:9px;margin-bottom:16px}',
     '.wbs-login-option{display:flex;align-items:flex-start;gap:10px;width:100%;box-sizing:border-box;padding:12px 13px;border:1px solid transparent;border-radius:11px;background:var(--wb-bg-popover,#fff);cursor:pointer;text-align:left;transition:border-color .16s,background .16s,box-shadow .16s;font-family:inherit}',
     '.wbs-login-option:hover{border-color:var(--wb-border-strong,#b9b9bd);background:var(--wb-bg-hover,#f5f5f5)}',
