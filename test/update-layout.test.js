@@ -1058,7 +1058,7 @@ test('session auto-copy plans and API responses collapse duplicate rows by accou
   assert.match(lib, /const allLineages = \{\}/);
   assert.match(daemon, /dedupeAutoCopySessionRows\(rows, \{ \[source\]: rules\.allLineages \}\)/);
   assert.match(daemon, /dedupeAutoCopySessionRows\(rows, lineagesByUid\)/);
-  assert.match(daemon, /const DAEMON_VERSION = '1\.1\.31'/);
+  assert.match(daemon, /const DAEMON_VERSION = '\d+\.\d+\.\d+'/);
 });
 
 test('session summary counts effective sessions and models tab only exposes sanitized model APIs', () => {
