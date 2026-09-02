@@ -1113,7 +1113,9 @@ function launchWorkBuddy(wb) {
     ? { ...process.env, WORKBUDDY_REMOTE_DEBUGGING_PORT: String(CDP_PORT) }
     : process.env;
   const child = spawn(wb, args, {
-    cwd: path.dirname(wb), detached: true, stdio: 'ignore', windowsHide: true, env,
+    // WorkBuddy is a GUI process; hiding its startup window can leave the main
+    // Electron window hidden when it inherits STARTUPINFO.wShowWindow.
+    cwd: path.dirname(wb), detached: true, stdio: 'ignore', windowsHide: false, env,
   });
   const state = { method: 'node-spawn', pid: Number.isSafeInteger(child.pid) ? child.pid : null, errorCode: null, exitCode: null, signal: null };
   child.on('error', (e) => {
