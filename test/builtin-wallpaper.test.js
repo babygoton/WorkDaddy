@@ -8,6 +8,7 @@ const test = require('node:test');
 const daemon = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'daemon.js'), 'utf8');
 const macBuild = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'build-mac-dmg.sh'), 'utf8');
 const winBuild = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'build-win-zip.sh'), 'utf8');
+const winInstaller = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'build-win-installer.ps1'), 'utf8');
 const winWorkflow = fs.readFileSync(path.join(__dirname, '..', '.github', 'workflows', 'build-win.yml'), 'utf8');
 const wallpaperOverride = path.join(__dirname, '..', 'scripts', 'builtin-overrides', 'wallpaper-06.webp');
 const builtinDir = path.join(__dirname, '..', 'scripts', 'builtin');
@@ -41,16 +42,24 @@ test('release builders stage the tracked wallpaper override as wallpaper 6 and t
   }
 });
 
-test('Windows release inputs include the complete tracked builtin gallery', () => {
+test('Windows builds have a tracked full built-in gallery independent of the macOS app shell', () => {
+  const wallpapers = fs.readdirSync(path.join(builtinDir, 'wallpapers')).filter((name) => /\.webp$/i.test(name));
+  assert.ok(wallpapers.length > 1, 'tracked builtin gallery must contain more than the single override');
   assert.ok(fs.existsSync(path.join(builtinDir, 'nebula', 'theme.json')));
-  const wallpapers = fs.readdirSync(path.join(builtinDir, 'wallpapers'))
-    .filter((name) => /^wallpaper-\d+\.webp$/i.test(name));
-  assert.ok(wallpapers.length >= 12, `expected at least 12 official wallpapers, found ${wallpapers.length}`);
-  for (let i = 1; i <= 12; i++) {
-    assert.ok(fs.existsSync(path.join(builtinDir, 'wallpapers', `wallpaper-${String(i).padStart(2, '0')}.webp`)));
-  }
-  assert.match(winBuild, /BUILTIN_SRC="\$DIR\/scripts\/builtin"/);
-  assert.match(winBuild, /内置资产没有任何官方壁纸/);
+  assert.match(winBuild, /BUILTIN_SRC=\"\$DIR\/scripts\/builtin\"/);
+});
+
+test('Windows packaging fails closed when the official wallpaper gallery is unavailable', () => {
+  assert.match(winBuild, /BUILTIN_SRC=.*WorkDaddy\.app[\\/]Contents[\\/]Resources[\\/]scripts[\\/]builtin/);
+  assert.match(winBuild, /WALLPAPER_COUNT=.*find[\s\S]*builtin\/wallpapers/);
+  assert.match(winBuild, /WALLPAPER_COUNT.*-le 0[\s\S]*exit 2/);
+  assert.match(winBuild, /nebula[\\/]theme\.json/);
+  assert.match(winBuild, /STAGE\/scripts\/builtin\/wallpapers/);
+  assert.match(winBuild, /STAGE\/scripts\/builtin\/nebula\/theme\.json/);
+  assert.match(winInstaller, /runtime\\node\\node\.exe/);
+  assert.match(winInstaller, /\$wallpaperPayload\s*=\s*Join-Path\s+\$builtinPayload\s+'wallpapers'/);
+  assert.match(winInstaller, /\$themePayload\s*=\s*Join-Path\s+\$builtinPayload\s+'nebula\\theme\.json'/);
+  assert.match(winInstaller, /内置官方壁纸/);
   assert.match(winWorkflow, /::error::缺少内置资产/);
   assert.doesNotMatch(winWorkflow, /警告: 未找到 builtin/);
 });

@@ -56,6 +56,17 @@ try {
   if (-not (Test-Path -LiteralPath (Join-Path $scriptsPayload 'runtime\node\node.exe') -PathType Leaf)) {
     throw 'The ZIP payload does not contain the bundled Node runtime.'
   }
+  $builtinPayload = Join-Path $scriptsPayload 'builtin'
+  $wallpaperPayload = Join-Path $builtinPayload 'wallpapers'
+  $themePayload = Join-Path $builtinPayload 'nebula\theme.json'
+  if (-not (Test-Path -LiteralPath $wallpaperPayload -PathType Container) -or
+      -not (Test-Path -LiteralPath $themePayload -PathType Leaf)) {
+    throw 'ZIP 内部缺少内置官方壁纸或 nebula/theme.json。'
+  }
+  $wallpaperCount = @(Get-ChildItem -LiteralPath $wallpaperPayload -Filter '*.webp' -File -ErrorAction SilentlyContinue).Count
+  if ($wallpaperCount -le 0) {
+    throw 'ZIP 内置官方壁纸为空，拒绝生成安装包。'
+  }
   $stagedDaemon = Get-Content -LiteralPath (Join-Path $scriptsPayload 'daemon.js') -Raw -Encoding UTF8
   $stagedVersionMatch = [regex]::Match($stagedDaemon, "const DAEMON_VERSION = '([^']+)'")
   if (-not $stagedVersionMatch.Success -or $stagedVersionMatch.Groups[1].Value -ne $version) {
