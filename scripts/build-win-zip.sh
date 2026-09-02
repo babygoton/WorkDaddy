@@ -106,21 +106,20 @@ if [ ! -d scripts/node_modules/ws ]; then
   rm -rf "$TMPNODE"
 fi
 
-# 2) 内置资产（官方壁纸 + nebula 主题，单一来源：WorkDaddy.app/Contents/Resources/scripts/builtin）
-#    仓库 scripts/ 本身不含 builtin，必须从 app 打包产物复制，否则 Windows 面板会显示「暂无官方壁纸」
-BUILTIN_SRC="$DIR/WorkDaddy.app/Contents/Resources/scripts/builtin"
-if [ -d "$BUILTIN_SRC" ]; then
-  echo "==> 内置资产 builtin -> scripts/builtin（$(find "$BUILTIN_SRC/wallpapers" -name '*.webp' | wc -l | tr -d ' ') 张壁纸 + 主题）"
-  mkdir -p scripts/builtin
-  cp -R "$BUILTIN_SRC/." scripts/builtin/
-else
-  echo "==> 警告: 未找到内置资产 $BUILTIN_SRC（无 WorkDaddy.app？），打包将不含官方壁纸/主题"
+# 2) 内置资产（官方壁纸 + nebula 主题）。这些文件必须随源码进入构建上下文，
+#    不能依赖被 .gitignore 排除的 WorkDaddy.app；否则干净的 Windows CI 会产出
+#    安装成功但主题面板为空的安装包。
+BUILTIN_SRC="$DIR/scripts/builtin"
+if [ ! -f "$BUILTIN_SRC/nebula/theme.json" ] || [ ! -d "$BUILTIN_SRC/wallpapers" ]; then
+  echo "错误：缺少内置资产 $BUILTIN_SRC（需要 nebula/theme.json 和 wallpapers/）" >&2
+  exit 2
 fi
-WALLPAPER_OVERRIDE="$DIR/scripts/builtin-overrides/wallpaper-06.webp"
-if [ -f "$WALLPAPER_OVERRIDE" ] && [ -d scripts/builtin ]; then
-  cp "$WALLPAPER_OVERRIDE" scripts/builtin/wallpapers/wallpaper-06.webp
-  cp "$WALLPAPER_OVERRIDE" scripts/builtin/nebula/background.webp
+BUILTIN_WALLPAPER_COUNT="$(find "$BUILTIN_SRC/wallpapers" -maxdepth 1 -type f -iname '*.webp' | wc -l | tr -d ' ')"
+if [ "$BUILTIN_WALLPAPER_COUNT" -lt 1 ]; then
+  echo "错误：内置资产没有任何官方壁纸：$BUILTIN_SRC/wallpapers" >&2
+  exit 2
 fi
+echo "==> 内置资产校验通过：${BUILTIN_WALLPAPER_COUNT} 张壁纸 + nebula 主题"
 
 # 3) 打包：staging 目录，把两个顶层入口文件 + scripts/ 一起打进 zip 根（解压即见一键安装/启动）
 #    注意 apply-update.ps1 复用本结构（需 zip 内存在 scripts\daemon.js 做 srcRoot 判定）
@@ -134,6 +133,10 @@ cp scripts/Install-WorkDaddy.cmd "$STAGE/Install-WorkDaddy.cmd"
 cp scripts/Start-WorkDaddy.cmd "$STAGE/Start-WorkDaddy.cmd"
 # 3.2) scripts\ 本体（含 node_modules/ws、builtin）
 cp -R scripts "$STAGE/scripts"
+# 以已校验的仓库资产为准，避免工作树里残留的临时目录进入安装包。
+rm -rf "$STAGE/scripts/builtin"
+mkdir -p "$STAGE/scripts/builtin"
+cp -R "$BUILTIN_SRC/." "$STAGE/scripts/builtin/"
 cp "$NATIVE_LAUNCHER" "$STAGE/WorkDaddyLauncher.exe"
 printf '%s\n' "$PROFILE" > "$STAGE/scripts/profile-id.txt"
 echo "==> 原生入口: WorkDaddyLauncher.exe (${PROFILE})"
@@ -182,6 +185,15 @@ PY
 test -s "$STAGE/scripts/runtime/node/node.exe"
 test -s "$STAGE/scripts/runtime/node/LICENSE"
 echo "==> 内置 Node.js: scripts/runtime/node/node.exe"
+# 发布版使用当前 override 替换第 6 张壁纸及 nebula 背景；只修改暂存目录，
+# 不触碰仓库内的正式资源。
+WALLPAPER_OVERRIDE="$DIR/scripts/builtin-overrides/wallpaper-06.webp"
+if [ -f "$WALLPAPER_OVERRIDE" ]; then
+  cp "$WALLPAPER_OVERRIDE" "$STAGE/scripts/builtin/wallpapers/wallpaper-06.webp"
+  cp "$WALLPAPER_OVERRIDE" "$STAGE/scripts/builtin/nebula/background.webp"
+fi
+test -f "$STAGE/scripts/builtin/nebula/theme.json"
+test -n "$(find "$STAGE/scripts/builtin/wallpapers" -maxdepth 1 -type f -iname '*.webp' -print -quit)"
 # 3.2a) 打包期 profile 替换（统一用 python3，mac/win 均可用）：
 #       1) win-launcher.js 默认 profile
 #       2) 三个 ps1 仅替换 param 默认值处的占位符（[string]$Profile = '...'），
@@ -373,11 +385,6 @@ fi
 # 3.5) 清理 staging（Windows Git Bash 下 rm 可能触发安全删除钩子导致非零退出；改用 find -delete 兜底）
 if [ -d "$STAGE" ]; then
   find "$STAGE" -depth -delete 2>/dev/null || rm -rf "$STAGE" || true
-fi
-
-# 4) 清理临时内置到 scripts/ 的 builtin（避免污染仓库）；rm 可能触发安全删除钩子，失败不中断
-if [ -d "$BUILTIN_SRC" ] && [ -d scripts/builtin ]; then
-  rm -rf scripts/builtin 2>/dev/null || true
 fi
 
 echo "==> 安装暂存包完成: $(ls -lh "$OUT" | awk '{print $5}')"
