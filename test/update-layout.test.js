@@ -1051,6 +1051,16 @@ test('session copy-all is a separate override with a distinct toggle and hidden 
   assert.match(inject, /\.wbs-sess-summary-tag\{[^}]*border:0[^}]*background:transparent/);
 });
 
+test('session auto-copy plans and API responses collapse duplicate rows by account lineage', () => {
+  const daemon = read('daemon.js');
+  const lib = read('lib.js');
+  assert.match(lib, /function dedupeAutoCopySessionRows\(rows, lineagesByUid\)/);
+  assert.match(lib, /const allLineages = \{\}/);
+  assert.match(daemon, /dedupeAutoCopySessionRows\(rows, \{ \[source\]: rules\.allLineages \}\)/);
+  assert.match(daemon, /dedupeAutoCopySessionRows\(rows, lineagesByUid\)/);
+  assert.match(daemon, /const DAEMON_VERSION = '1\.1\.31'/);
+});
+
 test('session summary counts effective sessions and models tab only exposes sanitized model APIs', () => {
   const daemon = read('daemon.js');
   const inject = read('inject.js');
