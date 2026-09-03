@@ -547,6 +547,46 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
   var WBS_PROFILE_IS_AI = PROFILE_ID === 'workbuddy-ai';
   var WBS_BRAND = WBS_PROFILE_IS_AI ? 'WorkDaddy AI' : 'WorkDaddy';
 
+  // User-facing strings are translated at the injected root so dynamically-built
+  // panes and toasts follow the same language without touching WorkBuddy's DOM.
+  var WBS_LANGUAGE_KEY = 'workdaddy.ui.language';
+  var WBS_I18N_EN = {
+    '账号': 'Accounts', '主题': 'Theme', '会话': 'Sessions', '模型': 'Models', '增强': 'Enhance', '电脑': 'Computer', '关于': 'About', '设置': 'Settings',
+    '导出': 'Export', '导入': 'Import', '删除': 'Delete', '编辑': 'Edit', '保存': 'Save', '取消': 'Cancel', '确定': 'Confirm', '确认': 'Confirm', '复制': 'Copy', '切换': 'Switch', '启用': 'Enable', '停止': 'Stop',
+    '暂存提示词': 'Stash prompt', '暂存': 'Stashed', '引用文本': 'Quote text', '快捷短语': 'Quick phrases', '点击后发送': 'Send on click', '编辑 →': 'Edit →', '新增': 'Add', '批量操作': 'Batch actions', '批量管理': 'Batch manage', '全选': 'Select all', '取消全选': 'Deselect all', '已选 0': 'Selected 0',
+    '账号汇总': 'Account summary', '账号数': 'Accounts', '总积分': 'Total credits', '手机': 'Phone', '有效期至': 'Expires', '当前使用中': 'Currently active', '登录新账号': 'Log in a new account', '没有可导出的账号备份': 'No account backups to export', '还没有备份账号。打开/登录一次 WorkBuddy 后会自动备份，稍后再来查看。': 'No account backups yet. Open or log in to WorkBuddy once and check again later.',
+    '语言': 'Language', '中文': 'Chinese', '英语': 'English', 'English': 'English', '跟随系统': 'Follow system', '设置语言': 'Language', '首次打开时自动跟随系统语言；未匹配时使用英语。': 'The first launch follows your system language. English is used when no match is found.', '语言设置已更新': 'Language updated',
+    '默认': 'Default', 'WorkDaddy 主题': 'WorkDaddy theme', '护眼绿': 'Eye-care green', '赛博紫': 'Cyber purple', '主题外观': 'Theme appearance', '壁纸': 'Wallpaper', '头像': 'Avatar', '自定义壁纸': 'Custom wallpaper', '背景蒙版': 'Background overlay', '背景毛玻璃': 'Background blur', '恢复默认': 'Restore default', '恢复官方头像': 'Restore official avatar',
+    '加载中…': 'Loading…', '读取中…': 'Reading…', '正在读取设置…': 'Reading settings…', '查询中…': 'Checking…', '暂无快捷短语': 'No quick phrases', '暂无快捷短语，点击「+ 新增」添加': 'No quick phrases. Click “+ Add” to create one.', '当前还未添加模型': 'No models added yet', '还没有模型备份': 'No model backups yet', '当前筛选下没有会话': 'No sessions match the current filter', '暂无进行中的会话': 'No active sessions', '暂无官方壁纸': 'No built-in wallpapers', '还没有自定义壁纸，先上传一张': 'No custom wallpapers yet. Upload one to start.', '壁纸加载中…': 'Loading wallpapers…', '壁纸加载失败（daemon 不可达）': 'Wallpaper loading failed (daemon unavailable)',
+    '发送失败: ': 'Send failed: ', '发送失败': 'Send failed', '打开面板失败: ': 'Could not open panel: ', '设置失败: ': 'Settings failed: ', '设置失败': 'Settings failed', '请求失败': 'Request failed', '操作失败': 'Operation failed', '读取文件失败': 'Could not read file', '复制失败': 'Copy failed', '复制失败: ': 'Copy failed: ', '删除失败: ': 'Delete failed: ', '删除失败': 'Delete failed', '切换失败: ': 'Switch failed: ', '应用主题失败: ': 'Could not apply theme: ', '蒙版设置失败: ': 'Overlay setting failed: ', '毛玻璃设置失败: ': 'Blur setting failed: ', '诊断设置保存失败: ': 'Could not save diagnostics setting: ', '无法连接本地服务: ': 'Cannot connect to local service: ', '请确认守护进程已运行': 'Make sure the daemon is running',
+    '签到中': 'Checking in', '今日已签到✓': 'Checked in today ✓', '无签到活动': 'No check-in activity', '登录身份过期': 'Login expired', '刚刚': 'Just now', '分钟前': ' minutes ago', '小时前': ' hours ago', '天前': ' days ago',
+    '发现新版本': 'New version available', '立即更新': 'Update now', '有新版本可用，点击更新。': 'A new version is available. Click Update.', '下载中…': 'Downloading…', '正在打开…': 'Opening…', '安装程序已打开': 'Installer opened', '打开安装程序': 'Open installer', '安装中…': 'Installing…', '重启中…': 'Restarting…', '已完成': 'Completed', '重试更新': 'Retry update',
+    '安全传输': 'Secure transfer', '选择内容': 'Select content', '选择账号': 'Select accounts', '选择目标账号': 'Select target account', '选择目标账号…': 'Select a target account…', '密码': 'Password', '请输入密码': 'Enter password', '密码不能为空': 'Password cannot be empty', '请至少选择一项': 'Select at least one item', '处理中…': 'Processing…', '新版文件请输入密码': 'Enter the password for the new file', '新版文件必须输入密码；旧版导出文件可留空。': 'New files require a password; older exports may be left blank.', '新版文件请输入密码；已有的相同短语会自动跳过。': 'Enter the password for the new file; duplicate phrases are skipped.',
+    '电脑休眠': 'Computer sleep', '允许电脑休眠': 'Allow computer sleep', '持续禁止休眠': 'Keep awake', '所有会话结束允许休眠': 'Allow sleep when all sessions end', '系统默认，空闲后正常休眠': 'System default; sleep normally when idle', '保持唤醒，防黑屏锁屏': 'Stay awake to prevent screen lock', '任一会话运行中都保持唤醒': 'Stay awake while any session is running', '允许显示器休眠': 'Allow display sleep', '禁止休眠时，是否允许显示器单独黑屏': 'When sleep is blocked, allow the display to turn off',
+    '发送错误诊断': 'Send error diagnostics', '推荐开启': 'Recommended', '由环境变量控制': 'Controlled by environment variable', '默认开启 · 设置读取失败': 'Enabled by default · failed to read setting', '保存中…': 'Saving…', '仅发送经过脱敏、截断的版本、系统和错误信息，不包含账号、会话内容、Token 或 API Key；可随时关闭。': 'Only redacted and truncated version, system, and error details are sent. Accounts, sessions, tokens, and API keys are excluded; you can turn this off anytime.', '查看错误诊断说明': 'View diagnostics details', '问题反馈': 'Report an issue', '会话监听日志': 'Session monitor log', '仅保存在当前页面内存': 'Stored only in this page memory',
+    '权限免打扰': 'Permission quiet mode', '异常中断会话': 'Continue interrupted sessions', '决策弹窗': 'Decision prompts', '用弹窗提问': 'Ask with a dialog', '确认弹窗自动允许': 'Auto-allow confirmation dialogs', '自动复制所有会话': 'Auto-copy all sessions', '会话消息索引': 'Message index', '引用消息文本': 'Quote message text', '选择登录方式': 'Choose a login method', '假退出': 'Soft logout', '无感登录': 'Seamless login',
+    '未设置': 'Not set', '当前使用中': 'Currently active', '停止生成': 'Stop generating', '正常重启': 'Restart normally', '清空日志': 'Clear log', '开发者工具': 'Developer tools', '隐藏功能': 'Hidden feature', '卡死': 'Stuck', '任务': 'Task', '空间': 'Workspace', '全部': 'All', '今天': 'Today', '近 7 天': 'Last 7 days', '近 30 天': 'Last 30 days', '企业配额': 'Enterprise quota', '积分到期分布': 'Credit expiry distribution',
+    '连接新服务…': 'Connecting to service…', '等待中': 'Waiting', '运行中': 'Running', '空闲': 'Idle', '已中断': 'Interrupted', '已停止': 'Stopped', '未确认': 'Unconfirmed', '等待确认': 'Waiting for confirmation', '等待新回复': 'Waiting for a new reply', '等待会话': 'Waiting for session', '等待允许': 'Waiting for approval', '整理中': 'Organizing', '恢复中': 'Restoring', '即将完成…': 'Finishing…', '已继续': 'Continued', '检测到会话异常中断，即将自动发送「': 'An interrupted session was detected. Sending “', '自动发送失败，请手动点击发送': 'Automatic send failed. Please click Send manually', '底层发送失败，请手动发送': 'Underlying send failed. Please send manually',
+    '导出账号': 'Export accounts', '导入账号': 'Import accounts', '导出会话': 'Export sessions', '导入会话': 'Import sessions', '导出快捷短语': 'Export quick phrases', '导入快捷短语': 'Import quick phrases', '复制选中到其他账号': 'Copy selected to another account', '删除选中': 'Delete selected', '操作会话': 'Session actions', '连通测试': 'Test connection', '编辑模型': 'Edit model', '模型已保存': 'Model saved', '模型已启用': 'Model enabled', '模型已复制': 'Model copied', '模型配置已共用': 'Model configuration shared', '当前模型': 'Current model', '备选模型': 'Backup models', '模型加载失败：': 'Failed to load models: ', '保存模型失败：': 'Failed to save model: ', '删除当前模型失败：': 'Failed to delete current model: ', '启用模型失败：': 'Failed to enable model: ', '连通测试失败：': 'Connection test failed: ',
+    '选择要查看的账号': 'Choose an account to view', '选择账号并输入密码后导出备份': 'Choose accounts and enter a password to export backups', '从加密导出文件导入账号备份': 'Import account backups from an encrypted export', '使用密码导出选中会话': 'Export selected sessions with a password', '使用密码导出选中快捷短语': 'Export selected quick phrases with a password', '从加密文件导入会话': 'Import sessions from an encrypted file', '从加密文件导入快捷短语': 'Import quick phrases from an encrypted file', '仅支持 PNG / JPG / WebP': 'PNG / JPG / WebP only', '点击或拖拽上传壁纸': 'Click or drag to upload a wallpaper', '点击选择图片，或拖拽到此处': 'Click to choose an image, or drag it here', '支持 PNG / JPG / WebP，自动压缩；可添加多张': 'PNG / JPG / WebP supported; images are compressed automatically',
+    '未命名账号': 'Unnamed account', '未命名模型': 'Unnamed model', '未命名': 'Unnamed', '未知错误': 'Unknown error', '未知': 'Unknown', '有效期未知': 'Expiry unknown', '未找到输入框': 'Composer not found', '输入框内容为空': 'Composer is empty', '当前输入框暂不支持引用插入': 'The current composer does not support quote insertion', '引用插入失败，请重试': 'Could not insert quote. Please try again', '已引用选中文字': 'Selected text quoted', '短语不能为空': 'Quick phrase cannot be empty', '请输入快捷短语': 'Enter a quick phrase', '删除快捷短语': 'Delete quick phrase', '编辑快捷短语': 'Edit quick phrase', '新增快捷短语': 'Add quick phrase', '确定删除': 'Confirm deletion', '确认永久删除': 'Confirm permanent deletion',
+    '本机回环 CDP 注入 · 不改官方安装包': 'Local CDP injection · official app untouched', '一个基于 ': 'A ', ' 的 WorkBuddy 桌面端增强工具。零侵入、零重签名——只把界面组件注入到正在运行的 WorkBuddy 渲染进程里。': ' WorkBuddy desktop enhancement tool using Chrome DevTools Protocol (CDP). No intrusion or re-signing; UI components are injected into the running renderer.', '问题反馈': 'Report an issue'
+  };
+  function wbsSystemLanguage() {
+    var value = String((navigator && (navigator.language || navigator.userLanguage)) || '').toLowerCase();
+    return value.indexOf('zh') === 0 ? 'zh' : 'en';
+  }
+  function wbsNormalizeLanguage(value) { return value === 'zh' ? 'zh' : 'en'; }
+  function wbsTranslateString(value, language) {
+    var source = String(value == null ? '' : value);
+    if (language !== 'en') return source;
+    var keys = Object.keys(WBS_I18N_EN).sort(function (a, b) { return b.length - a.length; });
+    for (var i = 0; i < keys.length; i++) {
+      if (source.indexOf(keys[i]) >= 0) source = source.split(keys[i]).join(WBS_I18N_EN[keys[i]]);
+    }
+    return source;
+  }
+
   // ===== 全局错误钩子：捕获渲染进程不可捕获的 error / unhandledrejection，把完整消息+栈
   // 打到 daemon 日志。渲染进程级崩溃（如 An object could not be cloned）虽非 try/catch 能拦，
   // 但很多是经 promise/microtask 抛出的可拦异常——这里统一兜住并留痕。
@@ -577,6 +617,13 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
   // 当前注入的 daemon 版本号（由 daemon.js 注入时把 __WBS_VERSION__ 替换为 DAEMON_VERSION）
   // 「关于」tab 直接展示，升级 daemon 后这里自动同步
   var WBS_VERSION = '__WBS_VERSION__';
+  var WBS_LANGUAGE = (function () {
+    try {
+      var saved = localStorage.getItem(WBS_LANGUAGE_KEY);
+      if (saved === 'zh' || saved === 'en') return saved;
+    } catch (_) {}
+    return wbsSystemLanguage();
+  })();
 
   // 纯图标 SVG（stroke 跟随按钮 currentColor）
   var SWITCH_SVG =
@@ -967,6 +1014,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       var t = el('div', 'wbs-toast' + (isErr ? ' err' : ''));
       t.textContent = String(msg == null ? '' : msg);
       (targetRoot || document.body).appendChild(t);
+      applyI18n(t);
       setBuildTimeout(function () {
         t.classList.add('out');
         setBuildTimeout(function () { t.remove(); }, 300);
@@ -1212,6 +1260,70 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     });
 
     // 根节点（面板保持右下角，按钮拖动后水平回到右侧）
+    var i18nTextSources = typeof WeakMap !== 'undefined' ? new WeakMap() : null;
+    var i18nAttrSources = typeof WeakMap !== 'undefined' ? new WeakMap() : null;
+    var i18nApplying = false;
+    function applyI18n(scope) {
+      if (!scope || !scope.ownerDocument) return;
+      i18nApplying = true;
+      try {
+        var nodeFilter = (scope.ownerDocument.defaultView && scope.ownerDocument.defaultView.NodeFilter) || { SHOW_TEXT: 4 };
+        var walker = scope.ownerDocument.createTreeWalker(scope, nodeFilter.SHOW_TEXT);
+        var node;
+        while ((node = walker.nextNode())) {
+          if (!node.parentNode || /^(SCRIPT|STYLE)$/.test(node.parentNode.nodeName)) continue;
+          var current = String(node.nodeValue || '');
+          var previous = i18nTextSources && i18nTextSources.get(node);
+          var source = previous && (current === previous.last || current === previous.translated) ? previous.source : current;
+          var translated = wbsTranslateString(source, WBS_LANGUAGE);
+          if (i18nTextSources) i18nTextSources.set(node, { source: source, translated: translated, last: translated });
+          if (current !== translated) node.nodeValue = translated;
+        }
+        var elements = scope.querySelectorAll ? scope.querySelectorAll('*') : [];
+        var processElement = function (element) {
+          if (!element || !element.hasAttribute) return;
+          ['title', 'aria-label', 'placeholder'].forEach(function (name) {
+            if (!element.hasAttribute(name)) return;
+            var currentAttr = element.getAttribute(name) || '';
+            var attrs = i18nAttrSources && i18nAttrSources.get(element);
+            var previousAttr = attrs && attrs[name];
+            var sourceAttr = previousAttr && (currentAttr === previousAttr.last || currentAttr === previousAttr.translated) ? previousAttr.source : currentAttr;
+            var translatedAttr = wbsTranslateString(sourceAttr, WBS_LANGUAGE);
+            if (i18nAttrSources) {
+              attrs = attrs || {};
+              attrs[name] = { source: sourceAttr, translated: translatedAttr, last: translatedAttr };
+              i18nAttrSources.set(element, attrs);
+            }
+            if (currentAttr !== translatedAttr) element.setAttribute(name, translatedAttr);
+          });
+        };
+        if (scope.nodeType === 1) processElement(scope);
+        for (var i = 0; i < elements.length; i++) processElement(elements[i]);
+      } finally { i18nApplying = false; }
+    }
+    function setLanguage(value) {
+      WBS_LANGUAGE = wbsNormalizeLanguage(value);
+      try { localStorage.setItem(WBS_LANGUAGE_KEY, WBS_LANGUAGE); } catch (_) {}
+      try {
+        document.documentElement.setAttribute('data-wbs-language', WBS_LANGUAGE);
+        document.documentElement.setAttribute('lang', WBS_LANGUAGE === 'zh' ? 'zh-CN' : 'en');
+      } catch (_) {}
+      applyInjectedI18n();
+      var select = root && root.querySelector('#wbs-language-select');
+      if (select) select.value = WBS_LANGUAGE;
+    }
+    function applyInjectedI18n() {
+      applyI18n(root);
+      var nodes = document.querySelectorAll('.wbs-stash-inline,.wbs-selection-quote-btn,.wbs-queue-tag,.wbs-message-nav-root');
+      for (var i = 0; i < nodes.length; i++) applyI18n(nodes[i]);
+    }
+    window.__wbsSetLanguage = setLanguage;
+    registerDisposer(function () {
+      if (window.__wbsSetLanguage === setLanguage) {
+        try { delete window.__wbsSetLanguage; } catch (_) { window.__wbsSetLanguage = null; }
+      }
+    });
+
     var root = el('div', 'wbs-root');
     root.setAttribute('data-wbs-profile', PROFILE_ID);
     if (!CAPS.theme) root.classList.add('wbs-no-theme');
@@ -1252,6 +1364,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       '<button class="wbs-tab" type="button" data-tab="enhance"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg><span>增强</span></button>',
       '<button class="wbs-tab" type="button" data-tab="pc"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg><span>电脑</span></button>',
       '<button class="wbs-tab" type="button" data-tab="about"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg><span>关于</span></button>',
+      '<button class="wbs-tab" type="button" data-tab="settings" title="设置"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.64 5.64l1.42 1.42M16.94 16.94l1.42 1.42M5.64 18.36l1.42-1.42M16.94 7.06l1.42-1.42"/><circle cx="12" cy="12" r="4"/></svg><span>设置</span></button>',
       '</div>',
       '<div class="wbs-body">',
       '<div class="wbs-pane active" data-pane="account"></div>',
@@ -1261,10 +1374,29 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       '<div class="wbs-pane" data-pane="enhance"></div>',
       '<div class="wbs-pane" data-pane="pc"></div>',
       '<div class="wbs-pane" data-pane="about"></div>',
+      '<div class="wbs-pane" data-pane="settings"></div>',
       '</div>',
       '</div>',
     ].join('');
     document.body.appendChild(root);
+    try {
+      document.documentElement.setAttribute('data-wbs-language', WBS_LANGUAGE);
+      document.documentElement.setAttribute('lang', WBS_LANGUAGE === 'zh' ? 'zh-CN' : 'en');
+    } catch (_) {}
+    var i18nObserver = null;
+    if (typeof MutationObserver !== 'undefined') {
+      i18nObserver = new MutationObserver(function (records) {
+        if (i18nApplying) return;
+        for (var ri = 0; ri < records.length; ri++) {
+          var target = records[ri].target;
+          var host = target && target.nodeType === 1 ? target : (target && target.parentNode);
+          if (host && host.closest && host.closest('.wbs-root') === root) applyI18n(host);
+        }
+      });
+      i18nObserver.observe(root, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ['title', 'aria-label', 'placeholder'] });
+      registerDisposer(function () { if (i18nObserver) i18nObserver.disconnect(); i18nObserver = null; });
+    }
+    applyI18n(root);
 
     // 不同客户端只开放明确支持的能力；保留统一面板结构可避免模式切换时布局抖动。
     // 主题能力由 profile capabilities 统一控制，两个 WorkBuddy 客户端均可使用。
@@ -1301,6 +1433,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     stashBtn.setAttribute('tabindex', '0');
     stashBtn.title = '暂存提示词';
     stashBtn.innerHTML = '<span class="wbs-stash-ico">' + STASH_SVG + '</span><span class="wbs-stash-txt">暂存提示词</span>';
+    applyI18n(stashBtn);
     // 防输入框失焦：点击按钮时不把焦点从输入框抢走（退格/打字持续有效）
     stashBtn.addEventListener('mousedown', function (e) { e.preventDefault(); });
     if (!CAPS.stashPrompt) stashBtn.style.display = 'none';
@@ -1322,6 +1455,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       '</div>' +
       '</div>' +
       '</div>';
+    applyI18n(exploreBtn);
     var exploreSendTxt = exploreBtn.querySelector('.wbs-explore-send-txt');
     if (exploreSendTxt) {
       exploreSendTxt.addEventListener('click', function (e) {
@@ -1540,6 +1674,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         selectionQuoteButton.setAttribute('aria-label', '引用文本');
         selectionQuoteButton.textContent = '引用文本';
         document.body.appendChild(selectionQuoteButton);
+        applyI18n(selectionQuoteButton);
         listen(selectionQuoteButton, 'pointerdown', function (event) {
           if (event.preventDefault) event.preventDefault();
           if (event.stopPropagation) event.stopPropagation();
@@ -3038,6 +3173,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
               '<path d="M2.53 2.53A2.25 2.25 0 0 1 4.12 2h6.13c.6 0 1.17.24 1.59.66l9.5 9.5a2.25 2.25 0 0 1 0 3.18l-5.4 5.4a2.25 2.25 0 0 1-3.18 0l-9.5-9.5a2.25 2.25 0 0 1-.66-1.59V4.12c0-.6.24-1.17.66-1.59zM7.06 8.56a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3z"/></svg>' +
               '<span>暂存提示词</span>';
             actions.insertBefore(tag, actions.firstChild);
+            applyI18n(tag);
           }
           // data-wbs-stash 标记：禁拖（dragstart 捕获拦截）+ 隐藏拖拽图标（CSS）。data 属性 React 不管理，幂等设置安全
           it.setAttribute('data-wbs-stash', '1');
@@ -3510,6 +3646,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     var enhancePane = root.querySelector('[data-pane="enhance"]');
     var pcPane = root.querySelector('[data-pane="pc"]');
     var aboutPane = root.querySelector('[data-pane="about"]');
+    var settingsPane = root.querySelector('[data-pane="settings"]');
     var hiddenToolsUnlocked = false;
     var logoutBtn = root.querySelector('[data-act="logout"]');
     var creditTooltip = null;
@@ -3799,12 +3936,37 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       if (name === 'enhance' && enhancePane && !enhancePane.dataset.built) buildEnhancePane();
       if (name === 'pc' && pcPane && !pcPane.dataset.built) buildPcPane();
       if (name === 'about' && aboutPane && !aboutPane.dataset.built) buildAboutPane();
+      if (name === 'settings' && settingsPane && !settingsPane.dataset.built) buildSettingsPane();
     }
     var tabBtns = root.querySelectorAll('.wbs-tab');
     for (var ti = 0; ti < tabBtns.length; ti++) {
       (function (btn) {
         btn.addEventListener('click', function () { switchTab(btn.getAttribute('data-tab')); });
       })(tabBtns[ti]);
+    }
+
+    function buildSettingsPane() {
+      if (!settingsPane) return;
+      settingsPane.dataset.built = '1';
+      settingsPane.innerHTML =
+        '<div class="wbs-pcard wbs-settings-card">' +
+          '<div class="wbs-pcard-title">语言</div>' +
+          '<div class="wbs-settings-row">' +
+            '<div class="wbs-settings-copy"><strong>设置语言</strong><span>首次打开时自动跟随系统语言；未匹配时使用英语。</span></div>' +
+            '<select id="wbs-language-select" class="wbs-sess-select" aria-label="设置语言" title="设置语言">' +
+              '<option value="zh">中文</option><option value="en">English</option>' +
+            '</select>' +
+          '</div>' +
+        '</div>';
+      var select = settingsPane.querySelector('#wbs-language-select');
+      if (select) {
+        select.value = WBS_LANGUAGE;
+        select.addEventListener('change', function () {
+          setLanguage(select.value);
+          toast('语言设置已更新', false, root);
+        });
+      }
+      applyI18n(settingsPane);
     }
 
     // ===== 会话 pane（构建：账号/时间筛选 + 按空间分组[默认2条/展开10条] + 刷新 + 批量操作[迁移/删除]）=====
@@ -9650,13 +9812,20 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '.wbs-toast.err{background:#f53f3f}',
     '.wbs-toast.out{opacity:0}',
     /* ===== 新版 Tab 布局（账号/主题/增强）===== */
-    '.wbs-tabs{display:flex;gap:6px;padding:10px 14px 0;background:color-mix(in srgb,var(--wb-bg-secondary,#fff) 25%,transparent)}',
-    '.wbs-tab{flex:1;display:flex;align-items:center;justify-content:center;gap:6px;padding:8px 0;border:none;border-radius:10px;background:transparent;color:var(--wb-icon-secondary,#666);font-size:13px;font-weight:600;cursor:pointer;transition:all .18s;font-family:inherit}',
+    '.wbs-tabs{display:flex;gap:6px;padding:10px 14px 0;background:color-mix(in srgb,var(--wb-bg-secondary,#fff) 25%,transparent);overflow-x:auto;scrollbar-width:none}',
+    '.wbs-tabs::-webkit-scrollbar{display:none}',
+    '.wbs-tab{flex:1 0 66px;min-width:66px;display:flex;align-items:center;justify-content:center;gap:6px;padding:8px 4px;border:none;border-radius:10px;background:transparent;color:var(--wb-icon-secondary,#666);font-size:13px;font-weight:600;cursor:pointer;transition:all .18s;font-family:inherit;white-space:nowrap}',
     '.wbs-tab-ico{font-size:14px;line-height:1}',
     '.wbs-tab:hover{background:var(--wb-bg-hover,#f5f5f5);color:var(--wb-color-text-primary,#1f1f1f)}',
     '.wbs-tab.active{background:var(--wb-button-primary-bg,#1f1f1f);color:var(--wb-button-primary-fg,#fff);box-shadow:0 2px 10px color-mix(in srgb,var(--wb-button-primary-bg,#1f1f1f) 30%,transparent)}',
     '.wbs-pane{display:none;padding:2px 2px 6px}',
     '.wbs-pane.active{display:flex;flex-direction:column;height:100%;min-height:0}',
+    '.wbs-settings-card{padding:12px 14px}',
+    '.wbs-settings-row{display:flex;align-items:center;gap:12px;justify-content:space-between}',
+    '.wbs-settings-copy{display:flex;flex-direction:column;gap:4px;min-width:0}',
+    '.wbs-settings-copy strong{font-size:12px;color:var(--wb-color-text-primary,#1f1f1f);font-weight:650}',
+    '.wbs-settings-copy span{font-size:11px;line-height:1.5;color:var(--wb-icon-tertiary,#999);white-space:normal;overflow-wrap:anywhere}',
+    '#wbs-language-select{flex:0 0 112px;min-width:112px}',
     /* 分组卡片（主题/增强 tab） */
     '.wbs-pcard{background:color-mix(in srgb,var(--wb-bg-secondary,#fff) 18%,transparent);border:1px solid var(--wb-border-subtle,#f0f0f0);border-radius:14px;padding:10px 12px;margin-bottom:8px;backdrop-filter:blur(16px) saturate(1.2);-webkit-backdrop-filter:blur(16px) saturate(1.2)}',
     '.wbs-pcard-title{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:700;color:var(--wb-color-text-primary,#1f1f1f);margin-bottom:8px}',
@@ -10044,6 +10213,8 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     init: start,
     refresh: function () { if (state._refresh) state._refresh(); },
     destroy: destroyWidget,
+    getLanguage: function () { return WBS_LANGUAGE; },
+    setLanguage: function (value) { return typeof window.__wbsSetLanguage === 'function' ? window.__wbsSetLanguage(value) : undefined; },
   };
 })();
 }
