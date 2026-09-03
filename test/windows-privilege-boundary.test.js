@@ -246,7 +246,12 @@ test('native lifecycle stop validates the bundled node path before termination',
   assert.match(nativeSource, /--terminate-workbuddy/);
   assert.match(nativeSource, /exitAccessDenied/);
   assert.match(nativeSource, /exitIdentityMismatch/);
-  assert.match(nativeSource, /if elevated \{[\s\S]*return true, exitAccessDenied/);
+  const lifecycleStart = nativeSource.indexOf('if hasArgument("--stop-lifecycle")');
+  const lifecycleEnd = nativeSource.indexOf('\n\tif hasArgument("--self-test")', lifecycleStart);
+  assert.ok(lifecycleStart >= 0 && lifecycleEnd > lifecycleStart);
+  const lifecycleBranch = nativeSource.slice(lifecycleStart, lifecycleEnd);
+  assert.match(lifecycleBranch, /stopLifecycle\(profile, targetApp, elevated\)/);
+  assert.doesNotMatch(lifecycleBranch, /if elevated \{[\s\S]*return true, exitAccessDenied/);
 });
 
 test('native termination maps TerminateProcess access denial to the permission exit code', () => {

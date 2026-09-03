@@ -180,6 +180,22 @@ test('native lifecycle cleanup accepts a PID that exits during exact inspection'
   assert.match(source.slice(exitedCheck, mismatch), /waitResult == waitObject0[\s\S]*return false, 0, nil/);
 });
 
+test('elevated lifecycle cleanup inspects exact state before refusing active termination', () => {
+  const source = read('scripts/windows-native/main.go');
+  const stopStart = source.indexOf('func stopLifecycle(');
+  const stopEnd = source.indexOf('\nfunc appendLog(', stopStart);
+  assert.ok(stopStart >= 0 && stopEnd > stopStart);
+  const stop = source.slice(stopStart, stopEnd);
+  assert.match(stop, /inspectExactProcess\(/);
+  assert.match(stop, /elevated[\s\S]*active[\s\S]*exitAccessDenied/);
+  assert.match(stop, /os\.Remove\(candidate\.path\)/);
+  const helperStart = source.indexOf('if hasArgument("--stop-lifecycle")');
+  const helperEnd = source.indexOf('\n\tif hasArgument("--self-test")', helperStart);
+  assert.ok(helperStart >= 0 && helperEnd > helperStart);
+  assert.match(source.slice(helperStart, helperEnd), /stopLifecycle\(profile, targetApp, elevated\)/);
+  assert.doesNotMatch(source.slice(helperStart, helperEnd), /if elevated \{[\s\S]*return true, exitAccessDenied/);
+});
+
 test('native lifecycle can recover a missing watchdog PID only from a unique daemon parent', () => {
   const source = read('scripts/windows-native/main.go');
   assert.match(source, /ParentPID\s+uint32/);
@@ -188,7 +204,7 @@ test('native lifecycle can recover a missing watchdog PID only from a unique dae
   assert.match(source, /daemonPID\s*int/);
   assert.match(source, /len\(candidates\) != 1/);
   assert.match(source, /candidate\.Path/);
-  const stopStart = source.indexOf('func stopLifecycle(profile, appDir string) int');
+  const stopStart = source.indexOf('func stopLifecycle(');
   const stopEnd = source.indexOf('\nfunc appendLog(', stopStart);
   assert.ok(stopStart >= 0 && stopEnd > stopStart);
   const stop = source.slice(stopStart, stopEnd);
@@ -199,7 +215,7 @@ test('native lifecycle can recover a missing watchdog PID only from a unique dae
 
 test('installer lifecycle cleanup releases only the exact installed native launcher', () => {
   const source = read('scripts/windows-native/main.go');
-  const stopStart = source.indexOf('func stopInstalledLauncher(appDir string) int');
+  const stopStart = source.indexOf('func stopInstalledLauncher(');
   const stopEnd = source.indexOf('\nfunc uniqueRunningWorkBuddyPath(', stopStart);
   assert.ok(stopStart >= 0 && stopEnd > stopStart);
   const stop = source.slice(stopStart, stopEnd);
@@ -277,6 +293,16 @@ test('native startup precisely restarts a verified WorkBuddy without CDP', () =>
   const nativeMain = launcher.slice(nativeMainStart, nativeMainEnd);
   assert.match(nativeMain, /nativeWorkBuddyRunning\(\)[\s\S]*stopNativeWorkBuddy\(\)[\s\S]*waitForWorkBuddyCdpNative/);
   assert.doesNotMatch(nativeMain, /return 10/);
+});
+
+test('native WorkBuddy restart preserves helper diagnostics for permission failures', () => {
+  const launcher = read('scripts/win-launcher.js');
+  const start = launcher.indexOf('function stopNativeWorkBuddy()');
+  const end = launcher.indexOf('\nfunction ', start + 1);
+  assert.ok(start >= 0 && end > start);
+  const stop = launcher.slice(start, end);
+  assert.match(stop, /result\.stderr/);
+  assert.match(stop, /无法精确重启当前 WorkBuddy[\s\S]*detail/);
 });
 
 test('native CDP startup detects failed child launches instead of waiting for the full timeout', () => {

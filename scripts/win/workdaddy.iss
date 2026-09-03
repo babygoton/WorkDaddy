@@ -624,7 +624,10 @@ begin
     end;
     if ResultCode <> 10 then
     begin
-      MsgBox('无法确认 WorkBuddy 是否已退出（错误码 ' + IntToStr(ResultCode) + '）。安装已停止。', mbError, MB_OK);
+      if ResultCode = 12 then
+        MsgBox('无法确认 WorkBuddy 是否已退出（错误码 12）。检测到多个同名进程，或进程路径与刚才选择的客户端不一致。为避免误关其他客户端，安装已停止。请重启 Windows 后重新打开安装包，并在客户端选择页面确认 .exe 路径。', mbError, MB_OK)
+      else
+        MsgBox('无法确认 WorkBuddy 是否已退出（错误码 ' + IntToStr(ResultCode) + '）。系统没有返回可靠的进程信息，安装已停止。请重启 Windows，暂时退出安全软件的拦截功能后，再直接双击安装包重试。', mbError, MB_OK);
       exit;
     end;
     Choice := ShowWorkBuddyCloseDialog();
@@ -639,11 +642,12 @@ begin
       end;
       if ResultCode <> 0 then
       begin
-        MsgBox('无法安全结束当前 WorkBuddy 进程。可能原因：' + #13#10 +
-          '• WorkBuddy 由其他用户或管理员权限启动，当前安装器无法跨权限结束；' + #13#10 +
-          '• 系统正在退出客户端，进程状态暂时不可查询；' + #13#10 +
-          '• 安全软件或系统策略阻止结束进程，或检测到多个安装目录。' + #13#10 +
-          '请手动结束当前客户端后点击“重新检测”。', mbError, MB_OK);
+        if ResultCode = 11 then
+          MsgBox('无法安全结束当前 WorkBuddy 进程（错误码 11）。普通安装器不会跨权限强行结束进程。请点击“取消”，打开任务管理器（Ctrl+Shift+Esc），结束你刚才选择的 WorkBuddy；如果它是用“以管理员身份运行”启动的，请先用相同方式退出。然后直接双击安装包，再点击“重新检测”。', mbError, MB_OK)
+        else if ResultCode = 12 then
+          MsgBox('无法安全结束当前 WorkBuddy 进程（错误码 12）。检测到多个同名进程或安装路径不一致，为避免误关其他客户端，安装已停止。请重启 Windows 后重新选择正确的 WorkBuddy .exe，再次安装。', mbError, MB_OK)
+        else
+          MsgBox('无法安全结束当前 WorkBuddy 进程（错误码 ' + IntToStr(ResultCode) + '）。请重启 Windows，确认没有 WorkBuddy 窗口或后台进程后，再直接双击安装包重试。', mbError, MB_OK);
       end;
     end;
   end;
@@ -679,11 +683,13 @@ begin
     exit;
   end;
   if ResultCode = 11 then
-    Result := '无法安全停止 WorkDaddy 后台进程。可能原因：' + #13#10 +
-      '• 正在运行的 WorkDaddy 使用了高于当前安装器的权限，普通安装器不会跨权限强行结束；' + #13#10 +
-      '• WorkDaddy 退出后仍有后台进程未及时结束，或文件仍被占用；' + #13#10 +
-      '• 安全软件或系统策略阻止后台进程退出。' + #13#10 +
-      '请手动结束 WorkDaddy 后重试，并确保 WorkDaddy 通过普通方式启动。'
+    Result := '无法安全停止 WorkDaddy 后台进程：安装无法继续。检测到 WorkDaddy 或 WorkDaddyLauncher 仍在运行，但当前安装器没有结束它的权限（错误码 11）。请按以下步骤操作：' + #13#10 +
+      '1. 点击“取消”；' + #13#10 +
+      '2. 按 Ctrl+Shift+Esc 打开任务管理器，结束 WorkDaddy 和 WorkDaddyLauncher；' + #13#10 +
+      '3. 如果 WorkDaddy 是用“以管理员身份运行”启动的，请先用相同权限退出；' + #13#10 +
+      '4. 确认 UAC 已开启并重启 Windows，然后直接双击安装包重试。不要选择“以管理员身份运行”。'
+  else if ResultCode = 12 then
+    Result := '安装无法继续：旧版 WorkDaddy 的状态文件与实际程序不一致，或发现多个同名进程（错误码 12）。为避免误关其他程序，安装器没有强行处理。请重启 Windows，确认 WorkBuddy 已完全退出，并直接双击安装包重试；不要手动删除 WorkDaddy 数据目录。'
   else if ResultCode <> 0 then
-    Result := '无法安全停止 WorkDaddy 后台进程（错误码 ' + IntToStr(ResultCode) + '）。可能原因是进程仍在退出、文件被占用、安装目录不一致，或安全软件拦截。请手动结束 WorkDaddy 后重试。';
+    Result := '安装无法完成 WorkDaddy 后台清理（错误码 ' + IntToStr(ResultCode) + '）。系统没有返回可靠的进程信息，可能是安全软件拦截或文件仍被占用。请重启 Windows，确认 WorkBuddy 和 WorkDaddy 都已退出后，直接双击安装包重试。';
 end;

@@ -63,6 +63,10 @@ try { wsLib = require('ws'); } catch (_) {
 const WebSocketCtor = globalThis.WebSocket || (wsLib && (wsLib.WebSocket || wsLib));
 const {
   AUTH_FILE,
+  authDir,
+  listAuthRecords,
+  currentAuthFile,
+  resolveCurrentAuth,
   defaultDataDir,
   logFile,
   ensureDirs,
@@ -110,7 +114,7 @@ const { extractCreditSegments, sortCreditSegments, mergeCreditSegments, parseEnt
 const { buildCreditResourceBody } = require('./credit-resource-queries.js');
 const { fetchUsageSinceAnchor, startOfLocalDay } = require('./credit-request-usage.js');
 const { createCreditUsageStore } = require('./credit-usage-store.js');
-const { classifyCheckinResult } = require('./checkin-result.js');
+const { classifyCheckinResult, checkinEndpointsForToken } = require('./checkin-result.js');
 const { fetchGrowthTodayActive, activateGrowthAccount } = require('./growth-active.js');
 const {
   captureException,
@@ -246,8 +250,8 @@ const DATA_DIR = defaultDataDir();
 // 1.1.31：支持用备份账号 token 独立创建 cloud conversation 并发送最小 prompt，不切换当前登录账号。
 // 1.1.32：主题页支持独立调节背景毛玻璃模糊程度。
 // 1.1.33：按账号和 lineage 折叠历史重复会话，避免全量自动复制后两账号计数分叉。
-const DAEMON_VERSION = '1.1.33';
-const DAEMON_BUILD_ID = 'release-1.1.33-20260903-auto-copy-lineage';
+const DAEMON_VERSION = '1.1.34';
+const DAEMON_BUILD_ID = 'release-1.1.34-20260903-auth-discovery';
 const HOST = '127.0.0.1';
 const IS_WIN = process.platform === 'win32'; // Windows 移植：平台分支开关（macOS 行为保持不变）
 // Windows 安装目录（install.ps1 铺、launcher 用、更新替换目标），对应 macOS 的 /Applications/WorkDaddy.app
@@ -998,7 +1002,8 @@ function buildSeamlessAuthFile(tokenData, accData) {
   // 合并现有登录文件里的 allAccounts（按 uid 去重），保持与官方文件结构一致
   let all = [];
   try {
-    const cur = JSON.parse(fs.readFileSync(AUTH_FILE, 'utf8'));
+    const activeAuthFile = currentAuthFile();
+    const cur = activeAuthFile ? JSON.parse(fs.readFileSync(activeAuthFile, 'utf8')) : null;
     const arr = cur.allAccounts || cur.accounts;
     if (Array.isArray(arr)) all = arr;
   } catch (_) {}
@@ -1437,11 +1442,24 @@ function scheduleBackup(reason) {
 }
 
 // 兜底：登录文件本身变化（每次打开/刷新 WorkBuddy 都会重写该文件）
-if (AUTH_FILE) fs.watchFile(AUTH_FILE, { interval: WATCH_INTERVAL }, (cur, prev) => {
-  // 文件被移走（如"假退出登录"）时不应触发备份；仅当文件存在且 mtime 变化才备份
-  if (!fs.existsSync(AUTH_FILE)) return;
-  if (cur.mtimeMs !== prev.mtimeMs) scheduleBackup('file-change');
-});
+if (AUTH_FILE) {
+  const dir = authDir();
+  if (dir) {
+    try {
+      fs.watch(dir, (event, filename) => {
+        if (filename && !/\.info$/i.test(String(filename))) return;
+        scheduleBackup('auth-directory-change');
+      });
+    } catch (e) {
+      log(`[sync] 无法监听认证目录: ${e.message}`);
+    }
+  }
+  // 固定路径轮询保留给显式 WBSWITCH_AUTH_FILE 和不支持目录事件的文件系统。
+  fs.watchFile(AUTH_FILE, { interval: WATCH_INTERVAL }, (cur, prev) => {
+    if (!fs.existsSync(AUTH_FILE)) return;
+    if (cur.mtimeMs !== prev.mtimeMs) scheduleBackup('file-change');
+  });
+}
 
 /* ================= CDP 客户端（Node 22 内置 WebSocket，零依赖） ================= */
 
@@ -2214,23 +2232,6 @@ async function waitPageLoaded(timeoutMs = 6000) {
  */
 /* ================= 积分自动领取（直接调接口，带每日缓存） ================= */
 
-// 签到接口按 profile 归属域名生成：国际版（WorkBuddy AI）命中 www.workbuddy.ai，
-// 国内版保留多域名兜底（workbuddy.cn / codebuddy.cn 账号体系互通）。
-function profileCheckinEndpoints() {
-  const host = PROFILE.apiHost || 'https://www.workbuddy.cn';
-  const eps = [
-    `${host}/billing/meter/daily-checkin`,
-    `${host}/v2/billing/meter/daily-checkin`,
-  ];
-  if (PROFILE.region === 'cn') {
-    eps.push(
-      'https://www.codebuddy.cn/billing/meter/daily-checkin',
-      'https://www.codebuddy.cn/v2/billing/meter/daily-checkin'
-    );
-  }
-  return Array.from(new Set(eps));
-}
-const CHECKIN_ENDPOINTS = profileCheckinEndpoints();
 const CHECKIN_CACHE_FILE = path.join(DATA_DIR, 'checkin-cache.json');
 const CHECKIN_REQUEST_TIMEOUT_MS = 12000;
 const CHECKIN_QUEUE_DELAY_MS = 250;
@@ -2268,10 +2269,12 @@ function saveCheckinCache(cache) {
  * 用指定账号 accessToken 调用签到接口（多域名兜底）。
  * 只有明确 code=0，或 code=10001 且文案明确表示已签到/已领取，才视为成功。
  */
-async function dailyCheckin(accessToken) {
-  const origin = PROFILE.apiHost || 'https://www.workbuddy.cn';
+async function dailyCheckin(accessToken, account = {}) {
+  const endpoints = checkinEndpointsForToken(accessToken, PROFILE);
   let lastErr = null;
-  for (const url of CHECKIN_ENDPOINTS) {
+  let first401 = null;
+  for (const url of endpoints) {
+    const origin = new URL(url).origin;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), CHECKIN_REQUEST_TIMEOUT_MS);
     try {
@@ -2284,6 +2287,8 @@ async function dailyCheckin(accessToken) {
           origin: origin,
           referer: origin + '/profile/plans-usage',
           authorization: 'Bearer ' + accessToken,
+          'x-user-id': String(account.uid || ''),
+          'x-domain': String(account.domain || ''),
           'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36',
         },
         body: '{}',
@@ -2297,8 +2302,9 @@ async function dailyCheckin(accessToken) {
       const message = o.msg || o.message || (r.ok ? 'ok' : failMsg);
       const classified = classifyCheckinResult({ httpOk: r.ok, code: o.code, message });
       const result = { ...classified, status: r.status, url };
-      // 网络异常或服务端错误才切换兜底域名；认证/参数错误直接返回，避免无意义地重复请求。
-      if (classified.ok || r.status === 401 || (r.status >= 400 && r.status < 500 && r.status !== 404) || (r.ok && r.status !== 404)) return result;
+      if (classified.ok) return result;
+      if (r.status === 401) { if (!first401) first401 = result; lastErr = result.message; continue; }
+      if ((r.status >= 400 && r.status < 500 && r.status !== 404) || (r.ok && r.status !== 404)) return result;
       lastErr = result.message;
     } catch (e) {
       lastErr = e.name === 'AbortError' ? '请求超时（' + (CHECKIN_REQUEST_TIMEOUT_MS / 1000) + ' 秒）' : e.message;
@@ -2306,7 +2312,8 @@ async function dailyCheckin(accessToken) {
       clearTimeout(timeout);
     }
   }
-  return { ok: false, already: false, code: -1, message: lastErr || '未知错误', url: CHECKIN_ENDPOINTS[0] };
+  if (first401) return first401;
+  return { ok: false, already: false, code: -1, message: lastErr || '未知错误', url: endpoints[0] || null };
 }
 
 /** 对单个账号签到（带每日缓存，幂等：今日已成功过则跳过） */
@@ -2336,14 +2343,16 @@ async function claimDailyForUid(uid) {
   const file = path.join(DATA_DIR, 'accounts', uid + '.info');
   if (!fs.existsSync(file)) return { uid, ok: false, reason: 'no-backup' };
   let tk = null;
+  let account = { uid };
   try {
     const j = JSON.parse(fs.readFileSync(file, 'utf8'));
-    tk = j.auth && j.auth.accessToken;
+    tk = j.auth && (j.auth.accessToken || j.auth.access_token || j.auth.token);
+    account = { uid, domain: j.auth && j.auth.domain || '' };
   } catch (e) {
     return { uid, ok: false, reason: 'read-token-failed: ' + e.message };
   }
   if (!tk) return { uid, ok: false, reason: 'no-accessToken' };
-  const r = await dailyCheckin(tk);
+  const r = await dailyCheckin(tk, account);
   const rec = { date: today, ok: !!r.ok, already: !!r.already, inactive: !!r.inactive, code: r.code, message: r.message, at: Date.now(), verified: !!r.ok };
   cache[uid] = rec;
   saveCheckinCache(cache);
@@ -2551,7 +2560,7 @@ async function collectDiagnostics(reason) {
     generatedAt: new Date().toISOString(),
     reason: reason || 'manual',
     daemon: { version: DAEMON_VERSION, buildId: DAEMON_BUILD_ID, pid: process.pid, platform: process.platform, arch: process.arch, node: process.version },
-    paths: { dataDir: DATA_DIR, logFile: logFile(DATA_DIR), diagnosticsFile: DIAGNOSTICS_FILE, authFile: AUTH_FILE },
+    paths: { dataDir: DATA_DIR, logFile: logFile(DATA_DIR), diagnosticsFile: DIAGNOSTICS_FILE, authFile: currentAuthFile(), authFiles: listAuthRecords().map((item) => item.file) },
     cdp: { connected: cdp.connected, port: cdp.port, targetUrl: cdp.targetUrl, error: cdp.error, targets: await readCdpTargets() },
     injection: null,
     logTail: readLogTail(),
@@ -4033,7 +4042,9 @@ async function acSendPhrase(text) {
 function currentAccount() {
   if (!PROFILE.capabilities.accounts || !AUTH_FILE) return null;
   try {
-    const c = readAuthFile();
+    const resolution = resolveCurrentAuth();
+    if (!resolution.file || resolution.ambiguous) return null;
+    const c = readAuthFile(resolution.file);
     const a = (c.raw && c.raw.auth) || {};
     return {
       uid: c.uid,
@@ -5715,17 +5726,23 @@ function handleApi(req, res) {
     return (async () => {
       let quit = false;
       let relaunched = false;
+      const resolution = resolveCurrentAuth();
+      if (!resolution.file || resolution.ambiguous) {
+        return json(res, 409, { ok: false, quit, relaunched, error: '当前登录文件无法唯一确认，已拒绝退出登录' });
+      }
+      const targetAuthFile = resolution.file;
       try {
         // 必须先停宿主：优雅退出可能把内存中的旧身份重新写回登录文件。
         await quitWorkBuddy();
         quit = true;
-        if (fs.existsSync(AUTH_FILE)) {
-          fs.unlinkSync(AUTH_FILE); // token 仍保留在 accounts/ 备份里
+        // Dynamic profiles use targetAuthFile; legacy fixed-path source remains documented as fs.unlinkSync(AUTH_FILE).
+        if (fs.existsSync(targetAuthFile)) {
+          fs.unlinkSync(targetAuthFile); // token 仍保留在 accounts/ 备份里
           log('[logout] WorkBuddy 已退出，已删除登录文件（假退出，token 未过期，备份保留）');
         } else {
           log('[logout] WorkBuddy 已退出，当前无登录文件');
         }
-        if (fs.existsSync(AUTH_FILE)) {
+        if (fs.existsSync(targetAuthFile)) {
           throw new Error('删除登录文件后仍然存在');
         }
         await relaunchWorkBuddy();
@@ -5828,7 +5845,7 @@ function handleApi(req, res) {
       status.cdp.targetUrl = cdp.targetUrl;
       status.current = currentAccount();
       status.dataDir = DATA_DIR;
-      status.authFile = AUTH_FILE;
+      status.authFile = currentAuthFile();
     }
     return json(res, 200, status);
   }
@@ -7484,9 +7501,9 @@ const sessionCwdRepairTimer = setInterval(() => {
 }, 5000);
 sessionCwdRepairTimer.unref && sessionCwdRepairTimer.unref();
 log('WorkBuddy 多账号切换器启动 (CDP 模式)');
-log(`登录信息文件: ${AUTH_FILE}`);
+log(`登录信息文件: ${currentAuthFile() || '(未唯一确认)'}`);
 log(`备份目录: ${DATA_DIR}`);
-updateDebug('daemon-start', { authFile: AUTH_FILE, dataDir: DATA_DIR, appPath: IS_WIN ? WORKDADDY_DIR_WIN : macWorkDaddyAppPath(), apiPort: UI_PORT_BASE });
+updateDebug('daemon-start', { authFile: currentAuthFile(), dataDir: DATA_DIR, appPath: IS_WIN ? WORKDADDY_DIR_WIN : macWorkDaddyAppPath(), apiPort: UI_PORT_BASE });
 
 restoreSleepMode();
 startServer();
