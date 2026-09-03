@@ -455,7 +455,7 @@ func readLockPID(path string) int {
 	return owner.PID
 }
 
-func terminateExactProcess(pid int, expectedPath string, label string) (bool, int, error) {
+func inspectExactProcess(pid int, expectedPath string, label string) (bool, int, error) {
 	if pid <= 0 {
 		return false, 0, nil
 	}
@@ -481,6 +481,17 @@ func terminateExactProcess(pid int, expectedPath string, label string) (bool, in
 	}
 	if !samePath(actual, expectedPath) {
 		return false, exitIdentityMismatch, fmt.Errorf("PID %d is %s, expected %s", pid, actual, expectedPath)
+	}
+	return true, 0, nil
+}
+
+func terminateExactProcess(pid int, expectedPath string, label string) (bool, int, error) {
+	active, code, inspectErr := inspectExactProcess(pid, expectedPath, label)
+	if inspectErr != nil {
+		return false, code, inspectErr
+	}
+	if !active {
+		return false, 0, nil
 	}
 	handle, err := openProcess(uint32(pid), processTerminate|synchronize|processQueryLimitedInformation)
 	if err != nil {
@@ -508,7 +519,7 @@ func terminateExactNode(pid int, expectedNode string) (bool, int, error) {
 	return terminateExactProcess(pid, expectedNode, "node")
 }
 
-func stopInstalledLauncher(appDir string) int {
+func stopInstalledLauncher(appDir string, elevated bool) int {
 	expectedLauncher := filepath.Join(appDir, "WorkDaddyLauncher.exe")
 	records, err := enumerateProcesses()
 	if err != nil {
@@ -533,6 +544,10 @@ func stopInstalledLauncher(appDir string) int {
 	}
 	if len(matches) == 0 {
 		return 0
+	}
+	if elevated {
+		fmt.Fprintln(os.Stderr, "installed WorkDaddy launcher is still running; lifecycle stop requires standard user privilege")
+		return exitAccessDenied
 	}
 	_, code, stopErr := terminateExactProcess(int(matches[0].PID), expectedLauncher, "launcher")
 	if stopErr != nil {
@@ -644,7 +659,7 @@ func recoverWatchdogPID(records []processRecord, expectedNode string, daemonPID 
 	return int(candidate.PID), nil
 }
 
-func stopLifecycle(profile, appDir string) int {
+func stopLifecycle(profile, appDir string, elevated bool) int {
 	dir, err := dataDir(profile)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -701,6 +716,20 @@ func stopLifecycle(profile, appDir string) int {
 			continue
 		}
 		seen[candidate.pid] = true
+		// An elevated helper may clear a stale PID, but must refuse any active
+		// lifecycle so it never becomes a cross-privilege process terminator.
+		active, code, inspectErr := inspectExactProcess(candidate.pid, expectedNode, "node")
+		if inspectErr != nil {
+			fmt.Fprintln(os.Stderr, inspectErr)
+			return code
+		}
+		if !active {
+			continue
+		}
+		if elevated {
+			fmt.Fprintln(os.Stderr, "running WorkDaddy lifecycle requires standard user privilege")
+			return exitAccessDenied
+		}
 		_, code, stopErr := terminateExactNode(candidate.pid, expectedNode)
 		if stopErr != nil {
 			fmt.Fprintln(os.Stderr, stopErr)
@@ -712,7 +741,7 @@ func stopLifecycle(profile, appDir string) int {
 			_ = os.Remove(candidate.path)
 		}
 	}
-	if code := stopInstalledLauncher(appDir); code != 0 {
+	if code := stopInstalledLauncher(appDir, elevated); code != 0 {
 		return code
 	}
 	return 0
@@ -857,15 +886,11 @@ func helperMain(appDir, profile string) (bool, int) {
 			fmt.Fprintln(os.Stderr, "cannot determine helper privilege:", err)
 			return true, exitFailure
 		}
-		if elevated {
-			fmt.Fprintln(os.Stderr, "lifecycle stop requires standard user privilege")
-			return true, exitAccessDenied
-		}
 		targetApp := argumentValue("--app-dir")
 		if targetApp == "" {
 			targetApp = appDir
 		}
-		return true, stopLifecycle(profile, targetApp)
+		return true, stopLifecycle(profile, targetApp, elevated)
 	}
 	if hasArgument("--self-test") {
 		elevated, err := isElevated()

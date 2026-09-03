@@ -607,6 +607,9 @@ test('Windows Setup waits for WorkBuddy and stops only a native-verified profile
   assert.match(installer, /当前安装程序是以管理员权限运行的/);
   assert.match(installer, /不要选择“以管理员身份运行”/);
   assert.match(installer, /普通安装器不会跨权限强行结束/);
+  assert.match(installer, /按 Ctrl\+Shift\+Esc 打开任务管理器/);
+  assert.match(installer, /旧版 WorkDaddy 的状态文件与实际程序不一致/);
+  assert.match(installer, /不要手动删除 WorkDaddy 数据目录/);
   assert.doesNotMatch(installer, /安装器本身可以使用管理员权限运行/);
   assert.doesNotMatch(installer, /旧版 WorkDaddy 正以管理员权限运行/);
   assert.doesNotMatch(installer, /prepare-win-install|windows-process-boundary|PowerShell/i);
