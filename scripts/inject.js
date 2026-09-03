@@ -722,7 +722,70 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     // —— 第十二批：切换/删除断句模板 + ' 天' 时间变体 ——
     ' 天': ' days',
     '已切换到「': 'Switched to “', '再次点击确认切换': 'Click again to confirm switch', '再次点击确认切换为「': 'Click again to confirm switching to “',
-    '切换中…': 'Switching…', '已切换为「': 'Switched to “', '将永久删除「': 'Permanently delete “', '已永久删除「': 'Permanently deleted “'
+    '切换中…': 'Switching…', '已切换为「': 'Switched to “', '将永久删除「': 'Permanently delete “', '已永久删除「': 'Permanently deleted “',
+    // —— 第十三批：弹窗/登录方式/更新流/会话归档等二级页文案（扫描网修复后暴露）——
+    '确定删除这 {n} 条快捷短语吗？删除后不可恢复。': 'Delete these {n} quick phrases? This cannot be undone.',
+    '确定删除这条快捷短语吗？删除后不可恢复。': 'Delete this quick phrase? This cannot be undone.',
+    '（旧版文件可留空）': ' (may be left blank for older files)', '密码不能为空，请妥善保管。': 'Password cannot be empty; keep it safe.',
+    '展开': 'Expand', '共': 'Total', '条（': ' (', '备份': 'Backup',
+    '无可复制的目标账号（已排除会话所属账号）': 'No target accounts to copy to (the session owner account is excluded)',
+    '删除后会话将从列表中移除，该账号下的本地消息文件将被永久删除，此操作不可恢复。': 'The sessions are removed from the list and their local message files are permanently deleted; this cannot be undone.',
+    '以「不让当前账号登录身份过期」的方式切到登录页，可以登录新账号，也可以切回已登录账号': 'Goes to the login page without letting the current account expire; log in a new account or switch back to an existing one.',
+    '不退出 WorkBuddy，在浏览器完成授权后新账号自动加入列表': 'Keeps WorkBuddy running; after authorizing in the browser, the new account is added to the list automatically.',
+    '正在发起授权…': 'Starting authorization…', '再想想': 'Not now',
+    '如果未完成，继续执行；已完成则回复"已完成"': 'If unfinished, continue; if finished, reply “Finished”.',
+    '暂无可用积分': 'No credits available', '今日已使用': 'Used today', '不限量': 'Unlimited',
+    '正在': '', '安装包': 'installer package', '归档': 'archive', '重复': 'duplicate', '选择': 'selection', '读取': 'read', '尚未': 'not yet',
+    '已就绪': 'ready', '完整性': 'integrity', '落盘': 'write to disk', '校验安装包…': 'Verifying installer package…', '正在下载安装包…': 'Downloading installer package…',
+    '下载安装包失败': 'Downloading the installer package failed', '安装包校验失败，已删除损坏包': 'Installer package verification failed; the damaged package was deleted',
+    '安装包已就绪': 'Installer package ready', '安装包已就绪（校验通过）': 'Installer package ready (verified)', '安装包内部 daemon 版本不可读': 'Cannot read the installer package daemon version',
+    '安装包应用版本不可读': 'Cannot read the installer package app version', '安装包文件不可读:': 'Installer package file unreadable:',
+    '安装包为空或不是普通文件': 'Installer package is empty or not a regular file', 'DMG 预检执行失败:': 'DMG pre-check failed:',
+    '下载内容不是有效 DMG:': 'Downloaded content is not a valid DMG:',
+    '安装包 SHA-256 读取失败:': 'Failed to read the installer package SHA-256:', '已启动更新，正在替换文件并自动重启，请稍候…': 'Update started; replacing files and restarting automatically, please wait…',
+    '尚未下载完成': 'Download not finished yet', '缺少已下载的新版本安装包': 'Missing the downloaded new version installer package',
+    '此历史版本只提供 ZIP，无法使用新的可见安装流程；请从发布页下载 Setup.exe': 'This older version only provides a ZIP; the visible install flow is unavailable, download Setup.exe from the release page instead',
+    '安装包名称与目标 profile 或版本不一致': 'Installer package name does not match the target profile or version',
+    '缺少安装包（未找到已下载的 dmg）': 'Missing installer package (downloaded dmg not found)', '安装包版本校验失败': 'Installer package version verification failed',
+    '官方接口未返回 uid，无法保存账号': 'The official API did not return a uid; account cannot be saved',
+    '未知开关:': 'Unknown switch:', '快捷短语选择必须是数组': 'Quick phrase selection must be an array',
+    '单次最多导入 {n} 个会话': 'Import at most {n} sessions at a time', '单次最多处理 {n} 条快捷短语': 'Process at most {n} quick phrases at a time',
+    '快捷短语标识不能为空': 'Quick phrase id cannot be empty', '未选择快捷短语': 'No quick phrase selected', '没有可导出的快捷短语': 'No quick phrases to export',
+    '没有可导出的会话': 'No sessions to export', '未选择会话': 'No session selected', '导入文件中没有会话数据': 'No session data found in the import file',
+    '无效会话记录': 'Invalid session record', '没有可导入的会话': 'No sessions to import', '会话文件目标不在 managed parent 内': 'Session file target is outside the managed parent',
+    '无法确认 WorkBuddy 已退出': 'Could not confirm WorkBuddy has quit',
+    '未找到 WorkBuddy 可执行文件，无法验证运行中的进程': 'WorkBuddy executable not found; cannot verify the running process',
+    // —— 第十四批：daemon 更新流/归档/导出/账号/壁纸收口 ——
+    '正在检查更新…': 'Checking for updates…', '无可用安装包': 'No installer package available',
+    '发布未提供可信的 SHA-256，已停止更新': 'The release does not provide a trusted SHA-256; update stopped',
+    '安装包缺少完整性校验，已停止更新': 'Installer package lacks integrity verification; update stopped',
+    '安装程序已打开，请按提示完成安装': 'The installer is open. Complete the installation as prompted.',
+    '未找到 WorkBuddy.exe（可用环境变量 WBSWITCH_WORKBUDDY_BIN 指定）': 'WorkBuddy.exe not found (can be set via the WBSWITCH_WORKBUDDY_BIN environment variable)',
+    '注入后未检测到 WorkDaddy 组件（请检查 WorkBuddy 页面是否正常加载）': 'WorkDaddy not detected after injection (check whether the WorkBuddy page loaded correctly)',
+    'CodeBuddy 会话库读取失败:': 'CodeBuddy session DB read failed:',
+    '拒绝在文件系统根目录创建会话空间': 'Refusing to create a session workspace at the filesystem root',
+    '无效的会话 ID': 'Invalid session ID', '无效的会话文件目标': 'Invalid session file target',
+    '会话附件文件过多，无法导出': 'Too many session attachment files; cannot export', '会话附件超过 256 MB，无法导出': 'Session attachments exceed 256 MB; cannot export',
+    '会话归档包含无效 ID': 'Session archive contains an invalid ID', '会话归档包含无效附件': 'Session archive contains an invalid attachment',
+    '会话归档附件文件过多': 'Session archive has too many attachment files', '会话归档包含重复附件路径': 'Session archive contains duplicate attachment paths',
+    '会话归档附件超过 256 MB': 'Session archive attachments exceed 256 MB', '会话归档缺少有效的账号归属': 'Session archive is missing a valid account owner',
+    '首次会话播种持久化失败': 'Initial session seeding failed to persist',
+    '导入文件中没有快捷短语': 'No quick phrases found in the import file', '单次最多导入 {n} 条快捷短语': 'Import at most {n} quick phrases at a time',
+    '没有可导入的快捷短语': 'No quick phrases to import', '暂存记录不存在:': 'Stashed record not found:', '暂存内容为空': 'Stash content is empty',
+    '默认（浅色）': 'Default (light)', '对话持续回复中（等待 {n} 秒仍未空闲），已取消发送，请稍后再试': 'The conversation is still replying (not idle after {n}s); send cancelled, please retry later',
+    '导出数据不完整或已损坏': 'Export data is incomplete or corrupted', '文件不是有效的导出 JSON': 'The file is not a valid export JSON',
+    '不是 WorkDaddy 的账号导出文件': 'Not a WorkDaddy account export file', '导入文件中没有账号数据': 'No account data found in the import file',
+    '未读取到有效内容，请选择导出文件': 'No valid content read; please choose an export file', '密码不能超过 1024 个字符': 'Password cannot exceed 1024 characters',
+    '当前登录文件无法唯一确认，已拒绝退出登录': 'The current login file cannot be uniquely identified; logout rejected',
+    '删除登录文件后仍然存在': 'The login file still exists after deletion',
+    '诊断设置由 WORKDADDY_TELEMETRY 环境变量控制': 'Diagnostics are controlled by the WORKDADDY_TELEMETRY environment variable',
+    '保存遥测设置失败:': 'Failed to save telemetry settings:',
+    '账号选择必须是数组': 'Account selection must be an array', '选择的账号过多': 'Too many accounts selected', '请至少选择一个账号': 'Select at least one account',
+    '仅支持删除自定义壁纸（custom-*.webp）': 'Only custom wallpapers (custom-*.webp) can be deleted', '壁纸不存在:': 'Wallpaper not found:',
+    '蒙版已保存但应用失败:': 'Overlay saved but failed to apply:', '模糊设置已保存但应用失败:': 'Blur setting saved but failed to apply:',
+    '无法清空输入框': 'Could not clear the composer', '未找到发送按钮': 'Send button not found', '未找到操作栏': 'Toolbar not found',
+    // —— 第十五批：面板入口描述与连接状态 ——
+    '面板入口：': 'Panel entry:', '右下角机器人按钮': 'Bottom-right robot button', '已连接': 'Connected', '未连接': 'Not connected'
   };
   function wbsSystemLanguage() {
     var value = String((navigator && (navigator.language || navigator.userLanguage)) || '').toLowerCase();
@@ -1543,8 +1606,16 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         document.documentElement.setAttribute('lang', WBS_LANGUAGE === 'zh' ? 'zh-CN' : 'en');
       } catch (_) {}
       applyInjectedI18n();
-      var select = root && root.querySelector('#wbs-language-select');
-      if (select) select.value = WBS_LANGUAGE;
+      // 关于页 Segmented 控件状态同步（存在时）
+      var langSeg = root && root.querySelector('.wbs-lang-seg');
+      if (langSeg) {
+        var btns = langSeg.querySelectorAll('.wbs-seg-btn');
+        for (var bi = 0; bi < btns.length; bi++) {
+          var active = btns[bi].getAttribute('data-wbs-lang') === WBS_LANGUAGE;
+          btns[bi].classList.toggle('is-active', active);
+          btns[bi].setAttribute('aria-pressed', active ? 'true' : 'false');
+        }
+      }
     }
     function applyInjectedI18n() {
       applyI18n(root);
@@ -5399,9 +5470,10 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
           '<div class="wbs-pcard-title">语言</div>' +
           '<div class="wbs-settings-row">' +
             '<div class="wbs-settings-copy"><strong>设置语言</strong><span>首次打开时自动跟随系统语言；未匹配时使用英语。</span></div>' +
-            '<select id="wbs-language-select" class="wbs-sess-select" aria-label="设置语言" title="设置语言">' +
-              '<option value="zh">中文</option><option value="en">English</option>' +
-            '</select>' +
+            '<div class="wbs-lang-seg" role="group" aria-label="设置语言">' +
+              '<button type="button" class="wbs-seg-btn" data-wbs-lang="zh" aria-pressed="false">中文</button>' +
+              '<button type="button" class="wbs-seg-btn" data-wbs-lang="en" aria-pressed="false">English</button>' +
+            '</div>' +
           '</div>' +
         '</div>' +
         '<div class="wbs-pcard wbs-telemetry-card" id="wbs-telemetry-card">' +
@@ -5443,12 +5515,25 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         var issues = aboutPane.querySelector('#wbs-about-issues');
         if (issues && d.repository) issues.href = d.repository.replace(/\/$/, '') + '/issues';
       }).catch(function () {});
-      // 语言选择器：随关于页构建，保持单一 DOM id（#wbs-language-select）
-      var langSelect = aboutPane.querySelector('#wbs-language-select');
-      if (langSelect) {
-        langSelect.value = WBS_LANGUAGE;
-        langSelect.addEventListener('change', function () {
-          setLanguage(langSelect.value);
+      // 语言切换 Segmented 控件：随关于页构建，保持单一容器（.wbs-lang-seg）
+      var langSeg = aboutPane.querySelector('.wbs-lang-seg');
+      if (langSeg) {
+        function syncLangSeg(lang) {
+          var btns = langSeg.querySelectorAll('.wbs-seg-btn');
+          for (var bi = 0; bi < btns.length; bi++) {
+            var active = btns[bi].getAttribute('data-wbs-lang') === lang;
+            btns[bi].classList.toggle('is-active', active);
+            btns[bi].setAttribute('aria-pressed', active ? 'true' : 'false');
+          }
+        }
+        syncLangSeg(WBS_LANGUAGE);
+        langSeg.addEventListener('click', function (ev) {
+          var btn = ev.target && ev.target.closest ? ev.target.closest('.wbs-seg-btn') : null;
+          if (!btn || !langSeg.contains(btn)) return;
+          var next = btn.getAttribute('data-wbs-lang');
+          if (next !== 'zh' && next !== 'en') return;
+          setLanguage(next);
+          syncLangSeg(next);
           toast('语言设置已更新', false, root);
         });
       }
@@ -9829,8 +9914,16 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     /* 面板：毛玻璃主题（半透明 + 模糊，背景图透出） */
     '.wbs-panel{position:absolute;right:0;bottom:0;width:520px;max-width:94vw;height:650px;max-height:650px;background:color-mix(in srgb,var(--wb-bg-popover,#fff) 72%,transparent);border:1px solid var(--wb-border-subtle,#f0f0f0);border-radius:18px;box-shadow:0 20px 60px rgba(0,0,0,.28);display:none;flex-direction:column;overflow:hidden;backdrop-filter:blur(28px) saturate(1.25);-webkit-backdrop-filter:blur(28px) saturate(1.25)}',
     '.wbs-panel.show{display:flex}',
-    // 英文文案更长：EN 模式面板宽度放大 1.5 倍（520px -> 780px），避免长词挤压换行
-    'html[data-wbs-language="en"] .wbs-panel{width:780px}',
+    // 英文文案更长：EN 模式面板宽度放大 1.3 倍（520px -> 676px），配合 label 自适应避免挤压
+    'html[data-wbs-language="en"] .wbs-panel{width:676px}',
+    // EN 下固定宽度 label 容易溢出：phone/credit/token 列的 label 释放为自适应宽度
+    'html[data-wbs-language="en"] .wbs-phone-cell .wbs-lbl,html[data-wbs-language="en"] .wbs-credit-left .wbs-lbl{width:auto;max-width:84px}',
+    'html[data-wbs-language="en"] .wbs-token-cell .wbs-lbl{width:auto;max-width:96px}',
+    // 语言切换 Segmented 控件
+    '.wbs-lang-seg{display:inline-flex;flex:0 0 auto;padding:2px;gap:2px;border-radius:8px;background:color-mix(in srgb,var(--wb-bg-input,#f2f3f5) 75%,transparent);align-items:center}',
+    '.wbs-lang-seg .wbs-seg-btn{border:none;background:transparent;padding:4px 12px;border-radius:6px;font-size:12px;line-height:1.4;color:var(--wb-color-text-secondary,#6b7280);cursor:pointer;white-space:nowrap}',
+    '.wbs-lang-seg .wbs-seg-btn.is-active{background:color-mix(in srgb,var(--wb-bg-popover,#fff) 92%,transparent);color:var(--wb-color-text-primary,#1f1f1f);font-weight:500;box-shadow:0 1px 3px rgba(0,0,0,.14);cursor:default}',
+    '.wbs-lang-seg .wbs-seg-btn:focus-visible{outline:2px solid var(--wb-accent,#4a6cf7);outline-offset:1px}',
     '.wbs-head{display:flex;align-items:center;justify-content:space-between;padding:16px 18px 12px;border-bottom:1px solid var(--wb-border-subtle,#f0f0f0);background:color-mix(in srgb,var(--wb-bg-secondary,#fff) 30%,transparent)}',
     '.wbs-head-left{display:flex;align-items:center;gap:9px;min-width:0}',
     '.wbs-title{font-size:16px;font-weight:700;color:var(--wb-color-text-primary,#1f1f1f);letter-spacing:.3px;cursor:pointer;user-select:none}',
@@ -10066,7 +10159,6 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '.wbs-settings-copy{display:flex;flex-direction:column;gap:4px;min-width:0}',
     '.wbs-settings-copy strong{font-size:12px;color:var(--wb-color-text-primary,#1f1f1f);font-weight:650}',
     '.wbs-settings-copy span{font-size:11px;line-height:1.5;color:var(--wb-icon-tertiary,#999);white-space:normal;overflow-wrap:anywhere}',
-    '#wbs-language-select{flex:0 0 112px;min-width:112px}',
     /* 分组卡片（主题/增强 tab） */
     '.wbs-pcard{background:color-mix(in srgb,var(--wb-bg-secondary,#fff) 18%,transparent);border:1px solid var(--wb-border-subtle,#f0f0f0);border-radius:14px;padding:10px 12px;margin-bottom:8px;backdrop-filter:blur(16px) saturate(1.2);-webkit-backdrop-filter:blur(16px) saturate(1.2)}',
     '.wbs-pcard-title{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:700;color:var(--wb-color-text-primary,#1f1f1f);margin-bottom:8px}',
