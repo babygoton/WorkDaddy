@@ -629,6 +629,32 @@ test('macOS package launcher keeps WorkBuddy CN and AI CDP ports profile-specifi
   assert.match(build, /workbuddy-ai\)/);
 });
 
+test('macOS launchers discover renamed WorkBuddy app bundles and wait for slow CDP startup', () => {
+  const relaunch = read('relaunch-with-cdp.sh');
+  const build = fs.readFileSync(path.join(repoRoot, 'scripts', 'build-mac-dmg.sh'), 'utf8');
+  for (const source of [relaunch, build]) {
+    assert.match(source, /WorkBuddy\*\.app/);
+    assert.match(source, /Contents\/MacOS\/Electron/);
+    assert.match(source, /WorkBuddy AI/);
+    assert.match(source, /matches=\(\)/);
+    assert.match(source, /检测到多个/);
+    assert.match(source, /\[ -n "\$APP_BIN" \].*pkill/s);
+    assert.match(source, /choose application with prompt/);
+    assert.match(source, /所选应用不是可用的 WorkBuddy 客户端/);
+    assert.match(source, /等待 60 秒/);
+  }
+  assert.match(relaunch, /workbuddy-target\.json/);
+  assert.match(relaunch, /APP_DISCOVERY_ERROR.*APP_NAME=.*APP_BIN=/s);
+  assert.match(build, /APP_DISCOVERY_ERROR.*APP_NAME=.*APP_BIN=/s);
+});
+
+test('macOS launchers resolve an explicit target configuration before auto-discovery', () => {
+  const relaunch = read('relaunch-with-cdp.sh');
+  const build = fs.readFileSync(path.join(repoRoot, 'scripts', 'build-mac-dmg.sh'), 'utf8');
+  assert.match(relaunch, /workbuddy-target\.js" --resolve --profile=/);
+  assert.match(build, /workbuddy-target\.js" --resolve --profile=/);
+});
+
 test('macOS package launcher returns focus to the target WorkBuddy and separates AI identity', () => {
   const build = fs.readFileSync(path.join(repoRoot, 'scripts', 'build-mac-dmg.sh'), 'utf8');
   assert.match(build, /activate_target_app\(\)/);

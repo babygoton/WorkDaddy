@@ -65,6 +65,17 @@
 4. 双击 `WorkDaddy.app` 启动：它会自带守护进程并把组件注入到 WorkBuddy
 5. 看到机器人按钮？**搞定**。
 
+#### 企业专享版 / VPC 客户端
+
+macOS 会自动扫描带 `WorkBuddy` 前缀且包含 `Contents/MacOS/Electron` 的客户端（例如 `WorkBuddy企业定制版.app`），并按 WorkDaddy/WorkDaddy AI profile 排除另一端。发现多个候选时会弹出系统选择窗口，选中后自动记住，不需要手动寻找配置文件。完全自定义名称也可以在源码目录执行下面的高级配置命令：
+
+```bash
+node scripts/workbuddy-target.js --configure --platform darwin \
+  --profile workbuddy-cn \
+  --binary "/Applications/企业客户端.app/Contents/MacOS/Electron" \
+  --data-dir "$HOME/Library/Application Support/WorkDaddy"
+```
+
 
 ### Windows
 

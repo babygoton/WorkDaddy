@@ -39,8 +39,11 @@ function validateApiHost(value) {
 
 function validateProcessName(value, pathApi) {
   const name = clean(value);
-  if (!/^[^\\/:*?"<>|\0]+\.exe$/i.test(name) || name !== pathApi.basename(name)) {
-    throw new Error('WorkBuddy 进程名必须是单个 .exe 文件名');
+  const isSafeName = /^[^\\/:*?"<>|\0]+$/.test(name) && name === pathApi.basename(name);
+  if (!isSafeName || (pathApi === path.win32 && !/\.exe$/i.test(name))) {
+    throw new Error(pathApi === path.win32
+      ? 'WorkBuddy 进程名必须是单个 .exe 文件名'
+      : 'WorkBuddy 进程名必须是单个文件名');
   }
   return name;
 }
@@ -170,9 +173,36 @@ function buildTargetFromBinary(options = {}) {
   const platform = options.platform || process.platform;
   const pathApi = platformPath(platform);
   const binary = clean(options.binary);
-  if (!binary || !isAbsolute(binary, platform)) throw new Error('请选择完整的 WorkBuddy .exe 路径');
+  if (!binary || !isAbsolute(binary, platform)) throw new Error(platform === 'win32' ? '请选择完整的 WorkBuddy .exe 路径' : '请选择完整的 WorkBuddy 应用可执行文件路径');
   const processName = pathApi.basename(binary);
-  if (!/\.exe$/i.test(processName)) throw new Error('请选择 WorkBuddy 的 .exe 主程序');
+  if (platform === 'win32' && !/\.exe$/i.test(processName)) throw new Error('请选择 WorkBuddy 的 .exe 主程序');
+  // Keep accepting legacy cross-platform test/configuration paths ending in
+  // .exe; real macOS app binaries use the branch below with their native name.
+  if (platform === 'darwin' && !/\.exe$/i.test(processName)) {
+    const profileId = clean(options.profileId) || 'workbuddy-cn';
+    const port = Number(options.cdpPort) || (profileId === 'workbuddy-ai' ? 9223 : 9222);
+    const appName = path.basename(binary.replace(/\/Contents\/MacOS\/[^/]+$/i, '')).replace(/\.app$/i, '');
+    const home = options.home || os.homedir();
+    const appSupport = path.join(home, 'Library', 'Application Support');
+    const extensionAuth = path.join(appSupport, 'CodeBuddyExtension', 'Data', 'Public', 'auth');
+    const ai = profileId === 'workbuddy-ai';
+    const workbuddyRoot = path.join(home, ai ? '.workbuddy-ai' : '.workbuddy');
+    return validateTarget({
+      schemaVersion: 1,
+      clientType: 'enterprise',
+      profileId,
+      binary,
+      version: clean(options.version),
+      processNames: [processName],
+      authFile: path.join(extensionAuth, ai ? 'workbuddy-desktop-ai.info' : 'workbuddy-desktop.info'),
+      sessionDb: path.join(workbuddyRoot, 'workbuddy.db'),
+      modelsFile: path.join(workbuddyRoot, 'models.json'),
+      apiHost: ai ? 'https://www.workbuddy.ai' : 'https://www.codebuddy.cn',
+      targetHints: [appName].filter(Boolean),
+      cdp: { mode: 'argument', port },
+      capabilities: { accounts: true, sessions: true, models: true, stashPrompt: true, theme: true, checkin: true },
+    }, { platform });
+  }
   const processNames = inferredProcessNames(binary, platform);
   const stem = processName.replace(/\.exe$/i, '').toLowerCase();
   const home = options.home || os.homedir();
@@ -290,7 +320,10 @@ function removeWorkBuddyTarget({ dataDir } = {}) {
 
 function cliValue(argv, name) {
   const index = argv.indexOf(name);
-  return index >= 0 && index + 1 < argv.length ? argv[index + 1] : '';
+  if (index >= 0 && index + 1 < argv.length) return argv[index + 1];
+  const prefix = `${name}=`;
+  const inline = argv.find((value) => typeof value === 'string' && value.startsWith(prefix));
+  return inline ? inline.slice(prefix.length) : '';
 }
 
 function configureFromInstaller(argv = process.argv.slice(2)) {
@@ -299,7 +332,21 @@ function configureFromInstaller(argv = process.argv.slice(2)) {
   const binary = clean(cliValue(argv, '--binary'));
   const version = clean(cliValue(argv, '--version'));
   const dataDir = clean(cliValue(argv, '--data-dir'));
-  const pathApi = platformPath('win32');
+  const platform = clean(cliValue(argv, '--platform')) || process.env.WBSWITCH_TARGET_PLATFORM || 'win32';
+  const pathApi = platformPath(platform);
+  if (platform !== 'win32' && platform !== 'darwin') throw new Error('仅支持 win32 或 darwin 客户端配置');
+  if (platform !== 'win32') {
+    const target = buildTargetFromBinary({
+      binary,
+      version,
+      profileId,
+      cdpPort: profileId === 'workbuddy-ai' ? 9223 : 9222,
+      platform,
+    });
+    const saved = writeWorkBuddyTarget({ dataDir, profileId, target, platform });
+    process.stdout.write(JSON.stringify({ ok: true, name: pathApi.basename(saved.binary), version: saved.version || '', clientType: saved.clientType }) + '\n');
+    return saved;
+  }
   const expectedName = profileId === 'workbuddy-ai' ? 'WorkBuddyAI.exe' : 'WorkBuddy.exe';
   const official = pathApi.basename(binary).toLowerCase() === expectedName.toLowerCase();
   const target = official
@@ -316,7 +363,24 @@ function configureFromInstaller(argv = process.argv.slice(2)) {
   return saved;
 }
 
-if (require.main === module && process.argv.slice(2).includes('--configure')) {
+function resolveFromConfig(argv = process.argv.slice(2)) {
+  const profileId = clean(cliValue(argv, '--profile'));
+  const dataDir = clean(cliValue(argv, '--data-dir'));
+  if (!profileId || !dataDir) return '';
+  const target = readWorkBuddyTarget({ dataDir, profileId, platform: process.platform });
+  if (!target.configured || !target.binary) return '';
+  process.stdout.write(target.binary + '\n');
+  return target.binary;
+}
+
+if (require.main === module && process.argv.slice(2).includes('--resolve')) {
+  try {
+    resolveFromConfig();
+  } catch (error) {
+    process.stderr.write(String(error && error.message || error) + '\n');
+    process.exitCode = 1;
+  }
+} else if (require.main === module && process.argv.slice(2).includes('--configure')) {
   try {
     configureFromInstaller();
   } catch (error) {
@@ -332,9 +396,11 @@ module.exports = {
   buildTargetFromBinary,
   configureFromInstaller,
   inferredProcessNames,
+  resolveFromConfig,
   readWorkBuddyTarget,
   removeWorkBuddyTarget,
   targetFile,
+  validateProcessName,
   validateTarget,
   writeWorkBuddyTarget,
 };
