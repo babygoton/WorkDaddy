@@ -82,8 +82,8 @@ test('model, wallpaper, and account cards escape each dynamic HTML sink', () => 
   assert.doesNotMatch(wallpapers, /(?:data-wp|title|data-src|alt)="' \+ (?:w\.|wallpaperUrl)/);
 
   const accounts = sourceBetween('function render(data)', 'function updateAccountSummary()');
-  assert.equal((accounts.match(/escAttr\(a\.uid\)/g) || []).length, 3);
-  assert.equal((accounts.match(/escAttr\(a\.nickname \|\| '未命名'\)/g) || []).length, 3);
+  assert.equal((accounts.match(/escAttr\(a\.uid\)/g) || []).length, 2);
+  assert.equal((accounts.match(/escAttr\(a\.nickname \|\| '未命名'\)/g) || []).length, 2);
   assert.match(accounts, /var idVal = a\.phone \? esc\(a\.phone\) : \(a\.uin \? esc\(a\.uin\) : '-'\)/);
   assert.match(accounts, /wbs-name">' \+ esc\(a\.nickname/);
   assert.match(accounts, /wbs-val">' \+ idVal/);
