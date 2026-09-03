@@ -368,7 +368,10 @@ if [ -z "$DMG_DEVICE" ] || [ -z "$MOUNT_DIR" ]; then
 fi
 
 VOLUME_NAME="$(basename "$MOUNT_DIR")"
-sleep 2
+# 无 GUI 会话（CI/Agent 沙箱）无法驱动 Finder 写 .DS_Store 布局：
+# 设置 WORKDADDY_SKIP_FINDER=1 跳过布局步骤，产物为无 Finder 美化布局的标准 DMG。
+if [ -z "$WORKDADDY_SKIP_FINDER" ]; then
+  sleep 2
 osascript - "$VOLUME_NAME" "${PACKAGE_APP_NAME}.app" "$DMG_WINDOW_WIDTH" "$DMG_WINDOW_HEIGHT" "$DMG_ICON_SIZE" <<'APPLESCRIPT'
 on run argv
   set volumeName to item 1 of argv
@@ -423,17 +426,22 @@ on run argv
   end tell
 end run
 APPLESCRIPT
-
-sync
-for _ in {1..20}; do
-  test -f "$MOUNT_DIR/.DS_Store" && break
-  sleep 0.25
-done
-if ! test -f "$MOUNT_DIR/.DS_Store"; then
-  echo "错误：Finder 未能把 DMG 窗口布局写入 .DS_Store" >&2
-  exit 1
 fi
-rm -rf -- "$MOUNT_DIR/.fseventsd"
+
+if [ -z "$WORKDADDY_SKIP_FINDER" ]; then
+  sync
+  for _ in {1..20}; do
+    test -f "$MOUNT_DIR/.DS_Store" && break
+    sleep 0.25
+  done
+  if ! test -f "$MOUNT_DIR/.DS_Store"; then
+    echo "错误：Finder 未能把 DMG 窗口布局写入 .DS_Store" >&2
+    exit 1
+  fi
+  rm -rf -- "$MOUNT_DIR/.fseventsd"
+else
+  echo "==> 跳过 Finder 布局（WORKDADDY_SKIP_FINDER=1，无 GUI 会话）"
+fi
 hdiutil detach "$DMG_DEVICE" >/dev/null
 DMG_DEVICE=""
 rm -f "$OUT"

@@ -9929,6 +9929,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '.wbs-language-card .wbs-settings-row{justify-content:space-between}',
     '.wbs-language-card .wbs-pcard-title{margin-bottom:0}',
     '.wbs-lang-seg{flex:0 0 auto;width:auto;margin-bottom:0}',
+    '.wbs-lang-seg .wbs-sess-seg-btn{padding:6px 14px}',
     '.wbs-head{display:flex;align-items:center;justify-content:space-between;padding:16px 18px 12px;border-bottom:1px solid var(--wb-border-subtle,#f0f0f0);background:color-mix(in srgb,var(--wb-bg-secondary,#fff) 30%,transparent)}',
     '.wbs-head-left{display:flex;align-items:center;gap:9px;min-width:0}',
     '.wbs-title{font-size:16px;font-weight:700;color:var(--wb-color-text-primary,#1f1f1f);letter-spacing:.3px;cursor:pointer;user-select:none}',
