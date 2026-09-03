@@ -111,6 +111,12 @@ const { buildCreditResourceBody } = require('./credit-resource-queries.js');
 const { fetchUsageSinceAnchor, startOfLocalDay } = require('./credit-request-usage.js');
 const { createCreditUsageStore } = require('./credit-usage-store.js');
 const { classifyCheckinResult } = require('./checkin-result.js');
+const {
+  DAY_MS: TOKEN_REFRESH_DAY_MS,
+  refreshAuthToken,
+  shouldRefreshAccessToken,
+  normalizeTimestamp: normalizeTokenTimestamp,
+} = require('./token-refresh.js');
 const { fetchGrowthTodayActive, activateGrowthAccount } = require('./growth-active.js');
 const {
   captureException,
@@ -246,8 +252,9 @@ const DATA_DIR = defaultDataDir();
 // 1.1.31：支持用备份账号 token 独立创建 cloud conversation 并发送最小 prompt，不切换当前登录账号。
 // 1.1.32：主题页支持独立调节背景毛玻璃模糊程度。
 // 1.1.33：按账号和 lineage 折叠历史重复会话，避免全量自动复制后两账号计数分叉。
-const DAEMON_VERSION = '1.1.33';
-const DAEMON_BUILD_ID = 'release-1.1.33-20260903-auto-copy-lineage';
+// 1.1.34：签到前惰性刷新 access token，并按日使用 refresh token 保活所有备份账号。
+const DAEMON_VERSION = '1.1.34';
+const DAEMON_BUILD_ID = 'release-1.1.34-20260903-token-keepalive';
 const HOST = '127.0.0.1';
 const IS_WIN = process.platform === 'win32'; // Windows 移植：平台分支开关（macOS 行为保持不变）
 // Windows 安装目录（install.ps1 铺、launcher 用、更新替换目标），对应 macOS 的 /Applications/WorkDaddy.app
@@ -2264,6 +2271,42 @@ function saveCheckinCache(cache) {
   }
 }
 
+/** 刷新备份账号凭证：临期惰性刷新，或距上次刷新超过一天时执行保活。 */
+async function refreshAccountBackupToken(uid, options = {}) {
+  const file = path.join(DATA_DIR, 'accounts', uid + '.info');
+  let root;
+  try {
+    root = JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch (e) {
+    return { root: null, error: 'read-account-failed: ' + e.message };
+  }
+  const auth = root && root.auth && typeof root.auth === 'object' ? root.auth : null;
+  if (!auth) return { root, skipped: true, reason: 'no-auth' };
+  const now = Date.now();
+  const lastRefreshTime = normalizeTokenTimestamp(auth.lastRefreshTime);
+  const dailyDue = options.dailyKeepalive === true &&
+    (lastRefreshTime === null || now - lastRefreshTime >= TOKEN_REFRESH_DAY_MS);
+  if (!dailyDue && !shouldRefreshAccessToken(auth, now)) return { root, skipped: true };
+
+  const result = await refreshAuthToken(auth, { apiHost: PROFILE.apiHost, fetchImpl: globalThis.fetch, now });
+  if (!result.ok) {
+    log(`[token-refresh] 账号 ${uid} 刷新失败: ${redactDiagnosticText(result.error, 300)}`);
+    return { root, refreshed: false, error: result.error };
+  }
+  const nextRoot = Object.assign({}, root, { auth: result.auth });
+  const tmp = file + '.tmp';
+  try {
+    fs.writeFileSync(tmp, JSON.stringify(nextRoot, null, 2), { mode: 0o600 });
+    fs.renameSync(tmp, file);
+    fs.chmodSync(file, 0o600);
+  } catch (e) {
+    try { if (fs.existsSync(tmp)) fs.unlinkSync(tmp); } catch (_) {}
+    log(`[token-refresh] 账号 ${uid} 刷新结果落盘失败: ${e.message}`);
+    return { root, refreshed: false, error: 'write-account-failed: ' + e.message };
+  }
+  return { root: nextRoot, refreshed: true };
+}
+
 /**
  * 用指定账号 accessToken 调用签到接口（多域名兜底）。
  * 只有明确 code=0，或 code=10001 且文案明确表示已签到/已领取，才视为成功。
@@ -2312,11 +2355,14 @@ async function dailyCheckin(accessToken) {
 /** 对单个账号签到（带每日缓存，幂等：今日已成功过则跳过） */
 async function claimDailyForUid(uid) {
   const today = todayStr();
+  const refreshed = await refreshAccountBackupToken(uid);
+  const accountRoot = refreshed.root;
+  const refreshError = refreshed.error || '';
   let dbHit = null;
   try { dbHit = await CREDIT_USAGE_STORE.getDailyCheckin(uid, today); } catch (e) {
     log('[checkin] 读取 SQLite 标记失败: ' + e.message);
   }
-  if (dbHit && dbHit.ok === true && dbHit.verified === true) {
+  if (!refreshError && dbHit && dbHit.ok === true && dbHit.verified === true) {
     return { uid, skipped: true, ...dbHit };
   }
   const cache = loadCheckinCache();
@@ -2324,7 +2370,7 @@ async function claimDailyForUid(uid) {
   const cachedResult = hit && hit.date === today
     ? classifyCheckinResult({ httpOk: true, code: hit.code, message: hit.message })
     : null;
-  if (cachedResult && cachedResult.ok) {
+  if (!refreshError && cachedResult && cachedResult.ok) {
     const migrated = { uid, skipped: true, date: today, ...cachedResult, at: Number(hit.at) || Date.now(), verified: true };
     try {
       await CREDIT_USAGE_STORE.saveDailyCheckin({ uid, date: today, checkedAt: migrated.at, code: migrated.code, message: migrated.message });
@@ -2333,15 +2379,8 @@ async function claimDailyForUid(uid) {
     }
     return migrated;
   }
-  const file = path.join(DATA_DIR, 'accounts', uid + '.info');
-  if (!fs.existsSync(file)) return { uid, ok: false, reason: 'no-backup' };
-  let tk = null;
-  try {
-    const j = JSON.parse(fs.readFileSync(file, 'utf8'));
-    tk = j.auth && j.auth.accessToken;
-  } catch (e) {
-    return { uid, ok: false, reason: 'read-token-failed: ' + e.message };
-  }
+  if (!accountRoot) return { uid, ok: false, reason: refreshed.error || 'no-backup' };
+  const tk = accountRoot.auth && accountRoot.auth.accessToken;
   if (!tk) return { uid, ok: false, reason: 'no-accessToken' };
   const r = await dailyCheckin(tk);
   const rec = { date: today, ok: !!r.ok, already: !!r.already, inactive: !!r.inactive, code: r.code, message: r.message, at: Date.now(), verified: !!r.ok };
@@ -2354,7 +2393,7 @@ async function claimDailyForUid(uid) {
       log('[checkin] 写入 SQLite 标记失败: ' + e.message);
     }
   }
-  return { uid, ...rec };
+  return { uid, ...(refreshError ? { refreshError } : {}), ...rec };
 }
 
 /** 对所有账号执行每日签到（自动跳过今日已成功过的，带并发保护） */
@@ -2368,6 +2407,8 @@ async function claimDailyForAll() {
     const results = [];
     for (let i = 0; i < list.length; i++) {
       const uid = list[i];
+      // 即使 access token 尚未临期，也每天主动刷新一次，避免 refresh token 因长期闲置失效。
+      await refreshAccountBackupToken(uid, { dailyKeepalive: true });
       let result;
       try {
         result = await claimDailyForUid(uid);
