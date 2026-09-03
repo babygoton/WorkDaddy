@@ -591,7 +591,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '已切换为「{name}」，开始领取积分…': 'Switched to “{name}”, claiming credits…', '已切换为「{name}」，正在复制已标记会话…': 'Switched to “{name}”, copying marked sessions…', '已登录「{name}」': 'Logged in as “{name}”', '已发送「{text}」': 'Sent “{text}”', '「{name}」的备份': 'Backup of “{name}”', '「{name}」的本地备份，不可恢复': 'Local backup of “{name}”, cannot be restored', '「{name}」，请刷新 WorkBuddy 窗口': '“{name}”, please refresh the WorkBuddy window', '「{name}」，重启后生效': '“{name}”, effective after restart', '定位到第{n}条用户消息': 'Jump to user message {n}', '已关闭：{reason}': 'Disabled: {reason}', '已开启：{reason}': 'Enabled: {reason}', '已删除 {n} 项': 'Deleted {n} item(s)', '已复制 {n} 项': 'Copied {n} item(s)', '检测到会话异常中断，即将自动发送「{text}」': 'An interrupted session was detected. Sending “{text}”', '输入框非空，已放弃会话 {id} 的自动继续': 'Composer is not empty; skipped auto-continue for session {id}',
     // —— 第二批补齐（inject 剩余 + daemon 端会进入 UI/API 的文案）——
     '免打扰': 'Quiet mode', 'WorkBuddy 即将退出并重新打开到登录页': 'WorkBuddy will exit and reopen to the login page', 'WorkBuddy 队列尚未准备完成': 'WorkBuddy queue is not ready yet', 'WorkBuddy 队列排序接口不可用': 'WorkBuddy queue sort API unavailable', 'WorkBuddy 队列立即发送接口不可用': 'WorkBuddy queue send-now API unavailable', '未找到 WorkBuddy 队列接口': 'WorkBuddy queue API not found',
-    '一个基于': 'A ', '个备选': ' standby', '个失败': ' failed', '个已不存在': ' no longer exist', '项失败': ' failed', '已选': ' selected', '例如 deepseek-v4-flash': 'e.g. deepseek-v4-flash', '例如我的 DeepSeek': 'e.g. my DeepSeek', '加载失败': 'Load failed', '发起授权失败:': 'Authorization failed:', '开启': 'Enable', '关闭': 'Close', '失败': 'Failed', '用户消息': 'User message',
+    '一个基于': 'A ', '个备选': 'standby', '备选': 'standby', '个失败': ' failed', '个已不存在': ' no longer exist', '项失败': ' failed', '已选': ' selected', '例如 deepseek-v4-flash': 'e.g. deepseek-v4-flash', '例如我的 DeepSeek': 'e.g. my DeepSeek', '加载失败': 'Load failed', '发起授权失败:': 'Authorization failed:', '开启': 'Enable', '关闭': 'Close', '失败': 'Failed', '用户消息': 'User message',
     'OLED 纯黑': 'OLED Pure Black', '未发现 CDP 端口（WorkBuddy 需以 --remote-debugging-port 启动）': 'No CDP port found (start WorkBuddy with --remote-debugging-port)', '本地 API 未授权': 'Local API unauthorized', '仅支持 http(s) 链接': 'Only http(s) links are supported', '图片不能超过 10MB': 'Image must not exceed 10MB', '图片必须是 PNG/JPEG/WebP base64': 'Image must be PNG/JPEG/WebP base64', '遥测开关值必须是布尔值': 'Telemetry switch must be a boolean', 'blur 必须是数字': 'Blur must be a number', 'opacity 必须是数字': 'Opacity must be a number', '查询返回空结果': 'Query returned empty results',
     '正在解包新应用…': 'Unpacking new app…', '挂载 dmg 失败:': 'Failed to mount dmg:', '缺少解包后的新应用': 'Unpacked new app missing', '解包应用失败': 'Failed to unpack app', '缺少 apply-update.sh': 'apply-update.sh missing', '（仓库暂无 Release）': ' (no Releases in the repository yet)', 'auth/state 响应缺少 state': 'auth/state response is missing state',
     'WBSWITCH_WORKBUDDY_BIN 不是可验证的当前 profile 主程序；登录信息未修改': 'WBSWITCH_WORKBUDDY_BIN is not a verified main program for the current profile; login info unchanged', '无法以普通用户权限安全退出 WorkBuddy。请手动关闭该程序；若它以管理员身份运行，请先退出后再重试。登录信息未修改': 'Cannot safely quit WorkBuddy at standard user privilege. Please close it manually; if it runs as admin, quit it first and retry. Login info unchanged', '未找到 WorkBuddy 可执行文件，无法安全退出；登录信息未修改': 'WorkBuddy executable not found; cannot quit safely. Login info unchanged', 'workbuddy-target.json 指定的路径不是可验证的当前 profile 主程序；登录信息未修改': 'The path in workbuddy-target.json is not a verified main program for the current profile; login info unchanged', '存在当前 profile 进程，但没有进程属于已验证安装目录；登录信息未修改': 'A current profile process exists, but none belongs to a verified install directory; login info unchanged', '检测到当前 profile 正从另一安装目录运行，登录信息未修改': 'The current profile is running from another install directory; login info unchanged', '检测到多个 dormant WorkBuddy 安装目录，按发现优先级选择:': 'Multiple dormant WorkBuddy installs found; selecting by discovery priority:', 'WorkBuddy 数据目录不是受管目录': 'WorkBuddy data directory is not managed', 'WorkBuddy 页面尚未完成加载': 'WorkBuddy page has not finished loading', '注入脚本页面抛错': 'Injected script page threw an error', '读取注入脚本失败:': 'Failed to read the injected script:', '运行时桥接文件未生成': 'Runtime bridge file was not created',
@@ -1562,6 +1562,10 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     var i18nApplying = false;
     function applyI18n(scope) {
       if (!scope || !scope.ownerDocument) return;
+      var isSkipped = function (el) {
+        // data-wbs-i18n-skip 子树不参与翻译（如语言切换按钮需固定显示 中文/English）
+        return !!(el && el.closest && el.closest('[data-wbs-i18n-skip]'));
+      };
       i18nApplying = true;
       try {
         var nodeFilter = (scope.ownerDocument.defaultView && scope.ownerDocument.defaultView.NodeFilter) || { SHOW_TEXT: 4 };
@@ -1569,6 +1573,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         var node;
         while ((node = walker.nextNode())) {
           if (!node.parentNode || /^(SCRIPT|STYLE)$/.test(node.parentNode.nodeName)) continue;
+          if (isSkipped(node.parentNode)) continue;
           var current = String(node.nodeValue || '');
           var previous = i18nTextSources && i18nTextSources.get(node);
           var source = previous && (current === previous.last || current === previous.translated) ? previous.source : current;
@@ -1579,6 +1584,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         var elements = scope.querySelectorAll ? scope.querySelectorAll('*') : [];
         var processElement = function (element) {
           if (!element || !element.hasAttribute) return;
+          if (isSkipped(element) || (element.closest && element.closest('[data-wbs-i18n-skip]'))) return;
           ['title', 'aria-label', 'placeholder', 'alt', 'data-tip'].forEach(function (name) {
             if (!element.hasAttribute(name)) return;
             var currentAttr = element.getAttribute(name) || '';
@@ -1594,7 +1600,8 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
             if (currentAttr !== translatedAttr) element.setAttribute(name, translatedAttr);
           });
         };
-        if (scope.nodeType === 1) processElement(scope);
+        if (scope.nodeType === 1 && !isSkipped(scope)) processElement(scope);
+        else if (scope.nodeType === 1 && isSkipped(scope)) elements = [];
         for (var i = 0; i < elements.length; i++) processElement(elements[i]);
       } finally { i18nApplying = false; }
     }
@@ -1609,10 +1616,10 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       // 关于页 Segmented 控件状态同步（存在时）
       var langSeg = root && root.querySelector('.wbs-lang-seg');
       if (langSeg) {
-        var btns = langSeg.querySelectorAll('.wbs-seg-btn');
+        var btns = langSeg.querySelectorAll('.wbs-sess-seg-btn');
         for (var bi = 0; bi < btns.length; bi++) {
           var active = btns[bi].getAttribute('data-wbs-lang') === WBS_LANGUAGE;
-          btns[bi].classList.toggle('is-active', active);
+          btns[bi].classList.toggle('active', active);
           btns[bi].setAttribute('aria-pressed', active ? 'true' : 'false');
         }
       }
@@ -5467,12 +5474,11 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
           '</div>' +
         '</div>' +
         '<div class="wbs-pcard wbs-settings-card wbs-language-card">' +
-          '<div class="wbs-pcard-title">语言</div>' +
           '<div class="wbs-settings-row">' +
-            '<div class="wbs-settings-copy"><strong>设置语言</strong><span>首次打开时自动跟随系统语言；未匹配时使用英语。</span></div>' +
-            '<div class="wbs-lang-seg" role="group" aria-label="设置语言">' +
-              '<button type="button" class="wbs-seg-btn" data-wbs-lang="zh" aria-pressed="false">中文</button>' +
-              '<button type="button" class="wbs-seg-btn" data-wbs-lang="en" aria-pressed="false">English</button>' +
+            '<span class="wbs-pcard-title">语言</span>' +
+            '<div class="wbs-theme-seg wbs-lang-seg" role="group" aria-label="设置语言" data-wbs-i18n-skip="1">' +
+              '<button type="button" class="wbs-sess-seg-btn" data-wbs-lang="zh" aria-pressed="false">中文</button>' +
+              '<button type="button" class="wbs-sess-seg-btn" data-wbs-lang="en" aria-pressed="false">English</button>' +
             '</div>' +
           '</div>' +
         '</div>' +
@@ -5515,20 +5521,20 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         var issues = aboutPane.querySelector('#wbs-about-issues');
         if (issues && d.repository) issues.href = d.repository.replace(/\/$/, '') + '/issues';
       }).catch(function () {});
-      // 语言切换 Segmented 控件：随关于页构建，保持单一容器（.wbs-lang-seg）
+      // 语言切换 Segmented 控件：随关于页构建，与主题/会话页分段外观一致
       var langSeg = aboutPane.querySelector('.wbs-lang-seg');
       if (langSeg) {
         function syncLangSeg(lang) {
-          var btns = langSeg.querySelectorAll('.wbs-seg-btn');
+          var btns = langSeg.querySelectorAll('.wbs-sess-seg-btn');
           for (var bi = 0; bi < btns.length; bi++) {
             var active = btns[bi].getAttribute('data-wbs-lang') === lang;
-            btns[bi].classList.toggle('is-active', active);
+            btns[bi].classList.toggle('active', active);
             btns[bi].setAttribute('aria-pressed', active ? 'true' : 'false');
           }
         }
         syncLangSeg(WBS_LANGUAGE);
         langSeg.addEventListener('click', function (ev) {
-          var btn = ev.target && ev.target.closest ? ev.target.closest('.wbs-seg-btn') : null;
+          var btn = ev.target && ev.target.closest ? ev.target.closest('.wbs-sess-seg-btn') : null;
           if (!btn || !langSeg.contains(btn)) return;
           var next = btn.getAttribute('data-wbs-lang');
           if (next !== 'zh' && next !== 'en') return;
@@ -9914,16 +9920,15 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     /* 面板：毛玻璃主题（半透明 + 模糊，背景图透出） */
     '.wbs-panel{position:absolute;right:0;bottom:0;width:520px;max-width:94vw;height:650px;max-height:650px;background:color-mix(in srgb,var(--wb-bg-popover,#fff) 72%,transparent);border:1px solid var(--wb-border-subtle,#f0f0f0);border-radius:18px;box-shadow:0 20px 60px rgba(0,0,0,.28);display:none;flex-direction:column;overflow:hidden;backdrop-filter:blur(28px) saturate(1.25);-webkit-backdrop-filter:blur(28px) saturate(1.25)}',
     '.wbs-panel.show{display:flex}',
-    // 英文文案更长：EN 模式面板宽度放大 1.3 倍（520px -> 676px），配合 label 自适应避免挤压
-    'html[data-wbs-language="en"] .wbs-panel{width:676px}',
+    // 英文文案更长：EN 模式面板宽度放大 1.35 倍（520px -> 702px），配合 label 自适应避免挤压
+    'html[data-wbs-language="en"] .wbs-panel{width:702px}',
     // EN 下固定宽度 label 容易溢出：phone/credit/token 列的 label 释放为自适应宽度
     'html[data-wbs-language="en"] .wbs-phone-cell .wbs-lbl,html[data-wbs-language="en"] .wbs-credit-left .wbs-lbl{width:auto;max-width:84px}',
     'html[data-wbs-language="en"] .wbs-token-cell .wbs-lbl{width:auto;max-width:96px}',
-    // 语言切换 Segmented 控件
-    '.wbs-lang-seg{display:inline-flex;flex:0 0 auto;padding:2px;gap:2px;border-radius:8px;background:color-mix(in srgb,var(--wb-bg-input,#f2f3f5) 75%,transparent);align-items:center}',
-    '.wbs-lang-seg .wbs-seg-btn{border:none;background:transparent;padding:4px 12px;border-radius:6px;font-size:12px;line-height:1.4;color:var(--wb-color-text-secondary,#6b7280);cursor:pointer;white-space:nowrap}',
-    '.wbs-lang-seg .wbs-seg-btn.is-active{background:color-mix(in srgb,var(--wb-bg-popover,#fff) 92%,transparent);color:var(--wb-color-text-primary,#1f1f1f);font-weight:500;box-shadow:0 1px 3px rgba(0,0,0,.14);cursor:default}',
-    '.wbs-lang-seg .wbs-seg-btn:focus-visible{outline:2px solid var(--wb-accent,#4a6cf7);outline-offset:1px}',
+    // 语言切换 Segmented：复用主题/会话页的分段外观（theme-seg 容器 + sess-seg-btn 按钮）
+    '.wbs-language-card .wbs-settings-row{justify-content:space-between}',
+    '.wbs-language-card .wbs-pcard-title{margin-bottom:0}',
+    '.wbs-lang-seg{flex:0 0 auto;width:auto;margin-bottom:0}',
     '.wbs-head{display:flex;align-items:center;justify-content:space-between;padding:16px 18px 12px;border-bottom:1px solid var(--wb-border-subtle,#f0f0f0);background:color-mix(in srgb,var(--wb-bg-secondary,#fff) 30%,transparent)}',
     '.wbs-head-left{display:flex;align-items:center;gap:9px;min-width:0}',
     '.wbs-title{font-size:16px;font-weight:700;color:var(--wb-color-text-primary,#1f1f1f);letter-spacing:.3px;cursor:pointer;user-select:none}',
