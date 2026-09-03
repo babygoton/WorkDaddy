@@ -441,6 +441,12 @@ if [ -z "$WORKDADDY_SKIP_FINDER" ]; then
   rm -rf -- "$MOUNT_DIR/.fseventsd"
 else
   echo "==> 跳过 Finder 布局（WORKDADDY_SKIP_FINDER=1，无 GUI 会话）"
+  if [ -n "$WORKDADDY_DSSTORE_SOURCE" ] && [ -f "$WORKDADDY_DSSTORE_SOURCE" ]; then
+    # 无 GUI 时使用预置布局：把既有的 .DS_Store（窗口尺寸/图标位置/背景引用）放进卷根，
+    # 产物保留与 Finder 布局版本一致的观感。
+    cp "$WORKDADDY_DSSTORE_SOURCE" "$MOUNT_DIR/.DS_Store"
+    echo "==> 已注入预置 Finder 布局: $WORKDADDY_DSSTORE_SOURCE"
+  fi
 fi
 hdiutil detach "$DMG_DEVICE" >/dev/null
 DMG_DEVICE=""

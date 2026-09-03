@@ -10079,6 +10079,9 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '.wbs-stash-inline .wbs-stash-txt{opacity:0;max-width:0;overflow:hidden;white-space:nowrap;font-size:13px;font-weight:500;margin-left:0;transition:opacity .2s,max-width .25s,margin-left .25s}',
     '.wbs-stash-inline:hover{width:113px;border-radius:40px;padding-right:5px}',
     '.wbs-stash-inline:hover .wbs-stash-txt{opacity:1;max-width:76px;margin-left:7px}',
+    // EN 文案更长（Stash prompt / Quote text）：加宽展开胶囊与文案上限，避免 "prompt" 截断
+    'html[data-wbs-language="en"] .wbs-stash-inline:hover,html[data-wbs-language="en"] .wbs-stash-inline.wbs-stash-inline-inline:hover{width:156px}',
+    'html[data-wbs-language="en"] .wbs-stash-inline:hover .wbs-stash-txt{max-width:130px}',
     '.wbs-explore-inline{position:fixed;left:auto;display:flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;z-index:auto;top:0;right:0;overflow:visible;padding:0 8px}',
     /* 复用暂存按钮视觉（wbs-stash-inline 提供 32px 圆形/背景/阴影），但 hover 不变宽 */
     '.wbs-stash-inline.wbs-explore-inline:hover{width:32px;height:32px;border-radius:50%;padding:0 8px}',
