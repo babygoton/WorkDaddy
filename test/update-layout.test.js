@@ -727,7 +727,7 @@ test('account cards keep the compact three-row layout', () => {
   assert.doesNotMatch(script, /wbs-growth-activate/);
   assert.doesNotMatch(script, /api\('\/api\/growth\/activate'/);
   assert.match(script, /expired \? '' : '<button class="wbs-icon-btn wbs-acc-switch"/);
-  assert.match(script, /switchBtn\.style\.display = hidden \? 'none' : ''/);
+  assert.match(script, /switchBtn\.style\.display = hidden \|\| account\.creditExpired \? 'none' : ''/);
   assert.match(script, /height:5px;min-height:5px/);
   assert.match(script, /\.wbs-credit-segment:first-child\{border-radius:3px 0 0 3px\}/);
   assert.match(script, /\.wbs-credit-segment:last-child\{border-radius:0 3px 3px 0\}/);

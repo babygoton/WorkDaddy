@@ -166,6 +166,11 @@ function resolveCurrentAuth() {
   if (!DYNAMIC_AUTH_DISCOVERY) return { file: AUTH_FILE, record: parseAuthFile(AUTH_FILE, { strict: false }), ambiguous: false };
   const records = listAuthRecords();
   if (records.length === 1) return { file: records[0].file, record: records[0], ambiguous: false };
+  // 官方固定文件（workbuddy-desktop.info / workbuddy-desktop-ai.info）是官方实际读取的
+  // 当前登录文件：多份历史备份可能都残留 lastLogin 标记，只有固定文件是可信的「当前」。
+  // 固定文件有效时优先采用，避免被历史标记拖入 ambiguous 而拒绝切换/备份。
+  const canonical = records.find((record) => AUTH_FILE && path.resolve(record.file) === path.resolve(AUTH_FILE));
+  if (canonical) return { file: canonical.file, record: canonical, ambiguous: false };
   const marked = records.filter((record) => record.lastLogin);
   if (records.length > 1 && marked.length === 1) return { file: marked[0].file, record: marked[0], ambiguous: false };
   return { file: null, record: null, ambiguous: records.length > 1, records };
@@ -1235,9 +1240,9 @@ function deleteAccount(dataDir, uid) {
 function switchTo(dataDir, uid, log = () => {}) {
   if (!ACTIVE_PROFILE.capabilities.accounts) throw new Error(`${ACTIVE_PROFILE.name} 暂不支持账号切换`);
   migrateLegacyDataDir(dataDir, log);
-  if (DYNAMIC_AUTH_DISCOVERY && resolveCurrentAuth().ambiguous) {
-    throw new Error('当前存在多个无法唯一确认的登录文件，拒绝切换');
-  }
+  // 不再用「当前 auth 目录是否 ambiguous」一票否决：切换写入的目标文件由
+  // resolveAuthTarget 精确决定（meta.json 记录 / 唯一 uid 匹配），目标无法唯一
+  // 确定时它自己会拒绝，避免历史 lastLogin 残留导致已登录账号切不回去。
   const src = backupPath(dataDir, uid);
   if (!fs.existsSync(src)) {
     throw new Error(`未找到账号 ${uid} 的备份文件`);

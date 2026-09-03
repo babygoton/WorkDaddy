@@ -1364,7 +1364,6 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       '<button class="wbs-tab" type="button" data-tab="enhance"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg><span>增强</span></button>',
       '<button class="wbs-tab" type="button" data-tab="pc"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg><span>电脑</span></button>',
       '<button class="wbs-tab" type="button" data-tab="about"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg><span>关于</span></button>',
-      '<button class="wbs-tab" type="button" data-tab="settings" title="设置"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.64 5.64l1.42 1.42M16.94 16.94l1.42 1.42M5.64 18.36l1.42-1.42M16.94 7.06l1.42-1.42"/><circle cx="12" cy="12" r="4"/></svg><span>设置</span></button>',
       '</div>',
       '<div class="wbs-body">',
       '<div class="wbs-pane active" data-pane="account"></div>',
@@ -1374,7 +1373,6 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       '<div class="wbs-pane" data-pane="enhance"></div>',
       '<div class="wbs-pane" data-pane="pc"></div>',
       '<div class="wbs-pane" data-pane="about"></div>',
-      '<div class="wbs-pane" data-pane="settings"></div>',
       '</div>',
       '</div>',
     ].join('');
@@ -3646,7 +3644,6 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     var enhancePane = root.querySelector('[data-pane="enhance"]');
     var pcPane = root.querySelector('[data-pane="pc"]');
     var aboutPane = root.querySelector('[data-pane="about"]');
-    var settingsPane = root.querySelector('[data-pane="settings"]');
     var hiddenToolsUnlocked = false;
     var logoutBtn = root.querySelector('[data-act="logout"]');
     var creditTooltip = null;
@@ -3943,30 +3940,6 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       (function (btn) {
         btn.addEventListener('click', function () { switchTab(btn.getAttribute('data-tab')); });
       })(tabBtns[ti]);
-    }
-
-    function buildSettingsPane() {
-      if (!settingsPane) return;
-      settingsPane.dataset.built = '1';
-      settingsPane.innerHTML =
-        '<div class="wbs-pcard wbs-settings-card">' +
-          '<div class="wbs-pcard-title">语言</div>' +
-          '<div class="wbs-settings-row">' +
-            '<div class="wbs-settings-copy"><strong>设置语言</strong><span>首次打开时自动跟随系统语言；未匹配时使用英语。</span></div>' +
-            '<select id="wbs-language-select" class="wbs-sess-select" aria-label="设置语言" title="设置语言">' +
-              '<option value="zh">中文</option><option value="en">English</option>' +
-            '</select>' +
-          '</div>' +
-        '</div>';
-      var select = settingsPane.querySelector('#wbs-language-select');
-      if (select) {
-        select.value = WBS_LANGUAGE;
-        select.addEventListener('change', function () {
-          setLanguage(select.value);
-          toast('语言设置已更新', false, root);
-        });
-      }
-      applyI18n(settingsPane);
     }
 
     // ===== 会话 pane（构建：账号/时间筛选 + 按空间分组[默认2条/展开10条] + 刷新 + 批量操作[迁移/删除]）=====
@@ -5188,6 +5161,15 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
             '</a>' +
           '</div>' +
         '</div>' +
+        '<div class="wbs-pcard wbs-settings-card wbs-language-card">' +
+          '<div class="wbs-pcard-title">语言</div>' +
+          '<div class="wbs-settings-row">' +
+            '<div class="wbs-settings-copy"><strong>设置语言</strong><span>首次打开时自动跟随系统语言；未匹配时使用英语。</span></div>' +
+            '<select id="wbs-language-select" class="wbs-sess-select" aria-label="设置语言" title="设置语言">' +
+              '<option value="zh">中文</option><option value="en">English</option>' +
+            '</select>' +
+          '</div>' +
+        '</div>' +
         '<div class="wbs-pcard wbs-telemetry-card" id="wbs-telemetry-card">' +
           '<div class="wbs-telemetry-head">' +
             '<div class="wbs-telemetry-label"><span class="wbs-pcard-title">发送错误诊断</span><span class="wbs-telemetry-help" tabindex="0" aria-label="查看错误诊断说明"><svg viewBox="0 0 20 20" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="10" cy="10" r="8"/><path d="M8.4 7.6a1.8 1.8 0 1 1 2.8 1.45c-.75.48-1.2.85-1.2 1.75M10 13.7v.1"/></svg><span class="wbs-telemetry-tooltip" role="tooltip">仅发送经过脱敏、截断的版本、系统和错误信息，不包含账号、会话内容、Token 或 API Key；可随时关闭。</span></span></div>' +
@@ -5227,6 +5209,15 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         var issues = aboutPane.querySelector('#wbs-about-issues');
         if (issues && d.repository) issues.href = d.repository.replace(/\/$/, '') + '/issues';
       }).catch(function () {});
+      // 语言选择器：随关于页构建，保持单一 DOM id（#wbs-language-select）
+      var langSelect = aboutPane.querySelector('#wbs-language-select');
+      if (langSelect) {
+        langSelect.value = WBS_LANGUAGE;
+        langSelect.addEventListener('change', function () {
+          setLanguage(langSelect.value);
+          toast('语言设置已更新', false, root);
+        });
+      }
       wireTelemetrySettings();
       acRenderMonitorLogModal();
       // 自动更新：检查 + 红点 + 更新卡片
@@ -8860,7 +8851,10 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     }
 
     function creditBlockHtml(credits, segments, account) {
-      if (isIdentityExpired(account)) return '';
+      // 登录身份过期：展示可诊断文案（token 被服务端拒绝时不伪造积分，也不整格隐藏）
+      if (isIdentityExpired(account) || (account && account.creditExpired)) {
+        return '<div class="wbs-credit-block"><div class="wbs-credit-line"><div class="wbs-credit-left"><span class="wbs-lbl">剩余</span><span class="wbs-credit-na">登录身份过期</span></div></div></div>';
+      }
       var usage = accountStatusTagsHtml(account);
       // 企业账号不限量（官方 getEnterpriseUsage 返回 limitNum === -1）
       if (account && account.creditUnlimited) {
@@ -9007,7 +9001,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
           '<div class="wbs-mi wbs-phone-cell' + (isUinMode ? ' wbs-uin-cell' : '') + '"><span class="wbs-lbl">' + idLbl + '</span><span class="wbs-val">' + idVal + '</span></div>' +
           '<div class="wbs-mi wbs-token-cell"><span class="wbs-lbl">有效期至</span><span class="wbs-val' + (ts.warn ? ' wbs-warn' : '') + '">' + esc(ts.label) + '</span></div>' +
           '</div>' +
-          '<div class="wbs-credit-cell' + (isIdentityExpired(a) ? ' wbs-credit-hidden' : '') + '">' + creditBlockHtml(credits, a.creditSegments, a) + '</div>' +
+          '<div class="wbs-credit-cell">' + creditBlockHtml(credits, a.creditSegments, a) + '</div>' +
           '</div>';
         list.appendChild(card);
       });
@@ -9170,10 +9164,11 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         }
         if (cell) {
           var hidden = isIdentityExpired(account);
-          cell.classList.toggle('wbs-credit-hidden', hidden);
-          if (hidden) cell.innerHTML = '';
+          // 不再整格隐藏/清空：过期时由 creditBlockHtml 展示「登录身份过期」诊断文案
+          cell.classList.remove('wbs-credit-hidden');
+          cell.innerHTML = creditBlockHtml(account.credits, account.creditSegments, account);
           var switchBtn = cards[i].querySelector('.wbs-acc-switch');
-          if (switchBtn) switchBtn.style.display = hidden ? 'none' : '';
+          if (switchBtn) switchBtn.style.display = hidden || account.creditExpired ? 'none' : '';
         }
       }
     }
@@ -9272,13 +9267,21 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
             }
             updateCreditCell(a.uid, credits, segments);
           })
-          .catch(function () {
+          .catch(function (e) {
             if (runId !== state.creditRunId) return;
+            // daemon 对 token 失效返回结构化 401 {expired:true}：标记为登录身份过期，
+            // 卡片上展示可诊断文案而不是空白或「-」（同样不弹 toast，避免面板抖动）。
+            var accountExpired = !!(e && e.payload && e.payload.expired);
             for (var i = 0; i < state.accounts.length; i++) {
-              if (state.accounts[i].uid === a.uid) { state.accounts[i].credits = null; state.accounts[i].creditSegments = []; state.accounts[i].creditUnlimited = false; break; }
+              if (state.accounts[i].uid === a.uid) {
+                state.accounts[i].credits = null;
+                state.accounts[i].creditSegments = [];
+                state.accounts[i].creditUnlimited = false;
+                state.accounts[i].creditExpired = accountExpired;
+                break;
+              }
             }
             updateCreditCell(a.uid, null);
-            // 静默失败，不弹 toast；避免面板抖动
           })
           .finally(function () {
             if (runId !== state.creditRunId) return;
@@ -9305,8 +9308,10 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         if (state.accounts[j].uid === uid) { account = state.accounts[j]; break; }
       }
       var hidden = isIdentityExpired(account);
-      elCredit.classList.toggle('wbs-credit-hidden', hidden);
-      elCredit.innerHTML = hidden ? '' : creditBlockHtml(credits, segments || [], account);
+      elCredit.classList.remove('wbs-credit-hidden');
+      elCredit.innerHTML = creditBlockHtml(credits, segments || [], account);
+      var cellSwitch = card.querySelector('.wbs-acc-switch');
+      if (cellSwitch) cellSwitch.style.display = hidden || (account && account.creditExpired) ? 'none' : '';
     }
 
     // ===== 调试：暴露内部状态到 window.__wbsDiag（控制台可调） =====

@@ -5245,13 +5245,21 @@ async function fetchResource(accessToken, body, source) {
     signal: AbortSignal.timeout(12000),
   });
   const text = await r.text();
+  // 401 = token 已失效：认证网关常直接返回 HTML 登录页。必须先于 JSON 解析归类，
+  // 否则会显示成「解析积分响应失败」；前端据此展示「登录身份过期」，不伪造积分。
+  if (r.status === 401) {
+    const err = new Error('登录身份过期');
+    err.expired = true;
+    err.code = 'AUTH_EXPIRED';
+    throw err;
+  }
+  if (!r.ok) throw new Error(`积分接口 HTTP ${r.status}: ${text.slice(0, 120)}`);
   let o;
   try {
     o = JSON.parse(text);
   } catch (e) {
     throw new Error(`解析积分响应失败: ${e.message}`);
   }
-  if (!r.ok) throw new Error(`积分接口 HTTP ${r.status}: ${text.slice(0, 120)}`);
   if (o.code !== 0 && o.code !== undefined) throw new Error(o.msg || `积分接口返回 code=${o.code}`);
   const data = (o.data && o.data.Response && o.data.Response.Data) ||
     (o.data && o.data.data && o.data.data.Response && o.data.data.Response.Data) ||
@@ -5314,13 +5322,20 @@ async function fetchEnterpriseResource(accessToken, enterpriseId, domain) {
     throw new Error(`企业积分接口请求失败: ${e.message}`);
   }
   const text = await r.text();
+  if (r.status === 401) {
+    // token 已失效（网关 HTML 401）：归类为「登录身份过期」，与个人版积分查询一致。
+    const err = new Error('登录身份过期');
+    err.expired = true;
+    err.code = 'AUTH_EXPIRED';
+    throw err;
+  }
+  if (!r.ok) throw new Error(`企业积分接口 HTTP ${r.status}: ${text.slice(0, 120)}`);
   let o;
   try {
     o = JSON.parse(text);
   } catch (e) {
     throw new Error(`解析企业积分响应失败: ${e.message}`);
   }
-  if (!r.ok) throw new Error(`企业积分接口 HTTP ${r.status}: ${text.slice(0, 120)}`);
   if (o.code !== 0 && o.code !== undefined) throw new Error(o.msg || `企业积分接口返回 code=${o.code}`);
   const parsed = parseEnterpriseUsage(o, '企业配额');
   if (!parsed) throw new Error('企业积分接口返回数据无法解析');
@@ -5334,6 +5349,8 @@ async function robustFetchEnterpriseResource(accessToken, enterpriseId, domain) 
       return await fetchEnterpriseResource(accessToken, enterpriseId, domain);
     } catch (e) {
       lastErr = e;
+      // 401 = 凭证已失效，重试只会再拿 HTML 401，直接终止并向上带 expired 标记
+      if (e && e.expired) throw e;
       if (attempt < 3) {
         log(`[credits] 企业 ${String(enterpriseId).slice(0, 8)} 失败(第 ${attempt} 次): ${e.message}`);
         await retryDelay(300 * attempt);
@@ -5394,6 +5411,8 @@ async function robustFetchResource(accessToken, body, label) {
       return r;
     } catch (e) {
       lastErr = e;
+      // 401 = token 已失效：不重试，直接向上带 expired 标记
+      if (e && e.expired) throw e;
       if (attempt < 3) {
         log(`[credits] ${label} 失败(第 ${attempt} 次): ${e.message}，重试`);
         await retryDelay(300 * attempt);
@@ -6005,6 +6024,8 @@ function handleApi(req, res) {
         return json(res, 200, payload);
       } catch (e) {
         log(`[credits] 查询 ${uid} 积分失败: ${e.message}`);
+        // token 被服务端拒绝（gateway HTML 401）：返回结构化 401，前端展示「登录身份过期」，不伪造积分
+        if (e && e.expired) return json(res, 401, { ok: false, expired: true, error: '登录身份过期' });
         return json(res, 500, { ok: false, error: e.message });
       }
     });

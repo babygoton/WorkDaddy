@@ -114,15 +114,33 @@ test('missing filename metadata refuses a switch instead of falling back to a gu
   }
 });
 
-test('ambiguous active files block switching even when the backup has a target name', () => {
+test('canonical fixed info file wins over historical lastLogin markers', () => {
   const f = fixture();
   try {
-    fs.writeFileSync(path.join(f.authDir, 'a.info'), JSON.stringify(auth('a', 'https://www.codebuddy.cn/auth/realms/copilot')));
-    fs.writeFileSync(path.join(f.authDir, 'b.info'), JSON.stringify(auth('b', 'https://www.workbuddy.cn/auth/realms/copilot')));
+    // 真实回归：固定文件 + 多条历史文件都残留 lastLogin:true（旧代码判成 ambiguous，拒绝切换）
+    fs.writeFileSync(path.join(f.authDir, 'workbuddy-desktop.info'), JSON.stringify(auth('s', 'https://www.workbuddy.cn/auth/realms/copilot')));
+    fs.writeFileSync(path.join(f.authDir, 's-history.info'), JSON.stringify(auth('s', 'https://www.workbuddy.cn/auth/realms/copilot', true)));
+    fs.writeFileSync(path.join(f.authDir, 'h-history.info'), JSON.stringify(auth('h', 'https://www.workbuddy.cn/auth/realms/copilot', true)));
+    const current = run(f.root, f.dataDir, 'process.stdout.write(JSON.stringify(lib.resolveCurrentAuth()))');
+    assert.equal(path.basename(current.file), 'workbuddy-desktop.info');
+    assert.equal(current.record.uid, 's');
+    assert.equal(current.ambiguous, false);
+  } finally {
+    fs.rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
+test('switch must succeed via the recorded target name despite multiple lastLogin markers', () => {
+  const f = fixture();
+  try {
+    fs.writeFileSync(path.join(f.authDir, 'workbuddy-desktop.info'), JSON.stringify(auth('s', 'https://www.workbuddy.cn/auth/realms/copilot')));
+    fs.writeFileSync(path.join(f.authDir, 's-history.info'), JSON.stringify(auth('s', 'https://www.workbuddy.cn/auth/realms/copilot', true)));
+    fs.writeFileSync(path.join(f.authDir, 'h-history.info'), JSON.stringify(auth('h', 'https://www.workbuddy.cn/auth/realms/copilot', true)));
     run(f.root, f.dataDir, 'lib.backupCurrent(process.env.WBSWITCH_DATA_DIR); process.stdout.write("null")');
-    const result = run(f.root, f.dataDir, `try { lib.switchTo(process.env.WBSWITCH_DATA_DIR,'a'); process.stdout.write('unexpected') } catch (e) { process.stdout.write(JSON.stringify(e.message)) }`);
-    assert.match(result, /多个/);
-    assert.equal(JSON.parse(fs.readFileSync(path.join(f.authDir, 'a.info'), 'utf8')).account.uid, 'a');
+    // meta.json 已记录 h 的目标文件名（h-history.info），切换不再被当前歧义一票否决
+    const switched = run(f.root, f.dataDir, 'process.stdout.write(JSON.stringify(lib.switchTo(process.env.WBSWITCH_DATA_DIR,"h")))');
+    assert.equal(switched.authFile.endsWith('h-history.info'), true);
+    assert.equal(JSON.parse(fs.readFileSync(path.join(f.authDir, 'h-history.info'), 'utf8')).account.uid, 'h');
   } finally {
     fs.rmSync(f.root, { recursive: true, force: true });
   }

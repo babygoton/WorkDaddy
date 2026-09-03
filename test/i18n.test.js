@@ -9,7 +9,11 @@ test('injected panel exposes persisted bilingual language selection', () => {
   assert.match(source, /workdaddy\.ui\.language/);
   assert.match(source, /navigator\.language/);
   assert.match(source, /value\.indexOf\('zh'\) === 0 \? 'zh' : 'en'/);
-  assert.match(source, /data-tab="settings"/);
+  assert.match(source, /data-tab="about"/);
+  // 语言选择器必须位于 About pane（data-pane="about" 的构建函数内），且没有独立设置页残留
+  assert.match(source, /function buildAboutPane\(\)[\s\S]*?id="wbs-language-select"/);
+  assert.doesNotMatch(source, /data-tab="settings"/);
+  assert.doesNotMatch(source, /function buildSettingsPane\(\)/);
   assert.match(source, /id="wbs-language-select"/);
   assert.match(source, /localStorage\.setItem\(WBS_LANGUAGE_KEY/);
   assert.match(source, /setAttribute\('lang', WBS_LANGUAGE === 'zh' \? 'zh-CN' : 'en'\)/);
