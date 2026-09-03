@@ -175,6 +175,24 @@ discover_workdaddy_workbuddy_app || true
     insert_at = case_index + len('esac')
     source = source[:insert_at] + '\n' + function + source[insert_at:]
 source = source.replace('workbuddy-target.js" --profile="$PROFILE"', 'workbuddy-target.js" --resolve --profile="$PROFILE"')
+# 官方安装不应把自身路径作为 custom target 传给 daemon。仅在用户配置了
+# workbuddy-target.json 时设置 override，并让 launchd plist 保持相同边界。
+source = source.replace('export WBSWITCH_WORKBUDDY_BIN="$APP_BIN"', '''TARGET_ENV_XML=""
+if [ -n "${TARGET_BIN:-}" ]; then
+  export WBSWITCH_WORKBUDDY_BIN="$TARGET_BIN"
+  TARGET_ENV_XML="    <key>WBSWITCH_WORKBUDDY_BIN</key><string>${TARGET_BIN}</string>"
+fi''')
+source = source.replace('    <key>WBSWITCH_WORKBUDDY_BIN</key><string>${APP_BIN}</string>', '${TARGET_ENV_XML}')
+# 旧 plist 可能缺少 profile/target 环境；发现时强制重建，避免复用带错误
+# customTarget 的常驻 daemon。
+source = source.replace('if [ "$STATUS_UP" = "1" ] && { [ -z "$RUNNING_VERSION" ] || [ "$RUNNING_VERSION" != "$APP_VERSION" ] || [ "$RUNNING_BUILD_ID" != "$APP_BUILD_ID" ]; }; then', '''PLIST_STALE=0
+if [ ! -f "$PLIST" ] || ! grep -q '<key>WBSWITCH_PROFILE</key>' "$PLIST" 2>/dev/null; then
+  PLIST_STALE=1
+fi
+if [ -z "${TARGET_BIN:-}" ] && grep -q '<key>WBSWITCH_WORKBUDDY_BIN</key>' "$PLIST" 2>/dev/null; then
+  PLIST_STALE=1
+fi
+if [ "$STATUS_UP" = "1" ] && { [ -z "$RUNNING_VERSION" ] || [ "$RUNNING_VERSION" != "$APP_VERSION" ] || [ "$RUNNING_BUILD_ID" != "$APP_BUILD_ID" ] || [ "$PLIST_STALE" = "1" ]; }; then''')
 chooser = '''
 # 候选不唯一或自动扫描不到时交给 macOS 原生应用选择器，由用户明确选择并自动记住结果。
 if [ -z "${TARGET_BIN:-}" ] && [ -z "$APP_BIN" ]; then
