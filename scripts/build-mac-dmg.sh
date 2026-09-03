@@ -119,6 +119,107 @@ else
 fi
 sed -i.bak "s|^PROFILE=.*|PROFILE=\"${PROFILE}\"|" "$PACKAGE_APP/Contents/MacOS/launcher"
 rm -f "$PACKAGE_APP/Contents/MacOS/launcher.bak"
+# 企业版可能在 /Applications 下使用不同的 .app 名称。把官方路径优先、
+# profile 过滤的自动发现逻辑同步进产物 launcher；这样壳内 launcher 与
+# scripts/relaunch-with-cdp.sh 的行为一致。
+python3 - "$PACKAGE_APP/Contents/MacOS/launcher" <<'PY'
+import re
+import sys
+
+path = sys.argv[1]
+with open(path, encoding='utf-8') as f:
+    source = f.read()
+marker = 'discover_workdaddy_workbuddy_app() {'
+if marker not in source:
+    function = r'''discover_workdaddy_workbuddy_app() {
+  local preferred="" candidate name
+  local -a matches=()
+  case "$PROFILE" in
+    workbuddy-ai) preferred="/Applications/WorkBuddy AI.app" ;;
+    workbuddy-cn) preferred="/Applications/WorkBuddy.app" ;;
+    *) return 0 ;;
+  esac
+  if [ -x "$preferred/Contents/MacOS/Electron" ]; then matches+=("$preferred"); fi
+  for candidate in /Applications/WorkBuddy*.app; do
+    [ -x "$candidate/Contents/MacOS/Electron" ] || continue
+    [ "$candidate" = "$preferred" ] && continue
+    name="$(basename "$candidate" .app)"
+    case "$PROFILE:$name" in
+      workbuddy-ai:WorkBuddy|workbuddy-ai:WorkBuddy\ CN|workbuddy-ai:CodeBuddy*) continue ;;
+      workbuddy-ai:*) printf '%s' "$name" | grep -qi 'ai' || continue ;;
+      workbuddy-cn:WorkBuddy\ AI*|workbuddy-cn:WorkBuddyAI*|workbuddy-cn:CodeBuddy*) continue ;;
+    esac
+    matches+=("$candidate")
+  done
+  if [ "${#matches[@]}" -eq 1 ]; then
+    APP_BIN="${matches[0]}/Contents/MacOS/Electron"
+    APP_NAME="$(basename "${matches[0]}" .app)"
+    return 0
+  fi
+  APP_BIN=""
+  APP_NAME=""
+  if [ "${#matches[@]}" -gt 1 ]; then
+    APP_DISCOVERY_ERROR="检测到多个 ${PROFILE} 客户端，将通过系统选择窗口确认：$(printf '%s, ' "${matches[@]}" | sed 's/, $//')"
+  else
+    APP_DISCOVERY_ERROR="未找到 ${PROFILE} 客户端（搜索 /Applications/WorkBuddy*.app）"
+  fi
+  return 1
+}
+APP_DISCOVERY_ERROR=""
+discover_workdaddy_workbuddy_app || true
+'''
+    case_index = source.find('esac')
+    if case_index < 0:
+        raise SystemExit('macOS launcher 缺少 profile case')
+    insert_at = case_index + len('esac')
+    source = source[:insert_at] + '\n' + function + source[insert_at:]
+source = source.replace('workbuddy-target.js" --profile="$PROFILE"', 'workbuddy-target.js" --resolve --profile="$PROFILE"')
+chooser = '''
+# 候选不唯一或自动扫描不到时交给 macOS 原生应用选择器，由用户明确选择并自动记住结果。
+if [ -z "${TARGET_BIN:-}" ] && [ -z "$APP_BIN" ]; then
+  SELECTED_APP="$(osascript <<'APPLESCRIPT' 2>/dev/null
+try
+  set chosen to choose application with prompt "请选择要使用的 WorkBuddy 客户端"
+  POSIX path of (chosen as alias)
+on error number -128
+  return ""
+on error
+  return ""
+end try
+APPLESCRIPT
+)"
+  SELECTED_APP="${SELECTED_APP%/}"
+  if [ -z "$SELECTED_APP" ]; then
+    echo "已取消客户端选择"
+    exit 0
+  fi
+  APP_BIN="$SELECTED_APP/Contents/MacOS/Electron"
+  APP_NAME="$(basename "$SELECTED_APP" .app)"
+  if [ ! -x "$APP_BIN" ]; then
+    echo "错误：所选应用不是可用的 WorkBuddy 客户端: $SELECTED_APP"
+    exit 1
+  fi
+  if ! "$NODE_BIN" "$SCRIPTS_DIR/workbuddy-target.js" --configure --platform darwin \
+      --profile="$PROFILE" --binary="$APP_BIN" --data-dir="$DATA_DIR" >/dev/null 2>"$TARGET_ERR"; then
+    echo "错误：无法保存所选 WorkBuddy 客户端: $(tr '\n' ' ' <"$TARGET_ERR")"
+    rm -f "$TARGET_ERR"
+    exit 1
+  fi
+  rm -f "$TARGET_ERR"
+fi
+'''
+source = source.replace('\n# 清理旧版常驻服务和旧 profile 自启项', chooser + '\n# 清理旧版常驻服务和旧 profile 自启项', 1)
+source = source.replace('for i in $(seq 1 15); do', 'for i in $(seq 1 60); do')
+source = source.replace('等待 15 秒未检测到调试端口', '等待 60 秒未检测到调试端口')
+source = source.replace('osascript -e "quit app \\\"${APP_NAME}\\\"" >/dev/null 2>&1 || true\nsleep 3\npkill -f "$APP_BIN" 2>/dev/null || true',
+                        'if [ -n "$APP_NAME" ]; then osascript -e "quit app \\\"${APP_NAME}\\\"" >/dev/null 2>&1 || true; fi\nsleep 3\nif [ -n "$APP_BIN" ]; then pkill -f "$APP_BIN" 2>/dev/null || true; fi')
+source = source.replace('if pgrep -f "$APP_BIN" >/dev/null 2>&1; then',
+                        'if [ -n "$APP_BIN" ] && pgrep -f "$APP_BIN" >/dev/null 2>&1; then')
+source = source.replace('  notify "WorkDaddy" "未找到 WorkBuddy 应用，启动失败"\n  exit 1',
+                        '  echo "[$(date -u +%FT%TZ)] ${APP_DISCOVERY_ERROR:-未找到 WorkBuddy 应用}: APP_NAME=${APP_NAME} APP_BIN=${APP_BIN}"\n  notify "WorkDaddy" "未找到 WorkBuddy 应用，启动失败"\n  exit 1')
+with open(path, 'w', encoding='utf-8', newline='') as f:
+    f.write(source)
+PY
 # 启动器只能复用当前 profile 的 WorkBuddy CDP；否则 CN 包会把 WorkBuddy AI 的端口
 # 当成可复用目标，随后 daemon 按 CN profile 拒绝连接，用户看到的是启动器快速失败。
 python3 - "$PACKAGE_APP/Contents/MacOS/launcher" <<'PY'

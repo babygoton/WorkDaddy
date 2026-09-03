@@ -22,6 +22,54 @@ case "$PROFILE" in
   codebuddy-intl) APP_NAME="CodeBuddy"; APP_BIN="/Applications/CodeBuddy.app/Contents/MacOS/Electron"; DEFAULT_DATA_DIR="$HOME/Library/Application Support/WorkDaddy/profiles/codebuddy-intl"; DEFAULT_UI_PORT=47835; DEFAULT_CDP_PORT=9225; AUTH_DEFAULT="" ;;
   *) PROFILE="workbuddy-cn"; APP_NAME="WorkBuddy"; APP_BIN="/Applications/WorkBuddy.app/Contents/MacOS/Electron"; DEFAULT_DATA_DIR="$HOME/Library/Application Support/WorkDaddy"; DEFAULT_UI_PORT=47832; DEFAULT_CDP_PORT=9222; AUTH_DEFAULT="$HOME/Library/Application Support/CodeBuddyExtension/Data/Public/auth/workbuddy-desktop.info" ;;
 esac
+
+# 企业版可能在 /Applications 下使用不同的 .app 名称。官方路径优先，
+# 其次按 profile 过滤候选，避免 CN 误选 WorkBuddy AI 的单实例。
+discover_workbuddy_app() {
+  local preferred="" candidate name
+  local -a matches=()
+  case "$PROFILE" in
+    workbuddy-ai)
+      preferred="/Applications/WorkBuddy AI.app"
+      ;;
+    workbuddy-cn)
+      preferred="/Applications/WorkBuddy.app"
+      ;;
+    *)
+      return 0
+      ;;
+  esac
+  if [ -x "$preferred/Contents/MacOS/Electron" ]; then matches+=("$preferred"); fi
+  for candidate in /Applications/WorkBuddy*.app; do
+    [ -x "$candidate/Contents/MacOS/Electron" ] || continue
+    [ "$candidate" = "$preferred" ] && continue
+    name="$(basename "$candidate" .app)"
+    case "$PROFILE:$name" in
+      workbuddy-ai:WorkBuddy|workbuddy-ai:WorkBuddy\ CN|workbuddy-ai:CodeBuddy*) continue ;;
+      workbuddy-ai:*) printf '%s' "$name" | grep -qi 'ai' || continue ;;
+      workbuddy-cn:WorkBuddy\ AI*|workbuddy-cn:WorkBuddyAI*|workbuddy-cn:CodeBuddy*) continue ;;
+    esac
+    matches+=("$candidate")
+  done
+  if [ "${#matches[@]}" -eq 1 ]; then
+    APP_BIN="${matches[0]}/Contents/MacOS/Electron"
+    APP_NAME="$(basename "${matches[0]}" .app)"
+    return 0
+  fi
+  APP_BIN=""
+  APP_NAME=""
+  if [ "${#matches[@]}" -gt 1 ]; then
+    APP_DISCOVERY_MULTIPLE=1
+    APP_DISCOVERY_ERROR="检测到多个 ${PROFILE} 客户端，将通过系统选择窗口确认：$(printf '%s, ' "${matches[@]}" | sed 's/, $//')"
+  else
+    APP_DISCOVERY_MULTIPLE=0
+    APP_DISCOVERY_ERROR="未找到 ${PROFILE} 客户端（搜索 /Applications/WorkBuddy*.app）"
+  fi
+  return 1
+}
+APP_DISCOVERY_ERROR=""
+APP_DISCOVERY_MULTIPLE=0
+discover_workbuddy_app || true
 export WBSWITCH_PROFILE="$PROFILE"
 if [ -z "$PORT" ]; then PORT="$DEFAULT_CDP_PORT"; fi
 LABEL="com.workbuddy.workdaddy.${PROFILE}"
@@ -79,6 +127,54 @@ resolve_cdp_port() {
   mv -f "${CDP_PORT_FILE}.tmp.$$" "$CDP_PORT_FILE" 2>/dev/null || true
 }
 resolve_cdp_port
+
+# 若用户通过 workbuddy-target.json 指定了企业客户端，配置优先于自动发现。
+if [ -f "$DIR/scripts/workbuddy-target.js" ]; then
+  TARGET_ERR="/tmp/workdaddy-target-$$.err"
+  TARGET_BIN="$("$NODE_BIN" "$DIR/scripts/workbuddy-target.js" --resolve --profile="$PROFILE" --data-dir="$DATA_DIR" 2>"$TARGET_ERR")" || {
+    echo "错误：WorkBuddy 目标配置无效: $(tr '\n' ' ' <"$TARGET_ERR")"
+    rm -f "$TARGET_ERR"
+    exit 1
+  }
+  rm -f "$TARGET_ERR"
+  if [ -n "$TARGET_BIN" ]; then
+    APP_BIN="$TARGET_BIN"
+    APP_NAME="$(basename "$(dirname "$(dirname "$(dirname "$APP_BIN")")")" .app)"
+  fi
+fi
+
+# 候选不唯一或自动扫描不到时交给 macOS 原生应用选择器，由用户明确选择并自动记住结果。
+if [ -z "${TARGET_BIN:-}" ] && [ -z "$APP_BIN" ]; then
+  SELECTED_APP="$(osascript <<'APPLESCRIPT' 2>/dev/null
+try
+  set chosen to choose application with prompt "请选择要使用的 WorkBuddy 客户端"
+  POSIX path of (chosen as alias)
+on error number -128
+  return ""
+on error
+  return ""
+end try
+APPLESCRIPT
+)"
+  SELECTED_APP="${SELECTED_APP%/}"
+  if [ -z "$SELECTED_APP" ]; then
+    echo "已取消客户端选择"
+    exit 0
+  fi
+  APP_BIN="$SELECTED_APP/Contents/MacOS/Electron"
+  APP_NAME="$(basename "$SELECTED_APP" .app)"
+  if [ ! -x "$APP_BIN" ]; then
+    echo "错误：所选应用不是可用的 WorkBuddy 客户端: $SELECTED_APP"
+    exit 1
+  fi
+  if ! "$NODE_BIN" "$DIR/scripts/workbuddy-target.js" --configure --platform darwin \
+      --profile="$PROFILE" --binary="$APP_BIN" --data-dir="$DATA_DIR" >/dev/null 2>"$TARGET_ERR"; then
+    echo "错误：无法保存所选 WorkBuddy 客户端: $(tr '\n' ' ' <"$TARGET_ERR")"
+    rm -f "$TARGET_ERR"
+    exit 1
+  fi
+  rm -f "$TARGET_ERR"
+fi
 
 # 清理旧版常驻服务和旧 profile 自启项，但保留账号数据；daemon 仅由本次手动执行启动。
 for old_profile in workbuddy-cn workbuddy-ai codebuddy-cn codebuddy-intl; do
@@ -184,12 +280,14 @@ launch_plugin() {
 
   # ---------- 2. 彻底退出 WorkBuddy ----------
   echo "==> 退出 WorkBuddy ..."
-  osascript -e "quit app \"${APP_NAME}\"" 2>/dev/null || true
+  if [ -n "$APP_NAME" ]; then
+    osascript -e "quit app \"${APP_NAME}\"" 2>/dev/null || true
+  fi
   sleep 3
   # 兜底：按真实进程路径精确清理（进程名是 Electron，切勿 killall Electron 以免误伤其他应用）
-  pkill -f "$APP_BIN" 2>/dev/null || true
+  if [ -n "$APP_BIN" ]; then pkill -f "$APP_BIN" 2>/dev/null || true; fi
   sleep 2
-  if pgrep -f "$APP_BIN" >/dev/null 2>&1; then
+  if [ -n "$APP_BIN" ] && pgrep -f "$APP_BIN" >/dev/null 2>&1; then
     echo "   警告：WorkBuddy 仍在运行，强制结束"
     pkill -9 -f "$APP_BIN" 2>/dev/null || true
     sleep 2
@@ -198,6 +296,7 @@ launch_plugin() {
   # ---------- 3. 带调试端口启动 ----------
   echo "==> 以 --remote-debugging-port=${PORT} 启动 WorkBuddy"
   if [ ! -x "$APP_BIN" ]; then
+    echo "错误：${APP_DISCOVERY_ERROR:-未找到 WorkBuddy 应用}: APP_NAME=${APP_NAME} APP_BIN=${APP_BIN}"
     echo "   错误：未找到 $APP_BIN"
     exit 1
   fi
@@ -207,7 +306,7 @@ launch_plugin() {
   # ---------- 4. 验证 ----------
   echo "==> 等待 CDP 端口开放"
   OK=0
-  for i in $(seq 1 15); do
+  for i in $(seq 1 60); do
     sleep 1
     if curl -s -m 2 "http://127.0.0.1:${PORT}/json/version" | grep -qiE 'WorkBuddy|CodeBuddy'; then
       OK=1
@@ -222,10 +321,10 @@ launch_plugin() {
     echo "   若未出现，可手动重新注入: curl -X POST http://127.0.0.1:47832/api/inject"
   else
     echo ""
-    echo "警告：等待 15 秒仍未检测到 WorkBuddy CDP 端口 ${PORT}。"
+    echo "警告：等待 60 秒仍未检测到 WorkBuddy CDP 端口 ${PORT}。"
     echo "   WorkBuddy 可能忽略了该参数，或启动较慢。可再等几秒后执行："
     echo "   curl http://127.0.0.1:${PORT}/json/version"
-    "$NODE_BIN" "$REPORTER" --stage macos-cdp-timeout --message "等待 15 秒未检测到 WorkBuddy CDP 端口" --extra-json "{\"cdpPort\":${PORT}}" >/dev/null 2>&1 || true
+    "$NODE_BIN" "$REPORTER" --stage macos-cdp-timeout --message "等待 60 秒未检测到 WorkBuddy CDP 端口" --extra-json "{\"cdpPort\":${PORT}}" >/dev/null 2>&1 || true
   fi
 }
 
