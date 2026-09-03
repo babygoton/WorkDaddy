@@ -257,8 +257,10 @@ const DATA_DIR = defaultDataDir();
 // 1.1.32：主题页支持独立调节背景毛玻璃模糊程度。
 // 1.1.33：按账号和 lineage 折叠历史重复会话，避免全量自动复制后两账号计数分叉。
 // 1.1.34：签到前惰性刷新 access token，并按日使用 refresh token 保活所有备份账号。
-const DAEMON_VERSION = '1.1.34';
-const DAEMON_BUILD_ID = 'release-1.1.34-20260903-auth-discovery-token-keepalive';
+// 1.1.35：认证解析优先官方固定 auth 文件（消除多 lastLogin 残留的切换歧义）；积分接口
+//         401 归类为「登录身份过期」并返回结构化 401；语言选择器移入「关于」页。
+const DAEMON_VERSION = '1.1.35';
+const DAEMON_BUILD_ID = 'release-1.1.35-20260903-auth-canonical-credits-401-i18n-about';
 const HOST = '127.0.0.1';
 const IS_WIN = process.platform === 'win32'; // Windows 移植：平台分支开关（macOS 行为保持不变）
 // Windows 安装目录（install.ps1 铺、launcher 用、更新替换目标），对应 macOS 的 /Applications/WorkDaddy.app
