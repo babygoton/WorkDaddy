@@ -13,6 +13,7 @@ const vm = require('node:vm');
 
 const inject = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'inject.js'), 'utf8');
 const daemon = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'daemon.js'), 'utf8');
+const lib = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'lib.js'), 'utf8');
 
 // ---- 工具：提取字典 + 翻译函数并构造可执行翻译器 ----
 function buildTranslator() {
@@ -38,7 +39,7 @@ function buildTranslator() {
 
 // ---- 白名单：这些是 console 日志 / 断句残留（运行时被整句模板覆盖）/ 内部模块，不属 UI 文案 ----
 const LOG_LIKE = /^(WorkBuddy 兼容层未加载|\[WBS\]|注入组件已销毁|收到 SIGTERM|当前 Node 运行时没有 WebSocket|daemon 使用临时目录锁|picker-internal\.js 注入锚点不存在)|^\[[a-z-]+\]/;
-const FRAGMENT_LIKE = /^[」「，、。；：]|^已发送「|^已登录「|的自动继续|项）/;
+const FRAGMENT_LIKE = /^[」「，、。；：]|^已发送「|^已登录「|的自动继续|项）|」的备份|」的本地备份|」，请刷新|已发送「|已登录「|^\s*(个|条)$/;
 
 function stripComments(src) {
   return src
@@ -53,7 +54,9 @@ function chineseLiterals(src) {
   while ((m = re.exec(src))) {
     const s = m[2];
     if (s && /[\u4e00-\u9fff]/.test(s)) {
-      const clean = s.replace(/\\(['"])/g, '$1').trim();
+      // 保留前导空格：部分整句 key 以空格开头（如 ' 的 WorkBuddy 桌面端增强工具…'），
+      // trim 会让运行时本可整句匹配的文本提前落入短词替换（误报混合）。
+      const clean = s.replace(/\\(['"])/g, '$1').replace(/\s+$/, '');
       if (clean.length >= 2) out.add(clean);
     }
   }
@@ -74,16 +77,16 @@ function extractKeys() {
   return keys.sort((a, b) => b.length - a.length);
 }
 
-test('every Chinese UI literal in inject.js is covered by the dictionary or a whitelisted log/fragment', () => {
-  const keys = extractKeys();
+test('every Chinese UI literal in inject.js translates at runtime with zero Chinese residue', () => {
+  const t = buildTranslator();
   const missed = [];
   for (const lit of chineseLiterals(stripComments(inject))) {
     if (LOG_LIKE.test(lit)) continue;
     if (FRAGMENT_LIKE.test(lit)) continue;
-    const covered = keys.some((k) => k.length >= 2 && lit.indexOf(k) >= 0);
-    if (!covered) missed.push(lit);
+    const out = t(lit, 'en');
+    if (/[\u4e00-\u9fff]/.test(out)) missed.push(`「${lit}」-> ${out}`);
   }
-  assert.deepEqual(missed, [], `未覆盖中文文案:\n${missed.map((m, i) => `  ${i + 1}. ${m}`).join('\n')}`);
+  assert.deepEqual(missed, [], `运行时仍产中文（中英混合）:\n${missed.map((m, i) => `  ${i + 1}. ${m}`).join('\n')}`);
 });
 
 test('every user-facing Chinese literal in daemon.js (non-log) is covered', () => {
@@ -97,6 +100,18 @@ test('every user-facing Chinese literal in daemon.js (non-log) is covered', () =
     if (!covered) missed.push(lit);
   }
   assert.deepEqual(missed, [], `daemon 未覆盖文案:\n${missed.map((m, i) => `  ${i + 1}. ${m}`).join('\n')}`);
+});
+
+test('lib.js account-flow errors (surface as toasts) translate without Chinese residue', () => {
+  const t = buildTranslator();
+  const missed = [];
+  for (const lit of chineseLiterals(stripComments(lib))) {
+    if (LOG_LIKE.test(lit)) continue;
+    if (FRAGMENT_LIKE.test(lit)) continue;
+    const out = t(lit, 'en');
+    if (/[\u4e00-\u9fff]/.test(out)) missed.push(`「${lit}」-> ${out}`);
+  }
+  assert.deepEqual(missed, [], `lib.js 运行时仍产中文:\n${missed.map((m, i) => `  ${i + 1}. ${m}`).join('\n')}`);
 });
 
 test('runtime translation: typical concatenated sentences yield pure English (no zh/en mix)', () => {
