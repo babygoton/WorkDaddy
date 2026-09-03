@@ -15,3 +15,13 @@ test('conversation shell and grouped agent cards use global theme patch rules', 
   assert.match(patch.css, /backdrop-filter:blur\(14px\)/);
   assert.doesNotMatch(patch.css, /WBS_PROFILE|workbuddy-ai|data-theme="dark"/);
 });
+
+test('WorkBuddy widget cards use translucent theme surfaces', () => {
+  const patch = patches.find((item) => item && item.id === 'patch-99');
+  assert.ok(patch, 'patch-99 must be registered');
+  assert.match(patch.css, /\.cr-widget-card\{[^}]*background:color-mix/);
+  assert.match(patch.css, /\.cr-widget-card\{[^}]*backdrop-filter:blur\(/);
+  assert.match(patch.css, /\.cr-widget-header\{[^}]*background:color-mix/);
+  assert.match(patch.css, /\.cr-widget-header\{[^}]*background-color:color-mix/);
+  assert.doesNotMatch(patch.css, /WBS_PROFILE|workbuddy-ai/);
+});

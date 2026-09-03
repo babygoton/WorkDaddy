@@ -52,16 +52,17 @@
   function findMessageNavigationSurface(doc) {
     if (!doc || typeof doc.querySelector !== 'function') return null;
     try {
-      var scrollElement = doc.querySelector('.cr-message-list');
-      var viewportElement = doc.querySelector('.cr-message-list-viewport');
-      var contentElement = doc.querySelector('.cr-message-list__content');
-      var conversationElement = doc.querySelector('.cr-document[data-root-id]');
-      if (!scrollElement || !viewportElement || !contentElement || !conversationElement) return null;
+      // WorkBuddy keeps this host stable across renderer layout revisions. The
+      // nested viewport/content/document classes are implementation details and
+      // may disappear even while the message list remains mounted.
+      var messageList = doc.querySelector('div.cr-message-list');
+      if (!messageList) return null;
+      var viewportElement = messageList.parentElement || messageList;
       return {
-        scrollElement: scrollElement,
+        scrollElement: messageList,
         viewportElement: viewportElement,
-        contentElement: contentElement,
-        conversationElement: conversationElement,
+        contentElement: messageList,
+        conversationElement: messageList,
       };
     } catch (_) {
       return null;
@@ -176,7 +177,9 @@
     return !!value && typeof value === 'object' && value.conversationId &&
       value.messageStore && typeof value.messageStore.getState === 'function' &&
       typeof value.messageStore.subscribe === 'function' &&
-      typeof value.getMessagesViewState === 'function';
+      (typeof value.getMessagesViewState === 'function' ||
+       typeof value.getSessionViewState === 'function' ||
+       typeof value.getMessageStore === 'function');
   }
 
   function isMessageNavigationHandle(value) {

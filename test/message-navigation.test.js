@@ -7,23 +7,23 @@ const test = require('node:test');
 
 const compat = require('../scripts/workbuddy-compat.js');
 
-test('modern conversation surface is discovered without treating mounted virtual items as the message source', () => {
-  const conversationElement = { name: 'conversation' };
-  const scrollElement = { name: 'scroll' };
-  const viewportElement = { name: 'viewport' };
-  const contentElement = { name: 'content' };
+test('message navigation uses cr-message-list as the single stable surface seam', () => {
+  const viewport = { name: 'viewport' };
+  const messageList = { name: 'message-list', parentElement: viewport };
   const documentLike = {
     querySelector(selector) {
-      if (selector === '.cr-message-list') return scrollElement;
-      if (selector === '.cr-message-list-viewport') return viewportElement;
-      if (selector === '.cr-message-list__content') return contentElement;
-      if (selector === '.cr-document[data-root-id]') return conversationElement;
+      if (selector === 'div.cr-message-list') return messageList;
       return null;
     },
   };
 
   const surface = compat.findMessageNavigationSurface(documentLike);
-  assert.deepEqual(surface, { scrollElement, viewportElement, contentElement, conversationElement });
+  assert.deepEqual(surface, {
+    scrollElement: messageList,
+    viewportElement: viewport,
+    contentElement: messageList,
+    conversationElement: messageList,
+  });
 });
 
 test('all navigation turns are built from the structured message store regardless of DOM virtualization', () => {
@@ -81,10 +81,7 @@ test('message navigation adapter discovers the complete store and official virtu
   const contentElement = {};
   const documentLike = {
     querySelector(selector) {
-      if (selector === '.cr-message-list') return scrollElement;
-      if (selector === '.cr-message-list-viewport') return viewportElement;
-      if (selector === '.cr-message-list__content') return contentElement;
-      if (selector === '.cr-document[data-root-id]') return conversationElement;
+      if (selector === 'div.cr-message-list') return scrollElement;
       return null;
     },
   };
@@ -126,7 +123,7 @@ test('injected navigation rail is theme-aware, glassy, accessible, and profile a
   assert.doesNotMatch(navigationSource, /WBS_PROFILE_IS_AI|PROFILE_ID/);
   assert.doesNotMatch(navigationSource, /scrollIntoView/);
   assert.match(navigationSource, /scrollToMessage\(turn\.messageId, \{ behavior: 'auto'/);
-  assert.match(navigationSource, /surface\.scrollElement\.getBoundingClientRect\(\)/);
+  assert.match(navigationSource, /surface\.viewportElement\.getBoundingClientRect\(\)/);
   assert.match(navigationSource, /rect\.left \+ 12/);
   assert.doesNotMatch(navigationSource, /rect\.height \* 0\.7|420/);
   assert.match(navigationSource, /Math\.min\(desiredRailHeight, rect\.height\)/);
@@ -143,6 +140,7 @@ test('injected navigation rail is theme-aware, glassy, accessible, and profile a
   assert.match(inject, /localStorage\.getItem\(MESSAGE_NAV_ENABLED_KEY\) !== '0'/);
   assert.match(navigationSource, /function setEnabled\(enabled\)/);
   assert.match(inject, /messageNavigation\.setEnabled\(sessState\.messageNav\)/);
+  assert.match(inject, /mount = surface && surface\.viewportElement/);
 
   const stashSwitch = inject.indexOf('id="wbs-sess-stash"');
   const navigationSwitch = inject.indexOf('id="wbs-sess-message-nav"');

@@ -99,6 +99,7 @@ test('custom target persists outside the install and overlays only its base prof
     const { processName, ...targetWithoutLegacyName } = target;
     assert.deepEqual(persisted, {
       ...targetWithoutLegacyName,
+      lockVersion: false,
       clientType: 'enterprise',
       processNames: ['workbuddy-ent.exe'],
       configured: true,
@@ -116,6 +117,7 @@ test('custom target persists outside the install and overlays only its base prof
     assert.equal(profile.capabilities.accounts, true);
     assert.equal(profile.capabilities.checkin, false);
     assert.equal(profile.customTarget, true);
+    assert.equal(profile.lockTargetVersion, false);
 
     assert.deepEqual(getProfile('workbuddy-ai', { dataDir, env: {}, platform: 'win32' }), PROFILES['workbuddy-ai']);
     removeWorkBuddyTarget({ dataDir });
@@ -172,6 +174,7 @@ test('selecting the official executable pins its path without changing official 
     assert.equal(profile.appPath, 'D:\\Portable\\WorkBuddy.exe');
     assert.equal(profile.configuredTarget, true);
     assert.equal(profile.customTarget, false);
+    assert.equal(profile.lockTargetVersion, false);
     assert.equal(profile.cdp.mode, 'argument');
     assert.equal(profile.apiHost, PROFILES['workbuddy-cn'].apiHost);
     assert.equal(profile.authFile, PROFILES['workbuddy-cn'].authFile);
@@ -295,6 +298,6 @@ test('the existing Windows installer owns the single client selection flow', () 
   assert.doesNotMatch(inject, /wbs-client-target|选择其他 WorkBuddy 客户端|恢复自动识别/);
   assert.match(daemon, /u\.origin === PROFILE\.apiHost/);
   assert.doesNotMatch(launcher + daemon + native, /\bsetx(?:\.exe)?\b/i);
-  assert.match(launcher, /所选 WorkBuddy 版本已变化/);
-  assert.match(launcher, /重新运行 WorkDaddy 安装程序/);
+  assert.doesNotMatch(launcher, /verifyConfiguredWorkBuddyVersion|所选 WorkBuddy 版本已变化/);
+  assert.match(launcher, /PROFILE\.configuredTarget[\s\S]*sameWindowsPath\(path\.win32\.dirname\(item\.path\), path\.win32\.dirname\(PROFILE\.appPath\)\)/);
 });

@@ -472,6 +472,11 @@ module.exports = [
     desc: '代码块头部(cr-code-like-box__header)背景半透明（用户 08-30 01:16）：官方硬编码 rgb(20,21,24) 不透明 → 32% 主题深色底（比容器略深形成层次，无独立 blur 透出容器毛玻璃）',
     css: 'body[data-vscode-theme-name] .cr-code-like-box__header{background:color-mix(in srgb,var(--wb-bg-primary) 32%,transparent) !important;background-color:color-mix(in srgb,var(--wb-bg-primary) 32%,transparent) !important;border-color:var(--wb-border-subtle) !important;}',
   },
+  {
+    id: 'patch-99',
+    desc: 'WorkBuddy 主题会话 widget 卡片(.cr-widget-card)使用主题毛玻璃，标题(.cr-widget-header)改为半透明以透出卡片层次',
+    css: 'body[data-vscode-theme-name] .cr-widget-card{background:color-mix(in srgb,var(--wb-bg-primary) 42%,transparent) !important;background-color:color-mix(in srgb,var(--wb-bg-primary) 42%,transparent) !important;backdrop-filter:blur(18px) saturate(1.15) !important;-webkit-backdrop-filter:blur(18px) saturate(1.15) !important;border-color:var(--wb-border-subtle) !important;}body[data-vscode-theme-name] .cr-widget-header{background:color-mix(in srgb,var(--wb-bg-primary) 30%,transparent) !important;background-color:color-mix(in srgb,var(--wb-bg-primary) 30%,transparent) !important;backdrop-filter:none !important;-webkit-backdrop-filter:none !important;border-color:var(--wb-border-subtle) !important;}',
+  },
   /* 原 patch-82（AI 端快捷短语弹层 z-index 抬升）已移入 inject.js 常驻样式：
      theme-patches 仅在非默认主题时注入，默认浅色主题下会失效；层级修复不依赖主题，随注入脚本常驻更可靠。 */
 ];

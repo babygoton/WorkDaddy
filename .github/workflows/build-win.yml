@@ -54,16 +54,20 @@ jobs:
           echo "version=$VER" >> "$GITHUB_OUTPUT"
           echo "检测到版本: $VER"
 
-      - name: 打包内置资产 builtin（build-win-zip.sh 需要）
+      - name: 校验内置资产 builtin（Windows 安装包必须包含）
         shell: bash
         run: |
-          SRC="WorkDaddy.app/Contents/Resources/scripts/builtin"
-          if [ -d "$SRC" ]; then
-            cp -R "$SRC/." scripts/builtin/
-            echo "已复制 builtin 资产"
-          else
-            echo "警告: 未找到 builtin，面板将无官方壁纸（不影响安装功能）"
+          SRC="scripts/builtin"
+          if [ ! -f "$SRC/nebula/theme.json" ] || [ ! -d "$SRC/wallpapers" ]; then
+            echo "::error::缺少内置资产 $SRC（需要 nebula/theme.json 和 wallpapers/）"
+            exit 1
           fi
+          COUNT=$(find "$SRC/wallpapers" -maxdepth 1 -type f -iname '*.webp' | wc -l | tr -d ' ')
+          if [ "$COUNT" -lt 1 ]; then
+            echo "::error::内置资产没有任何官方壁纸"
+            exit 1
+          fi
+          echo "已校验 builtin 资产：$COUNT 张壁纸"
 
       - name: 生成 Windows 安装暂存包（仅供 Inno Setup 使用）
         shell: bash

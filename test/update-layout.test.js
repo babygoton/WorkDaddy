@@ -694,6 +694,9 @@ test('account cards keep the compact three-row layout', () => {
   assert.match(script, /row0\.insertBefore\(stashBtn, row0\.firstChild\)/);
   assert.match(script, /wbs-credit-hidden/);
   assert.match(script, /var expired = isIdentityExpired\(a\)/);
+  // 账号页暂不展示“发起独立会话保持活跃”入口；daemon 接口保留供内部/后续流程使用。
+  assert.doesNotMatch(script, /wbs-growth-activate/);
+  assert.doesNotMatch(script, /api\('\/api\/growth\/activate'/);
   assert.match(script, /expired \? '' : '<button class="wbs-icon-btn wbs-acc-switch"/);
   assert.match(script, /switchBtn\.style\.display = hidden \? 'none' : ''/);
   assert.match(script, /height:5px;min-height:5px/);
@@ -1023,10 +1026,39 @@ test('automatic session copy includes workspace-only rules when the initial plan
   assert.match(daemon, /startAutoCopyJob\(sourceUid, uid, autoCopyPlan\)/);
   assert.match(daemon, /syncAutoCopyLineage\(src\.lineageId, targetUid\)/);
   assert.match(daemon, /selectLatestAutoCopyMember\(live\)/);
-  assert.match(daemon, /lineageId = ensureAutoCopySession\(DATA_DIR, source, row\.id\)/);
+  assert.match(daemon, /ensureAutoCopySessions\(DATA_DIR, source, lineageSessionIds, \{ enabled: !rules\.allSessions \}\)/);
   assert.match(inject, /data-auto-kind="' \+ kind \+ '"/);
   assert.match(inject, /autoCopyButton\('workspace'/);
   assert.match(inject, /autoCopyButton\('session'/);
+});
+
+test('session copy-all is a separate override with a distinct toggle and hidden row controls', () => {
+  const daemon = read('daemon.js');
+  const inject = read('inject.js');
+  assert.match(daemon, /POST' && p === '\/api\/sessions\/auto-copy-all'/);
+  assert.match(daemon, /sourceRules\.allSessions/);
+  assert.match(inject, /id="wbs-sess-auto-all"/);
+  assert.match(inject, /id="wbs-sess-import"[\s\S]*id="wbs-sess-auto-all"/);
+  assert.match(inject, /id="wbs-sess-auto-all"[^>]*role="checkbox"[^>]*aria-checked="false"/);
+  assert.match(inject, /wbs-sess-auto-all-box/);
+  assert.match(inject, /getAttribute\('aria-checked'\)/);
+  assert.match(inject, /\.wbs-sess-auto-all\{display:inline-flex/);
+  assert.doesNotMatch(inject, /wbs-sess-auto-all-switch/);
+  assert.match(inject, /自动复制所有会话/);
+  assert.match(inject, /sessionsState\.autoCopyAll/);
+  assert.match(inject, /if \(sessionsState\.autoCopyAll \|\| !canEditAutoCopy\(uid\)\) return ''/);
+  assert.match(inject, /\/api\/sessions\/auto-copy-all/);
+  assert.match(inject, /\.wbs-sess-summary-tag\{[^}]*border:0[^}]*background:transparent/);
+});
+
+test('session auto-copy plans and API responses collapse duplicate rows by account lineage', () => {
+  const daemon = read('daemon.js');
+  const lib = read('lib.js');
+  assert.match(lib, /function dedupeAutoCopySessionRows\(rows, lineagesByUid\)/);
+  assert.match(lib, /const allLineages = \{\}/);
+  assert.match(daemon, /dedupeAutoCopySessionRows\(rows, \{ \[source\]: rules\.allLineages \}\)/);
+  assert.match(daemon, /dedupeAutoCopySessionRows\(rows, lineagesByUid\)/);
+  assert.match(daemon, /const DAEMON_VERSION = '\d+\.\d+\.\d+'/);
 });
 
 test('session summary counts effective sessions and models tab only exposes sanitized model APIs', () => {

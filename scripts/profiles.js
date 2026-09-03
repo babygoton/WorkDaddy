@@ -88,7 +88,7 @@ function applyWorkBuddyTarget(profile, target) {
       configuredTarget: true,
       customTarget: false,
       targetVersion: target.version || '',
-      lockTargetVersion: target.lockVersion === true,
+      lockTargetVersion: false,
     };
   }
   return {
@@ -106,7 +106,7 @@ function applyWorkBuddyTarget(profile, target) {
     configuredTarget: true,
     customTarget: true,
     targetVersion: target.version || '',
-    lockTargetVersion: target.lockVersion === true,
+    lockTargetVersion: false,
   };
 }
 

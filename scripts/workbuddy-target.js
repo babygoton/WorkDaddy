@@ -101,7 +101,9 @@ function validateTarget(target, options = {}) {
     profileId,
     binary,
     ...(version ? { version } : {}),
-    lockVersion: target.lockVersion !== false && !!version,
+    // WorkBuddy updates replace the executable in place. The installation
+    // path is the stable identity; never block startup on a recorded version.
+    lockVersion: false,
     processNames: uniqueProcessNames,
     ...(target.dataRoot ? { dataRoot: clean(target.dataRoot) } : {}),
     ...(target.authFile ? { authFile: clean(target.authFile) } : {}),
@@ -190,7 +192,7 @@ function buildTargetFromBinary(options = {}) {
     profileId,
     binary,
     version: clean(options.version),
-    lockVersion: !!clean(options.version),
+    lockVersion: false,
     processNames,
     dataRoot,
     ...(authFile ? { authFile } : {}),
@@ -219,7 +221,7 @@ function buildOfficialTargetFromBinary(options = {}) {
     profileId,
     binary,
     version: clean(options.version),
-    lockVersion: !!clean(options.version),
+    lockVersion: false,
     processNames: [pathApi.basename(binary)],
     targetHints: [],
     cdp: { mode: 'argument', port: profileId === 'workbuddy-ai' ? 9223 : 9222 },
