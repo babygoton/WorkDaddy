@@ -260,8 +260,10 @@ const DATA_DIR = defaultDataDir();
 // 1.1.35：认证解析优先官方固定 auth 文件（消除多 lastLogin 残留的切换歧义）；积分接口
 //         401 归类为「登录身份过期」并返回结构化 401；语言选择器移入「关于」页。
 // 1.1.36：迁移旧账号的固定 auth 目标；Windows 原生入口从桌面 Explorer token 自动降权重启。
-const DAEMON_VERSION = '1.1.36';
-const DAEMON_BUILD_ID = 'release-1.1.36-20260904-legacy-auth-target-windows-deelevation';
+// 1.1.37：修复 legacy 账号切换失败——无文件记录的旧账号无条件写回官方固定登录文件，
+//         固定文件名（workbuddy-desktop.info）跨认证通道可交替覆盖，个性化文件名保留通道校验。
+const DAEMON_VERSION = '1.1.37';
+const DAEMON_BUILD_ID = 'release-1.1.37-20260904-legacy-auth-switch-fixed';
 const HOST = '127.0.0.1';
 const IS_WIN = process.platform === 'win32'; // Windows 移植：平台分支开关（macOS 行为保持不变）
 // Windows 安装目录（install.ps1 铺、launcher 用、更新替换目标），对应 macOS 的 /Applications/WorkDaddy.app

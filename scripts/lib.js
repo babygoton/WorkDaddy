@@ -1096,17 +1096,23 @@ function readAuthFile(file = currentAuthFile()) {
   return info;
 }
 
-/** 更新 meta.json（uid -> nickname/uin/phone/时间） */
-function updateMeta(dataDir, info) {
+/** 更新 meta.json（uid -> nickname/uin/phone/时间）。preserveBinding：备份扫描路径
+ *  不漂移「账号 -> 登录文件」绑定——auth 目录里的个性化历史存档（带时间戳）即使
+ *  残留 lastLogin 标记，也不得覆盖切换路径建立的绑定关系。 */
+function updateMeta(dataDir, info, { preserveBinding = false } = {}) {
   const meta = readMeta(dataDir);
   const now = Date.now();
   const prev = meta.accounts[info.uid] || {};
+  let authFileName = info.authFileName || prev.authFileName || '';
+  if (preserveBinding && prev.authFileName && info.authFileName && prev.authFileName !== info.authFileName) {
+    authFileName = prev.authFileName;
+  }
   meta.accounts[info.uid] = {
     uid: info.uid,
     nickname: info.nickname || prev.nickname || '',
     uin: info.uin || prev.uin || '',
     phone: info.phone || prev.phone || '',
-    authFileName: info.authFileName || prev.authFileName || '',
+    authFileName,
     authDomain: info.authDomain || prev.authDomain || '',
     authIssuer: info.authIssuer || prev.authIssuer || '',
     firstSeen: prev.firstSeen || now,
@@ -1123,7 +1129,7 @@ function backupAuthFile(dataDir, file, log = () => {}) {
   fs.writeFileSync(tmp, fs.readFileSync(file), { mode: 0o600 });
   fs.renameSync(tmp, dest);
   fs.chmodSync(dest, 0o600);
-  updateMeta(dataDir, info);
+  updateMeta(dataDir, info, { preserveBinding: true });
   log(`[sync] 已备份账号 ${info.nickname || info.uid} (${info.uid}) -> ${dest}`);
   return info;
 }
@@ -1154,6 +1160,11 @@ function resolveAuthTarget(dataDir, uid, authJson) {
     return [candidate && candidate.authIssuer, candidate && candidate.authDomain]
       .some((origin) => origin && expected.has(origin));
   };
+  // 官方固定登录位（workbuddy-desktop.info / workbuddy-desktop-ai.info）是官方实际
+  // 读取的当前登录文件。它存在时，所有显式切换一律写这里——个性化历史存档（带时间戳
+  // 的 info）只是官方多账号机制的存档，写了官方也不读。切换后 updateMeta 会同步修正
+  // 「账号 -> 登录文件」绑定，历史上被备份扫描漂移到旧文件的记录在此自愈。
+  if (AUTH_FILE && parseAuthFile(AUTH_FILE)) return AUTH_FILE;
   const targetName = safeAuthFileName(record.authFileName) ? record.authFileName : '';
   if (targetName) {
     const target = path.join(authDir(), targetName);
@@ -1172,7 +1183,9 @@ function resolveAuthTarget(dataDir, uid, authJson) {
   if (channelMatches.length === 1) return channelMatches[0].file;
   const legacyRecord = String(record.uid || '') === String(uid) &&
     !record.authFileName && !record.authDomain && !record.authIssuer;
-  if (legacyRecord && AUTH_FILE && !fs.existsSync(AUTH_FILE)) return AUTH_FILE;
+  // legacy 账号（动态发现上线前备份）没有属于自己的文件记录，其唯一正确的落点就是
+  // 官方固定登录文件（AUTH_FILE）；无论该文件当前是否被占用，用户显式切换即意图覆盖。
+  if (legacyRecord && AUTH_FILE) return AUTH_FILE;
   throw new Error('账号缺少已确认的登录文件名，拒绝猜测写入目标');
 }
 
