@@ -1134,7 +1134,11 @@ function backupAuthFile(dataDir, file, log = () => {}) {
   return info;
 }
 
-/** 把活动登录信息备份到 accounts/<uid>.info（原子写入，0600）。 */
+/** 把活动登录信息备份到 accounts/<uid>.info（原子写入，0600）。
+ *  已有同名备份的账号只接受「官方权威登录位」（固定文件/当前登录位）作为更新源：
+ *  auth 目录里的个性化历史存档（同 uid、老 token、残留 lastLogin 标记）不允许
+ *  覆盖有效备份——否则切换会写入早已失效的旧 refresh token，导致官方身份过期
+ *  （真实事故：s 账号备份曾被 2026-08-21 存档覆盖成 8-19 的 token）。 */
 function backupCurrent(dataDir, log = () => {}) {
   if (!ACTIVE_PROFILE.capabilities.accounts) throw new Error(`${ACTIVE_PROFILE.name} 暂不支持账号文件备份`);
   ensureDirs(dataDir, log);
@@ -1142,11 +1146,16 @@ function backupCurrent(dataDir, log = () => {}) {
   if (!records.length) throw new Error('未找到有效的登录信息文件');
   const current = resolveCurrentAuth();
   let result = null;
+  let backedUp = 0;
   for (const record of records) {
+    const authoritative = current.file && samePath(record.file, current.file);
+    const existingBackup = fs.existsSync(backupPath(dataDir, record.uid));
+    if (existingBackup && !authoritative) continue; // 历史存档不覆盖已有备份
     const info = backupAuthFile(dataDir, record.file, log);
-    if (!result || (current.file && samePath(record.file, current.file))) result = info;
+    backedUp += 1;
+    if (!result || authoritative) result = info;
   }
-  return Object.assign(result, { backedUp: records.length, ambiguous: !!current.ambiguous });
+  return Object.assign(result || {}, { backedUp, ambiguous: !!current.ambiguous });
 }
 
 function resolveAuthTarget(dataDir, uid, authJson) {

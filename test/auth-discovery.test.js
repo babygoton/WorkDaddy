@@ -291,6 +291,45 @@ test('backup scan does not drift the account->file binding to historical archive
   }
 });
 
+test('backup scan never overwrites a valid backup with a historical archive', () => {
+  const f = fixture();
+  try {
+    // 官方固定登录位 = s（workbuddy.cn，权威）；auth 目录同时存在 s 的历史存档
+    // （codebuddy.cn、lastLogin:true、老 token）。存档不得覆盖已有同名备份。
+    const canonical = path.join(f.authDir, 'workbuddy-desktop.info');
+    fs.writeFileSync(canonical, JSON.stringify(auth('s', 'https://www.workbuddy.cn/auth/realms/copilot')));
+    fs.writeFileSync(path.join(f.authDir, 's-archive.info'), JSON.stringify(auth('s', 'https://www.codebuddy.cn/auth/realms/copilot', true)));
+    fs.mkdirSync(path.join(f.dataDir, 'accounts'), { recursive: true });
+    fs.writeFileSync(path.join(f.dataDir, 'accounts', 's.info'), JSON.stringify(auth('s', 'https://www.workbuddy.cn/auth/realms/copilot')));
+    run(f.root, f.dataDir, 'lib.backupCurrent(process.env.WBSWITCH_DATA_DIR); process.stdout.write("null")');
+    const backed = JSON.parse(fs.readFileSync(path.join(f.dataDir, 'accounts', 's.info'), 'utf8'));
+    // 备份来自固定登录位（workbuddy.cn），历史存档（codebuddy.cn）被拒绝覆盖
+    assert.equal(backed.auth.domain, 'https://www.workbuddy.cn');
+  } finally {
+    fs.rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
+test('backup scan keeps the valid backup when the archive account is not logged in', () => {
+  const f = fixture();
+  try {
+    // 真实事故形态：当前登录 = 巴拉巴拉，s 已不在登录位；auth 目录只剩 s 的历史存档。
+    // 已有 s 备份必须保持原样，不允许被存档（8-19 老 token）覆盖。
+    const canonical = path.join(f.authDir, 'workbuddy-desktop.info');
+    fs.writeFileSync(canonical, JSON.stringify(auth('balabala', 'https://www.workbuddy.cn/auth/realms/copilot')));
+    fs.writeFileSync(path.join(f.authDir, 's-archive.info'), JSON.stringify(auth('s', 'https://www.codebuddy.cn/auth/realms/copilot', true)));
+    fs.mkdirSync(path.join(f.dataDir, 'accounts'), { recursive: true });
+    const fresh = JSON.stringify(auth('s', 'https://www.codebuddy.cn/auth/realms/copilot'));
+    fs.writeFileSync(path.join(f.dataDir, 'accounts', 's.info'), fresh);
+    run(f.root, f.dataDir, 'lib.backupCurrent(process.env.WBSWITCH_DATA_DIR); process.stdout.write("null")');
+    const backed = JSON.parse(fs.readFileSync(path.join(f.dataDir, 'accounts', 's.info'), 'utf8'));
+    assert.equal(backed.account.uid, 's');
+    assert.equal(backed.auth.domain, 'https://www.codebuddy.cn');
+  } finally {
+    fs.rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
 test('AI profile does not claim a domestic Tencent/CodeBuddy auth file', () => {
   const f = fixture();
   try {
