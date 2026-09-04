@@ -593,6 +593,20 @@ begin
   end;
 end;
 
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+var
+  GroupShortcut: String;
+begin
+  // 安装时用 COM 创建的“卸载 …”快捷方式不在 Inno [Icons] 内，
+  // 卸载器不会自动清理，必须在卸载流程里显式删除。
+  if CurUninstallStep = usUninstall then
+  begin
+    GroupShortcut := ExpandConstant('{group}\') + UninstallerDisplayName() + '.lnk';
+    if FileExists(GroupShortcut) then
+      DeleteFile(GroupShortcut);
+  end;
+end;
+
 function ShowWorkBuddyCloseDialog(): Integer;
 var
   Dialog: TSetupForm;
