@@ -14,7 +14,11 @@ function jwt(issuer) {
 
 function fixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'workdaddy-auth-'));
-  const authDir = path.join(root, 'Library', 'Application Support', 'CodeBuddyExtension', 'Data', 'Public', 'auth');
+  // lib.js 按平台定位 auth 目录：macOS 用 ~/Library/Application Support，
+  // Windows 用 %LOCALAPPDATA%；必须按平台建隔离目录，否则会扫到本机真实账号文件。
+  const authDir = os.platform() === 'win32'
+    ? path.join(root, 'AppData', 'Local', 'CodeBuddyExtension', 'Data', 'Public', 'auth')
+    : path.join(root, 'Library', 'Application Support', 'CodeBuddyExtension', 'Data', 'Public', 'auth');
   const dataDir = path.join(root, 'WorkDaddy');
   fs.mkdirSync(authDir, { recursive: true });
   return { root, authDir, dataDir };
@@ -31,7 +35,13 @@ function run(root, dataDir, code, profile = 'workbuddy-cn') {
   const script = `const lib=require(${JSON.stringify(path.join(__dirname, '..', 'scripts', 'lib.js'))}); ${code}`;
   const result = spawnSync(process.execPath, ['-e', script], {
     encoding: 'utf8',
-    env: { ...process.env, HOME: root, WBSWITCH_PROFILE: profile, WBSWITCH_DATA_DIR: dataDir },
+    env: {
+      ...process.env,
+      HOME: root,
+      LOCALAPPDATA: path.join(root, 'AppData', 'Local'),
+      WBSWITCH_PROFILE: profile,
+      WBSWITCH_DATA_DIR: dataDir,
+    },
   });
   assert.equal(result.status, 0, result.stderr);
   return JSON.parse(result.stdout || 'null');

@@ -158,6 +158,9 @@ test('macOS target configuration accepts non-exe process names', () => {
     binary: '/Applications/WorkBuddy企业定制版.app/Contents/MacOS/Electron',
     profileId: 'workbuddy-cn',
     platform: 'darwin',
+    // macOS 上 os.homedir() 返回 posix 路径；Windows 上跑本用例须注入
+    // posix home，否则推导出的 authFile 无法通过 darwin 绝对路径校验。
+    home: '/Users/workdaddy',
   });
   assert.equal(target.clientType, 'enterprise');
   assert.deepEqual(target.processNames, ['Electron']);

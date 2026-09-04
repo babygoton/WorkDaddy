@@ -16,7 +16,9 @@ function emptyTarget(configured = false, source = 'default') {
 }
 
 function platformPath(platform) {
-  return platform === 'win32' ? path.win32 : path;
+  // 注意：Windows 上 require('path') 与 path.win32 是同一引用，
+  // 非 win32 平台必须显式返回 path.posix，否则 darwin 等分支会被误判为 win32。
+  return platform === 'win32' ? path.win32 : path.posix;
 }
 
 function targetFile(dataDir) {
@@ -179,14 +181,17 @@ function buildTargetFromBinary(options = {}) {
   // Keep accepting legacy cross-platform test/configuration paths ending in
   // .exe; real macOS app binaries use the branch below with their native name.
   if (platform === 'darwin' && !/\.exe$/i.test(processName)) {
+    // macOS 路径必须始终用 posix 拼装：Windows 上默认 path 是 win32，
+    // 用它 join 会产出 C:\ 风格路径，被 darwin 的绝对路径校验拒绝。
+    const posixPath = path.posix;
     const profileId = clean(options.profileId) || 'workbuddy-cn';
     const port = Number(options.cdpPort) || (profileId === 'workbuddy-ai' ? 9223 : 9222);
-    const appName = path.basename(binary.replace(/\/Contents\/MacOS\/[^/]+$/i, '')).replace(/\.app$/i, '');
+    const appName = posixPath.basename(binary.replace(/\/Contents\/MacOS\/[^/]+$/i, '')).replace(/\.app$/i, '');
     const home = options.home || os.homedir();
-    const appSupport = path.join(home, 'Library', 'Application Support');
-    const extensionAuth = path.join(appSupport, 'CodeBuddyExtension', 'Data', 'Public', 'auth');
+    const appSupport = posixPath.join(home, 'Library', 'Application Support');
+    const extensionAuth = posixPath.join(appSupport, 'CodeBuddyExtension', 'Data', 'Public', 'auth');
     const ai = profileId === 'workbuddy-ai';
-    const workbuddyRoot = path.join(home, ai ? '.workbuddy-ai' : '.workbuddy');
+    const workbuddyRoot = posixPath.join(home, ai ? '.workbuddy-ai' : '.workbuddy');
     return validateTarget({
       schemaVersion: 1,
       clientType: 'enterprise',
@@ -194,9 +199,9 @@ function buildTargetFromBinary(options = {}) {
       binary,
       version: clean(options.version),
       processNames: [processName],
-      authFile: path.join(extensionAuth, ai ? 'workbuddy-desktop-ai.info' : 'workbuddy-desktop.info'),
-      sessionDb: path.join(workbuddyRoot, 'workbuddy.db'),
-      modelsFile: path.join(workbuddyRoot, 'models.json'),
+      authFile: posixPath.join(extensionAuth, ai ? 'workbuddy-desktop-ai.info' : 'workbuddy-desktop.info'),
+      sessionDb: posixPath.join(workbuddyRoot, 'workbuddy.db'),
+      modelsFile: posixPath.join(workbuddyRoot, 'models.json'),
       apiHost: ai ? 'https://www.workbuddy.ai' : 'https://www.codebuddy.cn',
       targetHints: [appName].filter(Boolean),
       cdp: { mode: 'argument', port },
@@ -279,7 +284,16 @@ function readWorkBuddyTarget({ dataDir, profileId, env = process.env, platform =
       delete merged.processName;
     }
     if (envVersion) merged.version = envVersion;
-    return { ...validateTarget(merged, { platform }), configured: true, source: envBinary ? 'environment' : 'file' };
+    // 读取须容忍跨平台目标：Windows 管理机上可能读出为 macOS 客户端写入的
+    // target（进程名非 .exe），按当前平台严格校验会误报；先按当前平台尝试，
+    // 失败则按另一平台校验，仅平台相关约束（.exe / 绝对路径形态）被放宽。
+    try {
+      return { ...validateTarget(merged, { platform }), configured: true, source: envBinary ? 'environment' : 'file' };
+    } catch (error) {
+      const fallbackPlatform = platform === 'win32' ? 'darwin' : 'win32';
+      if (fallbackPlatform === platform) throw error;
+      return { ...validateTarget(merged, { platform: fallbackPlatform }), configured: true, source: envBinary ? 'environment' : 'file' };
+    }
   }
   if (envBinary) return { configured: true, binary: envBinary, version: envVersion, source: 'environment' };
   if (!target) return emptyTarget();
