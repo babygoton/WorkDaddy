@@ -540,21 +540,12 @@ var
   Shell: Variant;
   Shortcut: Variant;
   IconFile: String;
-  DesktopDir, GroupDir: String;
+  GroupDir: String;
 begin
+  // 只在开始菜单创建“卸载 …”入口（卸载入口不进桌面，避免打扰用户）。
   Shell := CreateOleObject('WScript.Shell');
   IconFile := ExpandConstant('{app}\scripts\{#PackageName}-{#AppVersion}.ico');
-  DesktopDir := ExpandConstant('{userdesktop}');
   GroupDir := ExpandConstant('{group}');
-  if DesktopDir <> '' then
-  begin
-    Shortcut := Shell.CreateShortCut(DesktopDir + '\' + UninstallerDisplayName() + '.lnk');
-    Shortcut.TargetPath := TargetPath;
-    Shortcut.Description := UninstallerDisplayName() + ' - ' + '{#AppVersion}';
-    if FileExists(IconFile) then
-      Shortcut.IconLocation := IconFile + ',0';
-    Shortcut.Save();
-  end;
   if GroupDir <> '' then
   begin
     Shortcut := Shell.CreateShortCut(GroupDir + '\' + UninstallerDisplayName() + '.lnk');
@@ -568,7 +559,7 @@ end;
 
 procedure RenameUninstallerAndFixEntries();
 var
-  OldPath, NewPath, UninstallKey: String;
+  OldPath, NewPath, OldDat, NewDat, UninstallKey: String;
 begin
   OldPath := ExpandConstant('{app}\unins000.exe');
   NewPath := RenamedUninstallerPath();
@@ -578,6 +569,12 @@ begin
     exit;
   if RenameFile(OldPath, NewPath) then
   begin
+    // Inno 卸载器按自身 exe 文件名推导同名的 .dat（卸载配置/日志）；
+    // 只改 exe 不改 dat 会报“xxxx.dat 不存在，无法卸载”，必须一起改名。
+    OldDat := ExpandConstant('{app}\unins000.dat');
+    NewDat := ChangeFileExt(NewPath, '.dat');
+    if FileExists(OldDat) and not FileExists(NewDat) then
+      RenameFile(OldDat, NewDat);
     UninstallKey := 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{#AppGuid}_is1';
     // 同步“应用和功能”的卸载入口，避免指向已改名的旧路径。
     RegWriteStringValue(HKCU, UninstallKey, 'UninstallString', '"' + NewPath + '"');
