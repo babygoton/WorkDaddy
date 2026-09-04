@@ -52,18 +52,17 @@ try {
   Write-Host '  已移除登录自启项'
 } catch {}
 
-# 2.5) 删除桌面快捷方式（与 install-win.ps1 创建对称；兼容两个 profile 的历史残留）
+# 2.5) 删除桌面快捷方式（与 install-win.ps1 创建对称；只删当前 profile 的，
+#      绝不连带另一个 profile（WorkDaddy / WorkDaddy AI 各自卸载各自清理）
 $desktopDir = [Environment]::GetFolderPath('Desktop')
 if (-not $desktopDir) { $desktopDir = Join-Path $env:USERPROFILE 'Desktop' }
-foreach ($lnkName in @('WorkDaddy.lnk', 'WorkDaddy AI.lnk')) {
-  $lnk = Join-Path $desktopDir $lnkName
-  if (Test-Path -LiteralPath $lnk -PathType Leaf) {
-    try {
-      Remove-Item -LiteralPath $lnk -Force -ErrorAction Stop
-      Write-Host ('  已删除桌面快捷方式: ' + $lnk)
-    } catch {
-      Write-Host ('  桌面快捷方式删除失败（可手动删除）: ' + $lnk + ' - ' + $_.Exception.Message)
-    }
+$lnk = Join-Path $desktopDir ($productName + '.lnk')
+if (Test-Path -LiteralPath $lnk -PathType Leaf) {
+  try {
+    Remove-Item -LiteralPath $lnk -Force -ErrorAction Stop
+    Write-Host ('  已删除桌面快捷方式: ' + $lnk)
+  } catch {
+    Write-Host ('  桌面快捷方式删除失败（可手动删除）: ' + $lnk + ' - ' + $_.Exception.Message)
   }
 }
 

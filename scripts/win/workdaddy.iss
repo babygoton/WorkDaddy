@@ -41,6 +41,7 @@ PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 WizardStyle=modern
+UninstallStyle=modern
 Compression=lzma2/ultra64
 SolidCompression=yes
 OutputDir={#OutputDir}
@@ -50,7 +51,7 @@ CloseApplications=no
 RestartApplications=no
 RestartIfNeededByRun=no
 MinVersion=10.0
-UninstallDisplayName={#ProductName}
+UninstallDisplayName={#ProductName} {#AppVersion}
 
 [Languages]
 Name: "chinesesimplified"; MessagesFile: "ChineseSimplified.isl"
@@ -523,12 +524,75 @@ begin
   Result := ResultCode = 0;
 end;
 
+function UninstallerDisplayName(): String;
+begin
+  // 用户可见的卸载入口名：直观且不带 Inno 的 unins000 序号。
+  Result := '卸载 ' + '{#ProductName}';
+end;
+
+function RenamedUninstallerPath(): String;
+begin
+  Result := ExpandConstant('{app}\') + UninstallerDisplayName() + '.exe';
+end;
+
+procedure CreateUninstallShortcut(const TargetPath: String);
+var
+  Shell: Variant;
+  Shortcut: Variant;
+  IconFile: String;
+  DesktopDir, GroupDir: String;
+begin
+  Shell := CreateOleObject('WScript.Shell');
+  IconFile := ExpandConstant('{app}\scripts\{#PackageName}-{#AppVersion}.ico');
+  DesktopDir := ExpandConstant('{userdesktop}');
+  GroupDir := ExpandConstant('{group}');
+  if DesktopDir <> '' then
+  begin
+    Shortcut := Shell.CreateShortCut(DesktopDir + '\' + UninstallerDisplayName() + '.lnk');
+    Shortcut.TargetPath := TargetPath;
+    Shortcut.Description := UninstallerDisplayName() + ' - ' + '{#AppVersion}';
+    if FileExists(IconFile) then
+      Shortcut.IconLocation := IconFile + ',0';
+    Shortcut.Save();
+  end;
+  if GroupDir <> '' then
+  begin
+    Shortcut := Shell.CreateShortCut(GroupDir + '\' + UninstallerDisplayName() + '.lnk');
+    Shortcut.TargetPath := TargetPath;
+    Shortcut.Description := UninstallerDisplayName() + ' - ' + '{#AppVersion}';
+    if FileExists(IconFile) then
+      Shortcut.IconLocation := IconFile + ',0';
+    Shortcut.Save();
+  end;
+end;
+
+procedure RenameUninstallerAndFixEntries();
+var
+  OldPath, NewPath, UninstallKey: String;
+begin
+  OldPath := ExpandConstant('{app}\unins000.exe');
+  NewPath := RenamedUninstallerPath();
+  if FileExists(NewPath) then
+    DeleteFile(NewPath);
+  if not FileExists(OldPath) then
+    exit;
+  if RenameFile(OldPath, NewPath) then
+  begin
+    UninstallKey := 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{#AppGuid}_is1';
+    // 同步“应用和功能”的卸载入口，避免指向已改名的旧路径。
+    RegWriteStringValue(HKCU, UninstallKey, 'UninstallString', '"' + NewPath + '"');
+    RegWriteStringValue(HKCU, UninstallKey, 'QuietUninstallString', '"' + NewPath + '" /SILENT');
+    CreateUninstallShortcut(NewPath);
+  end;
+end;
+
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if CurStep = ssPostInstall then
   begin
     if not SaveSelectedClient() then
       RaiseException('无法保存 WorkBuddy 客户端选择，安装已停止。');
+    RenameUninstallerAndFixEntries();
   end;
 end;
 
