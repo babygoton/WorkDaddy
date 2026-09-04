@@ -210,5 +210,5 @@ Write-InstallLine ('  profile  : ' + $Profile)
 Write-InstallLine ("  安装目录 : " + $AppDir)
 Write-InstallLine ("  数据目录 : " + $dataDir)
 Write-InstallLine ('  备份账号 : ' + (Join-Path $dataDir 'accounts'))
-Write-InstallLine '  卸载     : 运行安装目录 scripts\uninstall-win.ps1'
+Write-InstallLine '  卸载     : 运行安装目录 scripts\uninstall-win.cmd（或包根 Uninstall-WorkDaddy.cmd）'
 Write-InstallLine '=============================================================='

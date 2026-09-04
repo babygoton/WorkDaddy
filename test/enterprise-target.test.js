@@ -127,32 +127,66 @@ test('custom target persists outside the install and overlays only its base prof
   }
 });
 
-test('enterprise profile overrides remain Windows-only and macOS keeps the official profile', () => {
+test('enterprise profile overrides support a macOS Electron binary', () => {
   const dataDir = tempDir();
   try {
     writeWorkBuddyTarget({
       dataDir,
       profileId: 'workbuddy-cn',
-      platform: 'win32',
+      platform: 'darwin',
       target: {
         schemaVersion: 1,
         profileId: 'workbuddy-cn',
-        binary: 'C:\\Company\\workbuddy-ent.exe',
-        processNames: ['workbuddy-ent.exe'],
-        dataRoot: 'C:\\Users\\tester\\.workbuddy-ent',
-        authFile: 'C:\\Auth\\workbuddy-desktop-workbuddy-ent.info',
-        sessionDb: 'C:\\Users\\tester\\.workbuddy-ent\\workbuddy.db',
-        modelsFile: 'C:\\Users\\tester\\.workbuddy-ent\\models.json',
-        apiHost: 'https://api.ent.example.com',
-        targetHints: ['workbuddy-ent', 'api.ent.example.com'],
-        cdp: { mode: 'environment', port: 9226 },
+        binary: '/Applications/WorkBuddy企业定制版.app/Contents/MacOS/Electron',
+        processNames: ['Electron'],
+        cdp: { mode: 'argument', port: 9222 },
       },
     });
 
-    assert.deepEqual(
-      getProfile('workbuddy-cn', { dataDir, env: {}, platform: 'darwin' }),
-      PROFILES['workbuddy-cn']
-    );
+    const profile = getProfile('workbuddy-cn', { dataDir, env: {}, platform: 'darwin' });
+    assert.equal(profile.appPath, '/Applications/WorkBuddy企业定制版.app/Contents/MacOS/Electron');
+    assert.deepEqual(profile.binaryNames, ['Electron']);
+    assert.equal(profile.cdp.mode, 'argument');
+    assert.equal(profile.customTarget, true);
+  } finally {
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
+test('macOS target configuration accepts non-exe process names', () => {
+  const target = buildTargetFromBinary({
+    binary: '/Applications/WorkBuddy企业定制版.app/Contents/MacOS/Electron',
+    profileId: 'workbuddy-cn',
+    platform: 'darwin',
+    // macOS 上 os.homedir() 返回 posix 路径；Windows 上跑本用例须注入
+    // posix home，否则推导出的 authFile 无法通过 darwin 绝对路径校验。
+    home: '/Users/workdaddy',
+  });
+  assert.equal(target.clientType, 'enterprise');
+  assert.deepEqual(target.processNames, ['Electron']);
+  assert.deepEqual(target.cdp, { mode: 'argument', port: 9222 });
+});
+
+test('target resolver accepts launcher-style equals arguments', () => {
+  const dataDir = tempDir();
+  const script = path.join(__dirname, '..', 'scripts', 'workbuddy-target.js');
+  try {
+    writeWorkBuddyTarget({
+      dataDir,
+      profileId: 'workbuddy-cn',
+      platform: 'darwin',
+      target: {
+        profileId: 'workbuddy-cn',
+        binary: '/Applications/WorkBuddy企业定制版.app/Contents/MacOS/Electron',
+        processNames: ['Electron'],
+        cdp: { mode: 'argument', port: 9222 },
+      },
+    });
+    const result = spawnSync(process.execPath, [
+      script, '--resolve', '--profile=workbuddy-cn', `--data-dir=${dataDir}`,
+    ], { encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout.trim(), '/Applications/WorkBuddy企业定制版.app/Contents/MacOS/Electron');
   } finally {
     fs.rmSync(dataDir, { recursive: true, force: true });
   }

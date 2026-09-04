@@ -33,8 +33,10 @@ test('theme pane keeps avatar controls visible and gates wallpaper controls to W
   assert.match(inject, /syncWallpaperCardVisibility\(cur\)/);
 });
 
-test('theme pane uses the requested WorkDaddy and blur labels', () => {
-  assert.match(inject, /data-theme="nebula">' \+ WBS_BRAND \+ ' 主题<\/button>/);
+test('theme pane uses the requested blur labels and nebula tab', () => {
+  // 主题第 4 个 tab 文案为「毛玻璃」，且词典含英文 Frosted glass
+  assert.match(inject, /data-theme="nebula">毛玻璃<\/button>/);
+  assert.match(inject, /'毛玻璃': 'Frosted glass'/);
   assert.doesNotMatch(inject, /背景毛玻璃<span class="wbs-blur-hint">0% 不调节背景图<\/span>/);
   assert.match(inject, /<label class="wbs-blur-label" for="wbs-bg-blur-range">背景毛玻璃<\/label>/);
 });

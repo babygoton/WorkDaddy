@@ -1305,7 +1305,8 @@ function nativeWorkBuddyRunning() {
 function stopNativeWorkBuddy() {
   const result = runNativeHelper(['--terminate-workbuddy', '--profile', PROFILE.id], { timeout: 60000 });
   if (result.status !== 0) {
-    throw new Error('无法精确重启当前 WorkBuddy（错误码 ' + result.status + '）');
+    const detail = String(result.stderr || '').trim();
+    throw new Error('无法精确重启当前 WorkBuddy（错误码 ' + result.status + '）' + (detail ? ': ' + detail : ''));
   }
 }
 

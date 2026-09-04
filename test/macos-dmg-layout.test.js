@@ -50,3 +50,11 @@ test('macOS DMG uses a fixed-size SVG master for its arrow artwork', () => {
   assert.doesNotMatch(svg, /<(?:line|polyline)\b/);
   assert.doesNotMatch(svg, /<text\b/);
 });
+
+test('macOS launcher keeps official WorkBuddy targets out of enterprise mode', () => {
+  assert.match(buildSource, /source = source\.replace\('export WBSWITCH_WORKBUDDY_BIN="\$APP_BIN"'/);
+  assert.match(buildSource, /TARGET_ENV_XML/);
+  assert.match(buildSource, /TARGET_BIN:-\}/);
+  assert.match(buildSource, /<key>WBSWITCH_PROFILE<\/key>/);
+  assert.match(buildSource, /PLIST_STALE/);
+});

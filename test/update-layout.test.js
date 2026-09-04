@@ -607,6 +607,9 @@ test('Windows Setup waits for WorkBuddy and stops only a native-verified profile
   assert.match(installer, /当前安装程序是以管理员权限运行的/);
   assert.match(installer, /不要选择“以管理员身份运行”/);
   assert.match(installer, /普通安装器不会跨权限强行结束/);
+  assert.match(installer, /按 Ctrl\+Shift\+Esc 打开任务管理器/);
+  assert.match(installer, /旧版 WorkDaddy 的状态文件与实际程序不一致/);
+  assert.match(installer, /不要手动删除 WorkDaddy 数据目录/);
   assert.doesNotMatch(installer, /安装器本身可以使用管理员权限运行/);
   assert.doesNotMatch(installer, /旧版 WorkDaddy 正以管理员权限运行/);
   assert.doesNotMatch(installer, /prepare-win-install|windows-process-boundary|PowerShell/i);
@@ -624,6 +627,32 @@ test('macOS package launcher keeps WorkBuddy CN and AI CDP ports profile-specifi
   assert.ok(build.includes("WorkBuddy[[:space:]]*AI|WorkBuddyAI"));
   assert.match(build, /workbuddy-cn\)/);
   assert.match(build, /workbuddy-ai\)/);
+});
+
+test('macOS launchers discover renamed WorkBuddy app bundles and wait for slow CDP startup', () => {
+  const relaunch = read('relaunch-with-cdp.sh');
+  const build = fs.readFileSync(path.join(repoRoot, 'scripts', 'build-mac-dmg.sh'), 'utf8');
+  for (const source of [relaunch, build]) {
+    assert.match(source, /WorkBuddy\*\.app/);
+    assert.match(source, /Contents\/MacOS\/Electron/);
+    assert.match(source, /WorkBuddy AI/);
+    assert.match(source, /matches=\(\)/);
+    assert.match(source, /检测到多个/);
+    assert.match(source, /\[ -n "\$APP_BIN" \].*pkill/s);
+    assert.match(source, /choose application with prompt/);
+    assert.match(source, /所选应用不是可用的 WorkBuddy 客户端/);
+    assert.match(source, /等待 60 秒/);
+  }
+  assert.match(relaunch, /workbuddy-target\.json/);
+  assert.match(relaunch, /APP_DISCOVERY_ERROR.*APP_NAME=.*APP_BIN=/s);
+  assert.match(build, /APP_DISCOVERY_ERROR.*APP_NAME=.*APP_BIN=/s);
+});
+
+test('macOS launchers resolve an explicit target configuration before auto-discovery', () => {
+  const relaunch = read('relaunch-with-cdp.sh');
+  const build = fs.readFileSync(path.join(repoRoot, 'scripts', 'build-mac-dmg.sh'), 'utf8');
+  assert.match(relaunch, /workbuddy-target\.js" --resolve --profile=/);
+  assert.match(build, /workbuddy-target\.js" --resolve --profile=/);
 });
 
 test('macOS package launcher returns focus to the target WorkBuddy and separates AI identity', () => {
@@ -698,7 +727,7 @@ test('account cards keep the compact three-row layout', () => {
   assert.doesNotMatch(script, /wbs-growth-activate/);
   assert.doesNotMatch(script, /api\('\/api\/growth\/activate'/);
   assert.match(script, /expired \? '' : '<button class="wbs-icon-btn wbs-acc-switch"/);
-  assert.match(script, /switchBtn\.style\.display = hidden \? 'none' : ''/);
+  assert.match(script, /switchBtn\.style\.display = hidden \|\| account\.creditExpired \? 'none' : ''/);
   assert.match(script, /height:5px;min-height:5px/);
   assert.match(script, /\.wbs-credit-segment:first-child\{border-radius:3px 0 0 3px\}/);
   assert.match(script, /\.wbs-credit-segment:last-child\{border-radius:0 3px 3px 0\}/);

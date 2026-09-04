@@ -139,9 +139,10 @@ STAGE="$(mktemp -d)"
 if [ -f "$OUT" ]; then
   rm -f "$OUT" || true
 fi
-# 3.1) 顶层入口（zip 根）：Install-WorkDaddy.cmd / Start-WorkDaddy.cmd
+# 3.1) 顶层入口（zip 根）：Install-WorkDaddy.cmd / Start-WorkDaddy.cmd / Uninstall-WorkDaddy.cmd
 cp scripts/Install-WorkDaddy.cmd "$STAGE/Install-WorkDaddy.cmd"
 cp scripts/Start-WorkDaddy.cmd "$STAGE/Start-WorkDaddy.cmd"
+cp scripts/Uninstall-WorkDaddy.cmd "$STAGE/Uninstall-WorkDaddy.cmd"
 # 3.2) scripts\ 本体（含 node_modules/ws、builtin）
 cp -R scripts "$STAGE/scripts"
 # 内置资产直接写入 staging，避免修改源码树，也确保最终 ZIP/Setup.exe 一定包含它们。
@@ -290,10 +291,10 @@ else
   echo "==> 警告: 未找到 release/WorkDaddy.ico，桌面图标将回退为 cmd 默认"
 fi
 # 3.3) 排除开发/临时文件 + 顶层入口在 scripts\ 内的重复副本
-#      （Install-WorkDaddy.cmd / Start-WorkDaddy.cmd 只应存在于 zip 根，避免用户误进
-#       scripts\ 双击导致相对路径解析成 scripts\scripts\install-win.ps1 报错）
+#      （Install-WorkDaddy.cmd / Start-WorkDaddy.cmd / Uninstall-WorkDaddy.cmd 只应存在
+#       于 zip 根，避免用户误进 scripts\ 双击导致相对路径解析错误）
 rm -rf "$STAGE/scripts/win/probe" "$STAGE/scripts/win/probe/"* 2>/dev/null || true
-rm -f "$STAGE/scripts/Install-WorkDaddy.cmd" "$STAGE/scripts/Start-WorkDaddy.cmd" 2>/dev/null || true
+rm -f "$STAGE/scripts/Install-WorkDaddy.cmd" "$STAGE/scripts/Start-WorkDaddy.cmd" "$STAGE/scripts/Uninstall-WorkDaddy.cmd" 2>/dev/null || true
 find "$STAGE" -name '*.log' -delete 2>/dev/null || true
 find "$STAGE" -name '.DS_Store' -delete 2>/dev/null || true
 # 3.3a) AI 包品牌化：cmd 描述/桌面图标/安装目录名跟随工包显示为 WorkDaddy AI
@@ -332,6 +333,14 @@ patch('Start-WorkDaddy.cmd', [
     ('WorkDaddy 一键启动', 'WorkDaddy AI 一键启动'),
     ('「WorkDaddy」图标', '「WorkDaddy AI」图标'),
     ('WorkDaddy launcher starting', 'WorkDaddy AI launcher starting'),
+])
+patch('Uninstall-WorkDaddy.cmd', [
+    ('WorkDaddy 一键卸载', 'WorkDaddy AI 一键卸载'),
+    (r'%LOCALAPPDATA%\Programs\WorkDaddy', r'%LOCALAPPDATA%\Programs\WorkDaddy AI'),
+])
+patch('scripts/uninstall-win.cmd', [
+    ('WorkDaddy Windows 卸载核心', 'WorkDaddy AI Windows 卸载核心'),
+    (r'%LOCALAPPDATA%\Programs\WorkDaddy', r'%LOCALAPPDATA%\Programs\WorkDaddy AI'),
 ])
 # scripts\ 内安装/启动/自检脚本（%LOCALAPPDATA%\Programs\WorkDaddy → WorkDaddy AI；数据目录不替换）
 patch('scripts/install-win.cmd', [

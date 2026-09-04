@@ -19,7 +19,7 @@ if ($version -notmatch '^\d+\.\d+\.\d+$') { throw "Invalid daemon version: $vers
 
 $productName = if ($Profile -eq 'workbuddy-ai') { 'WorkDaddy AI' } else { 'WorkDaddy' }
 $packageName = if ($Profile -eq 'workbuddy-ai') { 'WorkDaddy-AI' } else { 'WorkDaddy' }
-$startDescription = if ($Profile -eq 'workbuddy-ai') { '创建 WorkDaddy AI 桌面快捷方式' } else { '创建 WorkDaddy 桌面快捷方式' }
+$startDescription = if ($Profile -eq 'workbuddy-ai') { '立即打开 WorkDaddy AI' } else { '立即打开 WorkDaddy' }
 $appGuid = if ($Profile -eq 'workbuddy-ai') {
   '{{D1A8A90C-1F55-4E56-8BB2-7F12A39B9D12}'
 } else {

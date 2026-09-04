@@ -1,5 +1,7 @@
 # WorkDaddy
 
+**语言：** [简体中文](README.md) · [English](README_en.md)
+
 > **WorkDaddy 是 WorkBuddy 桌面端增强助手：多账号独立备份、点切即用；免打扰模式让 AI 无人值守跑长任务；跨账号会话迁移、异常中断自动续接；暂存/快捷提示词；毛玻璃主题与更多实用功能，账号与配置全部留在本机。**
 > 本机回环 CDP 注入 · 不改官方安装包。
 
@@ -62,6 +64,17 @@
 
 4. 双击 `WorkDaddy.app` 启动：它会自带守护进程并把组件注入到 WorkBuddy
 5. 看到机器人按钮？**搞定**。
+
+#### 企业专享版 / VPC 客户端
+
+macOS 会自动扫描带 `WorkBuddy` 前缀且包含 `Contents/MacOS/Electron` 的客户端（例如 `WorkBuddy企业定制版.app`），并按 WorkDaddy/WorkDaddy AI profile 排除另一端。发现多个候选时会弹出系统选择窗口，选中后自动记住，不需要手动寻找配置文件。完全自定义名称也可以在源码目录执行下面的高级配置命令：
+
+```bash
+node scripts/workbuddy-target.js --configure --platform darwin \
+  --profile workbuddy-cn \
+  --binary "/Applications/企业客户端.app/Contents/MacOS/Electron" \
+  --data-dir "$HOME/Library/Application Support/WorkDaddy"
+```
 
 
 ### Windows
@@ -150,6 +163,7 @@ WorkBuddy 右下角的机器人按钮 → 弹出面板 → 选你要的操作：
 | **增强** | 配置权限免打扰、异常中断自动续接、暂存提示词和快捷短语 |
 | **电脑** | 允许或持续禁止休眠，也可在所有 AI 任务结束后自动恢复休眠 |
 | **关于** | 查看版本和项目说明、检查并安装更新、控制脱敏错误诊断 |
+| **设置** | 选择中文或英语；首次打开按系统语言匹配，未匹配时使用英语 |
 
 **输入框插件**：在「增强」页分别开启「暂存提示词」和「快捷短语」后，输入框操作栏会显示对应按钮。
 暂存提示词可把当前草稿（文字、图片、文件、引用等**完整原样**）加入 WorkBuddy 自带的待发送队列，并暂停自动发送；

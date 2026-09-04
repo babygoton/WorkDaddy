@@ -361,7 +361,7 @@ test('Windows installer uses the bundled Simplified Chinese wizard and profile b
   assert.match(installerSource, /\[Languages\][\s\S]*ChineseSimplified\.isl/);
   assert.match(installerSource, /AppPublisher=\{#ProductName\} 团队/);
   assert.match(installerSource, /Description: "\{#StartDescription\}"/);
-  assert.match(fs.readFileSync(path.join(root, 'scripts', 'build-win-installer.ps1'), 'utf8'), /创建 WorkDaddy AI 桌面快捷方式/);
+  assert.match(fs.readFileSync(path.join(root, 'scripts', 'build-win-installer.ps1'), 'utf8'), /立即打开 WorkDaddy AI/);
   assert.match(chineseLanguageSource, /LanguageName=简体中文/);
 });
 

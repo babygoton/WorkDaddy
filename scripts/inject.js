@@ -547,6 +547,343 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
   var WBS_PROFILE_IS_AI = PROFILE_ID === 'workbuddy-ai';
   var WBS_BRAND = WBS_PROFILE_IS_AI ? 'WorkDaddy AI' : 'WorkDaddy';
 
+  // User-facing strings are translated at the injected root so dynamically-built
+  // panes and toasts follow the same language without touching WorkBuddy's DOM.
+  var WBS_LANGUAGE_KEY = 'workdaddy.ui.language';
+  var WBS_I18N_EN = {
+    '账号': 'Accounts', '主题': 'Theme', '会话': 'Sessions', '模型': 'Models', '增强': 'Enhance', '电脑': 'Computer', '关于': 'About', '设置': 'Settings',
+    '导出': 'Export', '导入': 'Import', '删除': 'Delete', '编辑': 'Edit', '保存': 'Save', '取消': 'Cancel', '确定': 'Confirm', '确认': 'Confirm', '复制': 'Copy', '切换': 'Switch', '启用': 'Enable', '停止': 'Stop',
+    '暂存提示词': 'Stash prompt', '暂存': 'Stashed', '引用文本': 'Quote text', '快捷短语': 'Quick phrases', '点击后发送': 'Send on click', '编辑 →': 'Edit →', '新增': 'Add', '批量操作': 'Batch actions', '批量管理': 'Batch manage', '全选': 'Select all', '取消全选': 'Deselect all', '已选 0': 'Selected 0',
+    '账号汇总': 'Account summary', '账号数': 'Accounts', '总积分': 'Total credits', '手机': 'Phone', '有效期至': 'Expires', '当前使用中': 'Currently active', '登录新账号': 'Log in a new account', '没有可导出的账号备份': 'No account backups to export', '还没有备份账号。打开/登录一次 WorkBuddy 后会自动备份，稍后再来查看。': 'No account backups yet. Open or log in to WorkBuddy once and check again later.',
+    '语言': 'Language', '中文': 'Chinese', '英语': 'English', 'English': 'English', '跟随系统': 'Follow system', '设置语言': 'Language', '首次打开时自动跟随系统语言；未匹配时使用英语。': 'The first launch follows your system language. English is used when no match is found.', '语言设置已更新': 'Language updated',
+    '默认': 'Default', 'WorkDaddy 主题': 'WorkDaddy theme', '毛玻璃': 'Frosted glass', '护眼绿': 'Eye-care green', '赛博紫': 'Cyber purple', '主题外观': 'Theme appearance', '壁纸': 'Wallpaper', '头像': 'Avatar', '自定义壁纸': 'Custom wallpaper', '背景蒙版': 'Background overlay', '背景毛玻璃': 'Background blur', '恢复默认': 'Restore default', '恢复官方头像': 'Restore official avatar',
+    '加载中…': 'Loading…', '读取中…': 'Reading…', '正在读取设置…': 'Reading settings…', '查询中…': 'Checking…', '暂无快捷短语': 'No quick phrases', '暂无快捷短语，点击「+ 新增」添加': 'No quick phrases. Click “+ Add” to create one.', '当前还未添加模型': 'No models added yet', '还没有模型备份': 'No model backups yet', '当前筛选下没有会话': 'No sessions match the current filter', '暂无进行中的会话': 'No active sessions', '暂无官方壁纸': 'No built-in wallpapers', '还没有自定义壁纸，先上传一张': 'No custom wallpapers yet. Upload one to start.', '壁纸加载中…': 'Loading wallpapers…', '壁纸加载失败（daemon 不可达）': 'Wallpaper loading failed (daemon unavailable)',
+    '发送失败: ': 'Send failed: ', '发送失败': 'Send failed', '打开面板失败: ': 'Could not open panel: ', '设置失败: ': 'Settings failed: ', '设置失败': 'Settings failed', '请求失败': 'Request failed', '操作失败': 'Operation failed', '读取文件失败': 'Could not read file', '复制失败': 'Copy failed', '复制失败: ': 'Copy failed: ', '删除失败: ': 'Delete failed: ', '删除失败': 'Delete failed', '切换失败: ': 'Switch failed: ', '应用主题失败: ': 'Could not apply theme: ', '蒙版设置失败: ': 'Overlay setting failed: ', '毛玻璃设置失败: ': 'Blur setting failed: ', '诊断设置保存失败: ': 'Could not save diagnostics setting: ', '无法连接本地服务: ': 'Cannot connect to local service: ', '请确认守护进程已运行': 'Make sure the daemon is running',
+    '签到中': 'Checking in', '今日已签到✓': 'Checked in today ✓', '无签到活动': 'No check-in activity', '登录身份过期': 'Login expired', '刚刚': 'Just now', '分钟前': ' minutes ago', '小时前': ' hours ago', '天前': ' days ago',
+    '发现新版本': 'New version available', '立即更新': 'Update now', '有新版本可用，点击更新。': 'A new version is available. Click Update.', '下载中…': 'Downloading…', '正在打开…': 'Opening…', '安装程序已打开': 'Installer opened', '打开安装程序': 'Open installer', '安装中…': 'Installing…', '重启中…': 'Restarting…', '已完成': 'Completed', '重试更新': 'Retry update',
+    '安全传输': 'Secure transfer', '选择内容': 'Select content', '选择账号': 'Select accounts', '选择目标账号': 'Select target account', '选择目标账号…': 'Select a target account…', '密码': 'Password', '请输入密码': 'Enter password', '密码不能为空': 'Password cannot be empty', '请至少选择一项': 'Select at least one item', '处理中…': 'Processing…', '新版文件请输入密码': 'Enter the password for the new file', '新版文件必须输入密码；旧版导出文件可留空。': 'New files require a password; older exports may be left blank.', '新版文件请输入密码；已有的相同短语会自动跳过。': 'Enter the password for the new file; duplicate phrases are skipped.',
+    '电脑休眠': 'Computer sleep', '允许电脑休眠': 'Allow computer sleep', '持续禁止休眠': 'Keep awake', '所有会话结束允许休眠': 'Allow sleep when all sessions end', '系统默认，空闲后正常休眠': 'System default; sleep normally when idle', '保持唤醒，防黑屏锁屏': 'Stay awake to prevent screen lock', '任一会话运行中都保持唤醒': 'Stay awake while any session is running', '允许显示器休眠': 'Allow display sleep', '禁止休眠时，是否允许显示器单独黑屏': 'When sleep is blocked, allow the display to turn off',
+    '发送错误诊断': 'Send error diagnostics', '推荐开启': 'Recommended', '由环境变量控制': 'Controlled by environment variable', '默认开启 · 设置读取失败': 'Enabled by default · failed to read setting', '保存中…': 'Saving…', '仅发送经过脱敏、截断的版本、系统和错误信息，不包含账号、会话内容、Token 或 API Key；可随时关闭。': 'Only redacted and truncated version, system, and error details are sent. Accounts, sessions, tokens, and API keys are excluded; you can turn this off anytime.', '查看错误诊断说明': 'View diagnostics details', '问题反馈': 'Report an issue', '会话监听日志': 'Session monitor log', '仅保存在当前页面内存': 'Stored only in this page memory',
+    '权限免打扰': 'Permission quiet mode', '异常中断会话': 'Continue interrupted sessions', '决策弹窗': 'Decision prompts', '用弹窗提问': 'Ask with a dialog', '确认弹窗自动允许': 'Auto-allow confirmation dialogs', '自动复制所有会话': 'Auto-copy all sessions', '会话消息索引': 'Message index', '引用消息文本': 'Quote message text', '选择登录方式': 'Choose a login method', '假退出': 'Soft logout', '无感登录': 'Seamless login',
+    '未设置': 'Not set', '当前使用中': 'Currently active', '停止生成': 'Stop generating', '正常重启': 'Restart normally', '清空日志': 'Clear log', '开发者工具': 'Developer tools', '隐藏功能': 'Hidden feature', '卡死': 'Stuck', '任务': 'Task', '空间': 'Workspace', '全部': 'All', '今天': 'Today', '近 7 天': 'Last 7 days', '近 30 天': 'Last 30 days', '企业配额': 'Enterprise quota', '积分到期分布': 'Credit expiry distribution',
+    '连接新服务…': 'Connecting to service…', '等待中': 'Waiting', '运行中': 'Running', '空闲': 'Idle', '已中断': 'Interrupted', '已停止': 'Stopped', '未确认': 'Unconfirmed', '等待确认': 'Waiting for confirmation', '等待新回复': 'Waiting for a new reply', '等待会话': 'Waiting for session', '等待允许': 'Waiting for approval', '整理中': 'Organizing', '恢复中': 'Restoring', '即将完成…': 'Finishing…', '已继续': 'Continued', '检测到会话异常中断，即将自动发送「': 'An interrupted session was detected. Sending “', '自动发送失败，请手动点击发送': 'Automatic send failed. Please click Send manually', '底层发送失败，请手动发送': 'Underlying send failed. Please send manually',
+    '导出账号': 'Export accounts', '导入账号': 'Import accounts', '导出会话': 'Export sessions', '导入会话': 'Import sessions', '导出快捷短语': 'Export quick phrases', '导入快捷短语': 'Import quick phrases', '复制选中到其他账号': 'Copy selected to another account', '删除选中': 'Delete selected', '操作会话': 'Session actions', '连通测试': 'Test connection', '编辑模型': 'Edit model', '模型已保存': 'Model saved', '模型已启用': 'Model enabled', '模型已复制': 'Model copied', '模型配置已共用': 'Model configuration shared', '当前模型': 'Current model', '备选模型': 'Backup models', '模型加载失败：': 'Failed to load models: ', '保存模型失败：': 'Failed to save model: ', '删除当前模型失败：': 'Failed to delete current model: ', '启用模型失败：': 'Failed to enable model: ', '连通测试失败：': 'Connection test failed: ',
+    '选择要查看的账号': 'Choose an account to view', '选择账号并输入密码后导出备份': 'Choose accounts and enter a password to export backups', '从加密导出文件导入账号备份': 'Import account backups from an encrypted export', '使用密码导出选中会话': 'Export selected sessions with a password', '使用密码导出选中快捷短语': 'Export selected quick phrases with a password', '从加密文件导入会话': 'Import sessions from an encrypted file', '从加密文件导入快捷短语': 'Import quick phrases from an encrypted file', '仅支持 PNG / JPG / WebP': 'PNG / JPG / WebP only', '点击或拖拽上传壁纸': 'Click or drag to upload a wallpaper', '点击选择图片，或拖拽到此处': 'Click to choose an image, or drag it here', '支持 PNG / JPG / WebP，自动压缩；可添加多张': 'PNG / JPG / WebP supported; images are compressed automatically',
+    '未命名账号': 'Unnamed account', '未命名模型': 'Unnamed model', '未命名': 'Unnamed', '未知错误': 'Unknown error', '未知': 'Unknown', '有效期未知': 'Expiry unknown', '未找到输入框': 'Composer not found', '输入框内容为空': 'Composer is empty', '当前输入框暂不支持引用插入': 'The current composer does not support quote insertion', '引用插入失败，请重试': 'Could not insert quote. Please try again', '已引用选中文字': 'Selected text quoted', '短语不能为空': 'Quick phrase cannot be empty', '请输入快捷短语': 'Enter a quick phrase', '删除快捷短语': 'Delete quick phrase', '编辑快捷短语': 'Edit quick phrase', '新增快捷短语': 'Add quick phrase', '确定删除': 'Confirm deletion', '确认永久删除': 'Confirm permanent deletion',
+    '本机回环 CDP 注入 · 不改官方安装包': 'Local CDP injection · official app untouched', '一个基于 ': 'A ', ' 的 WorkBuddy 桌面端增强工具。零侵入、零重签名——只把界面组件注入到正在运行的 WorkBuddy 渲染进程里。': ' WorkBuddy desktop enhancement tool using Chrome DevTools Protocol (CDP). No intrusion or re-signing; UI components are injected into the running renderer.', '问题反馈': 'Report an issue',
+    // —— 覆盖度补齐（分区域，模板条目支持 {name} 占位，匹配时最长优先）——
+    '(无标题)': 'Untitled', 'GitHub 仓库': 'GitHub repository', '去 GitHub Issues 反馈问题': 'Report an issue on GitHub', '在 GitHub 上给 WorkDaddy 点 Star': 'Star WorkDaddy on GitHub', 'WorkDaddy，点击打开面板，可拖动': 'WorkDaddy – click to open the panel, draggable', '如果 WorkDaddy 对你有帮助，欢迎在 GitHub 点个 Star。你的支持会让这个小项目持续更新。': 'If WorkDaddy helps you, please star it on GitHub. Your support keeps this small project alive.',
+    '元素检查': 'Inspect element', '元素检查不可用：内部模块未加载': 'Element inspector unavailable: internal module not loaded',
+    '到期时间': 'Expiry', '剩余': 'Remaining', '剩余时间计算中': 'Calculating remaining time', '积分': 'Credits', '积分查询超时': 'Credit query timed out', '个人版': 'Personal', '企业': 'Enterprise', '基础用量': 'Base usage', '赠送与加量包': 'Gift & bonus packs', '其他积分': 'Other credits', '即将过期': 'Expiring soon', '已过期': 'Expired',
+    '昨天': 'Yesterday', '分钟': ' min', '小时': ' h', '定位到第': 'Jump to message ', '条用户消息': ' user message', '发送中': 'Sending', '附件': 'Attachment', '疑似未完成': 'Possibly incomplete',
+    '已开启': 'Enabled', '已关闭': 'Disabled', '已领取': 'Claimed', '立即领取,今日可领': 'Claim now, available today', '继续执行': 'Continue',
+    '下载': 'Download', '安装': 'Install', '校验': 'Verify', '检查': 'Check', '重启': 'Restart', '即将打开安装包…': 'Opening installer…', '安装包已打开': 'Installer opened', '安装失败': 'Install failed', '更新出错': 'Update error', '更新失败': 'Update failed', '检查更新失败': 'Update check failed', '已是最新版本': 'Already up to date',
+    '正在下载…': 'Downloading…', '正在准备更新…': 'Preparing update…', '正在安装新版本…': 'Installing new version…', '正在打开已校验的安装程序…': 'Opening verified installer…', '正在重启…': 'Restarting…', '启动新版本…': 'Launching new version…', '启动较慢，请稍候…': 'Startup is slow, please wait…', '更新服务正在重启…': 'Update service restarting…', '新版本服务在 120 秒内未恢复': 'New version service not recovered within 120s', '下载完成，准备安装…': 'Download complete, preparing to install…', '写入新文件…': 'Writing new file…', '已升级到 v': 'Upgraded to v', '已发现': 'Found', '网络暂时失败，正在重试…': 'Network hiccup, retrying…', '已是最新版本': 'Already up to date',
+    '上传图片失败': 'Image upload failed', '图片读取失败': 'Could not read image', '图片处理失败:': 'Image processing failed:', '生成皮肤失败:': 'Could not generate skin:', '替换背景图失败': 'Could not replace wallpaper', '替换背景图失败:': 'Could not replace wallpaper:', '已用图片生成皮肤并应用': 'Generated and applied a skin from the image', '我的图片皮肤': 'My image skin', '显示或隐藏 API Key': 'Show or hide API key',
+    '打开面板失败:': 'Could not open panel:', '无法连接本地服务:': 'Cannot connect to local service:', '退出失败:': 'Could not log out:', '登录失败，请关闭后重试': 'Login failed, please close and retry', '登录方式': 'Login method', '请求超时': 'Request timed out', '超时': 'Timeout',
+    '开启「弹窗自动点允许」？': 'Enable “auto-allow dialogs”?', '开启「系统级工具放行」？': 'Enable “system-wide tool allow”?', '开启后，AI 可直接读写工作区外的任意文件，不再逐次询问。': 'When enabled, the AI can read and write any file outside the workspace without asking each time.', '风险：误改文件时不会提醒。': 'Risk: accidental edits will not trigger warnings.', '开启后 npm、git、curl、python3 等常用命令直接本地执行，不再先进沙箱': 'When enabled, common commands like npm, git, curl, and python3 run directly without the sandbox first', '开启后仅阻止系统睡眠，显示器可黑屏省电': 'When enabled, only system sleep is blocked; the display can still turn off to save power', '开启，移入回收站': 'Enable and move to Trash', '关闭（指令块已移除）': 'Off (custom prompt block removed)', '开启（指令块已写入 app-config.customPrompt）': 'On (custom prompt block written to app-config.customPrompt)', '允许完全访问': 'Allow full access', '环境变量': 'Environment variable', '命令行参数': 'Command-line arguments', '隐藏工具已呼出': 'Hidden tools revealed',
+    '这会把该备份覆盖到官方 models.json 中，同 id 的旧配置将被移除。': 'This overwrites the official models.json with this backup; old configs with the same id are removed.', '输入框非空，已放弃自动发送，避免覆盖你的输入': 'Composer is not empty; automatic send was skipped to avoid overwriting your input', '输入框占用': 'Composer in use', '接口返回 HTTP': 'API returned HTTP', '发送经过脱敏的错误诊断': 'Send redacted error diagnostics',
+    '登录请求不存在或已过期': 'Login request does not exist or has expired', '登录超时，请重新发起': 'Login timed out, please retry', '未找到该短语': 'Quick phrase not found', '缺少 uid': 'Missing uid', 'uid 格式无效': 'Invalid uid format', '缺少 key': 'Missing key', '非法 key:': 'Invalid key:', '备份中无 accessToken': 'No accessToken in the backup', '缺少企业 ID': 'Missing enterprise ID', '账号备份不存在': 'Account backup not found',
+    'CDP 未连接': 'CDP not connected', 'CDP 未连接，无法注入组件': 'CDP not connected; injection skipped', 'CDP 未连接，无法自动刷新窗口': 'CDP not connected; window refresh skipped', 'CDP 未连接，无法发送': 'CDP not connected; cannot send',
+    '，显示器保持唤醒': ', display stays awake', '，显示器保持唤醒，防锁屏开启': ', display stays awake, screen lock blocked', '，显示器可单独休眠': ', display may sleep on its own', '，已防锁屏': ', screen lock blocked', '，更新完成': ', update complete', '，跳过': ', skipped',
+    '（阶段：': ' (stage: ', '；安装日志：': '; install log: ', '；尝试 ID：': '; attempt ID: ', '；诊断日志：': '; diagnostics log: ',
+    // —— 模板条目（{name}/{n} 占位，最长优先整句替换，杜绝中英混合）——
+    '已切换为「{name}」，开始领取积分…': 'Switched to “{name}”, claiming credits…', '已切换为「{name}」，正在复制已标记会话…': 'Switched to “{name}”, copying marked sessions…', '已登录「{name}」': 'Logged in as “{name}”', '已发送「{text}」': 'Sent “{text}”', '「{name}」的备份': 'Backup of “{name}”', '「{name}」的本地备份，不可恢复': 'Local backup of “{name}”, cannot be restored', '「{name}」，请刷新 WorkBuddy 窗口': '“{name}”, please refresh the WorkBuddy window', '「{name}」，重启后生效': '“{name}”, effective after restart', '定位到第{n}条用户消息': 'Jump to user message {n}', '已关闭：{reason}': 'Disabled: {reason}', '已开启：{reason}': 'Enabled: {reason}', '已删除 {n} 项': 'Deleted {n} item(s)', '已复制 {n} 项': 'Copied {n} item(s)', '检测到会话异常中断，即将自动发送「{text}」': 'An interrupted session was detected. Sending “{text}”', '输入框非空，已放弃会话 {id} 的自动继续': 'Composer is not empty; skipped auto-continue for session {id}',
+    // —— 第二批补齐（inject 剩余 + daemon 端会进入 UI/API 的文案）——
+    '免打扰': 'Quiet mode', 'WorkBuddy 即将退出并重新打开到登录页': 'WorkBuddy will exit and reopen to the login page', 'WorkBuddy 队列尚未准备完成': 'WorkBuddy queue is not ready yet', 'WorkBuddy 队列排序接口不可用': 'WorkBuddy queue sort API unavailable', 'WorkBuddy 队列立即发送接口不可用': 'WorkBuddy queue send-now API unavailable', '未找到 WorkBuddy 队列接口': 'WorkBuddy queue API not found',
+    '一个基于': 'A ', '个备选': 'standby', '备选': 'standby', '个失败': ' failed', '个已不存在': ' no longer exist', '项失败': ' failed', '已选': ' selected', '例如 deepseek-v4-flash': 'e.g. deepseek-v4-flash', '例如我的 DeepSeek': 'e.g. my DeepSeek', '加载失败': 'Load failed', '发起授权失败:': 'Authorization failed:', '开启': 'Enable', '关闭': 'Close', '失败': 'Failed', '用户消息': 'User message',
+    'OLED 纯黑': 'OLED Pure Black', '未发现 CDP 端口（WorkBuddy 需以 --remote-debugging-port 启动）': 'No CDP port found (start WorkBuddy with --remote-debugging-port)', '本地 API 未授权': 'Local API unauthorized', '仅支持 http(s) 链接': 'Only http(s) links are supported', '图片不能超过 10MB': 'Image must not exceed 10MB', '图片必须是 PNG/JPEG/WebP base64': 'Image must be PNG/JPEG/WebP base64', '遥测开关值必须是布尔值': 'Telemetry switch must be a boolean', 'blur 必须是数字': 'Blur must be a number', 'opacity 必须是数字': 'Opacity must be a number', '查询返回空结果': 'Query returned empty results',
+    '正在解包新应用…': 'Unpacking new app…', '挂载 dmg 失败:': 'Failed to mount dmg:', '缺少解包后的新应用': 'Unpacked new app missing', '解包应用失败': 'Failed to unpack app', '缺少 apply-update.sh': 'apply-update.sh missing', '（仓库暂无 Release）': ' (no Releases in the repository yet)', 'auth/state 响应缺少 state': 'auth/state response is missing state',
+    'WBSWITCH_WORKBUDDY_BIN 不是可验证的当前 profile 主程序；登录信息未修改': 'WBSWITCH_WORKBUDDY_BIN is not a verified main program for the current profile; login info unchanged', '无法以普通用户权限安全退出 WorkBuddy。请手动关闭该程序；若它以管理员身份运行，请先退出后再重试。登录信息未修改': 'Cannot safely quit WorkBuddy at standard user privilege. Please close it manually; if it runs as admin, quit it first and retry. Login info unchanged', '未找到 WorkBuddy 可执行文件，无法安全退出；登录信息未修改': 'WorkBuddy executable not found; cannot quit safely. Login info unchanged', 'workbuddy-target.json 指定的路径不是可验证的当前 profile 主程序；登录信息未修改': 'The path in workbuddy-target.json is not a verified main program for the current profile; login info unchanged', '存在当前 profile 进程，但没有进程属于已验证安装目录；登录信息未修改': 'A current profile process exists, but none belongs to a verified install directory; login info unchanged', '检测到当前 profile 正从另一安装目录运行，登录信息未修改': 'The current profile is running from another install directory; login info unchanged', '检测到多个 dormant WorkBuddy 安装目录，按发现优先级选择:': 'Multiple dormant WorkBuddy installs found; selecting by discovery priority:', 'WorkBuddy 数据目录不是受管目录': 'WorkBuddy data directory is not managed', 'WorkBuddy 页面尚未完成加载': 'WorkBuddy page has not finished loading', '注入脚本页面抛错': 'Injected script page threw an error', '读取注入脚本失败:': 'Failed to read the injected script:', '运行时桥接文件未生成': 'Runtime bridge file was not created',
+    // —— 第三批：daemon 端口/路径校验/发送链路错误（可能进入 toast/API 返回）——
+    '9222-9232、9333 均被占用，无法为 WorkBuddy 分配 CDP 端口': 'Ports 9222-9232 and 9333 are all occupied; cannot allocate a CDP port for WorkBuddy', 'cwd 不是绝对路径': 'cwd is not an absolute path', 'cwd 路径包含符号链接或普通文件': 'cwd path contains a symlink or regular file', '发送按钮禁用（输入内容未被识别）': 'Send button disabled (input not recognized)', '无法清空输入框': 'Could not clear the composer', '无法聚焦输入框': 'Could not focus the composer', '未找到发送按钮': 'Send button not found', '未找到操作栏': 'Toolbar not found',
+    // —— 第四批：真机扫描发现的整句/半动态拼接（杜绝中英混合）——
+    '全部开': 'Enable all', '一键批量开启/关闭全部免打扰开关': 'Toggle all quiet-mode switches at once',
+    '沙箱外写文件免确认': 'Write outside the sandbox without confirmation', '工作区外文件直接读写': 'Direct read/write of files outside the workspace',
+    '常用命令行免确认': 'Common commands without confirmation', '常用命令直接执行': 'Run common commands directly',
+    '大批量删除免确认': 'Bulk delete without confirmation', '批量删除直接进回收站': 'Bulk deletes go straight to Trash',
+    '系统级工具放行': 'Allow system-level tools', '系统管理命令直接执行': 'System admin commands run directly', '弹窗自动点允许': 'Auto-allow dialogs',
+    '继续异常中断会话': 'Continue interrupted sessions', '检测到会话异常中断，自动让它继续。': 'Detected an interrupted session; letting it continue automatically.',
+    '暂存想法择机发送，发送后自动删除。': 'Stashed thoughts send at an opportunity, then are deleted automatically.',
+    '悬停预览，点击或拖动快速定位消息。': 'Hover to preview; click or drag to jump to a message.',
+    '选中会话消息文字后，一键插入输入框。': 'After selecting session message text, insert it into the composer with one click.',
+    '发送后不会自动删除。': 'Not deleted automatically after sending.', '需要我决策时弹窗确认（全局生效）': 'Ask me with a dialog when my decision is needed (applies globally)',
+    '开启后 AI 可直接读写工作区外的文件（包括文稿、下载目录、配置），不再逐一确认': 'When enabled, the AI can directly read/write files outside the workspace (documents, Downloads, config) without confirming each time',
+    '开启后批量删除不再弹确认；为防误删，所有删除强制先进废纸篓/回收站': 'Bulk delete skips dialogs; to prevent mistakes, all deletes go to Trash first',
+    '开启后 wsl、reg、sc、schtasks 等系统管理工具直接运行，不再确认': 'System admin tools like wsl, reg, sc, schtasks run directly without confirmation',
+    '开启后仍有确认弹窗时自动替你点「允许」，所有自动批准记录在审计日志': 'Auto-clicks “Allow” on remaining dialogs; all auto-approvals are logged',
+    '在会话左侧显示消息索引': 'Show the message index on the left side of sessions', '选中会话消息中的文字后显示引用按钮': 'Show the quote button after selecting session message text',
+    '状态机日志': 'state machine log', '监控激活会话中': 'Monitoring active sessions',
+    '更换头像': 'Change avatar', '黑色半透明遮罩，压暗背景图': 'Black translucent overlay that dims the wallpaper',
+    '时间': 'Time', '自动复制': 'Auto-copy', '模型名': 'Model name', '自定义名称': 'Custom name', '确认操作': 'Confirm operation', '小贴士': 'Tip',
+    '解决 WorkBuddy 不支持多个同名模型的问题。': 'Solves WorkBuddy not supporting multiple models with the same name.',
+    '清空': 'Clear', '继续': 'Continue', '更换': 'Change',
+    '共 {n} 个': 'Total: {n} ', '展开 {n} 条（': 'Show {n} (', '从 {src} 导入': 'Import from {src}',
+    '（': '(', '）': ')',
+    // —— 第五批：基础高频词（杜绝词根缺失造成的半句混合）+ 会话/模型/账号错误整句 ——
+    '错误': 'Error', '状态': 'Status', '导航': 'navigation', '消息': 'message', '当前': 'Current', '配置': 'config', '无效': 'invalid', '接口': 'API', '队列': 'queue', '不可用': 'unavailable', '缺少': 'Missing',
+    '会话错误': 'Session error', '会话状态': 'Session status', '会话消息导航': 'Session message navigation', '未获取到当前会话': 'Could not get the current session',
+    '回复已停止，但没有发现明确完成证据': 'Reply stopped without clear completion evidence',
+    '会话正在等待决策确认': 'Session awaiting a decision confirmation', '会话出现模型或网络错误': 'Session hit a model or network error',
+    '会话疑似异常停止，请检查结尾内容': 'Session may have stopped unexpectedly; check the tail',
+    'WorkBuddy 队列删除接口不可用': 'WorkBuddy queue delete API is unavailable', 'WorkBuddy 队列响应超时（': 'WorkBuddy queue response timed out (',
+    '已导出': 'Exported', '成功导入': 'Imported successfully', '当前账号': 'Current account', '个账号': ' account(s)', '个账号（已加密）': ' account(s) (encrypted)',
+    '随空间自动复制': 'Auto-copy with workspace', '切换账号时自动复制': 'Auto-copy on account switch',
+    '切换账号时自动复制当前账号的所有会话，包括之后新增的会话': 'Auto-copy all sessions of the current account on switch, including new ones afterwards',
+    '已开启切换账号时自动复制': 'Auto-copy on account switch is on', '(未指定空间)': ' (no workspace specified)',
+    '未选择项目的一次性任务/临时会话': 'One-off task / temporary session without a chosen project',
+    '所选账号将加密保存，密码不能为空，请妥善保管。': 'Selected accounts are encrypted; a password is required and should be kept safe.',
+    '模型配置文件格式不受支持：应为数组或包含 models 数组的对象': 'Unsupported model config format: expected an array or an object with a models array',
+    '非法模型备份标识': 'Invalid model backup id', '模型备份不存在': 'Model backup not found', '模型备份格式不受支持': 'Unsupported model backup format',
+    '模型索引无效': 'Invalid model index', '模型配置无效': 'Invalid model config', '未选择当前模型': 'No current model selected',
+    '模型备份缺少 id/name，无法保存': 'Model backup is missing id/name; cannot save', '模型备份缺少 id/name，无法启用': 'Model backup is missing id/name; cannot enable',
+    '不能从当前客户端导入模型': 'Cannot import models from the current client',
+    '无效的自动复制规则类型': 'Invalid auto-copy rule type', '缺少自动复制规则标识': 'Missing auto-copy rule id', '缺少源账号 uid': 'Missing source account uid',
+    '缺少共享会话标识': 'Missing shared session id', '标记仍然存在': 'Marker still present',
+    '未找到唯一的当前登录信息文件': 'No unique current login file found', '未找到有效的登录信息文件': 'No valid login file found',
+    '备份文件认证数据无效，拒绝切换': 'Invalid auth data in the backup; switch rejected',
+    '登录文件目标路径无效': 'Invalid login file target path',
+    '登录文件目标不是当前客户端的有效认证文件，拒绝覆盖': 'Login file target is not a valid auth file for this client; overwrite rejected',
+    '登录文件名已属于其他账号，拒绝覆盖': 'Login filename already belongs to another account; overwrite rejected',
+    '账号缺少已确认的登录文件名，拒绝猜测写入目标': 'Account has no confirmed login filename; refusing to guess a write target',
+    '备份文件校验失败：uid 不匹配，已中止切换': 'Backup validation failed: uid mismatch; switch aborted',
+    // —— 第六批：会话/模型批量操作 + 头像 + 修补剩余整句 ——
+    '请先勾选要复制的会话': 'Select the sessions to copy first', '请先勾选要导出的会话': 'Select the sessions to export first', '请先勾选要删除的会话': 'Select the sessions to delete first',
+    '将加密导出': 'Export with encryption', '已导入': 'Imported', '已复制': 'Copied', '已删除': 'Deleted', '请选择目标账号': 'Select the target account', '加载账号失败:': 'Account loading failed:',
+    '会话将导入到「': 'Importing sessions into “', '会话将保留导出时的账号归属。': 'Sessions keep the account ownership from export.',
+    ' 个会话': ' session(s)', ' 个会话（已加密）': ' session(s) (encrypted)', ' 个会话及其本地消息附件。': ' session(s) and their local message attachments.', ' 个会话到…': ' session(s) to…', ' 个会话？': ' session(s)?',
+    ' 个模型': ' model(s)', ' 个当前模型': ' current model(s)', ' 个模型备份': ' model backup(s)',
+    '两个 WorkBuddy 客户端共用同一份模型配置，无需导入，切换客户端即可看到模型': 'Both WorkBuddy clients share one model config; no import needed, switch clients to see models',
+    '只导入当前不存在的模型，同名模型保留当前配置': 'Only import models that do not exist; same-name models keep the current config',
+    '未找到模型配置文件': 'Model config file not found', '模型已备份到「': 'Model backed up to “', '模型备份失败：': 'Model backup failed:',
+    '两个客户端共用同一份模型配置，无需导入': 'Both clients share one model config; no import needed',
+    '删除后会直接修改官方 models.json，已备份到「备选模型」的配置不会受影响。': 'Deleting directly modifies the official models.json; configs backed up under “Backup models” remain unaffected.',
+    '当前模型已删除': 'Current model deleted', '删除模型备份？': 'Delete model backup?',
+    '删除后无法恢复，但不会影响官方 models.json。': 'Cannot be restored after deletion, but the official models.json is unaffected.',
+    '删除模型备份失败：': 'Failed to delete model backup:', '头像预览': 'Avatar preview', '点击恢复官方头像': 'Click to restore the official avatar',
+    '未找到该账号已记录的登录文件名，拒绝猜测写入目标': 'No recorded login filename for this account; refusing to guess a write target',
+    '「': '“', '」': '”',
+    // —— 第七批：头像/主题/安装器/休眠等散落整句 ——
+    '上传图片替换左下角头像': 'Upload an image to replace the bottom-left avatar', '恢复 WorkBuddy 官方头像': 'Restore the official WorkBuddy avatar',
+    '复制选中快捷短语': 'Copy selected quick phrases',
+    '开启后 WorkBuddy 需要你决策时会用弹窗提问（写入全局自定义指令，所有会话生效）': 'When enabled, WorkBuddy asks with a dialog when your decision is needed (written to the global custom prompt; affects all sessions)',
+    '当前没有进行中的会话，无法开启「所有会话结束允许休眠」': 'No active sessions; cannot enable “Allow sleep when all sessions end”',
+    '进行中的会话': 'active session(s)', '预计剩余': 'Estimated remaining', ' 秒': ' seconds', ' 分': ' minutes',
+    '无法打开安装程序': 'Could not open the installer',
+    '安装程序已打开，请按提示退出 WorkBuddy 并完成安装。': 'The installer is open. Please quit WorkBuddy as prompted and finish installing.',
+    '停止旧服务…': 'Stopping old service…', '发现新版本，准备更新…': 'New version available; preparing to update…',
+    '已应用主题「': 'Theme applied: “', '已恢复官方头像': 'Restored the official avatar', '已应用官方头像': 'Applied the official avatar',
+    '头像已更新 ✓': 'Avatar updated ✓', '头像处理失败：': 'Avatar processing failed:',
+    '已开启：需要你决策时 WorkBuddy 会用弹窗提问（全局生效）': 'Enabled: WorkBuddy asks with a dialog when your decision is needed (applies globally)',
+    // —— 第八批：壁纸/授权/休眠/开启风险文案与时间相对词前导空格变体 ——
+    ' 分钟前': ' minutes ago', ' 小时前': ' hours ago', ' 天前': ' days ago',
+    'WorkBuddy 需要决策时可能改用文本询问': 'WorkBuddy may fall back to text prompts when a decision is needed',
+    '已关闭：WorkBuddy 需要决策时可能改用文本询问': 'Disabled: WorkBuddy falls back to text prompts when a decision is needed',
+    '已应用壁纸「': 'Wallpaper applied: “', '已删除当前壁纸（背景保留不变）': 'Current wallpaper deleted (background unchanged)',
+    '已在系统浏览器打开授权页，扫码确认后会自动切换到新账号...': 'Authorization page opened in your system browser; after scanning, it will switch to the new account automatically...',
+    '授权成功，但未获取到新账号 UID，请关闭后重试': 'Authorization succeeded, but the new account UID was not obtained; please close and retry',
+    '授权成功，正在切换到「': 'Authorization successful; switching to “', '已登录并切换到「': 'Logged in and switching to “',
+    '账号已授权，但自动切换失败：': 'Account authorized, but auto-switch failed:',
+    '上传壁纸失败': 'Wallpaper upload failed', '已添加并应用自定义壁纸': 'Custom wallpaper added and applied',
+    '开启「外写文件免确认」？': 'Enable “write outside sandbox without confirmation”?',
+    '开启后，npm、git、curl、python3 等命令可直接在本机执行，不再经过沙箱或逐次确认。': 'When enabled, commands like npm, git, curl, and python3 run directly on this machine without sandbox or per-command confirmation.',
+    '风险：命令执行不再受沙箱保护。': 'Risk: commands run without sandbox protection.',
+    '开启后，AI 批量删除文件时不再询问，文件会直接进入废纸篓/回收站，可恢复。': 'When enabled, bulk deletes by the AI skip prompts; files go to Trash and are recoverable.',
+    '彻底删除仍需你明确操作。': 'Permanent deletion still requires your explicit action.',
+    '开启后，wsl、reg、sc、schtasks 等系统命令可直接执行，不再经过确认或沙箱。': 'When enabled, system commands like wsl, reg, sc, schtasks run directly without confirmation or sandbox.',
+    '风险：可直接修改系统配置，风险最高。': 'Risk: can modify system config directly; highest risk.',
+    // —— 第九批：免打扰批量/发送结果兜底/控制器等 ——
+    '开启后，插件会自动点击出现的「允许」按钮，避免任务中断。': 'When enabled, the plugin auto-clicks “Allow” dialogs to avoid task interruptions.',
+    '风险：所有确认将失去人工把关。': 'Risk: confirmations lose human review.',
+    '将一次性开启下面所有开关：外写文件免确认、常用命令免确认、大批量删除免确认、系统级工具放行、弹窗自动点允许。开启后 AI 执行将不再打扰，所有删除仍先进废纸篓可恢复。': 'Enables all switches at once: write-outside-sandbox, common commands, bulk delete, system-level tools, and auto-allow dialogs. The AI then runs without interruptions; deletes still go to Trash first.',
+    '仅在你信任当前工作和本机时使用。': 'Only use when you trust the current work and this machine.',
+    '全部开启': 'Enable all', '已全部开启免打扰': 'All quiet-mode switches are on', '已全部关闭免打扰': 'All quiet-mode switches are off',
+    '批量设置失败:': 'Batch settings failed:',
+    '底层发送结果未确认，为避免重复消息已停止重试，请检查会话': 'Send result unconfirmed; stopped retrying to avoid duplicates; please check the session',
+    '未能确认自动发送结果，请检查会话；为避免重复消息，已停止重试': 'Could not confirm the auto-send result; please check the session; stopped retrying to avoid duplicates',
+    '会话控制器尚未就绪，稍后自动重试': 'Session controller not ready; will retry shortly',
+    '输入框非空，已放弃会话': 'Composer is not empty; session skipped',
+    '（未开启「会话异常中断」监控时无日志）': ' (no logs when the “interrupted session” monitor is off)',
+    '该会话暂无操作日志': 'No operation logs for this session yet',
+    // —— 第十批：快捷短语批量 + 休眠括号变体 ——
+    '请先勾选要复制的短语': 'Select the quick phrases to copy first', '请先勾选要导出的短语': 'Select the quick phrases to export first', '请先勾选要删除的短语': 'Select the quick phrases to delete first',
+    ' 条快捷短语': ' quick phrase(s)', ' 条快捷短语。': ' quick phrase(s).', ' 条快捷短语（已加密）': ' quick phrase(s) (encrypted)',
+    '输入导出时设置的密码；已有的相同短语会自动跳过。': 'Enter the password set for export; identical existing phrases are skipped automatically.',
+    '允许电脑休眠（系统默认）': 'Allow computer sleep (system default)', '持续禁止休眠（保持唤醒）': 'Keep awake (prevent sleep)',
+    // —— 第十一批：休眠模式说明整句 + 时间前导空格变体 ——
+    ' 分钟': ' minutes',
+    '所有会话结束允许休眠（暂禁休眠）': 'Allow sleep when all sessions end (sleep blocked)',
+    '休眠模式已切换为「': 'Sleep mode switched to “',
+    '所有进行中的会话已完成，已自动恢复「允许电脑休眠」': 'All active sessions finished; “Allow computer sleep” restored automatically',
+    '持续禁止休眠：电脑/显示器保持唤醒': 'Keep awake: computer and display stay awake',
+    '持续禁止休眠：仅阻止系统睡眠，显示器可黑屏（可能锁屏）': 'Keep awake: only system sleep is blocked; the display may turn off (screen lock possible)',
+    '所有会话结束允许休眠：任一会话回复中保持唤醒，全部结束后自动恢复': 'Allow sleep when all sessions end: stays awake while any session replies, then restores automatically',
+    '所有会话结束允许休眠：暂禁中，显示器可黑屏（可能锁屏）': 'Allow sleep when all sessions end: currently blocked; display may turn off (screen lock possible)',
+    // —— 第十二批：切换/删除断句模板 + ' 天' 时间变体 ——
+    ' 天': ' days',
+    '已切换到「': 'Switched to “', '再次点击确认切换': 'Click again to confirm switch', '再次点击确认切换为「': 'Click again to confirm switching to “',
+    '切换中…': 'Switching…', '已切换为「': 'Switched to “', '将永久删除「': 'Permanently delete “', '已永久删除「': 'Permanently deleted “',
+    // —— 第十三批：弹窗/登录方式/更新流/会话归档等二级页文案（扫描网修复后暴露）——
+    '确定删除这 {n} 条快捷短语吗？删除后不可恢复。': 'Delete these {n} quick phrases? This cannot be undone.',
+    '确定删除这条快捷短语吗？删除后不可恢复。': 'Delete this quick phrase? This cannot be undone.',
+    '（旧版文件可留空）': ' (may be left blank for older files)', '密码不能为空，请妥善保管。': 'Password cannot be empty; keep it safe.',
+    '展开': 'Expand', '共': 'Total', '条（': ' (', '备份': 'Backup',
+    '无可复制的目标账号（已排除会话所属账号）': 'No target accounts to copy to (the session owner account is excluded)',
+    '删除后会话将从列表中移除，该账号下的本地消息文件将被永久删除，此操作不可恢复。': 'The sessions are removed from the list and their local message files are permanently deleted; this cannot be undone.',
+    '以「不让当前账号登录身份过期」的方式切到登录页，可以登录新账号，也可以切回已登录账号': 'Goes to the login page without letting the current account expire; log in a new account or switch back to an existing one.',
+    '不退出 WorkBuddy，在浏览器完成授权后新账号自动加入列表': 'Keeps WorkBuddy running; after authorizing in the browser, the new account is added to the list automatically.',
+    '正在发起授权…': 'Starting authorization…', '再想想': 'Not now',
+    '如果未完成，继续执行；已完成则回复"已完成"': 'If unfinished, continue; if finished, reply “Finished”.',
+    '暂无可用积分': 'No credits available', '今日已使用': 'Used today', '不限量': 'Unlimited',
+    '正在': '', '安装包': 'installer package', '归档': 'archive', '重复': 'duplicate', '选择': 'selection', '读取': 'read', '尚未': 'not yet',
+    '已就绪': 'ready', '完整性': 'integrity', '落盘': 'write to disk', '校验安装包…': 'Verifying installer package…', '正在下载安装包…': 'Downloading installer package…',
+    '下载安装包失败': 'Downloading the installer package failed', '安装包校验失败，已删除损坏包': 'Installer package verification failed; the damaged package was deleted',
+    '安装包已就绪': 'Installer package ready', '安装包已就绪（校验通过）': 'Installer package ready (verified)', '安装包内部 daemon 版本不可读': 'Cannot read the installer package daemon version',
+    '安装包应用版本不可读': 'Cannot read the installer package app version', '安装包文件不可读:': 'Installer package file unreadable:',
+    '安装包为空或不是普通文件': 'Installer package is empty or not a regular file', 'DMG 预检执行失败:': 'DMG pre-check failed:',
+    '下载内容不是有效 DMG:': 'Downloaded content is not a valid DMG:',
+    '安装包 SHA-256 读取失败:': 'Failed to read the installer package SHA-256:', '已启动更新，正在替换文件并自动重启，请稍候…': 'Update started; replacing files and restarting automatically, please wait…',
+    '尚未下载完成': 'Download not finished yet', '缺少已下载的新版本安装包': 'Missing the downloaded new version installer package',
+    '此历史版本只提供 ZIP，无法使用新的可见安装流程；请从发布页下载 Setup.exe': 'This older version only provides a ZIP; the visible install flow is unavailable, download Setup.exe from the release page instead',
+    '安装包名称与目标 profile 或版本不一致': 'Installer package name does not match the target profile or version',
+    '缺少安装包（未找到已下载的 dmg）': 'Missing installer package (downloaded dmg not found)', '安装包版本校验失败': 'Installer package version verification failed',
+    '官方接口未返回 uid，无法保存账号': 'The official API did not return a uid; account cannot be saved',
+    '未知开关:': 'Unknown switch:', '快捷短语选择必须是数组': 'Quick phrase selection must be an array',
+    '单次最多导入 {n} 个会话': 'Import at most {n} sessions at a time', '单次最多处理 {n} 条快捷短语': 'Process at most {n} quick phrases at a time',
+    '快捷短语标识不能为空': 'Quick phrase id cannot be empty', '未选择快捷短语': 'No quick phrase selected', '没有可导出的快捷短语': 'No quick phrases to export',
+    '没有可导出的会话': 'No sessions to export', '未选择会话': 'No session selected', '导入文件中没有会话数据': 'No session data found in the import file',
+    '无效会话记录': 'Invalid session record', '没有可导入的会话': 'No sessions to import', '会话文件目标不在 managed parent 内': 'Session file target is outside the managed parent',
+    '无法确认 WorkBuddy 已退出': 'Could not confirm WorkBuddy has quit',
+    '未找到 WorkBuddy 可执行文件，无法验证运行中的进程': 'WorkBuddy executable not found; cannot verify the running process',
+    // —— 第十四批：daemon 更新流/归档/导出/账号/壁纸收口 ——
+    '正在检查更新…': 'Checking for updates…', '无可用安装包': 'No installer package available',
+    '发布未提供可信的 SHA-256，已停止更新': 'The release does not provide a trusted SHA-256; update stopped',
+    '安装包缺少完整性校验，已停止更新': 'Installer package lacks integrity verification; update stopped',
+    '安装程序已打开，请按提示完成安装': 'The installer is open. Complete the installation as prompted.',
+    '未找到 WorkBuddy.exe（可用环境变量 WBSWITCH_WORKBUDDY_BIN 指定）': 'WorkBuddy.exe not found (can be set via the WBSWITCH_WORKBUDDY_BIN environment variable)',
+    '注入后未检测到 WorkDaddy 组件（请检查 WorkBuddy 页面是否正常加载）': 'WorkDaddy not detected after injection (check whether the WorkBuddy page loaded correctly)',
+    'CodeBuddy 会话库读取失败:': 'CodeBuddy session DB read failed:',
+    '拒绝在文件系统根目录创建会话空间': 'Refusing to create a session workspace at the filesystem root',
+    '无效的会话 ID': 'Invalid session ID', '无效的会话文件目标': 'Invalid session file target',
+    '会话附件文件过多，无法导出': 'Too many session attachment files; cannot export', '会话附件超过 256 MB，无法导出': 'Session attachments exceed 256 MB; cannot export',
+    '会话归档包含无效 ID': 'Session archive contains an invalid ID', '会话归档包含无效附件': 'Session archive contains an invalid attachment',
+    '会话归档附件文件过多': 'Session archive has too many attachment files', '会话归档包含重复附件路径': 'Session archive contains duplicate attachment paths',
+    '会话归档附件超过 256 MB': 'Session archive attachments exceed 256 MB', '会话归档缺少有效的账号归属': 'Session archive is missing a valid account owner',
+    '首次会话播种持久化失败': 'Initial session seeding failed to persist',
+    '导入文件中没有快捷短语': 'No quick phrases found in the import file', '单次最多导入 {n} 条快捷短语': 'Import at most {n} quick phrases at a time',
+    '没有可导入的快捷短语': 'No quick phrases to import', '暂存记录不存在:': 'Stashed record not found:', '暂存内容为空': 'Stash content is empty',
+    '默认（浅色）': 'Default (light)', '对话持续回复中（等待 {n} 秒仍未空闲），已取消发送，请稍后再试': 'The conversation is still replying (not idle after {n}s); send cancelled, please retry later',
+    '导出数据不完整或已损坏': 'Export data is incomplete or corrupted', '文件不是有效的导出 JSON': 'The file is not a valid export JSON',
+    '不是 WorkDaddy 的账号导出文件': 'Not a WorkDaddy account export file', '导入文件中没有账号数据': 'No account data found in the import file',
+    '未读取到有效内容，请选择导出文件': 'No valid content read; please choose an export file', '密码不能超过 1024 个字符': 'Password cannot exceed 1024 characters',
+    '当前登录文件无法唯一确认，已拒绝退出登录': 'The current login file cannot be uniquely identified; logout rejected',
+    '删除登录文件后仍然存在': 'The login file still exists after deletion',
+    '诊断设置由 WORKDADDY_TELEMETRY 环境变量控制': 'Diagnostics are controlled by the WORKDADDY_TELEMETRY environment variable',
+    '保存遥测设置失败:': 'Failed to save telemetry settings:',
+    '账号选择必须是数组': 'Account selection must be an array', '选择的账号过多': 'Too many accounts selected', '请至少选择一个账号': 'Select at least one account',
+    '仅支持删除自定义壁纸（custom-*.webp）': 'Only custom wallpapers (custom-*.webp) can be deleted', '壁纸不存在:': 'Wallpaper not found:',
+    '蒙版已保存但应用失败:': 'Overlay saved but failed to apply:', '模糊设置已保存但应用失败:': 'Blur setting saved but failed to apply:',
+    '无法清空输入框': 'Could not clear the composer', '未找到发送按钮': 'Send button not found', '未找到操作栏': 'Toolbar not found',
+    // —— 第十五批：面板入口描述与连接状态 ——
+    '面板入口：': 'Panel entry:', '右下角机器人按钮': 'Bottom-right robot button', '已连接': 'Connected', '未连接': 'Not connected'
+  };
+  function wbsSystemLanguage() {
+    var value = String((navigator && (navigator.language || navigator.userLanguage)) || '').toLowerCase();
+    return value.indexOf('zh') === 0 ? 'zh' : 'en';
+  }
+  function wbsNormalizeLanguage(value) { return value === 'zh' ? 'zh' : 'en'; }
+  // 翻译匹配器：普通条目直接按 key 匹配；模板条目（key 含 {name}）编译为正则。
+  // 相同语义的变体（如带/不带尾随空格）均收录；扫描时按位置取「最长优先匹配」，
+  // 保证整句模板覆盖短词，避免短词把长句撕成中英混合。
+  var wbsI18nMatchers = null;
+  function escapeRegExp(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+  function wbsI18nBuildMatchers() {
+    var entries = [];
+    var seen = {};
+    var raw = Object.keys(WBS_I18N_EN);
+    for (var i = 0; i < raw.length; i++) {
+      var key = raw[i];
+      // 冒号归一化 + 去尾随空格：同一文案的 '：'/':'、带/不带尾空格变体按同一 key 处理，
+      // 保留先出现的条目（其翻译值通常带尾随空格，配合消费逻辑输出整齐）。
+      var normKey = key.replace(/：/g, ':').replace(/\s+$/, '');
+      if (seen[normKey]) continue;
+      seen[normKey] = true;
+      var names = [];
+      var reSource = '';
+      var cursor = 0;
+      var token = null;
+      var tokenRe = /\{([a-zA-Z0-9_]+)\}/g;
+      var hasPlaceholder = false;
+      while ((token = tokenRe.exec(normKey)) !== null) {
+        hasPlaceholder = true;
+        reSource += escapeRegExp(normKey.slice(cursor, token.index)) + '([\\s\\S]*?)';
+        names.push(token[1]);
+        cursor = token.index + token[0].length;
+      }
+      reSource += escapeRegExp(normKey.slice(cursor));
+      entries.push({
+        key: key,
+        normKey: normKey,
+        hasPlaceholder: hasPlaceholder,
+        re: hasPlaceholder ? new RegExp(reSource) : null,
+        translation: WBS_I18N_EN[key],
+        names: names,
+      });
+    }
+    entries.sort(function (a, b) { return b.normKey.length - a.normKey.length; });
+    wbsI18nMatchers = entries;
+  }
+
+  function wbsTranslateString(value, language) {
+    var source = String(value == null ? '' : value);
+    if (language !== 'en') return source;
+    if (!/[\u4e00-\u9fff]/.test(source)) return source;
+    if (!wbsI18nMatchers) wbsI18nBuildMatchers();
+    // 与 key 同样做冒号归一化，保证全角/半角变体都能命中；长度不变，索引可直接复用。
+    var nsource = source.replace(/：/g, ':');
+    var out = '';
+    var pos = 0;
+    var len = source.length;
+    while (pos < len) {
+      var ch = nsource.charAt(pos);
+      var best = null;
+      // 只尝试以当前字符开头的条目（key 原文总是从此字符开始，含空格/符号开头项）
+      for (var i = 0; i < wbsI18nMatchers.length; i++) {
+        var entry = wbsI18nMatchers[i];
+        if (entry.normKey.charAt(0) !== ch) continue;
+        if (!entry.hasPlaceholder) {
+          if (nsource.indexOf(entry.normKey, pos) === pos) { best = entry; break; }
+          continue;
+        }
+        var re = entry.re;
+        re.lastIndex = 0;
+        var m = re.exec(nsource.slice(pos));
+        if (m && m.index === 0) { best = entry; best.capture = m; break; }
+      }
+      if (best) {
+        if (best.hasPlaceholder) {
+          var args = best.capture.slice(1);
+          out += best.translation.replace(/\{([a-zA-Z0-9_]+)\}/g, function (_, name) {
+            var idx = best.names.indexOf(name);
+            return idx >= 0 && args[idx] !== undefined ? args[idx] : '';
+          });
+          pos += best.capture[0].length;
+        } else {
+          out += best.translation;
+          var advance = best.normKey.length;
+          // 前缀 key 尾随空格已被 trim：若原输入紧跟一个空格则一并消费，
+          // 让 'xx: y' 与 'xx:y' 输出一致的 'xx: y' 样式，避免粘连或双空格。
+          if (nsource.charAt(pos + advance) === ' ') advance += 1;
+          pos += advance;
+        }
+      } else {
+        out += ch;
+        pos++;
+      }
+    }
+    return out;
+  }
+
   // ===== 全局错误钩子：捕获渲染进程不可捕获的 error / unhandledrejection，把完整消息+栈
   // 打到 daemon 日志。渲染进程级崩溃（如 An object could not be cloned）虽非 try/catch 能拦，
   // 但很多是经 promise/microtask 抛出的可拦异常——这里统一兜住并留痕。
@@ -577,6 +914,13 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
   // 当前注入的 daemon 版本号（由 daemon.js 注入时把 __WBS_VERSION__ 替换为 DAEMON_VERSION）
   // 「关于」tab 直接展示，升级 daemon 后这里自动同步
   var WBS_VERSION = '__WBS_VERSION__';
+  var WBS_LANGUAGE = (function () {
+    try {
+      var saved = localStorage.getItem(WBS_LANGUAGE_KEY);
+      if (saved === 'zh' || saved === 'en') return saved;
+    } catch (_) {}
+    return wbsSystemLanguage();
+  })();
 
   // 纯图标 SVG（stroke 跟随按钮 currentColor）
   var SWITCH_SVG =
@@ -967,6 +1311,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       var t = el('div', 'wbs-toast' + (isErr ? ' err' : ''));
       t.textContent = String(msg == null ? '' : msg);
       (targetRoot || document.body).appendChild(t);
+      applyI18n(t);
       setBuildTimeout(function () {
         t.classList.add('out');
         setBuildTimeout(function () { t.remove(); }, 300);
@@ -1212,6 +1557,85 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     });
 
     // 根节点（面板保持右下角，按钮拖动后水平回到右侧）
+    var i18nTextSources = typeof WeakMap !== 'undefined' ? new WeakMap() : null;
+    var i18nAttrSources = typeof WeakMap !== 'undefined' ? new WeakMap() : null;
+    var i18nApplying = false;
+    function applyI18n(scope) {
+      if (!scope || !scope.ownerDocument) return;
+      var isSkipped = function (el) {
+        // data-wbs-i18n-skip 子树不参与翻译（如语言切换按钮需固定显示 中文/English）
+        return !!(el && el.closest && el.closest('[data-wbs-i18n-skip]'));
+      };
+      i18nApplying = true;
+      try {
+        var nodeFilter = (scope.ownerDocument.defaultView && scope.ownerDocument.defaultView.NodeFilter) || { SHOW_TEXT: 4 };
+        var walker = scope.ownerDocument.createTreeWalker(scope, nodeFilter.SHOW_TEXT);
+        var node;
+        while ((node = walker.nextNode())) {
+          if (!node.parentNode || /^(SCRIPT|STYLE)$/.test(node.parentNode.nodeName)) continue;
+          if (isSkipped(node.parentNode)) continue;
+          var current = String(node.nodeValue || '');
+          var previous = i18nTextSources && i18nTextSources.get(node);
+          var source = previous && (current === previous.last || current === previous.translated) ? previous.source : current;
+          var translated = wbsTranslateString(source, WBS_LANGUAGE);
+          if (i18nTextSources) i18nTextSources.set(node, { source: source, translated: translated, last: translated });
+          if (current !== translated) node.nodeValue = translated;
+        }
+        var elements = scope.querySelectorAll ? scope.querySelectorAll('*') : [];
+        var processElement = function (element) {
+          if (!element || !element.hasAttribute) return;
+          if (isSkipped(element) || (element.closest && element.closest('[data-wbs-i18n-skip]'))) return;
+          ['title', 'aria-label', 'placeholder', 'alt', 'data-tip'].forEach(function (name) {
+            if (!element.hasAttribute(name)) return;
+            var currentAttr = element.getAttribute(name) || '';
+            var attrs = i18nAttrSources && i18nAttrSources.get(element);
+            var previousAttr = attrs && attrs[name];
+            var sourceAttr = previousAttr && (currentAttr === previousAttr.last || currentAttr === previousAttr.translated) ? previousAttr.source : currentAttr;
+            var translatedAttr = wbsTranslateString(sourceAttr, WBS_LANGUAGE);
+            if (i18nAttrSources) {
+              attrs = attrs || {};
+              attrs[name] = { source: sourceAttr, translated: translatedAttr, last: translatedAttr };
+              i18nAttrSources.set(element, attrs);
+            }
+            if (currentAttr !== translatedAttr) element.setAttribute(name, translatedAttr);
+          });
+        };
+        if (scope.nodeType === 1 && !isSkipped(scope)) processElement(scope);
+        else if (scope.nodeType === 1 && isSkipped(scope)) elements = [];
+        for (var i = 0; i < elements.length; i++) processElement(elements[i]);
+      } finally { i18nApplying = false; }
+    }
+    function setLanguage(value) {
+      WBS_LANGUAGE = wbsNormalizeLanguage(value);
+      try { localStorage.setItem(WBS_LANGUAGE_KEY, WBS_LANGUAGE); } catch (_) {}
+      try {
+        document.documentElement.setAttribute('data-wbs-language', WBS_LANGUAGE);
+        document.documentElement.setAttribute('lang', WBS_LANGUAGE === 'zh' ? 'zh-CN' : 'en');
+      } catch (_) {}
+      applyInjectedI18n();
+      // 关于页 Segmented 控件状态同步（存在时）
+      var langSeg = root && root.querySelector('.wbs-lang-seg');
+      if (langSeg) {
+        var btns = langSeg.querySelectorAll('.wbs-sess-seg-btn');
+        for (var bi = 0; bi < btns.length; bi++) {
+          var active = btns[bi].getAttribute('data-wbs-lang') === WBS_LANGUAGE;
+          btns[bi].classList.toggle('active', active);
+          btns[bi].setAttribute('aria-pressed', active ? 'true' : 'false');
+        }
+      }
+    }
+    function applyInjectedI18n() {
+      applyI18n(root);
+      var nodes = document.querySelectorAll('.wbs-stash-inline,.wbs-selection-quote-btn,.wbs-queue-tag,.wbs-message-nav-root');
+      for (var i = 0; i < nodes.length; i++) applyI18n(nodes[i]);
+    }
+    window.__wbsSetLanguage = setLanguage;
+    registerDisposer(function () {
+      if (window.__wbsSetLanguage === setLanguage) {
+        try { delete window.__wbsSetLanguage; } catch (_) { window.__wbsSetLanguage = null; }
+      }
+    });
+
     var root = el('div', 'wbs-root');
     root.setAttribute('data-wbs-profile', PROFILE_ID);
     if (!CAPS.theme) root.classList.add('wbs-no-theme');
@@ -1265,6 +1689,24 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       '</div>',
     ].join('');
     document.body.appendChild(root);
+    try {
+      document.documentElement.setAttribute('data-wbs-language', WBS_LANGUAGE);
+      document.documentElement.setAttribute('lang', WBS_LANGUAGE === 'zh' ? 'zh-CN' : 'en');
+    } catch (_) {}
+    var i18nObserver = null;
+    if (typeof MutationObserver !== 'undefined') {
+      i18nObserver = new MutationObserver(function (records) {
+        if (i18nApplying) return;
+        for (var ri = 0; ri < records.length; ri++) {
+          var target = records[ri].target;
+          var host = target && target.nodeType === 1 ? target : (target && target.parentNode);
+          if (host && host.closest && host.closest('.wbs-root') === root) applyI18n(host);
+        }
+      });
+      i18nObserver.observe(root, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ['title', 'aria-label', 'placeholder', 'alt', 'data-tip'] });
+      registerDisposer(function () { if (i18nObserver) i18nObserver.disconnect(); i18nObserver = null; });
+    }
+    applyI18n(root);
 
     // 不同客户端只开放明确支持的能力；保留统一面板结构可避免模式切换时布局抖动。
     // 主题能力由 profile capabilities 统一控制，两个 WorkBuddy 客户端均可使用。
@@ -1301,6 +1743,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     stashBtn.setAttribute('tabindex', '0');
     stashBtn.title = '暂存提示词';
     stashBtn.innerHTML = '<span class="wbs-stash-ico">' + STASH_SVG + '</span><span class="wbs-stash-txt">暂存提示词</span>';
+    applyI18n(stashBtn);
     // 防输入框失焦：点击按钮时不把焦点从输入框抢走（退格/打字持续有效）
     stashBtn.addEventListener('mousedown', function (e) { e.preventDefault(); });
     if (!CAPS.stashPrompt) stashBtn.style.display = 'none';
@@ -1322,6 +1765,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       '</div>' +
       '</div>' +
       '</div>';
+    applyI18n(exploreBtn);
     var exploreSendTxt = exploreBtn.querySelector('.wbs-explore-send-txt');
     if (exploreSendTxt) {
       exploreSendTxt.addEventListener('click', function (e) {
@@ -1540,6 +1984,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         selectionQuoteButton.setAttribute('aria-label', '引用文本');
         selectionQuoteButton.textContent = '引用文本';
         document.body.appendChild(selectionQuoteButton);
+        applyI18n(selectionQuoteButton);
         listen(selectionQuoteButton, 'pointerdown', function (event) {
           if (event.preventDefault) event.preventDefault();
           if (event.stopPropagation) event.stopPropagation();
@@ -3038,6 +3483,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
               '<path d="M2.53 2.53A2.25 2.25 0 0 1 4.12 2h6.13c.6 0 1.17.24 1.59.66l9.5 9.5a2.25 2.25 0 0 1 0 3.18l-5.4 5.4a2.25 2.25 0 0 1-3.18 0l-9.5-9.5a2.25 2.25 0 0 1-.66-1.59V4.12c0-.6.24-1.17.66-1.59zM7.06 8.56a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3z"/></svg>' +
               '<span>暂存提示词</span>';
             actions.insertBefore(tag, actions.firstChild);
+            applyI18n(tag);
           }
           // data-wbs-stash 标记：禁拖（dragstart 捕获拦截）+ 隐藏拖拽图标（CSS）。data 属性 React 不管理，幂等设置安全
           it.setAttribute('data-wbs-stash', '1');
@@ -3799,6 +4245,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       if (name === 'enhance' && enhancePane && !enhancePane.dataset.built) buildEnhancePane();
       if (name === 'pc' && pcPane && !pcPane.dataset.built) buildPcPane();
       if (name === 'about' && aboutPane && !aboutPane.dataset.built) buildAboutPane();
+      if (name === 'settings' && settingsPane && !settingsPane.dataset.built) buildSettingsPane();
     }
     var tabBtns = root.querySelectorAll('.wbs-tab');
     for (var ti = 0; ti < tabBtns.length; ti++) {
@@ -4800,7 +5247,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         '<button class="wbs-theme-opt active" type="button" data-theme="default">默认</button>' +
         '<button class="wbs-theme-opt" type="button" data-theme="eye-care">护眼绿</button>' +
         '<button class="wbs-theme-opt" type="button" data-theme="cyber-purple">赛博紫</button>' +
-        '<button class="wbs-theme-opt" type="button" data-theme="nebula">' + WBS_BRAND + ' 主题</button>' +
+        '<button class="wbs-theme-opt" type="button" data-theme="nebula">毛玻璃</button>' +
         '</div>' +
         '</div>' +
         '<div class="wbs-pcard wbs-avatar-card">' +
@@ -5026,6 +5473,15 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
             '</a>' +
           '</div>' +
         '</div>' +
+        '<div class="wbs-pcard wbs-settings-card wbs-language-card">' +
+          '<div class="wbs-settings-row">' +
+            '<span class="wbs-pcard-title">语言</span>' +
+            '<div class="wbs-theme-seg wbs-lang-seg" role="group" aria-label="设置语言" data-wbs-i18n-skip="1">' +
+              '<button type="button" class="wbs-sess-seg-btn" data-wbs-lang="zh" aria-pressed="false">中文</button>' +
+              '<button type="button" class="wbs-sess-seg-btn" data-wbs-lang="en" aria-pressed="false">English</button>' +
+            '</div>' +
+          '</div>' +
+        '</div>' +
         '<div class="wbs-pcard wbs-telemetry-card" id="wbs-telemetry-card">' +
           '<div class="wbs-telemetry-head">' +
             '<div class="wbs-telemetry-label"><span class="wbs-pcard-title">发送错误诊断</span><span class="wbs-telemetry-help" tabindex="0" aria-label="查看错误诊断说明"><svg viewBox="0 0 20 20" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="10" cy="10" r="8"/><path d="M8.4 7.6a1.8 1.8 0 1 1 2.8 1.45c-.75.48-1.2.85-1.2 1.75M10 13.7v.1"/></svg><span class="wbs-telemetry-tooltip" role="tooltip">仅发送经过脱敏、截断的版本、系统和错误信息，不包含账号、会话内容、Token 或 API Key；可随时关闭。</span></span></div>' +
@@ -5065,6 +5521,28 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         var issues = aboutPane.querySelector('#wbs-about-issues');
         if (issues && d.repository) issues.href = d.repository.replace(/\/$/, '') + '/issues';
       }).catch(function () {});
+      // 语言切换 Segmented 控件：随关于页构建，与主题/会话页分段外观一致
+      var langSeg = aboutPane.querySelector('.wbs-lang-seg');
+      if (langSeg) {
+        function syncLangSeg(lang) {
+          var btns = langSeg.querySelectorAll('.wbs-sess-seg-btn');
+          for (var bi = 0; bi < btns.length; bi++) {
+            var active = btns[bi].getAttribute('data-wbs-lang') === lang;
+            btns[bi].classList.toggle('active', active);
+            btns[bi].setAttribute('aria-pressed', active ? 'true' : 'false');
+          }
+        }
+        syncLangSeg(WBS_LANGUAGE);
+        langSeg.addEventListener('click', function (ev) {
+          var btn = ev.target && ev.target.closest ? ev.target.closest('.wbs-sess-seg-btn') : null;
+          if (!btn || !langSeg.contains(btn)) return;
+          var next = btn.getAttribute('data-wbs-lang');
+          if (next !== 'zh' && next !== 'en') return;
+          setLanguage(next);
+          syncLangSeg(next);
+          toast('语言设置已更新', false, root);
+        });
+      }
       wireTelemetrySettings();
       acRenderMonitorLogModal();
       // 自动更新：检查 + 红点 + 更新卡片
@@ -6344,6 +6822,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     var ndScanTimer = null;
     var ndScanRoots = [];
     var ndEnabledCount = 0;
+    var ndSyncTimer = null; // 免打扰状态周期同步（确保外部/其它会话改动后观察者自动收敛）
     // 开关定义：id/配置名/确认弹窗文案（开启时弹窗，红字确认）
     var ND_DEFS = [
       {
@@ -8698,7 +9177,10 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     }
 
     function creditBlockHtml(credits, segments, account) {
-      if (isIdentityExpired(account)) return '';
+      // 登录身份过期：展示可诊断文案（token 被服务端拒绝时不伪造积分，也不整格隐藏）
+      if (isIdentityExpired(account) || (account && account.creditExpired)) {
+        return '<div class="wbs-credit-block"><div class="wbs-credit-line"><div class="wbs-credit-left"><span class="wbs-lbl">剩余</span><span class="wbs-credit-na">登录身份过期</span></div></div></div>';
+      }
       var usage = accountStatusTagsHtml(account);
       // 企业账号不限量（官方 getEnterpriseUsage 返回 limitNum === -1）
       if (account && account.creditUnlimited) {
@@ -8845,7 +9327,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
           '<div class="wbs-mi wbs-phone-cell' + (isUinMode ? ' wbs-uin-cell' : '') + '"><span class="wbs-lbl">' + idLbl + '</span><span class="wbs-val">' + idVal + '</span></div>' +
           '<div class="wbs-mi wbs-token-cell"><span class="wbs-lbl">有效期至</span><span class="wbs-val' + (ts.warn ? ' wbs-warn' : '') + '">' + esc(ts.label) + '</span></div>' +
           '</div>' +
-          '<div class="wbs-credit-cell' + (isIdentityExpired(a) ? ' wbs-credit-hidden' : '') + '">' + creditBlockHtml(credits, a.creditSegments, a) + '</div>' +
+          '<div class="wbs-credit-cell">' + creditBlockHtml(credits, a.creditSegments, a) + '</div>' +
           '</div>';
         list.appendChild(card);
       });
@@ -9008,10 +9490,11 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         }
         if (cell) {
           var hidden = isIdentityExpired(account);
-          cell.classList.toggle('wbs-credit-hidden', hidden);
-          if (hidden) cell.innerHTML = '';
+          // 不再整格隐藏/清空：过期时由 creditBlockHtml 展示「登录身份过期」诊断文案
+          cell.classList.remove('wbs-credit-hidden');
+          cell.innerHTML = creditBlockHtml(account.credits, account.creditSegments, account);
           var switchBtn = cards[i].querySelector('.wbs-acc-switch');
-          if (switchBtn) switchBtn.style.display = hidden ? 'none' : '';
+          if (switchBtn) switchBtn.style.display = hidden || account.creditExpired ? 'none' : '';
         }
       }
     }
@@ -9110,13 +9593,21 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
             }
             updateCreditCell(a.uid, credits, segments);
           })
-          .catch(function () {
+          .catch(function (e) {
             if (runId !== state.creditRunId) return;
+            // daemon 对 token 失效返回结构化 401 {expired:true}：标记为登录身份过期，
+            // 卡片上展示可诊断文案而不是空白或「-」（同样不弹 toast，避免面板抖动）。
+            var accountExpired = !!(e && e.payload && e.payload.expired);
             for (var i = 0; i < state.accounts.length; i++) {
-              if (state.accounts[i].uid === a.uid) { state.accounts[i].credits = null; state.accounts[i].creditSegments = []; state.accounts[i].creditUnlimited = false; break; }
+              if (state.accounts[i].uid === a.uid) {
+                state.accounts[i].credits = null;
+                state.accounts[i].creditSegments = [];
+                state.accounts[i].creditUnlimited = false;
+                state.accounts[i].creditExpired = accountExpired;
+                break;
+              }
             }
             updateCreditCell(a.uid, null);
-            // 静默失败，不弹 toast；避免面板抖动
           })
           .finally(function () {
             if (runId !== state.creditRunId) return;
@@ -9143,8 +9634,10 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         if (state.accounts[j].uid === uid) { account = state.accounts[j]; break; }
       }
       var hidden = isIdentityExpired(account);
-      elCredit.classList.toggle('wbs-credit-hidden', hidden);
-      elCredit.innerHTML = hidden ? '' : creditBlockHtml(credits, segments || [], account);
+      elCredit.classList.remove('wbs-credit-hidden');
+      elCredit.innerHTML = creditBlockHtml(credits, segments || [], account);
+      var cellSwitch = card.querySelector('.wbs-acc-switch');
+      if (cellSwitch) cellSwitch.style.display = hidden || (account && account.creditExpired) ? 'none' : '';
     }
 
     // ===== 调试：暴露内部状态到 window.__wbsDiag（控制台可调） =====
@@ -9242,6 +9735,9 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     sleepSyncTimer = setBuildInterval(syncSleepState, 30000);
     // 免打扰：启动即同步开关状态（若「弹窗自动点允许」已开启则挂上观察者，无需打开增强页）
     setBuildTimeout(syncNoDisturb, 1200);
+    // 免打扰周期同步（30s）：开关可能被其它会话/外部改动，周期拉取保证
+    // 「弹窗自动点允许」观察者及时启动/停止，避免弹窗出现后不被自动允许。
+    if (!ndSyncTimer) ndSyncTimer = setBuildInterval(syncNoDisturb, 30000);
     // 更新顶部红色角标：build 完成、send/editor/stash 状态（200ms 后写，等 syncStash 节流跑完）
     try {
       var badgeTimer = setBuildTimeout(function () {
@@ -9343,7 +9839,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '.wbs-root{position:fixed;right:22px;bottom:22px;z-index:2147483647;font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;font-size:13px;color:#1f1f1f;-webkit-font-smoothing:antialiased}',
     '.wbs-root.wbs-no-stash .wbs-stash-inline{display:none !important}',
     /* 会话消息索引：跟随官方消息视口定位，tooltip 使用主题感知的毛玻璃表面 */
-    '.wbs-message-nav-root{position:fixed;width:24px;z-index:2147483645;pointer-events:none;user-select:none;-webkit-user-select:none;font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;color:var(--wb-color-text-primary,#1f1f1f)}',
+    '.wbs-message-nav-root{position:fixed;width:24px;z-index:1000;pointer-events:none;user-select:none;-webkit-user-select:none;font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;color:var(--wb-color-text-primary,#1f1f1f)}',
     '.wbs-message-nav-rail{display:flex;width:24px;height:100%;box-sizing:border-box;flex-direction:column;align-items:center;justify-content:flex-start;gap:0;overflow:hidden;padding:6px 0;border:1px solid transparent;border-radius:8px;background:color-mix(in srgb,var(--wb-bg-popover,#fff) 16%,transparent);box-shadow:none;backdrop-filter:none;-webkit-backdrop-filter:none;pointer-events:auto;touch-action:none;cursor:pointer;scrollbar-width:none;transition:background-color .18s ease,border-color .18s ease,box-shadow .18s ease,backdrop-filter .18s ease}',
     '.wbs-message-nav-rail:hover,.wbs-message-nav-rail:focus-within{border-color:color-mix(in srgb,var(--wb-border-subtle,#d9dadd) 72%,transparent);background:color-mix(in srgb,var(--wb-bg-popover,#fff) 48%,transparent);box-shadow:0 5px 18px rgba(24,28,36,.10);backdrop-filter:blur(14px) saturate(1.12);-webkit-backdrop-filter:blur(14px) saturate(1.12)}',
     '.wbs-message-nav-rail::-webkit-scrollbar{display:none}',
@@ -9428,6 +9924,16 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     /* 面板：毛玻璃主题（半透明 + 模糊，背景图透出） */
     '.wbs-panel{position:absolute;right:0;bottom:0;width:520px;max-width:94vw;height:650px;max-height:650px;background:color-mix(in srgb,var(--wb-bg-popover,#fff) 72%,transparent);border:1px solid var(--wb-border-subtle,#f0f0f0);border-radius:18px;box-shadow:0 20px 60px rgba(0,0,0,.28);display:none;flex-direction:column;overflow:hidden;backdrop-filter:blur(28px) saturate(1.25);-webkit-backdrop-filter:blur(28px) saturate(1.25)}',
     '.wbs-panel.show{display:flex}',
+    // 英文文案更长：EN 模式面板宽度放大 1.35 倍（520px -> 702px），配合 label 自适应避免挤压
+    'html[data-wbs-language="en"] .wbs-panel{width:702px}',
+    // EN 下固定宽度 label 容易溢出：phone/credit/token 列的 label 释放为自适应宽度
+    'html[data-wbs-language="en"] .wbs-phone-cell .wbs-lbl,html[data-wbs-language="en"] .wbs-credit-left .wbs-lbl{width:auto;max-width:84px}',
+    'html[data-wbs-language="en"] .wbs-token-cell .wbs-lbl{width:auto;max-width:96px}',
+    // 语言切换 Segmented：复用主题/会话页的分段外观（theme-seg 容器 + sess-seg-btn 按钮）
+    '.wbs-language-card .wbs-settings-row{justify-content:space-between}',
+    '.wbs-language-card .wbs-pcard-title{margin-bottom:0}',
+    '.wbs-lang-seg{flex:0 0 auto;width:auto;margin-bottom:0}',
+    '.wbs-lang-seg .wbs-sess-seg-btn{padding:6px 14px}',
     '.wbs-head{display:flex;align-items:center;justify-content:space-between;padding:16px 18px 12px;border-bottom:1px solid var(--wb-border-subtle,#f0f0f0);background:color-mix(in srgb,var(--wb-bg-secondary,#fff) 30%,transparent)}',
     '.wbs-head-left{display:flex;align-items:center;gap:9px;min-width:0}',
     '.wbs-title{font-size:16px;font-weight:700;color:var(--wb-color-text-primary,#1f1f1f);letter-spacing:.3px;cursor:pointer;user-select:none}',
@@ -9577,6 +10083,10 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '.wbs-stash-inline .wbs-stash-txt{opacity:0;max-width:0;overflow:hidden;white-space:nowrap;font-size:13px;font-weight:500;margin-left:0;transition:opacity .2s,max-width .25s,margin-left .25s}',
     '.wbs-stash-inline:hover{width:113px;border-radius:40px;padding-right:5px}',
     '.wbs-stash-inline:hover .wbs-stash-txt{opacity:1;max-width:76px;margin-left:7px}',
+    // EN 文案更长（Stash prompt / Quote text）：加宽展开胶囊与文案上限，避免 "prompt" 截断；
+    // 宽度按 icon(16)+gap(7)+文字(~90)+padding(13) 收紧，不留过多右侧留白
+    'html[data-wbs-language="en"] .wbs-stash-inline:hover,html[data-wbs-language="en"] .wbs-stash-inline.wbs-stash-inline-inline:hover{width:128px}',
+    'html[data-wbs-language="en"] .wbs-stash-inline:hover .wbs-stash-txt{max-width:96px}',
     '.wbs-explore-inline{position:fixed;left:auto;display:flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;z-index:auto;top:0;right:0;overflow:visible;padding:0 8px}',
     /* 复用暂存按钮视觉（wbs-stash-inline 提供 32px 圆形/背景/阴影），但 hover 不变宽 */
     '.wbs-stash-inline.wbs-explore-inline:hover{width:32px;height:32px;border-radius:50%;padding:0 8px}',
@@ -9650,13 +10160,19 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '.wbs-toast.err{background:#f53f3f}',
     '.wbs-toast.out{opacity:0}',
     /* ===== 新版 Tab 布局（账号/主题/增强）===== */
-    '.wbs-tabs{display:flex;gap:6px;padding:10px 14px 0;background:color-mix(in srgb,var(--wb-bg-secondary,#fff) 25%,transparent)}',
-    '.wbs-tab{flex:1;display:flex;align-items:center;justify-content:center;gap:6px;padding:8px 0;border:none;border-radius:10px;background:transparent;color:var(--wb-icon-secondary,#666);font-size:13px;font-weight:600;cursor:pointer;transition:all .18s;font-family:inherit}',
+    '.wbs-tabs{display:flex;gap:6px;padding:10px 14px 0;background:color-mix(in srgb,var(--wb-bg-secondary,#fff) 25%,transparent);overflow-x:auto;scrollbar-width:none}',
+    '.wbs-tabs::-webkit-scrollbar{display:none}',
+    '.wbs-tab{flex:1 0 66px;min-width:66px;display:flex;align-items:center;justify-content:center;gap:6px;padding:8px 4px;border:none;border-radius:10px;background:transparent;color:var(--wb-icon-secondary,#666);font-size:13px;font-weight:600;cursor:pointer;transition:all .18s;font-family:inherit;white-space:nowrap}',
     '.wbs-tab-ico{font-size:14px;line-height:1}',
     '.wbs-tab:hover{background:var(--wb-bg-hover,#f5f5f5);color:var(--wb-color-text-primary,#1f1f1f)}',
     '.wbs-tab.active{background:var(--wb-button-primary-bg,#1f1f1f);color:var(--wb-button-primary-fg,#fff);box-shadow:0 2px 10px color-mix(in srgb,var(--wb-button-primary-bg,#1f1f1f) 30%,transparent)}',
     '.wbs-pane{display:none;padding:2px 2px 6px}',
     '.wbs-pane.active{display:flex;flex-direction:column;height:100%;min-height:0}',
+    '.wbs-settings-card{padding:12px 14px}',
+    '.wbs-settings-row{display:flex;align-items:center;gap:12px;justify-content:space-between}',
+    '.wbs-settings-copy{display:flex;flex-direction:column;gap:4px;min-width:0}',
+    '.wbs-settings-copy strong{font-size:12px;color:var(--wb-color-text-primary,#1f1f1f);font-weight:650}',
+    '.wbs-settings-copy span{font-size:11px;line-height:1.5;color:var(--wb-icon-tertiary,#999);white-space:normal;overflow-wrap:anywhere}',
     /* 分组卡片（主题/增强 tab） */
     '.wbs-pcard{background:color-mix(in srgb,var(--wb-bg-secondary,#fff) 18%,transparent);border:1px solid var(--wb-border-subtle,#f0f0f0);border-radius:14px;padding:10px 12px;margin-bottom:8px;backdrop-filter:blur(16px) saturate(1.2);-webkit-backdrop-filter:blur(16px) saturate(1.2)}',
     '.wbs-pcard-title{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:700;color:var(--wb-color-text-primary,#1f1f1f);margin-bottom:8px}',
@@ -10044,6 +10560,8 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     init: start,
     refresh: function () { if (state._refresh) state._refresh(); },
     destroy: destroyWidget,
+    getLanguage: function () { return WBS_LANGUAGE; },
+    setLanguage: function (value) { return typeof window.__wbsSetLanguage === 'function' ? window.__wbsSetLanguage(value) : undefined; },
   };
 })();
 }
