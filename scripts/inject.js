@@ -6822,6 +6822,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     var ndScanTimer = null;
     var ndScanRoots = [];
     var ndEnabledCount = 0;
+    var ndSyncTimer = null; // 免打扰状态周期同步（确保外部/其它会话改动后观察者自动收敛）
     // 开关定义：id/配置名/确认弹窗文案（开启时弹窗，红字确认）
     var ND_DEFS = [
       {
@@ -9734,6 +9735,9 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     sleepSyncTimer = setBuildInterval(syncSleepState, 30000);
     // 免打扰：启动即同步开关状态（若「弹窗自动点允许」已开启则挂上观察者，无需打开增强页）
     setBuildTimeout(syncNoDisturb, 1200);
+    // 免打扰周期同步（30s）：开关可能被其它会话/外部改动，周期拉取保证
+    // 「弹窗自动点允许」观察者及时启动/停止，避免弹窗出现后不被自动允许。
+    if (!ndSyncTimer) ndSyncTimer = setBuildInterval(syncNoDisturb, 30000);
     // 更新顶部红色角标：build 完成、send/editor/stash 状态（200ms 后写，等 syncStash 节流跑完）
     try {
       var badgeTimer = setBuildTimeout(function () {
