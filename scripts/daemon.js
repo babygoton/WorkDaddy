@@ -2561,8 +2561,9 @@ function injectWidget(reason) {
   // 关键：manual（launcher/用户显式 /api/inject）恒不等候、必须无条件注入——
   // 否则 WorkBuddy 重启后仅有的注入机会会被节流吞掉（多台机器 FAB 缺失的根因：
   // launcher 检测到 CDP 就调用 manual，但被 1.5s 节流跳过，页面又不会再触发补种）。
+  // switch（切号抢跑注入）同理：loadEventFired 可能几十秒后才到，这期间的注入机会不能被吞。
   var now = Date.now();
-  if (reason !== 'manual' && now - lastInjectTs < 1000) {
+  if (reason !== 'manual' && reason !== 'switch' && now - lastInjectTs < 1000) {
     log(`[cdp] 注入节流跳过 (${reason})`);
     // 兜底：被跳过的自动注入可能是页面刚就绪的唯一一次机会，1.5s 后补种一次（脚本幂等，安全）
     if (!injectRetryTimer) {
@@ -2577,34 +2578,10 @@ function injectWidget(reason) {
   lastInjectTs = now;
   let script;
   try {
-    const compatScript = fs.readFileSync(path.join(__dirname, 'workbuddy-compat.js'), 'utf8');
-    let injectScript = fs.readFileSync(path.join(__dirname, 'inject.js'), 'utf8');
-    // 内部调试模块（元素检查/DevTools）：picker-internal.js 存在才注入（git 不跟踪，
-    // 他人环境无此文件 → 隐藏入口的拾取按钮点击会报错，符合预期，不影响面板其他功能）。
-    // 注入位置：放进 build() 函数体末尾（与面板共享闭包作用域：root/toast/esc 等），
-    // 这样拾取实现与原版稳定版 debug 模块完全同域，不被 IIFE 边界隔开。
-    const pickerPath = path.join(__dirname, 'picker-internal.js');
-    if (fs.existsSync(pickerPath)) {
-      const pickerCode = fs.readFileSync(pickerPath, 'utf8');
-      const anchor = 'return { destroy: lifecycle.destroy, alive: lifecycle.alive };';
-      if (!injectScript.includes(anchor)) {
-        return Promise.reject(new Error('picker-internal.js 注入锚点不存在'));
-      }
-      injectScript = injectScript.replace(anchor, pickerCode + '\n' + anchor);
-    }
-    script = compatScript + '\n' + injectScript;
+    script = buildInjectScript();
   } catch (e) {
     return Promise.reject(new Error('读取注入脚本失败: ' + e.message));
   }
-  // 组件内通过 fetch 调用本机 API，注入时写入实际端口
-  script = script.replace(/__WBS_API__/g, `http://${HOST}:${ACTUAL_PORT}`);
-  script = script.replace(/__WBS_VERSION__/g, DAEMON_VERSION);
-  // 注入本地 API 能力凭证；旧版面板不会携带该 header，但新版 daemon 会在启动时重新注入新版面板。
-  script = script.replace(/__WBS_API_TOKEN__/g, API_TOKEN);
-  script = script.replace(/__WBS_DIAGNOSTICS_ENABLED__/g, diagnosticsEnabled() ? 'true' : 'false');
-  script = script.replace(/__WBS_PROFILE__/g, PROFILE.id);
-  script = script.replace(/__WBS_CAPS__/g, JSON.stringify(PROFILE.capabilities));
-  script = script.replace(/__WBS_PLATFORM__/g, JSON.stringify(process.platform));
   updateDebug('inject-version', { reason, injectedVersion: DAEMON_VERSION, profile: PROFILE.id });
   // 注入策略：不使用 addScriptToEvaluateOnNewDocument（它会在浏览器里持久化注册，
   // 多次重启会叠加旧版本；旧注册先执行并占住 window.__wbsWidget 守卫，导致新代码被拦截）。
@@ -2670,12 +2647,147 @@ function injectWidget(reason) {
     });
 }
 
+function buildInjectScript() {
+  const compatScript = fs.readFileSync(path.join(__dirname, 'workbuddy-compat.js'), 'utf8');
+  let injectScript = fs.readFileSync(path.join(__dirname, 'inject.js'), 'utf8');
+  // 内部调试模块（元素检查/DevTools）：picker-internal.js 存在才注入（git 不跟踪，
+  // 他人环境无此文件 → 隐藏入口的拾取按钮点击会报错，符合预期，不影响面板其他功能）。
+  // 注入位置：放进 build() 函数体末尾（与面板共享闭包作用域：root/toast/esc 等），
+  // 这样拾取实现与原版稳定版 debug 模块完全同域，不被 IIFE 边界隔开。
+  const pickerPath = path.join(__dirname, 'picker-internal.js');
+  if (fs.existsSync(pickerPath)) {
+    const pickerCode = fs.readFileSync(pickerPath, 'utf8');
+    const anchor = 'return { destroy: lifecycle.destroy, alive: lifecycle.alive };';
+    if (!injectScript.includes(anchor)) {
+      throw new Error('picker-internal.js 注入锚点不存在');
+    }
+    injectScript = injectScript.replace(anchor, pickerCode + '\n' + anchor);
+  }
+  // 组件内通过 fetch 调用本机 API，注入时写入实际端口
+  return (compatScript + '\n' + injectScript)
+    .replace(/__WBS_API__/g, `http://${HOST}:${ACTUAL_PORT}`)
+    .replace(/__WBS_VERSION__/g, DAEMON_VERSION)
+    // 注入本地 API 能力凭证；旧版面板不会携带该 header，但新版 daemon 会在启动时重新注入新版面板。
+    .replace(/__WBS_API_TOKEN__/g, API_TOKEN)
+    .replace(/__WBS_DIAGNOSTICS_ENABLED__/g, diagnosticsEnabled() ? 'true' : 'false')
+    .replace(/__WBS_PROFILE__/g, PROFILE.id)
+    .replace(/__WBS_CAPS__/g, JSON.stringify(PROFILE.capabilities))
+    .replace(/__WBS_PLATFORM__/g, JSON.stringify(process.platform));
+}
+
+// 切换账号的注入主通道：在 Page.reload 之前注册「新文档自动注入」。新文档一创建
+// 就由 Chromium 执行注入脚本（不经过 Runtime.evaluate），彻底绕开两大致命问题：
+// 1) 导航期间 Runtime.evaluate 会长时间挂起（实测 40+s），抢跑注入被拖死；
+// 2) 切号会话复制若用同步 cpSync 会阻塞 daemon 主线程几十秒，定时器抢跑被饿死。
+// 注册只对「注册后创建的新文档」生效，页面加载完成后移除，避免多次切号叠加执行
+// （注入脚本自身幂等且会暴力重建，叠加最多造成一次重建，不残留旧版本）。
+async function registerNewDocumentInject() {
+  if (!cdp.connected) {
+    log('[cdp] CDP 未连接，跳过新文档注入注册');
+    return null;
+  }
+  let script;
+  try {
+    script = buildInjectScript();
+  } catch (e) {
+    log('[cdp] 构建注入脚本失败: ' + e.message);
+    return null;
+  }
+  // 新文档注入作用于所有 frame；iframe 里挂载 FAB 会造成双按钮，用顶层守卫跳过。
+  const source = '(function(){ if (window.top !== window) return; ' + script + '\n})();';
+  try {
+    const r = await cdpSend('Page.addScriptToEvaluateOnNewDocument', { source });
+    const identifier = r && r.identifier;
+    if (!identifier) {
+      log('[cdp] 注册新文档注入失败: 无 identifier');
+      return null;
+    }
+    log('[cdp] 已注册新文档注入(switch)');
+    return String(identifier);
+  } catch (e) {
+    log('[cdp] 注册新文档注入失败: ' + e.message);
+    return null;
+  }
+}
+
+async function removeNewDocumentInject(identifier) {
+  if (!identifier) return;
+  try {
+    await cdpSend('Page.removeScriptToEvaluateOnNewDocument', { identifier });
+    log('[cdp] 已移除新文档注入注册');
+  } catch (e) {
+    log('[cdp] 移除新文档注入注册失败: ' + e.message);
+  }
+}
+
+function safeRegisterNewDocumentInject() {
+  let timer = null;
+  const timeout = new Promise((resolve) => {
+    timer = setTimeout(() => resolve(null), 2000);
+  });
+  const run = Promise.resolve().then(() => registerNewDocumentInject());
+  return Promise.race([run, timeout]).finally(() => { if (timer) clearTimeout(timer); });
+}
+
 function injectWidgetManual() {
   if (manualInjectPromise) return manualInjectPromise;
   manualInjectPromise = injectWidget('manual').finally(() => {
     manualInjectPromise = null;
   });
   return manualInjectPromise;
+}
+
+// 切换账号后抢跑注入：切号触发 Page.reload 后，loadEventFired 可能要几十秒才到
+// （新账号数据多/网络慢时实测 36~87s），期间右下角 FAB 一直不出现。而注入脚本
+// 自带「body 未就绪时等待 DOMContentLoaded」的挂载能力，只要 Runtime.evaluate
+// 成功执行一次，FAB 就会在页面一可交互时立即挂载——不必等 load 完成。
+// 关键坑：cdpSend 的 Runtime.evaluate 在页面 navigation 期间不是快速失败，而是
+// 挂起直到新 execution context 就绪（实测可挂 46s），所以这里必须给每次注入
+// 加超时并快速重试，否则第一次调用会把「抢跑」拖到和 loadEventFired 一样晚。
+async function confirmWidgetMountedOnce() {
+  let timer = null;
+  const timeout = new Promise((resolve) => { timer = setTimeout(() => resolve(false), 1000); });
+  const run = (async () => {
+    try {
+      const check = await cdpSend('Runtime.evaluate', {
+        expression: '!!document.querySelector(".wbs-root") && !!window.__wbsWidget',
+        returnByValue: true,
+      });
+      return Boolean(check && check.result && check.result.value);
+    } catch (_) {
+      return false;
+    }
+  })();
+  return Promise.race([run, timeout]).finally(() => { if (timer) clearTimeout(timer); });
+}
+
+function injectWidgetWithTimeout(reason, ms) {
+  let timer = null;
+  const timeout = new Promise((resolve) => {
+    timer = setTimeout(() => resolve({ result: null, mounted: false, timedOut: true }), ms);
+  });
+  const run = Promise.resolve().then(() => injectWidget(reason));
+  return Promise.race([run, timeout]).finally(() => { if (timer) clearTimeout(timer); });
+}
+
+function injectAfterSwitchReload() {
+  let attempts = 0;
+  const MAX_ATTEMPTS = 20;
+  const attempt = async function () {
+    if (!cdp.connected) return;
+    // 给单次注入设 1.2s 超时：页面 context 未就绪时 evaluate 会挂起，超时即放弃本次，
+    // 1.5s 后重试，直到某次 evaluate 快速返回（页面已可交互）并成功挂载。
+    const r = await injectWidgetWithTimeout('switch', 1200);
+    if (r && r.mounted) return;
+    // evaluate 协议成功（脚本已排队等 DOM ready），先确认挂载，不再立刻重注入。
+    if (r && !r.timedOut && r.result && !(r.result.exceptionDetails)) {
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      if (await confirmWidgetMountedOnce()) return;
+    }
+    attempts += 1;
+    if (attempts < MAX_ATTEMPTS) setTimeout(attempt, 1500);
+  };
+  setTimeout(attempt, 800);
 }
 
 async function readCdpTargets() {
@@ -2890,10 +3002,12 @@ function sessionRangeMs(range) {
 
 // 复制会话的消息文件：projects/<项目>/<id>.jsonl + <id>/、workspace/sessions/<id>/、
 // tasks/<id>/、file-history/<id>/、artifact-index/<id>.json（全部以新 id 命名复制）
-function copySessionFiles(wbHome, oldId, newId) {
+// 异步实现：切号复制大批会话时，同步 cpSync 会阻塞主线程几十秒，把注入定时器、
+// 面板响应全部饿死（切号后 FAB 迟迟不出现的根因之一）。
+async function copySessionFiles(wbHome, oldId, newId) {
   const fsMod = fs;
   const result = { copied: 0, failed: 0 };
-  const copyOne = (from, to) => {
+  const copyOne = async (from, to) => {
     try {
       if (!fsMod.existsSync(from)) return;
       const fromResolved = path.resolve(from);
@@ -2905,7 +3019,7 @@ function copySessionFiles(wbHome, oldId, newId) {
         return;
       }
       fsMod.mkdirSync(path.dirname(to), { recursive: true });
-      fsMod.cpSync(from, to, { recursive: true, force: true });
+      await fsMod.promises.cp(from, to, { recursive: true, force: true });
       result.copied++;
     } catch (e) {
       result.failed++;
@@ -2920,19 +3034,19 @@ function copySessionFiles(wbHome, oldId, newId) {
       for (const pj of projs) {
         const pjPath = path.join(projDir, pj);
         if (!fsMod.statSync(pjPath).isDirectory()) continue;
-        copyOne(path.join(pjPath, oldId + '.jsonl'), path.join(pjPath, newId + '.jsonl'));
-        copyOne(path.join(pjPath, oldId), path.join(pjPath, newId));
+        await copyOne(path.join(pjPath, oldId + '.jsonl'), path.join(pjPath, newId + '.jsonl'));
+        await copyOne(path.join(pjPath, oldId), path.join(pjPath, newId));
       }
     }
   } catch (_) {}
   // 2) workspace/sessions/<id>/
-  copyOne(path.join(wbHome, 'workspace', 'sessions', oldId), path.join(wbHome, 'workspace', 'sessions', newId));
+  await copyOne(path.join(wbHome, 'workspace', 'sessions', oldId), path.join(wbHome, 'workspace', 'sessions', newId));
   // 3) tasks/<id>/
-  copyOne(path.join(wbHome, 'tasks', oldId), path.join(wbHome, 'tasks', newId));
+  await copyOne(path.join(wbHome, 'tasks', oldId), path.join(wbHome, 'tasks', newId));
   // 4) file-history/<id>/
-  copyOne(path.join(wbHome, 'file-history', oldId), path.join(wbHome, 'file-history', newId));
+  await copyOne(path.join(wbHome, 'file-history', oldId), path.join(wbHome, 'file-history', newId));
   // 5) artifact-index/<id>.json
-  copyOne(path.join(wbHome, 'artifact-index', oldId + '.json'), path.join(wbHome, 'artifact-index', newId + '.json'));
+  await copyOne(path.join(wbHome, 'artifact-index', oldId + '.json'), path.join(wbHome, 'artifact-index', newId + '.json'));
   log('[sessions-copy] 已复制消息文件 ' + oldId + ' -> ' + newId);
   return result;
 }
@@ -3001,7 +3115,7 @@ async function syncAutoCopyLineage(lineageId, targetUid) {
   let failedFiles = 0;
   for (const target of live) {
     if (target.id === latest.id) continue;
-    const files = copySessionFiles(PROFILE.dataRoot, latest.id, target.id);
+    const files = await copySessionFiles(PROFILE.dataRoot, latest.id, target.id);
     synced++;
     failedFiles += files.failed;
     try {
@@ -3240,7 +3354,7 @@ async function copySessionRecord(src, targetUid, options = {}) {
         [mapping.targetId]
       );
       if (existing.length && String(existing[0].user_id || '') === String(targetUid)) {
-        const files = copySessionFiles(wbHome, src.id, mapping.targetId);
+        const files = await copySessionFiles(wbHome, src.id, mapping.targetId);
         addAutoCopySessionMember(DATA_DIR, lineageId, targetUid, mapping.targetId);
         setAutoCopyMapping(DATA_DIR, lineageId, targetUid, {
           targetId: mapping.targetId,
@@ -3279,7 +3393,7 @@ async function copySessionRecord(src, targetUid, options = {}) {
       });
       if (candidates.length) {
         const canonicalId = candidates[0].id;
-        const files = copySessionFiles(wbHome, src.id, canonicalId);
+        const files = await copySessionFiles(wbHome, src.id, canonicalId);
         addAutoCopySessionMember(DATA_DIR, lineageId, targetUid, canonicalId);
         setAutoCopyMapping(DATA_DIR, lineageId, targetUid, {
           targetId: canonicalId,
@@ -3293,7 +3407,7 @@ async function copySessionRecord(src, targetUid, options = {}) {
 
   const newId = crypto.randomUUID();
   await insertCopiedSession(src, targetUid, newId);
-  const files = copySessionFiles(wbHome, src.id, newId);
+  const files = await copySessionFiles(wbHome, src.id, newId);
   if (lineageId) {
     addAutoCopySessionMember(DATA_DIR, lineageId, targetUid, newId);
     setAutoCopyMapping(DATA_DIR, lineageId, targetUid, {
@@ -7373,9 +7487,20 @@ function handleApi(req, res) {
             }
           } catch (_) { /* 读不到就跳过自动聚焦会话 */ }
           try {
+            // 在 reload 之前注册「新文档自动注入」：新文档一创建即执行注入脚本，
+            // 不依赖 Runtime.evaluate 或定时器（导航期间 evaluate 会挂起 40s+，
+            // 且切号复制会话会同步阻塞主线程，两者都会把抢跑注入饿死）。
+            const newDocInjectId = await safeRegisterNewDocumentInject();
             await reloadWorkBuddyPage();
             reloaded = true;
             log('[switch] 已通过 CDP 刷新 WorkBuddy 窗口');
+            if (newDocInjectId) {
+              // 新文档已自动注入；30s 后移除注册，避免多次切号叠加。注入脚本幂等，无残留。
+              setTimeout(() => { removeNewDocumentInject(newDocInjectId); }, 30000);
+            } else {
+              // 注册失败时退回定时抢跑（兜底）。
+              injectAfterSwitchReload();
+            }
             // 切换后通过接口自动签到（带每日缓存，幂等）
             claimDailyForUid(uid)
               .then((r) => log('[checkin] 切换后自动签到 ' + uid + ': ' + (r.ok ? '已领取' : '失败 ' + (r.reason || r.message))))
