@@ -1149,17 +1149,30 @@ function resolveAuthTarget(dataDir, uid, authJson) {
   const record = meta.accounts[String(uid)] || {};
   const backup = authRecordFromJson(null, authJson);
   if (!backup) throw new Error('备份文件认证数据无效，拒绝切换');
+  const sameChannel = (candidate) => {
+    const expected = new Set([backup.authIssuer, backup.authDomain].filter(Boolean));
+    return [candidate && candidate.authIssuer, candidate && candidate.authDomain]
+      .some((origin) => origin && expected.has(origin));
+  };
   const targetName = safeAuthFileName(record.authFileName) ? record.authFileName : '';
   if (targetName) {
     const target = path.join(authDir(), targetName);
     if (path.dirname(path.resolve(target)) !== path.resolve(authDir())) throw new Error('登录文件目标路径无效');
     const existing = fs.existsSync(target) ? parseAuthFile(target) : null;
     if (fs.existsSync(target) && !existing) throw new Error('登录文件目标不是当前客户端的有效认证文件，拒绝覆盖');
-    if (existing && existing.uid !== String(uid)) throw new Error('登录文件名已属于其他账号，拒绝覆盖');
+    if (existing && !sameChannel(existing)) throw new Error('登录文件目标属于其他认证通道，拒绝覆盖');
     return target;
   }
-  const matching = listAuthRecords().filter((item) => item.uid === String(uid));
+  const records = listAuthRecords();
+  const matching = records.filter((item) => item.uid === String(uid));
   if (matching.length === 1) return matching[0].file;
+  const channelMatches = records.filter(sameChannel);
+  const canonical = channelMatches.find((item) => AUTH_FILE && samePath(item.file, AUTH_FILE));
+  if (canonical) return canonical.file;
+  if (channelMatches.length === 1) return channelMatches[0].file;
+  const legacyRecord = String(record.uid || '') === String(uid) &&
+    !record.authFileName && !record.authDomain && !record.authIssuer;
+  if (legacyRecord && AUTH_FILE && !fs.existsSync(AUTH_FILE)) return AUTH_FILE;
   throw new Error('账号缺少已确认的登录文件名，拒绝猜测写入目标');
 }
 

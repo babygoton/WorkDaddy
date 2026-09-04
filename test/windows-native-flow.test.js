@@ -33,7 +33,7 @@ test('Windows shortcuts use a versioned icon path to invalidate the shell icon c
   assert.doesNotMatch(installer, /IconFilename: "\{app\}\\scripts\\WorkDaddy\.ico"/);
 });
 
-test('normal Windows startup does not use Explorer de-elevation or CIM', () => {
+test('normal Windows startup does not use PowerShell de-elevation or CIM', () => {
   const launcher = read('scripts/win-launcher.js');
   const watchdog = read('scripts/watchdog.js');
 
@@ -45,6 +45,27 @@ test('normal Windows startup does not use Explorer de-elevation or CIM', () => {
   );
   assert.doesNotMatch(nativeStart, /Get-CimInstance|windows-relaunch-standard|quitWorkBuddy/);
   assert.doesNotMatch(watchdog, /Get-CimInstance|windows-process-boundary|pending\.json/);
+});
+
+test('native launcher retries inherited elevation with the verified desktop Explorer token', () => {
+  const source = read('scripts/windows-native/main.go');
+  const main = source.slice(source.indexOf('func main()'));
+
+  assert.match(source, /GetShellWindow/);
+  assert.match(source, /GetWindowThreadProcessId/);
+  assert.match(source, /CreateProcessWithTokenW/);
+  assert.match(source, /CreateEnvironmentBlock/);
+  assert.match(source, /DestroyEnvironmentBlock/);
+  assert.match(source, /createUnicodeEnvironment, environment/);
+  assert.match(source, /queryProcessPath\(shellPID\)/);
+  assert.match(source, /explorer\.exe/);
+  assert.match(source, /tokenIsElevated\(shellToken\)/);
+  assert.match(main, /--desktop-shell-relaunch/);
+  assert.ok(
+    main.indexOf('relaunchWithDesktopToken') < main.indexOf('runNodeLauncher'),
+    'native privilege normalization must happen before starting Node lifecycle processes'
+  );
+  assert.doesNotMatch(main, /powershell|windows-relaunch-standard/i);
 });
 
 test('WorkBuddy GUI startup stays visible while the watchdog stays hidden', () => {

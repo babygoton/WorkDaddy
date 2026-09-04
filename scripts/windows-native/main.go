@@ -31,8 +31,12 @@ const (
 	processTerminate               = 0x0001
 	processQueryLimitedInformation = 0x1000
 	synchronize                    = 0x00100000
+	tokenAssignPrimary             = 0x0001
+	tokenDuplicate                 = 0x0002
 	tokenQuery                     = 0x0008
 	tokenElevation                 = 20 // TokenElevation
+	logonWithProfile               = 0x00000001
+	createUnicodeEnvironment       = 0x00000400
 	th32csSnapProcess              = 0x00000002
 	maxPath                        = 260
 	infinite                       = 0xffffffff
@@ -48,12 +52,16 @@ const (
 var (
 	kernel32                      = syscall.NewLazyDLL("kernel32.dll")
 	advapi32                      = syscall.NewLazyDLL("advapi32.dll")
+	userenv                       = syscall.NewLazyDLL("userenv.dll")
 	user32                        = syscall.NewLazyDLL("user32.dll")
 	versionDLL                    = syscall.NewLazyDLL("version.dll")
 	procCreateMutexW              = kernel32.NewProc("CreateMutexW")
 	procGetCurrentProcess         = kernel32.NewProc("GetCurrentProcess")
 	procOpenProcessToken          = advapi32.NewProc("OpenProcessToken")
 	procGetTokenInformation       = advapi32.NewProc("GetTokenInformation")
+	procCreateProcessWithTokenW   = advapi32.NewProc("CreateProcessWithTokenW")
+	procCreateEnvironmentBlock    = userenv.NewProc("CreateEnvironmentBlock")
+	procDestroyEnvironmentBlock   = userenv.NewProc("DestroyEnvironmentBlock")
 	procCreateToolhelp32Snapshot  = kernel32.NewProc("CreateToolhelp32Snapshot")
 	procProcess32FirstW           = kernel32.NewProc("Process32FirstW")
 	procProcess32NextW            = kernel32.NewProc("Process32NextW")
@@ -62,6 +70,8 @@ var (
 	procTerminateProcess          = kernel32.NewProc("TerminateProcess")
 	procWaitForSingleObject       = kernel32.NewProc("WaitForSingleObject")
 	procMessageBoxW               = user32.NewProc("MessageBoxW")
+	procGetShellWindow            = user32.NewProc("GetShellWindow")
+	procGetWindowThreadProcessID  = user32.NewProc("GetWindowThreadProcessId")
 	procGetFileVersionInfoSizeW   = versionDLL.NewProc("GetFileVersionInfoSizeW")
 	procGetFileVersionInfoW       = versionDLL.NewProc("GetFileVersionInfoW")
 	procVerQueryValueW            = versionDLL.NewProc("VerQueryValueW")
@@ -158,6 +168,18 @@ func fileVersion(binary string) string {
 		fixed.FileVersionLS>>16, fixed.FileVersionLS&0xffff)
 }
 
+func tokenIsElevated(token syscall.Handle) (bool, error) {
+	var elevation uint32
+	var returned uint32
+	result, _, callErr := procGetTokenInformation.Call(
+		uintptr(token), tokenElevation, uintptr(unsafe.Pointer(&elevation)), unsafe.Sizeof(elevation), uintptr(unsafe.Pointer(&returned)),
+	)
+	if result == 0 {
+		return false, callErr
+	}
+	return elevation != 0, nil
+}
+
 func isElevated() (bool, error) {
 	current, _, _ := procGetCurrentProcess.Call()
 	var token syscall.Handle
@@ -166,15 +188,71 @@ func isElevated() (bool, error) {
 		return false, callErr
 	}
 	defer syscall.CloseHandle(token)
-	var elevation uint32
-	var returned uint32
-	result, _, callErr = procGetTokenInformation.Call(
-		uintptr(token), tokenElevation, uintptr(unsafe.Pointer(&elevation)), unsafe.Sizeof(elevation), uintptr(unsafe.Pointer(&returned)),
+	return tokenIsElevated(token)
+}
+
+func relaunchWithDesktopToken(appDir string) error {
+	shellWindow, _, callErr := procGetShellWindow.Call()
+	if shellWindow == 0 {
+		return fmt.Errorf("cannot find desktop Explorer window: %w", callErr)
+	}
+	var shellPID uint32
+	procGetWindowThreadProcessID.Call(shellWindow, uintptr(unsafe.Pointer(&shellPID)))
+	if shellPID == 0 {
+		return errors.New("cannot identify desktop Explorer process")
+	}
+	expectedExplorer := filepath.Join(os.Getenv("SystemRoot"), "explorer.exe")
+	if os.Getenv("SystemRoot") == "" || !strings.EqualFold(filepath.Clean(queryProcessPath(shellPID)), filepath.Clean(expectedExplorer)) {
+		return errors.New("desktop shell process is not the expected explorer.exe")
+	}
+	shellProcess, err := openProcess(shellPID, processQueryLimitedInformation)
+	if err != nil {
+		return fmt.Errorf("cannot open desktop Explorer process: %w", err)
+	}
+	defer syscall.CloseHandle(shellProcess)
+	var shellToken syscall.Handle
+	result, _, callErr := procOpenProcessToken.Call(
+		uintptr(shellProcess), tokenAssignPrimary|tokenDuplicate|tokenQuery, uintptr(unsafe.Pointer(&shellToken)),
 	)
 	if result == 0 {
-		return false, callErr
+		return fmt.Errorf("cannot open desktop Explorer token: %w", callErr)
 	}
-	return elevation != 0, nil
+	defer syscall.CloseHandle(shellToken)
+	elevated, err := tokenIsElevated(shellToken)
+	if err != nil {
+		return fmt.Errorf("cannot inspect desktop Explorer token: %w", err)
+	}
+	if elevated {
+		return errors.New("desktop Explorer token is elevated")
+	}
+	executable, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	if strings.ContainsAny(executable, "\x00\r\n\"") {
+		return errors.New("native launcher path contains invalid characters")
+	}
+	var environment uintptr
+	result, _, callErr = procCreateEnvironmentBlock.Call(
+		uintptr(unsafe.Pointer(&environment)), uintptr(shellToken), 0,
+	)
+	if result == 0 {
+		return fmt.Errorf("cannot create desktop user environment: %w", callErr)
+	}
+	defer procDestroyEnvironmentBlock.Call(environment)
+	commandLine := utf16Ptr("\"" + executable + "\" --desktop-shell-relaunch")
+	startup := syscall.StartupInfo{Cb: uint32(unsafe.Sizeof(syscall.StartupInfo{}))}
+	var processInfo syscall.ProcessInformation
+	result, _, callErr = procCreateProcessWithTokenW.Call(
+		uintptr(shellToken), logonWithProfile, uintptr(unsafe.Pointer(utf16Ptr(executable))), uintptr(unsafe.Pointer(commandLine)),
+		createUnicodeEnvironment, environment, uintptr(unsafe.Pointer(utf16Ptr(appDir))), uintptr(unsafe.Pointer(&startup)), uintptr(unsafe.Pointer(&processInfo)),
+	)
+	if result == 0 {
+		return fmt.Errorf("cannot relaunch with desktop Explorer token: %w", callErr)
+	}
+	syscall.CloseHandle(processInfo.Thread)
+	syscall.CloseHandle(processInfo.Process)
+	return nil
 }
 
 func acquireMutex(profile string) (syscall.Handle, bool, error) {
@@ -920,7 +998,12 @@ func main() {
 		os.Exit(exitFailure)
 	}
 	if elevated {
-		messageBox(productName(profile), "请使用普通方式启动 WorkDaddy，不要选择“以管理员身份运行”。\n\nUAC 可以保持开启；正常双击快捷方式不会请求管理员权限。", mbOK|mbIconWarning)
+		if !hasArgument("--desktop-shell-relaunch") {
+			if err := relaunchWithDesktopToken(appDir); err == nil {
+				os.Exit(0)
+			}
+		}
+		messageBox(productName(profile), "无法自动切换到普通用户权限。\n\n请确认 UAC 已开启，然后直接双击 WorkDaddy 快捷方式重试。", mbOK|mbIconWarning)
 		os.Exit(exitElevated)
 	}
 

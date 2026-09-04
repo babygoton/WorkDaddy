@@ -645,6 +645,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '登录文件目标路径无效': 'Invalid login file target path',
     '登录文件目标不是当前客户端的有效认证文件，拒绝覆盖': 'Login file target is not a valid auth file for this client; overwrite rejected',
     '登录文件名已属于其他账号，拒绝覆盖': 'Login filename already belongs to another account; overwrite rejected',
+    '登录文件目标属于其他认证通道，拒绝覆盖': 'Login file target belongs to another auth channel; overwrite rejected',
     '账号缺少已确认的登录文件名，拒绝猜测写入目标': 'Account has no confirmed login filename; refusing to guess a write target',
     '备份文件校验失败：uid 不匹配，已中止切换': 'Backup validation failed: uid mismatch; switch aborted',
     // —— 第六批：会话/模型批量操作 + 头像 + 修补剩余整句 ——

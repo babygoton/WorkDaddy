@@ -124,6 +124,71 @@ test('missing filename metadata refuses a switch instead of falling back to a gu
   }
 });
 
+test('legacy account metadata migrates to the canonical auth file for the same channel', () => {
+  const f = fixture();
+  try {
+    const canonical = path.join(f.authDir, 'workbuddy-desktop.info');
+    fs.writeFileSync(canonical, JSON.stringify(auth('current', 'https://www.workbuddy.cn/auth/realms/copilot')));
+    fs.mkdirSync(path.join(f.dataDir, 'accounts'), { recursive: true });
+    fs.writeFileSync(path.join(f.dataDir, 'accounts', 'legacy.info'), JSON.stringify(auth('legacy', 'https://www.workbuddy.cn/auth/realms/copilot')));
+    fs.writeFileSync(path.join(f.dataDir, 'meta.json'), JSON.stringify({
+      accounts: {
+        legacy: { uid: 'legacy', nickname: 'legacy', firstSeen: 1, lastSeen: 2 },
+      },
+    }));
+
+    const switched = run(f.root, f.dataDir, 'process.stdout.write(JSON.stringify(lib.switchTo(process.env.WBSWITCH_DATA_DIR,"legacy")))');
+    assert.equal(switched.authFile, canonical);
+    assert.equal(JSON.parse(fs.readFileSync(canonical, 'utf8')).account.uid, 'legacy');
+    const meta = JSON.parse(fs.readFileSync(path.join(f.dataDir, 'meta.json'), 'utf8'));
+    assert.equal(meta.accounts.legacy.authFileName, 'workbuddy-desktop.info');
+  } finally {
+    fs.rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
+test('recorded canonical auth target may be reused by another account in the same channel', () => {
+  const f = fixture();
+  try {
+    const canonical = path.join(f.authDir, 'workbuddy-desktop.info');
+    fs.writeFileSync(canonical, JSON.stringify(auth('current', 'https://www.workbuddy.cn/auth/realms/copilot')));
+    fs.mkdirSync(path.join(f.dataDir, 'accounts'), { recursive: true });
+    fs.writeFileSync(path.join(f.dataDir, 'accounts', 'target.info'), JSON.stringify(auth('target', 'https://www.workbuddy.cn/auth/realms/copilot')));
+    fs.writeFileSync(path.join(f.dataDir, 'meta.json'), JSON.stringify({
+      accounts: {
+        target: { uid: 'target', authFileName: 'workbuddy-desktop.info' },
+      },
+    }));
+
+    const switched = run(f.root, f.dataDir, 'process.stdout.write(JSON.stringify(lib.switchTo(process.env.WBSWITCH_DATA_DIR,"target")))');
+    assert.equal(switched.authFile, canonical);
+    assert.equal(JSON.parse(fs.readFileSync(canonical, 'utf8')).account.uid, 'target');
+  } finally {
+    fs.rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
+test('recorded auth target still refuses to overwrite a different auth channel', () => {
+  const f = fixture();
+  try {
+    const canonical = path.join(f.authDir, 'workbuddy-desktop.info');
+    fs.writeFileSync(canonical, JSON.stringify(auth('current', 'https://www.codebuddy.cn/auth/realms/copilot')));
+    fs.mkdirSync(path.join(f.dataDir, 'accounts'), { recursive: true });
+    fs.writeFileSync(path.join(f.dataDir, 'accounts', 'target.info'), JSON.stringify(auth('target', 'https://www.workbuddy.cn/auth/realms/copilot')));
+    fs.writeFileSync(path.join(f.dataDir, 'meta.json'), JSON.stringify({
+      accounts: {
+        target: { uid: 'target', authFileName: 'workbuddy-desktop.info' },
+      },
+    }));
+
+    const result = run(f.root, f.dataDir, `try { lib.switchTo(process.env.WBSWITCH_DATA_DIR,'target'); process.stdout.write('unexpected') } catch (e) { process.stdout.write(JSON.stringify(e.message)) }`);
+    assert.match(result, /其他认证通道/);
+    assert.equal(JSON.parse(fs.readFileSync(canonical, 'utf8')).account.uid, 'current');
+  } finally {
+    fs.rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
 test('canonical fixed info file wins over historical lastLogin markers', () => {
   const f = fixture();
   try {
