@@ -32,6 +32,12 @@ test('macOS DMG layout is written to a writable image before final compression',
   assert.match(buildSource, /hdiutil convert[\s\S]*-format UDZO/);
 });
 
+test('macOS batch build handles an omitted Finder flag and propagates profile failures', () => {
+  assert.match(buildSource, /SKIP_FINDER="\$\{WORKDADDY_SKIP_FINDER:-\}"/);
+  assert.match(buildSource, /WORKDADDY_BUILD_PROFILE="\$profile" bash "\$0" \|\| exit \$\?/);
+  assert.match(buildSource, /if \[ -z "\$SKIP_FINDER" \]; then/);
+});
+
 test('macOS DMG uses a fixed-size SVG master for its arrow artwork', () => {
   assert.equal(fs.existsSync(backgroundPath), true, 'missing DMG SVG background');
   const svg = fs.readFileSync(backgroundPath, 'utf8');
