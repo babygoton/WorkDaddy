@@ -52,6 +52,21 @@ try {
   Write-Host '  已移除登录自启项'
 } catch {}
 
+# 2.5) 删除桌面快捷方式（与 install-win.ps1 创建对称；兼容两个 profile 的历史残留）
+$desktopDir = [Environment]::GetFolderPath('Desktop')
+if (-not $desktopDir) { $desktopDir = Join-Path $env:USERPROFILE 'Desktop' }
+foreach ($lnkName in @('WorkDaddy.lnk', 'WorkDaddy AI.lnk')) {
+  $lnk = Join-Path $desktopDir $lnkName
+  if (Test-Path -LiteralPath $lnk -PathType Leaf) {
+    try {
+      Remove-Item -LiteralPath $lnk -Force -ErrorAction Stop
+      Write-Host ('  已删除桌面快捷方式: ' + $lnk)
+    } catch {
+      Write-Host ('  桌面快捷方式删除失败（可手动删除）: ' + $lnk + ' - ' + $_.Exception.Message)
+    }
+  }
+}
+
 # 3) 删除安装目录（Inno Setup 调用时由卸载器负责删除）
 if (-not $SkipAppRemoval -and (Test-Path $AppDir)) {
   Remove-Item -LiteralPath $AppDir -Recurse -Force -ErrorAction Stop
