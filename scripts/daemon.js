@@ -1817,13 +1817,15 @@ function autoFocusSessionByTitle(sourceTitle, logFn) {
         'for (var j = 0; j < leaves.length; j++) {' +
         '  var row = leaves[j];' +
         '  for (var d = 0; d < 8 && row && row.parentElement; d++) {' +
-        '    if (row.classList && row.classList.contains("conversation-item")) break;' +
+        '    var rc = row.classList ? row.className : "";' +
+        '    if (rc.indexOf("conversation-item") !== -1 || rc.indexOf("_card_") !== -1) break;' +
         '    row = row.parentElement;' +
         '  }' +
-        '  if (!row || row === list || !row.classList || !row.classList.contains("conversation-item")) continue;' +
+        '  var rcls = row && row.classList ? row.className : "";' +
+        '  if (!row || row === list || (rcls.indexOf("conversation-item") === -1 && rcls.indexOf("_card_") === -1)) continue;' +
         '  var rect = row.getBoundingClientRect ? row.getBoundingClientRect() : null;' +
         '  if (!rect || rect.width === 0 || rect.height === 0) continue;' +
-        '  if ((row.className || "").indexOf("_selected_") !== -1 || (row.className || "").indexOf("selected") !== -1) {' +
+        '  if (rcls.indexOf("_selected_") !== -1 || rcls.indexOf("selected") !== -1) {' +
         '    return { hit: true };' +
         '  }' +
         '  row.click();' +

@@ -4031,8 +4031,8 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       accountsPane.innerHTML =
         '<div class="wbs-acct-toolbar">' +
         '<div class="wbs-acct-summary" aria-label="账号汇总">' +
-        '<button class="wbs-acct-eye" type="button" title="隐藏敏感信息" aria-label="隐藏敏感信息">' + EYE_SVG + '</button>' +
         '<div class="wbs-acct-stat"><span>账号数</span><strong id="wbs-acct-count">-</strong></div>' +
+        '<button class="wbs-acct-eye" type="button" title="隐藏敏感信息" aria-label="隐藏敏感信息">' + EYE_SVG + '</button>' +
         '<span class="wbs-acct-stat-divider"></span>' +
         '<div class="wbs-acct-stat"><span>总积分</span><strong id="wbs-acct-total">-</strong></div>' +
         '</div>' +
@@ -9435,7 +9435,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     function maskAccountName(name) {
       var s = String(name == null ? '' : name);
       if (!s.length) return s;
-      if (s.length === 1) return '*';
+      if (s.length === 1) return '**';
       if (s.length === 2) return '**';
       return s.charAt(0) + new Array(s.length - 1).join('*') + s.charAt(s.length - 1);
     }
@@ -10565,8 +10565,8 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     /* 账号列表容器 + 退出按钮 */
     '.wbs-acct-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 14px 9px;border-bottom:1px solid var(--wb-border-subtle,#f0f0f0);background:color-mix(in srgb,var(--wb-bg-secondary,#fff) 25%,transparent);flex-shrink:0}',
     '.wbs-acct-summary{display:flex;align-items:center;gap:12px;min-width:0}',
-    '.wbs-acct-eye{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;padding:0;border:none;background:transparent;color:var(--wb-icon-secondary,var(--wb-color-text-secondary,#666));border-radius:6px;cursor:pointer;flex-shrink:0;transition:color .15s,background-color .15s}',
-    '.wbs-acct-eye:hover{color:var(--wb-accent,#4c8dff);background:rgba(76,141,255,.1)}',
+    '.wbs-acct-eye{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;padding:0;border:none;border-radius:6px;background:transparent;color:var(--wb-icon-secondary,var(--wb-color-text-secondary,#666));cursor:pointer;flex-shrink:0;transition:color .15s,background-color .15s}',
+    '.wbs-acct-eye:hover{background:var(--wb-bg-hover,#f0f0f0);color:var(--wb-color-text,#222)}',
     '.wbs-acct-eye:active{transform:scale(.94)}',
     '.wbs-acct-eye:focus-visible{outline:2px solid var(--wb-accent,#4c8dff);outline-offset:1px}',
     '.wbs-acct-stat{display:flex;align-items:center;gap:5px;white-space:nowrap;line-height:1}',
