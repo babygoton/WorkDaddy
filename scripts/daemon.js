@@ -259,11 +259,12 @@ const DATA_DIR = defaultDataDir();
 // 1.1.34：签到前惰性刷新 access token，并按日使用 refresh token 保活所有备份账号。
 // 1.1.35：认证解析优先官方固定 auth 文件（消除多 lastLogin 残留的切换歧义）；积分接口
 //         401 归类为「登录身份过期」并返回结构化 401；语言选择器移入「关于」页。
-// 1.1.36：迁移旧账号的固定 auth 目标；Windows 原生入口从桌面 Explorer token 自动降权重启。
 // 1.1.37：修复 legacy 账号切换失败——无文件记录的旧账号无条件写回官方固定登录文件，
 //         固定文件名（workbuddy-desktop.info）跨认证通道可交替覆盖，个性化文件名保留通道校验。
-const DAEMON_VERSION = '1.1.37';
-const DAEMON_BUILD_ID = 'release-1.1.37-20260904-legacy-auth-switch-fixed';
+// 1.1.38：备份扫描禁止历史存档覆盖有效备份（s 身份过期事故根源）；切换账号后自动打开
+//         目标账号中与当前会话同标题的复制会话（auto-focus）。
+const DAEMON_VERSION = '1.1.38';
+const DAEMON_BUILD_ID = 'release-1.1.38-20260904-auth-backup-guard-autofocus';
 const HOST = '127.0.0.1';
 const IS_WIN = process.platform === 'win32'; // Windows 移植：平台分支开关（macOS 行为保持不变）
 // Windows 安装目录（install.ps1 铺、launcher 用、更新替换目标），对应 macOS 的 /Applications/WorkDaddy.app
@@ -1766,6 +1767,103 @@ async function cdpLoop() {
 async function reloadWorkBuddyPage() {
   if (!cdp.connected) throw new Error('CDP 未连接，无法自动刷新窗口');
   await cdpSend('Page.reload', { ignoreCache: false });
+}
+
+// 切换账号后自动打开目标账号中「与切换前当前会话同标题」的会话：
+// 自动复制会话会为目标账号创建同标题会话，刷新后轮询官方会话列表：
+// 标题精确匹配叶子 -> 定位 .conversation-item 行 -> 若已选中(_selected_)则完成，
+// 否则点击该行等待下轮确认。列表是虚拟滚动（只渲染可视行），按步进滚动扫描，
+// 并自动展开折叠的分组；最长约 26s，找不到则静默放弃。
+function autoFocusSessionByTitle(sourceTitle, logFn) {
+  const target = String(sourceTitle || '').trim();
+  if (!target) return;
+  const logger = typeof logFn === 'function' ? logFn : () => {};
+  let attempts = 0;
+  let scrollPhase = 0; // 0=顶部初始, 1=向下扫描, 2=向上回扫
+  let scrollTop = 0;
+  const SCROLL_STEP = 480;
+  const timer = setInterval(async () => {
+    attempts++;
+    try {
+      if (!cdp.connected) throw new Error('CDP 未连接');
+      // 1) 设置滚动位置（虚拟列表只渲染可视行）
+      const scrollExpr =
+        '(function(){var c=document.querySelector(".conversation-list-content");' +
+        'if(!c) return {ok:false, max:0};' +
+        'c.scrollTop=' + String(scrollTop) + ';' +
+        'return {ok:true, max:Math.max(0,c.scrollHeight-c.clientHeight)};})()';
+      const sr = await cdpSend('Runtime.evaluate', { expression: scrollExpr, returnByValue: true });
+      const scrollInfo = sr && sr.result && sr.result.value;
+      // 2) 扫描匹配行：找到即返回 hit=已选中，pending=已点击待确认，miss=未渲染
+      const findExpr =
+        '(function(){' +
+        'var wanted = ' + JSON.stringify(target) + ';' +
+        'var list = document.querySelector(".conversation-list");' +
+        'if (!list) return { miss: true };' +
+        'var leaves = [];' +
+        'var all = list.querySelectorAll("*");' +
+        'for (var i = 0; i < all.length; i++) {' +
+        '  var el = all[i];' +
+        '  if (el.children.length === 0 && (el.textContent || "").trim() === wanted) leaves.push(el);' +
+        '}' +
+        'if (!leaves.length) {' +
+        '  var headers = list.querySelectorAll(".collapsible-section-header");' +
+        '  for (var k = 0; k < headers.length; k++) {' +
+        '    var hdr = headers[k];' +
+        '    if (hdr.className.indexOf("expanded") === -1) hdr.click();' +
+        '  }' +
+        '  return { miss: true };' +
+        '}' +
+        'for (var j = 0; j < leaves.length; j++) {' +
+        '  var row = leaves[j];' +
+        '  for (var d = 0; d < 8 && row && row.parentElement; d++) {' +
+        '    if (row.classList && row.classList.contains("conversation-item")) break;' +
+        '    row = row.parentElement;' +
+        '  }' +
+        '  if (!row || row === list || !row.classList || !row.classList.contains("conversation-item")) continue;' +
+        '  var rect = row.getBoundingClientRect ? row.getBoundingClientRect() : null;' +
+        '  if (!rect || rect.width === 0 || rect.height === 0) continue;' +
+        '  if ((row.className || "").indexOf("_selected_") !== -1 || (row.className || "").indexOf("selected") !== -1) {' +
+        '    return { hit: true };' +
+        '  }' +
+        '  row.click();' +
+        '  return { pending: true };' +
+        '}' +
+        'return { miss: true };' +
+        '})()';
+      const fr = await cdpSend('Runtime.evaluate', { expression: findExpr, returnByValue: true });
+      const out = fr && fr.result && fr.result.value;
+      if (out && out.hit) {
+        clearInterval(timer);
+        logger('[auto-focus] 已自动打开目标账号会话「' + target + '」');
+        return;
+      }
+      if (out && out.pending) {
+        // 已点击，下轮确认选中态；本轮不推进滚动
+        if (attempts >= 30) {
+          clearInterval(timer);
+          logger('[auto-focus] 已点击目标会话「' + target + '」，未确认选中（放弃继续等待）');
+        }
+        return;
+      }
+      // 3) 未渲染：推进滚动扫描
+      const max = scrollInfo && scrollInfo.max ? scrollInfo.max : 0;
+      if (scrollPhase === 0) { scrollPhase = 1; scrollTop = 0; }
+      else if (scrollPhase === 1) {
+        scrollTop += SCROLL_STEP;
+        if (scrollTop > max + SCROLL_STEP) { scrollPhase = 2; scrollTop = max; }
+      } else {
+        scrollTop -= SCROLL_STEP;
+        if (scrollTop <= -SCROLL_STEP) { scrollPhase = 1; scrollTop = 0; }
+      }
+    } catch (_) {
+      /* 页面加载中或 CDP 抖动，下一轮再试 */
+    }
+    if (attempts >= 30) {
+      clearInterval(timer);
+      logger('[auto-focus] 未找到目标会话「' + target + '」（复制未完成或标题不一致）');
+    }
+  }, 800);
 }
 
 const WORKBUDDY_TARGET = IS_WIN ? null : readWorkBuddyTarget({ dataDir: DATA_DIR, profileId: PROFILE.id });
@@ -7242,6 +7340,36 @@ function handleApi(req, res) {
         const hint = '登录文件已切换，请重启 WorkBuddy 使新账号生效';
         let reloaded = false;
         if (body.reload) {
+          // 读取切换前当前会话标题：官方会话列表的选中行（.conversation-item 带 selected）；
+// 刷新后用于在目标账号里自动打开对应的复制会话。读不到则跳过自动聚焦。
+          let sourceSessionTitle = '';
+          try {
+            if (cdp.connected) {
+              const titleExpr =
+                '(function(){' +
+                'var list = document.querySelector(".conversation-list");' +
+                'if (!list) return "";' +
+                'var rows = list.querySelectorAll(".conversation-item");' +
+                'for (var i = 0; i < rows.length; i++) {' +
+                '  var r = rows[i];' +
+                '  if ((r.className || "").indexOf("selected") === -1) continue;' +
+                '  var best = "";' +
+                '  var els = r.querySelectorAll("*");' +
+                '  for (var j = 0; j < els.length; j++) {' +
+                '    var el = els[j];' +
+                '    if (el.children.length === 0) {' +
+                '      var t = (el.textContent || "").trim();' +
+                '      if (t.length > best.length) best = t;' +
+                '    }' +
+                '  }' +
+                '  if (best) return best;' +
+                '}' +
+                'return "";' +
+                '})()';
+              const t = await cdpSend('Runtime.evaluate', { expression: titleExpr, returnByValue: true });
+              sourceSessionTitle = String((t && t.result && t.result.value) || '').trim();
+            }
+          } catch (_) { /* 读不到就跳过自动聚焦会话 */ }
           try {
             await reloadWorkBuddyPage();
             reloaded = true;
@@ -7250,6 +7378,9 @@ function handleApi(req, res) {
             claimDailyForUid(uid)
               .then((r) => log('[checkin] 切换后自动签到 ' + uid + ': ' + (r.ok ? '已领取' : '失败 ' + (r.reason || r.message))))
               .catch((e) => log('[checkin] 切换后签到异常: ' + e.message));
+            if (sourceSessionTitle) {
+              autoFocusSessionByTitle(sourceSessionTitle, log);
+            }
           } catch (e) {
             log(`[switch] CDP 刷新失败: ${e.message}`);
           }
