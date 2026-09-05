@@ -341,3 +341,35 @@ test('native CDP startup detects failed child launches instead of waiting for th
   assert.match(wait, /windows-native-launcher-workbuddy-exit/);
   assert.match(wait, /stopNativeWorkBuddy\(\)[\s\S]*start\(\)/);
 });
+
+test('denied elevated lifecycle is preserved after an authenticated status proof', () => {
+  const source = read('scripts/windows-native/main.go');
+  assert.match(source, /exitPreserveLifecycle\s*=\s*13/);
+  assert.match(source, /func authenticatedElevatedDaemonStatus\(profile string\)/);
+  assert.match(source, /\.api-token/);
+  assert.match(source, /len\(token\) != 64/);
+  assert.match(source, /api\/status/);
+  assert.match(source, /X-WorkDaddy-Token/);
+  assert.match(source, /privil[e]ge\s*!=\s*"elevated"|Privilege\s*!=\s*"elevated"/);
+  assert.match(source, /status\.Profile\.ID != profile/);
+  assert.match(source, /listenerPidOnPort\(port\)/);
+  assert.match(source, /netstat/);
+
+  const helperStart = source.indexOf('if hasArgument("--stop-lifecycle")');
+  const helperEnd = source.indexOf('\n\tif hasArgument("--self-test")', helperStart);
+  assert.ok(helperStart >= 0 && helperEnd > helperStart);
+  const block = source.slice(helperStart, helperEnd);
+  assert.match(block, /code == exitAccessDenied && !elevated/);
+  assert.match(block, /authenticatedElevatedDaemonStatus\(profile\)/);
+  assert.match(block, /exitPreserveLifecycle/);
+  assert.doesNotMatch(block, /if elevated \{[\s\S]*return true, exitAccessDenied/);
+});
+
+test('installer continues with a preserved lifecycle instead of blocking', () => {
+  const installer = read('scripts/win/workdaddy.iss');
+  assert.match(installer, /PreserveExistingLifecycle: Boolean/);
+  assert.match(installer, /function ShouldReplaceRuntime/);
+  assert.match(installer, /Result := not PreserveExistingLifecycle/);
+  assert.match(installer, /Check: ShouldReplaceRuntime/);
+  assert.match(installer, /if ResultCode = 13 then[\s\S]*PreserveExistingLifecycle := True/);
+});

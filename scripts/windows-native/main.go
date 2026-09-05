@@ -3,10 +3,12 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -21,12 +23,13 @@ const (
 	profileCN = "workbuddy-cn"
 	profileAI = "workbuddy-ai"
 
-	exitFailure          = 4
-	exitElevated         = 5
-	exitWorkBuddyRunning = 10
-	exitAccessDenied     = 11
-	exitIdentityMismatch = 12
-	exitUsage            = 20
+	exitFailure           = 4
+	exitElevated          = 5
+	exitWorkBuddyRunning  = 10
+	exitAccessDenied      = 11
+	exitIdentityMismatch  = 12
+	exitPreserveLifecycle = 13
+	exitUsage             = 20
 
 	processTerminate               = 0x0001
 	processQueryLimitedInformation = 0x1000
@@ -108,6 +111,18 @@ type workBuddyTarget struct {
 	Version      string   `json:"version"`
 	ProcessName  string   `json:"processName"`
 	ProcessNames []string `json:"processNames"`
+}
+
+// daemonStatus mirrors the authenticated subset of the daemon /api/status
+// payload. Only fields required for capability proof are decoded.
+type daemonStatus struct {
+	OK        bool   `json:"ok"`
+	PID       int    `json:"pid"`
+	Privilege string `json:"privilege"`
+	DataDir   string `json:"dataDir"`
+	Profile   struct {
+		ID string `json:"id"`
+	} `json:"profile"`
 }
 
 type vsFixedFileInfo struct {
@@ -825,6 +840,151 @@ func stopLifecycle(profile, appDir string, elevated bool) int {
 	return 0
 }
 
+// profileUiPorts returns the fixed UI-port candidates for a profile in
+// preference order. They mirror scripts/ui-port.js PROFILE_UI_PORTS.
+func profileUiPorts(profile string) []int {
+	if profile == profileAI {
+		return []int{47833, 17833, 27833, 37833}
+	}
+	return []int{47832, 17832, 27832, 37832}
+}
+
+// persistedUiPort reads DATA_DIR/ui-port.json and returns the recorded port
+// when it belongs to this profile's candidate list, otherwise 0.
+func persistedUiPort(profile, dir string) int {
+	data, err := os.ReadFile(filepath.Join(dir, "ui-port.json"))
+	if err != nil {
+		return 0
+	}
+	var state struct {
+		ProfileID string `json:"profileId"`
+		Port      int    `json:"port"`
+	}
+	if json.Unmarshal(data, &state) != nil || state.ProfileID != profile || state.Port <= 0 {
+		return 0
+	}
+	for _, port := range profileUiPorts(profile) {
+		if port == state.Port {
+			return port
+		}
+	}
+	return 0
+}
+
+// listenerPidOnPort resolves the unique PID listening on a TCP port through
+// netstat. It is visible for elevated listeners from a standard process.
+func listenerPidOnPort(port int) (int, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "netstat", "-ano").Output()
+	if err != nil {
+		return 0, fmt.Errorf("netstat failed: %w", err)
+	}
+	target := fmt.Sprintf(":%d", port)
+	pids := map[int]bool{}
+	for _, line := range strings.Split(string(out), "\n") {
+		if !strings.Contains(line, target) || !strings.Contains(line, "LISTENING") {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			continue
+		}
+		pid, parseErr := strconv.Atoi(fields[len(fields)-1])
+		if parseErr != nil {
+			continue
+		}
+		pids[pid] = true
+	}
+	if len(pids) != 1 {
+		if len(pids) == 0 {
+			return 0, fmt.Errorf("no listener found on port %d", port)
+		}
+		return 0, fmt.Errorf("multiple listeners found on port %d", port)
+	}
+	for pid := range pids {
+		return pid, nil
+	}
+	return 0, fmt.Errorf("no listener found on port %d", port)
+}
+
+func fetchDaemonStatus(port int, token string) (*daemonStatus, error) {
+	client := &http.Client{
+		Timeout: 3 * time.Second,
+		Transport: &http.Transport{
+			Proxy: nil,
+		},
+	}
+	request, err := http.NewRequest("GET", fmt.Sprintf("http://127.0.0.1:%d/api/status", port), nil)
+	if err != nil {
+		return nil, err
+	}
+	request.Header.Set("X-WorkDaddy-Token", token)
+	response, err := client.Do(request)
+	if err != nil {
+		return nil, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("status endpoint returned %s", response.Status)
+	}
+	body, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+	if err != nil {
+		return nil, err
+	}
+	var status daemonStatus
+	if json.Unmarshal(body, &status) != nil {
+		return nil, errors.New("status endpoint returned invalid JSON")
+	}
+	return &status, nil
+}
+
+// authenticatedElevatedDaemonStatus proves that the running daemon for this
+// profile is the exact current-profile lifecycle using the local API token:
+// the per-profile /api/status response must report ok, a positive PID, the
+// matching profile id, elevated privilege and the matching data directory,
+// and the port listener must be the reported PID itself. This is a
+// non-termination capability proof: it never touches the remote process.
+func authenticatedElevatedDaemonStatus(profile string) (*daemonStatus, error) {
+	dir, err := dataDir(profile)
+	if err != nil {
+		return nil, err
+	}
+	tokenData, err := os.ReadFile(filepath.Join(dir, ".api-token"))
+	if err != nil {
+		return nil, errors.New("当前 profile 缺少本地 API 身份凭证")
+	}
+	token := strings.TrimSpace(string(tokenData))
+	if len(token) != 64 {
+		return nil, errors.New("当前 profile 的本地 API 身份凭证无效")
+	}
+	ports := profileUiPorts(profile)
+	if persisted := persistedUiPort(profile, dir); persisted > 0 {
+		ports = append([]int{persisted}, ports...)
+	}
+	expectedDataDir := strings.TrimRight(filepath.Clean(dir), `\/`)
+	for _, port := range ports {
+		status, fetchErr := fetchDaemonStatus(port, token)
+		if fetchErr != nil {
+			continue
+		}
+		if !status.OK || status.PID <= 0 || status.Profile.ID != profile ||
+			status.Privilege != "elevated" || strings.TrimSpace(status.DataDir) == "" {
+			continue
+		}
+		actualDataDir := strings.TrimRight(filepath.Clean(status.DataDir), `\/`)
+		if !strings.EqualFold(actualDataDir, expectedDataDir) {
+			continue
+		}
+		listenerPid, listenErr := listenerPidOnPort(port)
+		if listenErr != nil || listenerPid != status.PID {
+			continue
+		}
+		return status, nil
+	}
+	return nil, errors.New("无法通过本地身份凭证确认正在运行的本 profile 生命周期")
+}
+
 func appendLog(dir string, args ...any) *os.File {
 	_ = os.MkdirAll(dir, 0700)
 	file, err := os.OpenFile(filepath.Join(dir, "native-launcher.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
@@ -968,7 +1128,20 @@ func helperMain(appDir, profile string) (bool, int) {
 		if targetApp == "" {
 			targetApp = appDir
 		}
-		return true, stopLifecycle(profile, targetApp, elevated)
+		code := stopLifecycle(profile, targetApp, elevated)
+		if code == exitAccessDenied && !elevated {
+			// A standard helper cannot terminate an elevated lifecycle. Before
+			// failing closed, prove with the per-profile API token that the
+			// running daemon is this exact profile's lifecycle; the installer
+			// then preserves it and continues instead of blocking upgrades.
+			if status, verifyErr := authenticatedElevatedDaemonStatus(profile); verifyErr == nil {
+				fmt.Fprintln(os.Stderr, "verified elevated lifecycle preserved pid="+strconv.Itoa(status.PID))
+				return true, exitPreserveLifecycle
+			} else {
+				fmt.Fprintln(os.Stderr, "elevated lifecycle verification failed:", verifyErr)
+			}
+		}
+		return true, code
 	}
 	if hasArgument("--self-test") {
 		elevated, err := isElevated()
