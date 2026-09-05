@@ -61,7 +61,7 @@ Source: "{#StageRoot}\WorkDaddyLauncher.exe"; DestDir: "{app}"; Flags: ignorever
 Source: "{#StageRoot}\WorkDaddyLauncher.exe"; Flags: dontcopy
 Source: "{#StageRoot}\scripts\WorkDaddy.ico"; DestDir: "{app}\scripts"; DestName: "{#PackageName}-{#AppVersion}.ico"; Flags: ignoreversion
 Source: "{#StageRoot}\scripts\*"; DestDir: "{app}\scripts"; Excludes: "runtime\node\*,WorkDaddy.ico"; Flags: ignoreversion recursesubdirs createallsubdirs
-Source: "{#StageRoot}\scripts\runtime\node\*"; DestDir: "{app}\scripts\runtime\node"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#StageRoot}\scripts\runtime\node\*"; DestDir: "{app}\scripts\runtime\node"; Flags: ignoreversion recursesubdirs createallsubdirs; Check: ShouldReplaceRuntime
 
 [InstallDelete]
 Type: files; Name: "{app}\scripts\WorkDaddy.ico"
@@ -86,6 +86,7 @@ Type: filesandordirs; Name: "{app}"
 
 [Code]
 var
+  PreserveExistingLifecycle: Boolean;
   ClientPage: TInputFileWizardPage;
   ClientSourceLabel: TNewStaticText;
   ClientVersionLabel: TNewStaticText;
@@ -93,6 +94,14 @@ var
   DetectedOfficialPath: String;
   SelectedWorkBuddyPath: String;
   SelectedWorkBuddyVersion: String;
+
+function ShouldReplaceRuntime(): Boolean;
+begin
+  // 已验证的 elevated 生命周期被保留时（错误码 13），旧 daemon 仍持有
+  // runtime\node\node.exe 文件锁，跳过替换避免安装中途失败；下次启动时
+  // 新版 watchdog 会用验证边界自行接管并替换旧进程。
+  Result := not PreserveExistingLifecycle;
+end;
 
 function RunNativeHelper(const Mode: String; var ResultCode: Integer): Boolean;
 var
@@ -757,7 +766,11 @@ begin
     Result := '无法启动 WorkDaddy 后台进程清理。可能原因是安装器原始用户权限不可用、安全软件拦截了临时 helper，或临时目录不可写。请点击“取消”，关闭安装程序后直接双击安装包重新运行；不要选择“以管理员身份运行”。UAC 无需关闭。';
     exit;
   end;
-  if ResultCode = 11 then
+  if ResultCode = 13 then
+    // 已验证正在运行的 daemon 是本 profile 的 elevated 生命周期（通过本地
+    // API 身份凭证证明），保留它并继续安装；runtime\node 跳过本次替换。
+    PreserveExistingLifecycle := True
+  else if ResultCode = 11 then
     Result := '无法安全停止 WorkDaddy 后台进程：安装无法继续。检测到 WorkDaddy 或 WorkDaddyLauncher 仍在运行，但当前安装器没有结束它的权限（错误码 11）。请按以下步骤操作：' + #13#10 +
       '1. 点击“取消”；' + #13#10 +
       '2. 按 Ctrl+Shift+Esc 打开任务管理器，结束 WorkDaddy 和 WorkDaddyLauncher；' + #13#10 +

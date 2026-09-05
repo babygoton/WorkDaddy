@@ -550,11 +550,12 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
   // User-facing strings are translated at the injected root so dynamically-built
   // panes and toasts follow the same language without touching WorkBuddy's DOM.
   var WBS_LANGUAGE_KEY = 'workdaddy.ui.language';
+  var WBS_ACCOUNT_MASK_KEY = 'workdaddy.account.mask.' + PROFILE_ID;
   var WBS_I18N_EN = {
     '账号': 'Accounts', '主题': 'Theme', '会话': 'Sessions', '模型': 'Models', '增强': 'Enhance', '电脑': 'Computer', '关于': 'About', '设置': 'Settings',
     '导出': 'Export', '导入': 'Import', '删除': 'Delete', '编辑': 'Edit', '保存': 'Save', '取消': 'Cancel', '确定': 'Confirm', '确认': 'Confirm', '复制': 'Copy', '切换': 'Switch', '启用': 'Enable', '停止': 'Stop',
     '暂存提示词': 'Stash prompt', '暂存': 'Stashed', '引用文本': 'Quote text', '快捷短语': 'Quick phrases', '点击后发送': 'Send on click', '编辑 →': 'Edit →', '新增': 'Add', '批量操作': 'Batch actions', '批量管理': 'Batch manage', '全选': 'Select all', '取消全选': 'Deselect all', '已选 0': 'Selected 0',
-    '账号汇总': 'Account summary', '账号数': 'Accounts', '总积分': 'Total credits', '手机': 'Phone', '有效期至': 'Expires', '当前使用中': 'Currently active', '登录新账号': 'Log in a new account', '没有可导出的账号备份': 'No account backups to export', '还没有备份账号。打开/登录一次 WorkBuddy 后会自动备份，稍后再来查看。': 'No account backups yet. Open or log in to WorkBuddy once and check again later.',
+    '账号汇总': 'Account summary', '账号数': 'Accounts', '总积分': 'Total credits', '手机': 'Phone', '有效期至': 'Expires', '当前使用中': 'Currently active', '隐藏敏感信息': 'Mask sensitive info', '显示明文': 'Show plaintext', '登录新账号': 'Log in a new account', '没有可导出的账号备份': 'No account backups to export', '还没有备份账号。打开/登录一次 WorkBuddy 后会自动备份，稍后再来查看。': 'No account backups yet. Open or log in to WorkBuddy once and check again later.',
     '语言': 'Language', '中文': 'Chinese', '英语': 'English', 'English': 'English', '跟随系统': 'Follow system', '设置语言': 'Language', '首次打开时自动跟随系统语言；未匹配时使用英语。': 'The first launch follows your system language. English is used when no match is found.', '语言设置已更新': 'Language updated',
     '默认': 'Default', 'WorkDaddy 主题': 'WorkDaddy theme', '毛玻璃': 'Frosted glass', '护眼绿': 'Eye-care green', '赛博紫': 'Cyber purple', '主题外观': 'Theme appearance', '壁纸': 'Wallpaper', '头像': 'Avatar', '自定义壁纸': 'Custom wallpaper', '背景蒙版': 'Background overlay', '背景毛玻璃': 'Background blur', '恢复默认': 'Restore default', '恢复官方头像': 'Restore official avatar',
     '加载中…': 'Loading…', '读取中…': 'Reading…', '正在读取设置…': 'Reading settings…', '查询中…': 'Checking…', '暂无快捷短语': 'No quick phrases', '暂无快捷短语，点击「+ 新增」添加': 'No quick phrases. Click “+ Add” to create one.', '当前还未添加模型': 'No models added yet', '还没有模型备份': 'No model backups yet', '当前筛选下没有会话': 'No sessions match the current filter', '暂无进行中的会话': 'No active sessions', '暂无官方壁纸': 'No built-in wallpapers', '还没有自定义壁纸，先上传一张': 'No custom wallpapers yet. Upload one to start.', '壁纸加载中…': 'Loading wallpapers…', '壁纸加载失败（daemon 不可达）': 'Wallpaper loading failed (daemon unavailable)',
@@ -645,6 +646,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '登录文件目标路径无效': 'Invalid login file target path',
     '登录文件目标不是当前客户端的有效认证文件，拒绝覆盖': 'Login file target is not a valid auth file for this client; overwrite rejected',
     '登录文件名已属于其他账号，拒绝覆盖': 'Login filename already belongs to another account; overwrite rejected',
+    '登录文件目标属于其他认证通道，拒绝覆盖': 'Login file target belongs to another auth channel; overwrite rejected',
     '账号缺少已确认的登录文件名，拒绝猜测写入目标': 'Account has no confirmed login filename; refusing to guess a write target',
     '备份文件校验失败：uid 不匹配，已中止切换': 'Backup validation failed: uid mismatch; switch aborted',
     // —— 第六批：会话/模型批量操作 + 头像 + 修补剩余整句 ——
@@ -909,7 +911,9 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     window.addEventListener('unhandledrejection', function (ev) { wbsReportErr('unhandledrejection', ev); });
   }
 
-  var state = { accounts: [], current: null, open: false, batchRunning: false, creditRunId: 0, creditRemaining: 0, creditSummaryValue: null, checkinPollId: null };
+  var accountMaskEnabled = false;
+  try { accountMaskEnabled = localStorage.getItem(WBS_ACCOUNT_MASK_KEY) === '1'; } catch (_) {}
+  var state = { accounts: [], current: null, open: false, batchRunning: false, creditRunId: 0, creditRemaining: 0, creditSummaryValue: null, checkinPollId: null, mask: accountMaskEnabled };
   var currentBuild = null;
   // 当前注入的 daemon 版本号（由 daemon.js 注入时把 __WBS_VERSION__ 替换为 DAEMON_VERSION）
   // 「关于」tab 直接展示，升级 daemon 后这里自动同步
@@ -978,6 +982,15 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
     '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>' +
     '<polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
+  // 脱敏小眼睛：睁眼 = 明文可见（点击后隐藏）；闭眼（斜线） = 已脱敏（点击后显示明文）
+  var EYE_SVG =
+    '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+    '<path d="M2.06 12.35C3.2 8.1 7.6 5 12 5s8.8 3.1 9.94 7.35a.5.5 0 0 1 0 .3C20.8 16.9 16.4 20 12 20s-8.8-3.1-9.94-7.35a.5.5 0 0 1 0-.3z"/>' +
+    '<circle cx="12" cy="12" r="3"/></svg>';
+  var EYE_OFF_SVG =
+    '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+    '<path d="M2.06 12.35C3.2 8.1 7.6 5 12 5s8.8 3.1 9.94 7.35a.5.5 0 0 1 0 .3C20.8 16.9 16.4 20 12 20s-8.8-3.1-9.94-7.35a.5.5 0 0 1 0-.3z"/>' +
+    '<circle cx="12" cy="12" r="3"/><line x1="4.2" y1="5.6" x2="19.8" y2="18.4"/></svg>';
 
   // 暂存提示词按钮图标：纯色「标签」图标（实心填充风，非线条）；fill 用 currentColor 跟随按钮文字色（主题适配）
   var STASH_SVG =
@@ -4022,6 +4035,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         '<div class="wbs-acct-toolbar">' +
         '<div class="wbs-acct-summary" aria-label="账号汇总">' +
         '<div class="wbs-acct-stat"><span>账号数</span><strong id="wbs-acct-count">-</strong></div>' +
+        '<button class="wbs-acct-eye" type="button" title="隐藏敏感信息" aria-label="隐藏敏感信息">' + EYE_SVG + '</button>' +
         '<span class="wbs-acct-stat-divider"></span>' +
         '<div class="wbs-acct-stat"><span>总积分</span><strong id="wbs-acct-total">-</strong></div>' +
         '</div>' +
@@ -4034,6 +4048,8 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         '<button class="wbs-logout-btn" type="button" data-act="logout">' + LOGOUT_SVG + '<span>登录新账号</span></button>' +
         '<input type="file" id="wbs-import-file" accept=".json,application/json" style="display:none">';
       logoutBtn = root.querySelector('[data-act="logout"]');
+      var eyeBtn = root.querySelector('.wbs-acct-eye');
+      if (eyeBtn) eyeBtn.addEventListener('click', toggleAccountMask);
       root.querySelector('[data-act="export"]').addEventListener('click', onExportAccounts);
       root.querySelector('[data-act="import"]').addEventListener('click', function () {
         root.querySelector('#wbs-import-file').click();
@@ -9318,19 +9334,23 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         // UIN 与手机号共用同一标签和值间距，确保与“剩余”额度列对齐。
         var isUinMode = !a.phone;
         var idLbl = a.phone ? '手机' : (a.uin ? 'UIN' : '账号');
-        var idVal = a.phone ? esc(a.phone) : (a.uin ? esc(a.uin) : '-');
+        var rawName = a.nickname || '(未命名)';
+        var rawId = a.phone ? a.phone : (a.uin ? a.uin : '-');
+        var nameVal = state.mask ? maskAccountName(rawName) : rawName;
+        var idVal = state.mask ? maskAccountId(rawId) : rawId;
         card.innerHTML =
           curMark +
           '<div class="wbs-info">' +
-          '<div class="wbs-row1"><div class="wbs-name-group"><span class="wbs-name">' + esc(a.nickname || '(未命名)') + '</span>' + badge + checkinBadge + '</div>' + ops + '</div>' +
+          '<div class="wbs-row1"><div class="wbs-name-group"><span class="wbs-name">' + esc(nameVal) + '</span>' + badge + checkinBadge + '</div>' + ops + '</div>' +
           '<div class="wbs-meta wbs-secondary-row">' +
-          '<div class="wbs-mi wbs-phone-cell' + (isUinMode ? ' wbs-uin-cell' : '') + '"><span class="wbs-lbl">' + idLbl + '</span><span class="wbs-val">' + idVal + '</span></div>' +
+          '<div class="wbs-mi wbs-phone-cell' + (isUinMode ? ' wbs-uin-cell' : '') + '"><span class="wbs-lbl">' + idLbl + '</span><span class="wbs-val">' + esc(idVal) + '</span></div>' +
           '<div class="wbs-mi wbs-token-cell"><span class="wbs-lbl">有效期至</span><span class="wbs-val' + (ts.warn ? ' wbs-warn' : '') + '">' + esc(ts.label) + '</span></div>' +
           '</div>' +
           '<div class="wbs-credit-cell">' + creditBlockHtml(credits, a.creditSegments, a) + '</div>' +
           '</div>';
         list.appendChild(card);
       });
+      applyAccountMask();
       // 切换按钮：两击确认（第一次点击进入确认态，3s 内再点才真正切换，防止误触）
       list.querySelectorAll('.wbs-acc-switch').forEach(function (btn) {
         var armed = false;
@@ -9413,6 +9433,57 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
             });
         });
       });
+    }
+
+    function maskAccountName(name) {
+      var s = String(name == null ? '' : name);
+      if (!s.length) return s;
+      if (s.length === 1) return '**';
+      if (s.length === 2) return '**';
+      return s.charAt(0) + new Array(s.length - 1).join('*') + s.charAt(s.length - 1);
+    }
+
+    function maskAccountId(v) {
+      var s = String(v == null ? '' : v).trim();
+      if (!s || s === '-') return s;
+      if (/^\d+$/.test(s)) {
+        if (s.length >= 7) return s.slice(0, 3) + '****' + s.slice(s.length - 4);
+        return s.replace(/\d/g, '*');
+      }
+      return maskAccountName(s);
+    }
+
+    // 眼睛按钮 + 卡片文本联动：恢复上次选择，点击切换脱敏/明文
+    function applyAccountMask() {
+      var eyeBtn = accountsPane.querySelector('.wbs-acct-eye');
+      if (eyeBtn) {
+        eyeBtn.innerHTML = state.mask ? EYE_OFF_SVG : EYE_SVG;
+        var tip = state.mask ? '显示明文' : '隐藏敏感信息';
+        eyeBtn.title = tip;
+        eyeBtn.setAttribute('aria-label', tip);
+      }
+      var cards = accountsPane.querySelectorAll('.wbs-card');
+      for (var c = 0; c < cards.length; c++) {
+        var uid = cards[c].getAttribute('data-uid');
+        var account = null;
+        for (var i = 0; i < state.accounts.length; i++) {
+          if (String(state.accounts[i].uid) === String(uid)) { account = state.accounts[i]; break; }
+        }
+        if (!account) continue;
+        var nameEl = cards[c].querySelector('.wbs-name');
+        if (nameEl) nameEl.textContent = state.mask ? maskAccountName(account.nickname || '(未命名)') : (account.nickname || '(未命名)');
+        var valEl = cards[c].querySelector('.wbs-phone-cell .wbs-val');
+        if (valEl) {
+          var raw = account.phone ? account.phone : (account.uin ? account.uin : '-');
+          valEl.textContent = state.mask ? maskAccountId(raw) : raw;
+        }
+      }
+    }
+
+    function toggleAccountMask() {
+      state.mask = !state.mask;
+      try { localStorage.setItem(WBS_ACCOUNT_MASK_KEY, state.mask ? '1' : '0'); } catch (_) {}
+      applyAccountMask();
     }
 
     function refresh() {
@@ -10498,6 +10569,10 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     /* 账号列表容器 + 退出按钮 */
     '.wbs-acct-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 14px 9px;border-bottom:1px solid var(--wb-border-subtle,#f0f0f0);background:color-mix(in srgb,var(--wb-bg-secondary,#fff) 25%,transparent);flex-shrink:0}',
     '.wbs-acct-summary{display:flex;align-items:center;gap:12px;min-width:0}',
+    '.wbs-acct-eye{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;padding:0;border:none;border-radius:6px;background:transparent;color:var(--wb-icon-secondary,var(--wb-color-text-secondary,#666));cursor:pointer;flex-shrink:0;transition:color .15s,background-color .15s}',
+    '.wbs-acct-eye:hover{background:var(--wb-bg-hover,#f0f0f0);color:var(--wb-color-text,#222)}',
+    '.wbs-acct-eye:active{transform:scale(.94)}',
+    '.wbs-acct-eye:focus-visible{outline:2px solid var(--wb-accent,#4c8dff);outline-offset:1px}',
     '.wbs-acct-stat{display:flex;align-items:center;gap:5px;white-space:nowrap;line-height:1}',
     '.wbs-acct-stat span,.wbs-acct-stat strong{font-size:13px}',
     '.wbs-acct-stat span{color:var(--wb-icon-tertiary,#999);font-weight:500}',

@@ -168,6 +168,55 @@ test('account switching refreshes WorkBuddy after replacing auth without restart
   assert.match(lib, /retireLogoutMarker\(log\);/);
 });
 
+test('WorkDaddy-triggered reload injects on the new main execution context before page load', () => {
+  const script = read('daemon.js');
+  const reloadStart = script.indexOf('async function reloadWorkBuddyPage()');
+  const reloadEnd = script.indexOf('\n// 切换账号后自动打开', reloadStart);
+  const reload = script.slice(reloadStart, reloadEnd);
+  const eventsStart = script.indexOf('function onCdpEvent(method, params)');
+  const eventsEnd = script.indexOf('\nasync function cdpLoop()', eventsStart);
+  const events = script.slice(eventsStart, eventsEnd);
+
+  assert.match(reload, /Page\.getFrameTree/);
+  assert.match(reload, /const pending = armPendingReloadInjection\(frameId\)/);
+  assert.ok(reload.indexOf('armPendingReloadInjection') < reload.indexOf("cdpSend('Page.reload'"), 'reload must be armed before navigation starts');
+  assert.ok(reload.indexOf("cdpSend('Page.reload'") < reload.indexOf('await pending.ready'), 'auto-copy callers must wait until the widget is mounted');
+  assert.match(events, /case 'Runtime\.executionContextCreated'/);
+  assert.match(events, /auxData\.isDefault === true/);
+  assert.match(events, /auxData\.frameId === pendingReloadInjection\.frameId/);
+  assert.match(events, /runPendingReloadInjection\('reload-context', context\.id\)/);
+  assert.match(events, /case 'Page\.frameNavigated'/);
+  assert.match(events, /pendingReloadInjection\.frameId = frame\.id/);
+  assert.match(events, /case 'Page\.loadEventFired'/);
+  assert.match(events, /runPendingReloadInjection\('reload-page-load'\)/);
+  assert.match(events, /suppressPageLoadInjectionForNavigation === mainFrameNavigationSerial/);
+
+  const switchStart = script.indexOf("if (req.method === 'POST' && p === '/api/switch')");
+  const switchRoute = script.slice(switchStart, switchStart + 9000);
+  const switchWrite = switchRoute.indexOf('switchTo(DATA_DIR, uid, log)');
+  assert.notEqual(switchWrite, -1);
+  assert.doesNotMatch(switchRoute.slice(0, switchWrite), /buildAutoCopyPlan\(/, 'session planning must not delay auth replacement and renderer reload');
+  assert.ok(switchRoute.indexOf('await reloadWorkBuddyPage()') < switchRoute.indexOf('startAutoCopyJob('), 'widget readiness must precede the synchronous auto-copy queue');
+  const autoCopyStart = script.indexOf('function startAutoCopyJob(');
+  const autoCopyEnd = script.indexOf('\nfunction publicAutoCopyJob(', autoCopyStart);
+  const autoCopy = script.slice(autoCopyStart, autoCopyEnd);
+  assert.ok((autoCopy.match(/await yieldAutoCopyToRenderer\(\)/g) || []).length >= 2, 'auto-copy must yield before planning and each synchronous file batch');
+
+  const yieldStart = script.indexOf('async function yieldAutoCopyToRenderer()');
+  const syncStart = script.indexOf('async function syncAutoCopyLineage(', yieldStart);
+  const yieldHelper = script.slice(yieldStart, syncStart);
+  assert.match(yieldHelper, /setImmediate/);
+  assert.match(yieldHelper, /rendererReloadPriorityPromise/);
+  assert.match(yieldHelper, /await reloadPriority/);
+  assert.match(yieldHelper, /pendingReloadInjection/);
+  assert.match(yieldHelper, /await pending\.ready/);
+  const syncEnd = script.indexOf('\nconst MAX_SESSION_EXPORT_BYTES', syncStart);
+  const syncLineage = script.slice(syncStart, syncEnd);
+  assert.ok((syncLineage.match(/await yieldAutoCopyToRenderer\(\)/g) || []).length >= 2, 'lineage scans and copies must pause for renderer reloads');
+  assert.match(switchRoute, /const releaseRendererReload = body\.reload \? beginRendererReloadPriority\(\) : null/);
+  assert.match(switchRoute, /finally \{\s*if \(releaseRendererReload\) releaseRendererReload\(\)/);
+});
+
 test('account switching retires WorkBuddy logout marker', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'workdaddy-auth-'));
   const authFile = path.join(dir, 'workbuddy-desktop.info');
@@ -1052,7 +1101,7 @@ test('automatic session copy includes workspace-only rules when the initial plan
   assert.match(daemon, /const sourceRules = sourceUid \? getAutoCopyRules\(DATA_DIR, sourceUid\)/);
   assert.match(daemon, /hasSourceAutoCopyRules/);
   assert.match(daemon, /hasPendingAutoCopyTo\(uid\)/);
-  assert.match(daemon, /startAutoCopyJob\(sourceUid, uid, autoCopyPlan\)/);
+  assert.match(daemon, /startAutoCopyJob\(sourceUid, uid, \[\]\)/);
   assert.match(daemon, /syncAutoCopyLineage\(src\.lineageId, targetUid\)/);
   assert.match(daemon, /selectLatestAutoCopyMember\(live\)/);
   assert.match(daemon, /ensureAutoCopySessions\(DATA_DIR, source, lineageSessionIds, \{ enabled: !rules\.allSessions \}\)/);

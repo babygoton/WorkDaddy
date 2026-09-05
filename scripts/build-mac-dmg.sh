@@ -25,10 +25,11 @@ DMG_WINDOW_WIDTH=620
 DMG_WINDOW_HEIGHT=400
 DMG_ICON_SIZE=112
 DMG_BACKGROUND_SVG="$DIR/scripts/assets/macos-dmg-background.svg"
+SKIP_FINDER="${WORKDADDY_SKIP_FINDER:-}"
 PROFILE="${WORKDADDY_BUILD_PROFILE:-}"
 if [ -z "$PROFILE" ]; then
   for profile in workbuddy-cn workbuddy-ai; do
-    WORKDADDY_BUILD_PROFILE="$profile" bash "$0"
+    WORKDADDY_BUILD_PROFILE="$profile" bash "$0" || exit $?
   done
   exit 0
 fi
@@ -370,7 +371,7 @@ fi
 VOLUME_NAME="$(basename "$MOUNT_DIR")"
 # 无 GUI 会话（CI/Agent 沙箱）无法驱动 Finder 写 .DS_Store 布局：
 # 设置 WORKDADDY_SKIP_FINDER=1 跳过布局步骤，产物为无 Finder 美化布局的标准 DMG。
-if [ -z "$WORKDADDY_SKIP_FINDER" ]; then
+if [ -z "$SKIP_FINDER" ]; then
   sleep 2
 osascript - "$VOLUME_NAME" "${PACKAGE_APP_NAME}.app" "$DMG_WINDOW_WIDTH" "$DMG_WINDOW_HEIGHT" "$DMG_ICON_SIZE" <<'APPLESCRIPT'
 on run argv
@@ -428,7 +429,7 @@ end run
 APPLESCRIPT
 fi
 
-if [ -z "$WORKDADDY_SKIP_FINDER" ]; then
+if [ -z "$SKIP_FINDER" ]; then
   sync
   for _ in {1..20}; do
     test -f "$MOUNT_DIR/.DS_Store" && break

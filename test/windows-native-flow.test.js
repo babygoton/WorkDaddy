@@ -33,7 +33,7 @@ test('Windows shortcuts use a versioned icon path to invalidate the shell icon c
   assert.doesNotMatch(installer, /IconFilename: "\{app\}\\scripts\\WorkDaddy\.ico"/);
 });
 
-test('normal Windows startup does not use Explorer de-elevation or CIM', () => {
+test('normal Windows startup does not use PowerShell de-elevation or CIM', () => {
   const launcher = read('scripts/win-launcher.js');
   const watchdog = read('scripts/watchdog.js');
 
@@ -45,6 +45,27 @@ test('normal Windows startup does not use Explorer de-elevation or CIM', () => {
   );
   assert.doesNotMatch(nativeStart, /Get-CimInstance|windows-relaunch-standard|quitWorkBuddy/);
   assert.doesNotMatch(watchdog, /Get-CimInstance|windows-process-boundary|pending\.json/);
+});
+
+test('native launcher retries inherited elevation with the verified desktop Explorer token', () => {
+  const source = read('scripts/windows-native/main.go');
+  const main = source.slice(source.indexOf('func main()'));
+
+  assert.match(source, /GetShellWindow/);
+  assert.match(source, /GetWindowThreadProcessId/);
+  assert.match(source, /CreateProcessWithTokenW/);
+  assert.match(source, /CreateEnvironmentBlock/);
+  assert.match(source, /DestroyEnvironmentBlock/);
+  assert.match(source, /createUnicodeEnvironment, environment/);
+  assert.match(source, /queryProcessPath\(shellPID\)/);
+  assert.match(source, /explorer\.exe/);
+  assert.match(source, /tokenIsElevated\(shellToken\)/);
+  assert.match(main, /--desktop-shell-relaunch/);
+  assert.ok(
+    main.indexOf('relaunchWithDesktopToken') < main.indexOf('runNodeLauncher'),
+    'native privilege normalization must happen before starting Node lifecycle processes'
+  );
+  assert.doesNotMatch(main, /powershell|windows-relaunch-standard/i);
 });
 
 test('WorkBuddy GUI startup stays visible while the watchdog stays hidden', () => {
@@ -319,4 +340,36 @@ test('native CDP startup detects failed child launches instead of waiting for th
   assert.match(wait, /nativeLaunchFailed\(nativeLaunchState\)/);
   assert.match(wait, /windows-native-launcher-workbuddy-exit/);
   assert.match(wait, /stopNativeWorkBuddy\(\)[\s\S]*start\(\)/);
+});
+
+test('denied elevated lifecycle is preserved after an authenticated status proof', () => {
+  const source = read('scripts/windows-native/main.go');
+  assert.match(source, /exitPreserveLifecycle\s*=\s*13/);
+  assert.match(source, /func authenticatedElevatedDaemonStatus\(profile string\)/);
+  assert.match(source, /\.api-token/);
+  assert.match(source, /len\(token\) != 64/);
+  assert.match(source, /api\/status/);
+  assert.match(source, /X-WorkDaddy-Token/);
+  assert.match(source, /privil[e]ge\s*!=\s*"elevated"|Privilege\s*!=\s*"elevated"/);
+  assert.match(source, /status\.Profile\.ID != profile/);
+  assert.match(source, /listenerPidOnPort\(port\)/);
+  assert.match(source, /netstat/);
+
+  const helperStart = source.indexOf('if hasArgument("--stop-lifecycle")');
+  const helperEnd = source.indexOf('\n\tif hasArgument("--self-test")', helperStart);
+  assert.ok(helperStart >= 0 && helperEnd > helperStart);
+  const block = source.slice(helperStart, helperEnd);
+  assert.match(block, /code == exitAccessDenied && !elevated/);
+  assert.match(block, /authenticatedElevatedDaemonStatus\(profile\)/);
+  assert.match(block, /exitPreserveLifecycle/);
+  assert.doesNotMatch(block, /if elevated \{[\s\S]*return true, exitAccessDenied/);
+});
+
+test('installer continues with a preserved lifecycle instead of blocking', () => {
+  const installer = read('scripts/win/workdaddy.iss');
+  assert.match(installer, /PreserveExistingLifecycle: Boolean/);
+  assert.match(installer, /function ShouldReplaceRuntime/);
+  assert.match(installer, /Result := not PreserveExistingLifecycle/);
+  assert.match(installer, /Check: ShouldReplaceRuntime/);
+  assert.match(installer, /if ResultCode = 13 then[\s\S]*PreserveExistingLifecycle := True/);
 });

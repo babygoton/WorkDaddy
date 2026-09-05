@@ -84,12 +84,20 @@ test('model, wallpaper, and account cards escape each dynamic HTML sink', () => 
   const accounts = sourceBetween('function render(data)', 'function updateAccountSummary()');
   assert.equal((accounts.match(/escAttr\(a\.uid\)/g) || []).length, 2);
   assert.equal((accounts.match(/escAttr\(a\.nickname \|\| '未命名'\)/g) || []).length, 2);
-  assert.match(accounts, /var idVal = a\.phone \? esc\(a\.phone\) : \(a\.uin \? esc\(a\.uin\) : '-'\)/);
-  assert.match(accounts, /wbs-name">' \+ esc\(a\.nickname/);
-  assert.match(accounts, /wbs-val">' \+ idVal/);
+  assert.match(accounts, /var nameVal = state\.mask \? maskAccountName\(rawName\) : rawName;/);
+  assert.match(accounts, /var idVal = state\.mask \? maskAccountId\(rawId\) : rawId;/);
+  assert.match(accounts, /wbs-name">' \+ esc\(nameVal\)/);
+  assert.match(accounts, /wbs-val">' \+ esc\(idVal\)/);
   assert.match(accounts, /wbs-val[^\n]+esc\(ts\.label\)/);
   assert.doesNotMatch(accounts, /data-(?:uid|name)="' \+ a\./);
   assert.doesNotMatch(accounts, /var idVal = a\.phone \? a\.phone/);
+});
+
+test('account masking preference persists per WorkDaddy profile', () => {
+  assert.match(source, /var WBS_ACCOUNT_MASK_KEY = 'workdaddy\.account\.mask\.' \+ PROFILE_ID;/);
+  assert.match(source, /localStorage\.getItem\(WBS_ACCOUNT_MASK_KEY\) === '1'/);
+  const toggle = sourceBetween('function toggleAccountMask()', 'function refresh()');
+  assert.match(toggle, /localStorage\.setItem\(WBS_ACCOUNT_MASK_KEY, state\.mask \? '1' : '0'\)/);
 });
 
 test('dynamic error and check-in messages are escaped before HTML insertion', () => {

@@ -18,3 +18,6 @@ scripts/picker-internal.js
 # 工作区元数据（WorkBuddy 项目数据，不入库）
 .workbuddy/
 .workbuddy-ai/
+
+# 构建缓存(安装器临时产物)
+release/.cache/
