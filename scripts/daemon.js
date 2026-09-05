@@ -264,8 +264,10 @@ const DATA_DIR = defaultDataDir();
 // 1.1.38：备份扫描禁止历史存档覆盖有效备份（s 身份过期事故根源）；切换账号后自动打开
 //         目标账号中与当前会话同标题的复制会话（auto-focus）。
 // 1.1.39：账号脱敏状态按 profile 持久化；WorkDaddy 触发页面重载后在主执行上下文创建时提前注入。
-const DAEMON_VERSION = '1.1.39';
-const DAEMON_BUILD_ID = 'release-1.1.39-20260905-mask-persistence-early-reload-inject';
+// 1.1.40：跨账号重载跟随新主 frame，并在会话自动复制占用事件循环前等待组件实际挂载。
+// 1.1.41：后台会话自动复制在文件边界让出 I/O；账号重载期间暂停复制，优先完成组件挂载。
+const DAEMON_VERSION = '1.1.41';
+const DAEMON_BUILD_ID = 'release-1.1.41-20260905-prioritize-switch-reload';
 const HOST = '127.0.0.1';
 const IS_WIN = process.platform === 'win32'; // Windows 移植：平台分支开关（macOS 行为保持不变）
 // Windows 安装目录（install.ps1 铺、launcher 用、更新替换目标），对应 macOS 的 /Applications/WorkDaddy.app
@@ -1505,7 +1507,68 @@ let lastInjectTs = 0;
 let injectRetryTimer = null; // 被节流跳过的自动注入的兜底补种定时器
 let manualInjectPromise = null; // launcher 超时重试时复用同一轮注入，避免并发清理/重挂载 renderer
 let pendingReloadInjection = null; // 仅对 WorkDaddy 主动触发的页面重载做一次主 frame 早期注入
-let pendingReloadInjectionTimer = null;
+let mainFrameNavigationSerial = 0;
+let suppressPageLoadInjectionForNavigation = 0;
+
+function settlePendingReloadInjection(pending, mounted) {
+  if (!pending || pendingReloadInjection !== pending || pending.settled) return;
+  pending.settled = true;
+  if (pending.timer) clearTimeout(pending.timer);
+  pendingReloadInjection = null;
+  // 早期注入已挂载时，紧随其后的 loadEventFired 只做备份/主题恢复，不能再次销毁组件。
+  if (mounted && !pending.loadFired) {
+    suppressPageLoadInjectionForNavigation = pending.navigationSerial || mainFrameNavigationSerial;
+  }
+  pending.resolve(!!mounted);
+}
+
+function armPendingReloadInjection(frameId) {
+  if (pendingReloadInjection) settlePendingReloadInjection(pendingReloadInjection, false);
+  let resolveReady;
+  const ready = new Promise((resolve) => { resolveReady = resolve; });
+  const pending = {
+    frameId: frameId || null,
+    expiresAt: Date.now() + 5000,
+    injecting: false,
+    loadFired: false,
+    navigationSerial: mainFrameNavigationSerial,
+    attempts: 0,
+    settled: false,
+    resolve: resolveReady,
+    ready,
+    timer: null,
+  };
+  pending.timer = setTimeout(() => settlePendingReloadInjection(pending, false), 5000);
+  if (pending.timer.unref) pending.timer.unref();
+  pendingReloadInjection = pending;
+  return pending;
+}
+
+function runPendingReloadInjection(reason, executionContextId) {
+  const pending = pendingReloadInjection;
+  if (!pending || pending.injecting || pending.settled) return;
+  pending.injecting = true;
+  pending.attempts++;
+  injectWidget(reason, executionContextId)
+    .then((info) => {
+      if (pendingReloadInjection !== pending || pending.settled) return;
+      pending.injecting = false;
+      if (info && info.mounted) {
+        settlePendingReloadInjection(pending, true);
+        return;
+      }
+      if (pending.loadFired && pending.attempts < 3) {
+        setTimeout(() => runPendingReloadInjection('reload-page-load-retry'), 150);
+      }
+    })
+    .catch(() => {
+      if (pendingReloadInjection !== pending || pending.settled) return;
+      pending.injecting = false;
+      if (pending.loadFired && pending.attempts < 3) {
+        setTimeout(() => runPendingReloadInjection('reload-page-load-retry'), 150);
+      }
+    });
+}
 
 async function findCdpEndpoint() {
   // profile 已由启动器绑定时不能扫描其他产品的端口；CodeBuddy Agents/Editor
@@ -1704,6 +1767,7 @@ async function connectCdp() {
     ws.onclose = () => {
       cdp.connected = false;
       cdp.ws = null;
+      if (pendingReloadInjection) settlePendingReloadInjection(pendingReloadInjection, false);
       log('[cdp] 连接已断开，5 秒后重连');
     };
   });
@@ -1743,29 +1807,44 @@ function onCdpEvent(method, params) {
       const context = params.context || {};
       const auxData = context.auxData || {};
       if (!pendingReloadInjection || Date.now() > pendingReloadInjection.expiresAt) {
-        pendingReloadInjection = null;
-        if (pendingReloadInjectionTimer) clearTimeout(pendingReloadInjectionTimer);
-        pendingReloadInjectionTimer = null;
+        if (pendingReloadInjection) settlePendingReloadInjection(pendingReloadInjection, false);
         break;
       }
       if (auxData.isDefault === true && auxData.frameId === pendingReloadInjection.frameId) {
-        pendingReloadInjection = null;
-        if (pendingReloadInjectionTimer) clearTimeout(pendingReloadInjectionTimer);
-        pendingReloadInjectionTimer = null;
-        injectWidget('reload-context', context.id).catch(() => {});
+        runPendingReloadInjection('reload-context', context.id);
       }
       break;
     }
-    case 'Page.loadEventFired':
+    case 'Page.loadEventFired': {
       scheduleBackup('cdp-page-load');
-      // 页面刷新/导航后重新注入组件（组件自带幂等清理，可安全重新注入最新代码）
-      injectWidget('page-load').catch(() => {});
+      if (pendingReloadInjection) {
+        pendingReloadInjection.loadFired = true;
+        runPendingReloadInjection('reload-page-load');
+      } else if (suppressPageLoadInjectionForNavigation === mainFrameNavigationSerial) {
+        suppressPageLoadInjectionForNavigation = 0;
+        log('[cdp] 页面加载完成，早期注入已挂载，跳过重复注入');
+      } else {
+        suppressPageLoadInjectionForNavigation = 0;
+        // 非 WorkDaddy 触发的刷新仍在页面加载完成后恢复组件。
+        injectWidget('page-load').catch(() => {});
+      }
       // 页面刷新后 WorkBuddy 回到官方浅色，重新应用已保存主题（WorkDaddy=深色 / 默认=浅色）
       restoreSavedTheme().catch((e) => log(`[theme] 页面刷新恢复主题失败: ${e.message}`));
       break;
-    case 'Page.frameNavigated':
+    }
+    case 'Page.frameNavigated': {
+      const frame = params.frame || {};
+      // 跨账号刷新会换掉主 frame id；必须在默认 execution context 创建前跟随新 id。
+      if (!frame.parentId && frame.id) {
+        mainFrameNavigationSerial++;
+        if (pendingReloadInjection) {
+          pendingReloadInjection.frameId = frame.id;
+          pendingReloadInjection.navigationSerial = mainFrameNavigationSerial;
+        }
+      }
       scheduleBackup('cdp-navigate');
       break;
+    }
     default:
       break;
   }
@@ -1793,21 +1872,13 @@ async function reloadWorkBuddyPage() {
   } catch (error) {
     log(`[cdp] 获取主页面 frame 失败，将在页面加载完成后注入: ${error.message}`);
   }
-  if (pendingReloadInjectionTimer) clearTimeout(pendingReloadInjectionTimer);
-  pendingReloadInjectionTimer = null;
-  pendingReloadInjection = frameId ? { frameId, expiresAt: Date.now() + 30000 } : null;
-  if (pendingReloadInjection) {
-    pendingReloadInjectionTimer = setTimeout(() => {
-      pendingReloadInjection = null;
-      pendingReloadInjectionTimer = null;
-    }, 30000);
-  }
+  const pending = armPendingReloadInjection(frameId);
   try {
     await cdpSend('Page.reload', { ignoreCache: false });
+    const mounted = await pending.ready;
+    if (!mounted) log('[cdp] 页面重载后组件未在 5 秒内确认挂载，继续后台流程');
   } catch (error) {
-    pendingReloadInjection = null;
-    if (pendingReloadInjectionTimer) clearTimeout(pendingReloadInjectionTimer);
-    pendingReloadInjectionTimer = null;
+    settlePendingReloadInjection(pending, false);
     throw error;
   }
 }
@@ -2616,6 +2687,7 @@ function injectWidget(reason, executionContextId) {
     }
     return Promise.resolve();
   }
+  if (injectRetryTimer) clearTimeout(injectRetryTimer);
   injectRetryTimer = null;
   lastInjectTs = now;
   let script;
@@ -2681,7 +2753,7 @@ function injectWidget(reason, executionContextId) {
       // Runtime.evaluate 本身成功不代表脚本完成挂载；回读 DOM/全局守卫，区分“协议成功”与“用户可见”。
       // 手动注入是 launcher 的成功判据，给页面首屏最多约 1.3 秒完成挂载，避免把正常加载延迟误报为失败。
       let state = null;
-      const checks = reason === 'manual' ? 5 : 1;
+      const checks = reason === 'manual' || String(reason).startsWith('reload-') ? 5 : 1;
       for (let attempt = 0; attempt < checks; attempt++) {
         await new Promise((resolve) => setTimeout(resolve, attempt === 0 ? 120 : 300));
         try {
@@ -2700,7 +2772,7 @@ function injectWidget(reason, executionContextId) {
         log(`[cdp] 注入后未检测到组件(${reason}): ${JSON.stringify(state || {})}`);
         writeDiagnosticsSnapshot('inject-not-mounted').catch(() => {});
         // 页面首屏尚未完成时偶发 body 已存在但应用仍在替换根节点，延迟补试一次。
-        if (!String(reason).endsWith('-retry')) {
+        if (!String(reason).endsWith('-retry') && !String(reason).startsWith('reload-')) {
           setTimeout(() => { if (cdp.connected) injectWidget(String(reason) + '-retry').catch(() => {}); }, 700);
         }
         if (reason === 'manual') throw new Error('注入后未检测到 WorkDaddy 组件（请检查 WorkBuddy 页面是否正常加载）');
@@ -3020,12 +3092,21 @@ function sessionContentMtime(wbHome, sessionId) {
 // Reconcile every live member of a shared lineage.  A switch can arrive after
 // either account has received new messages, so the active account is not a
 // reliable source of truth; choose the freshest on-disk snapshot first.
+async function yieldAutoCopyToRenderer() {
+  await new Promise((resolve) => setImmediate(resolve));
+  const reloadPriority = rendererReloadPriorityPromise;
+  if (reloadPriority) await reloadPriority;
+  const pending = pendingReloadInjection;
+  if (pending && !pending.settled) await pending.ready;
+}
+
 async function syncAutoCopyLineage(lineageId, targetUid) {
   if (!lineageId || PROFILE.kind !== 'workbuddy') return { members: 0, synced: 0, failedFiles: 0, targetIds: [], targetPresent: false };
   const records = getAutoCopySessionMemberRecords(DATA_DIR, lineageId);
   if (!records.length) return { members: 0, synced: 0, failedFiles: 0, targetIds: [], targetPresent: false };
   const live = [];
   for (const member of records) {
+    await yieldAutoCopyToRenderer();
     const rows = await sqliteQuery(
       'SELECT ' + SESSION_COPY_COLUMNS.join(',') + ' FROM sessions WHERE id = ? AND user_id = ? AND deleted_at IS NULL LIMIT 1;',
       [member.id, member.uid]
@@ -3047,6 +3128,7 @@ async function syncAutoCopyLineage(lineageId, targetUid) {
   let failedFiles = 0;
   for (const target of live) {
     if (target.id === latest.id) continue;
+    await yieldAutoCopyToRenderer();
     const files = copySessionFiles(PROFILE.dataRoot, latest.id, target.id);
     synced++;
     failedFiles += files.failed;
@@ -3393,6 +3475,24 @@ async function buildAutoCopyPlan(sourceUid, targetUid) {
 const autoCopyJobs = new Map();
 const autoCopyQueue = [];
 let autoCopyWorkerRunning = false;
+const rendererReloadPriorityTokens = new Set();
+let rendererReloadPriorityPromise = null;
+let resolveRendererReloadPriority = null;
+
+function beginRendererReloadPriority() {
+  const token = {};
+  if (!rendererReloadPriorityTokens.size) {
+    rendererReloadPriorityPromise = new Promise((resolve) => { resolveRendererReloadPriority = resolve; });
+  }
+  rendererReloadPriorityTokens.add(token);
+  return () => {
+    if (!rendererReloadPriorityTokens.delete(token) || rendererReloadPriorityTokens.size) return;
+    const resolve = resolveRendererReloadPriority;
+    rendererReloadPriorityPromise = null;
+    resolveRendererReloadPriority = null;
+    if (resolve) resolve();
+  };
+}
 
 function hasPendingAutoCopyTo(uid) {
   const target = String(uid || '').trim();
@@ -3454,11 +3554,15 @@ function startAutoCopyJob(sourceUid, targetUid, plan) {
   autoCopyJobs.set(id, job);
   const run = async () => {
     job.status = 'running';
+    // 账号切换响应、CDP 导航和注入事件必须先有机会完成；Node SQLite 与文件复制
+    // 的 Promise 可能同步结算，连续微任务会在 macOS 上长期饿死 I/O 事件。
+    await yieldAutoCopyToRenderer();
     // A rapid switch chain may enqueue this job before the previous copy has
     // created the target rows. Re-plan after the queue reaches this job.
     job.plan = await buildAutoCopyPlan(sourceUid, targetUid);
     job.total = job.plan.length;
     for (const src of job.plan) {
+      await yieldAutoCopyToRenderer();
       try {
         let result;
         if (src.lineageId) {
@@ -7373,17 +7477,11 @@ function handleApi(req, res) {
     return readBody(req).then(async (body) => {
       const uid = (body.uid || '').trim();
       if (!uid) return json(res, 400, { ok: false, error: '缺少 uid' });
+      const releaseRendererReload = body.reload ? beginRendererReloadPriority() : null;
       try {
-        // 先记录源账号并规划自动复制内容；切换后异步执行，避免阻塞 WorkBuddy 刷新。
+        // 只记录源账号；自动复制队列会在 renderer 刷新并完成组件注入后重新规划。
+        // 不在这里预规划，否则大量会话的同步 SQLite/文件扫描会让切换界面长时间无响应。
         const sourceUid = String((currentAccount() || {}).uid || '').trim();
-        let autoCopyPlan = [];
-        if (sourceUid && sourceUid !== uid) {
-          try {
-            autoCopyPlan = await buildAutoCopyPlan(sourceUid, uid);
-          } catch (e) {
-            log(`[sessions-auto-copy] 规划失败 ${sourceUid} -> ${uid}: ${e.message}`);
-          }
-        }
         const acct = switchTo(DATA_DIR, uid, log);
         const hint = '登录文件已切换，请重启 WorkBuddy 使新账号生效';
         let reloaded = false;
@@ -7437,8 +7535,8 @@ function handleApi(req, res) {
         // 任务规则通常能直接命中，所以旧逻辑只表现为“任务能复制、空间不复制”。
         const sourceRules = sourceUid ? getAutoCopyRules(DATA_DIR, sourceUid) : { allSessions: false, sessionIds: [], workspaces: [] };
         const hasSourceAutoCopyRules = !!(sourceRules.allSessions || sourceRules.sessionIds.length || sourceRules.workspaces.length);
-        const autoCopyJob = (autoCopyPlan.length || hasSourceAutoCopyRules || hasPendingAutoCopyTo(sourceUid))
-          ? startAutoCopyJob(sourceUid, uid, autoCopyPlan)
+        const autoCopyJob = (hasSourceAutoCopyRules || hasPendingAutoCopyTo(sourceUid))
+          ? startAutoCopyJob(sourceUid, uid, [])
           : null;
         return json(res, 200, {
           ok: true,
@@ -7450,6 +7548,8 @@ function handleApi(req, res) {
         });
       } catch (e) {
         return json(res, 500, { ok: false, error: e.message });
+      } finally {
+        if (releaseRendererReload) releaseRendererReload();
       }
     });
   }
