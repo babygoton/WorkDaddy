@@ -779,6 +779,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '不是 WorkDaddy 的账号导出文件': 'Not a WorkDaddy account export file', '导入文件中没有账号数据': 'No account data found in the import file',
     '未读取到有效内容，请选择导出文件': 'No valid content read; please choose an export file', '密码不能超过 1024 个字符': 'Password cannot exceed 1024 characters',
     '当前登录文件无法唯一确认，已拒绝退出登录': 'The current login file cannot be uniquely identified; logout rejected',
+    '不能删除当前登录的账号（请先退出登录或切换到其他账号）': 'Cannot delete the currently logged-in account (log out or switch to another account first)',
     '删除登录文件后仍然存在': 'The login file still exists after deletion',
     '诊断设置由 WORKDADDY_TELEMETRY 环境变量控制': 'Diagnostics are controlled by the WORKDADDY_TELEMETRY environment variable',
     '保存遥测设置失败:': 'Failed to save telemetry settings:',
@@ -5607,10 +5608,12 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     // → 有新版则 tab 红点 + 更新卡片 → 点击走 下载→安装→自动重启
     function checkForUpdate() {
       api('/api/update-check?force=1').then(function (d) {
-        if (!d || !d.hasUpdate) return; // 无更新或检查失败：不打扰
         var tab = root.querySelector('.wbs-tab[data-tab="about"]');
-        if (tab) tab.classList.add('wbs-tab-dot');
         var card = aboutPane.querySelector('#wbs-update-card');
+        if (tab) tab.classList.remove('wbs-tab-dot');
+        if (card) card.style.display = 'none';
+        if (!d || !d.hasUpdate) return; // 无更新或检查失败：清除旧提示后不打扰
+        if (tab) tab.classList.add('wbs-tab-dot');
         if (!card) return;
         card.style.display = '';
         var title = aboutPane.querySelector('#wbs-update-title');

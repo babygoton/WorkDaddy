@@ -266,8 +266,10 @@ const DATA_DIR = defaultDataDir();
 // 1.1.39：账号脱敏状态按 profile 持久化；WorkDaddy 触发页面重载后在主执行上下文创建时提前注入。
 // 1.1.40：跨账号重载跟随新主 frame，并在会话自动复制占用事件循环前等待组件实际挂载。
 // 1.1.41：后台会话自动复制在文件边界让出 I/O；账号重载期间暂停复制，优先完成组件挂载。
-const DAEMON_VERSION = '1.1.41';
-const DAEMON_BUILD_ID = 'release-1.1.41-20260905-prioritize-switch-reload';
+// 1.1.42：删除账号时同步清理旧版 HelloBuddy 迁移源，避免重启后账号备份复活。
+// 1.1.43：更新缓存只保存发布信息，每次按当前 daemon 版本重新判断，避免同版本重复提示。
+const DAEMON_VERSION = '1.1.44';
+const DAEMON_BUILD_ID = 'release-1.1.44-20260906-fix-account-delete-resurrection';
 const HOST = '127.0.0.1';
 const IS_WIN = process.platform === 'win32'; // Windows 移植：平台分支开关（macOS 行为保持不变）
 // Windows 安装目录（install.ps1 铺、launcher 用、更新替换目标），对应 macOS 的 /Applications/WorkDaddy.app
@@ -645,7 +647,8 @@ function checkUpdate(force) {
       updateState.checkedAt = Date.now();
       updateState.status = 'idle';
       updateState.message = updateState.hasUpdate ? '发现新版本 v' + latest : '已是最新版本';
-      try { fs.writeFileSync(UPDATE_CHECK_CACHE, JSON.stringify({ latest, hasUpdate: updateState.hasUpdate, dmgUrl: updateState.dmgUrl, dmgSize: updateState.dmgSize, dmgSha256: updateState.dmgSha256, assetName: updateState.assetName, notes: updateState.notes, checkedAt: updateState.checkedAt })); } catch (_) {}
+      // 缓存发布信息，不缓存依赖当前运行版本的判断结果。
+      try { fs.writeFileSync(UPDATE_CHECK_CACHE, JSON.stringify({ latest, dmgUrl: updateState.dmgUrl, dmgSize: updateState.dmgSize, dmgSha256: updateState.dmgSha256, assetName: updateState.assetName, notes: updateState.notes, checkedAt: updateState.checkedAt })); } catch (_) {}
       log(`[update] 检查完成: latest=${latest} hasUpdate=${updateState.hasUpdate} (current=${DAEMON_VERSION})`);
       updateDebug('check-result', { current: DAEMON_VERSION, latest, hasUpdate: updateState.hasUpdate, assetName: updateState.assetName, assetSize: updateState.dmgSize, assetSha256: updateState.dmgSha256 });
       return updateState;
@@ -659,14 +662,16 @@ function checkUpdate(force) {
       // 尝试读缓存兜底（上次成功的结果）
       try {
         const c = JSON.parse(fs.readFileSync(UPDATE_CHECK_CACHE, 'utf8'));
-        updateState.latest = c.latest;
-        updateState.hasUpdate = !!c.hasUpdate;
+        const cachedLatest = String(c.latest || '').replace(/^v/, '');
+        updateState.latest = cachedLatest;
+        updateState.hasUpdate = semverCompare(cachedLatest, DAEMON_VERSION) > 0;
         updateState.dmgUrl = c.dmgUrl;
         updateState.dmgSize = Number(c.dmgSize) || 0;
         updateState.assetName = c.assetName || null;
         updateState.dmgSha256 = normalizeAssetSha256(c.dmgSha256) || parseSha256(c.notes);
         updateState.notes = c.notes;
         updateState.checkedAt = c.checkedAt || Date.now();
+        updateState.message = updateState.hasUpdate ? '发现新版本 v' + cachedLatest : '已是最新版本';
       } catch (_) {}
       return updateState;
     });
@@ -6031,10 +6036,10 @@ function handleApi(req, res) {
       if (!uid) return json(res, 400, { ok: false, error: '缺少 uid' });
       if (!/^[A-Za-z0-9_-]{1,128}$/.test(uid)) return json(res, 400, { ok: false, error: 'uid 格式无效' });
       try {
-        const r = deleteAccount(DATA_DIR, uid);
+        const r = deleteAccount(DATA_DIR, uid, log);
         const rulesRemoved = removeAutoCopyAccount(DATA_DIR, uid);
-        log(`[delete] 已永久删除账号备份 ${uid}`);
-        return json(res, 200, { ok: true, deleted: r.deleted, uid, rulesRemoved });
+        log(`[delete] 已永久删除账号备份 ${uid}（auth 存档清理 ${r.authFilesRemoved} 个）`);
+        return json(res, 200, { ok: true, deleted: r.deleted, uid, rulesRemoved, authFilesRemoved: r.authFilesRemoved });
       } catch (e) {
         return json(res, 500, { ok: false, error: e.message });
       }

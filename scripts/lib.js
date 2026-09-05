@@ -1248,15 +1248,69 @@ function listAccounts(dataDir) {
   );
 }
 
+/** 删除 auth 目录中属于该 uid 的全部登录文件（官方固定文件 + 带时间戳的历史存档）。
+ *  只删 listAuthRecords 能发现（parseAuthFile 可解析并匹配）的记录，确保之后的
+ *  backupCurrent 扫描不会再把这个账号重新备份回来——这是「删除账号重启后又出现」
+ *  的根因：删除只清了 backups 目录，auth 目录里残留的存档会在下一次扫描时复活账号。 */
+function deleteAuthFilesForUid(uid, log = () => {}) {
+  if (!AUTH_FILE) return { removed: 0 };
+  if (!DYNAMIC_AUTH_DISCOVERY) {
+    const record = parseAuthFile(AUTH_FILE, { strict: false });
+    if (record && record.uid === uid && fs.existsSync(AUTH_FILE)) {
+      fs.unlinkSync(AUTH_FILE);
+      log(`[delete] 已删除固定登录文件 ${path.basename(AUTH_FILE)}`);
+      return { removed: 1 };
+    }
+    return { removed: 0 };
+  }
+  const dir = authDir();
+  let names;
+  try { names = fs.readdirSync(dir); } catch (_) { return { removed: 0 }; }
+  let removed = 0;
+  for (const name of names) {
+    if (!safeAuthFileName(name)) continue;
+    const file = path.join(dir, name);
+    const record = parseAuthFile(file);
+    if (record && record.uid === uid && fs.existsSync(file)) {
+      try {
+        fs.unlinkSync(file);
+        removed += 1;
+      } catch (e) {
+        log(`[delete] 删除认证存档 ${name} 失败: ${e.message}`);
+      }
+    }
+  }
+  return { removed };
+}
+
 /** 永久删除某个账号的备份文件（不影响当前登录） */
-function deleteAccount(dataDir, uid) {
+function deleteAccount(dataDir, uid, log = () => {}) {
   if (!ACTIVE_PROFILE.capabilities.accounts) throw new Error(`${ACTIVE_PROFILE.name} 暂不支持账号切换`);
+  // 防御：面板已对当前登录账号隐藏删除按钮；走到这里说明状态异常，
+  // 拒绝直接删官方正在读取的登录位（删了 WorkBuddy 也会重新写回，删不干净）。
+  const current = resolveCurrentAuth();
+  if (current.file && !current.ambiguous) {
+    const record = parseAuthFile(current.file, { strict: false });
+    if (record && record.uid === uid) {
+      throw new Error('不能删除当前登录的账号（请先退出登录或切换到其他账号）');
+    }
+  }
   migrateLegacyDataDir(dataDir);
-  const file = backupPath(dataDir, uid);
+  // 关键：先清掉 auth 目录里该 uid 的全部登录文件（固定文件 + 历史存档），
+  // 否则 backupCurrent 的下一次扫描会把账号重新备份回来（删除后复活的根因）。
+  const authResult = deleteAuthFilesForUid(uid, log);
+  const files = [backupPath(dataDir, uid)];
+  // 旧版 HelloBuddy 目录仍会在每次启动时迁移缺失的账号备份。删除新目录
+  // 的文件后若留下旧源文件，下一次 daemon 启动就会把账号重新复制回来。
+  if (!IS_WIN && samePath(dataDir, PLATFORM_DATA_DIR)) {
+    files.push(backupPath(LEGACY_DATA_DIR, uid));
+  }
   let deletedFile = false;
-  if (fs.existsSync(file)) {
-    fs.unlinkSync(file);
-    deletedFile = true;
+  for (const file of files) {
+    if (fs.existsSync(file)) {
+      fs.unlinkSync(file);
+      deletedFile = true;
+    }
   }
   const mf = metaFile(dataDir);
   try {
@@ -1268,7 +1322,7 @@ function deleteAccount(dataDir, uid) {
   } catch (_) {
     /* meta 不存在则忽略 */
   }
-  return { deleted: deletedFile, uid };
+  return { deleted: deletedFile, uid, authFilesRemoved: authResult.removed };
 }
 
 /** 切换登录账号：把备份文件复制回登录信息文件（先校验 uid 匹配） */
