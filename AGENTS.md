@@ -106,6 +106,7 @@ The queue item's 暂存提示词 tag is rendered by `syncQueueTags` (in `scripts
 ## Release Version Consistency
 
 - A release version must be identical in the package filename, macOS `Info.plist` (`CFBundleShortVersionString`/`CFBundleVersion`), and the packaged `scripts/daemon.js` `DAEMON_VERSION`. A package named `1.0.10` that runs daemon code reporting `1.0.6` is invalid.
+- Update availability has one source of truth: compare the latest GitHub or cached release version with the running `DAEMON_VERSION` every time. Never persist or trust a cached `hasUpdate` decision across daemon versions, and clear any existing update card/red dot when no newer version exists.
 - Build scripts must always rewrite the staged daemon version from the release `VERSION`; never rely on the version embedded in the reusable `WorkDaddy.app` shell or on a conditional test-only override.
 - Windows releases are `Setup.exe` only. The `*-win64.zip` created by the installer pipeline is temporary staging and must be deleted before artifact upload or GitHub Release publication; ZIP remains supported only as an updater fallback for historical releases.
 - Before publishing or handing off a package, inspect the actual DMG/Setup.exe payload and record the daemon version, app metadata version, profile branding, and required update scripts. Do not infer package correctness from the filename alone.

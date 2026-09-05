@@ -81,7 +81,7 @@ test('WorkBuddy GUI startup stays visible while the watchdog stays hidden', () =
   assert.match(watchdog, /spawn\(process\.execPath, args, \{ stdio: 'ignore', windowsHide: true/);
 });
 
-test('installer waits for the exact profile client with a visible recheck dialog', () => {
+test('installer confirms elevated setup but keeps lifecycle work and auto-launch standard-only', () => {
   const installer = read('scripts/win/workdaddy.iss');
 
   assert.match(installer, /function EnsureWorkBuddyClosed/);
@@ -91,10 +91,16 @@ test('installer waits for the exact profile client with a visible recheck dialog
   assert.match(installer, /Caption := '\u53d6\u6d88'/);
   assert.match(installer, /--terminate-workbuddy/);
   assert.match(installer, /--stop-lifecycle/);
-  assert.match(installer, /IsAdminInstallMode/);
+  assert.match(installer, /function ConfirmElevatedInstall/);
+  assert.match(installer, /if IsAdmin and not ConfirmElevatedInstall/);
+  assert.match(installer, /MB_YESNO/);
+  assert.match(installer, /IDYES/);
+  assert.match(installer, /if IsAdmin then\s+exit;/);
+  assert.doesNotMatch(installer, /if IsAdminInstallMode then/);
   assert.match(installer, /当前安装程序是以管理员权限运行的/);
   assert.match(installer, /ExecAsOriginalUser\(/);
-  assert.match(installer, /runasoriginaluser/);
+  assert.match(installer, /runasoriginaluser[^\r\n]*Check: ShouldAutoLaunch/);
+  assert.match(installer, /function ShouldAutoLaunch[\s\S]*Result := not IsAdmin/);
   assert.match(installer, /PrivilegesRequired=lowest/);
   assert.match(installer, /CloseApplications=no/);
 });

@@ -652,14 +652,20 @@ test('Windows Setup waits for WorkBuddy and stops only a native-verified profile
   assert.match(installer, /ResultCode = 11/);
   assert.match(installer, /runtime\\node\\\*/);
   assert.match(installer, /无法安全停止 WorkDaddy 后台进程/);
-  assert.match(installer, /IsAdminInstallMode/);
+  assert.match(installer, /function ConfirmElevatedInstall/);
+  assert.match(installer, /if IsAdmin and not ConfirmElevatedInstall/);
+  assert.match(installer, /MB_YESNO/);
+  assert.match(installer, /IDYES/);
+  assert.match(installer, /if IsAdmin then\s+exit;/);
+  assert.doesNotMatch(installer, /if IsAdminInstallMode then/);
   assert.match(installer, /当前安装程序是以管理员权限运行的/);
-  assert.match(installer, /不要选择“以管理员身份运行”/);
+  assert.match(installer, /仍然继续安装/);
+  assert.match(installer, /runasoriginaluser[^\r\n]*Check: ShouldAutoLaunch/);
+  assert.match(installer, /function ShouldAutoLaunch[\s\S]*Result := not IsAdmin/);
   assert.match(installer, /普通安装器不会跨权限强行结束/);
   assert.match(installer, /按 Ctrl\+Shift\+Esc 打开任务管理器/);
   assert.match(installer, /旧版 WorkDaddy 的状态文件与实际程序不一致/);
   assert.match(installer, /不要手动删除 WorkDaddy 数据目录/);
-  assert.doesNotMatch(installer, /安装器本身可以使用管理员权限运行/);
   assert.doesNotMatch(installer, /旧版 WorkDaddy 正以管理员权限运行/);
   assert.doesNotMatch(installer, /prepare-win-install|windows-process-boundary|PowerShell/i);
 });
@@ -962,6 +968,31 @@ test('about page reports the running daemon version instead of stale package met
   assert.match(about, /version:\s*DAEMON_VERSION/);
   assert.match(about, /packageVersion/);
   assert.doesNotMatch(about, /build\.version = pjson\.version/);
+});
+
+test('cached update metadata is rechecked against the running daemon version', () => {
+  const daemon = read('daemon.js');
+  const checkStart = daemon.indexOf('function checkUpdate(force)');
+  const downloadStart = daemon.indexOf('\nfunction downloadUpdate()', checkStart);
+  assert.ok(checkStart >= 0 && downloadStart > checkStart);
+  const checkUpdate = daemon.slice(checkStart, downloadStart);
+  assert.match(checkUpdate, /const cachedLatest = String\(c\.latest \|\| ''\)\.replace\(\/\^v\//);
+  assert.match(checkUpdate, /updateState\.hasUpdate = semverCompare\(cachedLatest, DAEMON_VERSION\) > 0/);
+  assert.doesNotMatch(checkUpdate, /updateState\.hasUpdate = !!c\.hasUpdate/);
+});
+
+test('about page clears stale update UI when no newer version exists', () => {
+  const inject = read('inject.js');
+  const checkStart = inject.indexOf('function checkForUpdate()');
+  const logStart = inject.indexOf('\n    function updateLogTimestamp()', checkStart);
+  assert.ok(checkStart >= 0 && logStart > checkStart);
+  const checkForUpdate = inject.slice(checkStart, logStart);
+  assert.match(checkForUpdate, /tab\.classList\.remove\('wbs-tab-dot'\)/);
+  assert.match(checkForUpdate, /card\.style\.display = 'none'/);
+  assert.ok(
+    checkForUpdate.indexOf("classList.remove('wbs-tab-dot')") < checkForUpdate.indexOf('if (!d || !d.hasUpdate)'),
+    'stale update indicators must be cleared before returning'
+  );
 });
 
 test('update failures preserve stage, attempt id, and apply log details for feedback', () => {
