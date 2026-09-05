@@ -550,6 +550,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
   // User-facing strings are translated at the injected root so dynamically-built
   // panes and toasts follow the same language without touching WorkBuddy's DOM.
   var WBS_LANGUAGE_KEY = 'workdaddy.ui.language';
+  var WBS_ACCOUNT_MASK_KEY = 'workdaddy.account.mask.' + PROFILE_ID;
   var WBS_I18N_EN = {
     '账号': 'Accounts', '主题': 'Theme', '会话': 'Sessions', '模型': 'Models', '增强': 'Enhance', '电脑': 'Computer', '关于': 'About', '设置': 'Settings',
     '导出': 'Export', '导入': 'Import', '删除': 'Delete', '编辑': 'Edit', '保存': 'Save', '取消': 'Cancel', '确定': 'Confirm', '确认': 'Confirm', '复制': 'Copy', '切换': 'Switch', '启用': 'Enable', '停止': 'Stop',
@@ -910,7 +911,9 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     window.addEventListener('unhandledrejection', function (ev) { wbsReportErr('unhandledrejection', ev); });
   }
 
-  var state = { accounts: [], current: null, open: false, batchRunning: false, creditRunId: 0, creditRemaining: 0, creditSummaryValue: null, checkinPollId: null, mask: false };
+  var accountMaskEnabled = false;
+  try { accountMaskEnabled = localStorage.getItem(WBS_ACCOUNT_MASK_KEY) === '1'; } catch (_) {}
+  var state = { accounts: [], current: null, open: false, batchRunning: false, creditRunId: 0, creditRemaining: 0, creditSummaryValue: null, checkinPollId: null, mask: accountMaskEnabled };
   var currentBuild = null;
   // 当前注入的 daemon 版本号（由 daemon.js 注入时把 __WBS_VERSION__ 替换为 DAEMON_VERSION）
   // 「关于」tab 直接展示，升级 daemon 后这里自动同步
@@ -9450,7 +9453,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       return maskAccountName(s);
     }
 
-    // 眼睛按钮 + 卡片文本联动：默认不脱敏（明文），点击切换脱敏/明文
+    // 眼睛按钮 + 卡片文本联动：恢复上次选择，点击切换脱敏/明文
     function applyAccountMask() {
       var eyeBtn = accountsPane.querySelector('.wbs-acct-eye');
       if (eyeBtn) {
@@ -9479,6 +9482,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
 
     function toggleAccountMask() {
       state.mask = !state.mask;
+      try { localStorage.setItem(WBS_ACCOUNT_MASK_KEY, state.mask ? '1' : '0'); } catch (_) {}
       applyAccountMask();
     }
 

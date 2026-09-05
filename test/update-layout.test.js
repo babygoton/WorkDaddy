@@ -168,6 +168,27 @@ test('account switching refreshes WorkBuddy after replacing auth without restart
   assert.match(lib, /retireLogoutMarker\(log\);/);
 });
 
+test('WorkDaddy-triggered reload injects on the new main execution context before page load', () => {
+  const script = read('daemon.js');
+  const reloadStart = script.indexOf('async function reloadWorkBuddyPage()');
+  const reloadEnd = script.indexOf('\n// 切换账号后自动打开', reloadStart);
+  const reload = script.slice(reloadStart, reloadEnd);
+  const eventsStart = script.indexOf('function onCdpEvent(method, params)');
+  const eventsEnd = script.indexOf('\nasync function cdpLoop()', eventsStart);
+  const events = script.slice(eventsStart, eventsEnd);
+
+  assert.match(reload, /Page\.getFrameTree/);
+  assert.match(reload, /pendingReloadInjection/);
+  assert.ok(reload.indexOf('pendingReloadInjection') < reload.indexOf("cdpSend('Page.reload'"), 'reload must be armed before navigation starts');
+  assert.match(events, /case 'Runtime\.executionContextCreated'/);
+  assert.match(events, /auxData\.isDefault === true/);
+  assert.match(events, /auxData\.frameId === pendingReloadInjection\.frameId/);
+  assert.match(events, /pendingReloadInjection = null/);
+  assert.match(events, /injectWidget\('reload-context'/);
+  assert.match(events, /case 'Page\.loadEventFired'/);
+  assert.match(events, /injectWidget\('page-load'/);
+});
+
 test('account switching retires WorkBuddy logout marker', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'workdaddy-auth-'));
   const authFile = path.join(dir, 'workbuddy-desktop.info');

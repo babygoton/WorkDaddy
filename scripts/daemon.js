@@ -263,8 +263,9 @@ const DATA_DIR = defaultDataDir();
 //         固定文件名（workbuddy-desktop.info）跨认证通道可交替覆盖，个性化文件名保留通道校验。
 // 1.1.38：备份扫描禁止历史存档覆盖有效备份（s 身份过期事故根源）；切换账号后自动打开
 //         目标账号中与当前会话同标题的复制会话（auto-focus）。
-const DAEMON_VERSION = '1.1.38';
-const DAEMON_BUILD_ID = 'release-1.1.38-20260904-auth-backup-guard-autofocus';
+// 1.1.39：账号脱敏状态按 profile 持久化；WorkDaddy 触发页面重载后在主执行上下文创建时提前注入。
+const DAEMON_VERSION = '1.1.39';
+const DAEMON_BUILD_ID = 'release-1.1.39-20260905-mask-persistence-early-reload-inject';
 const HOST = '127.0.0.1';
 const IS_WIN = process.platform === 'win32'; // Windows 移植：平台分支开关（macOS 行为保持不变）
 // Windows 安装目录（install.ps1 铺、launcher 用、更新替换目标），对应 macOS 的 /Applications/WorkDaddy.app
@@ -1503,6 +1504,8 @@ let daemonLockPath = DAEMON_LOCK_FILE;
 let lastInjectTs = 0;
 let injectRetryTimer = null; // 被节流跳过的自动注入的兜底补种定时器
 let manualInjectPromise = null; // launcher 超时重试时复用同一轮注入，避免并发清理/重挂载 renderer
+let pendingReloadInjection = null; // 仅对 WorkDaddy 主动触发的页面重载做一次主 frame 早期注入
+let pendingReloadInjectionTimer = null;
 
 async function findCdpEndpoint() {
   // profile 已由启动器绑定时不能扫描其他产品的端口；CodeBuddy Agents/Editor
@@ -1736,6 +1739,23 @@ function onCdpEvent(method, params) {
       log('[renderer:exception] ' + redactDiagnosticText(desc || d.text || ''));
       break;
     }
+    case 'Runtime.executionContextCreated': {
+      const context = params.context || {};
+      const auxData = context.auxData || {};
+      if (!pendingReloadInjection || Date.now() > pendingReloadInjection.expiresAt) {
+        pendingReloadInjection = null;
+        if (pendingReloadInjectionTimer) clearTimeout(pendingReloadInjectionTimer);
+        pendingReloadInjectionTimer = null;
+        break;
+      }
+      if (auxData.isDefault === true && auxData.frameId === pendingReloadInjection.frameId) {
+        pendingReloadInjection = null;
+        if (pendingReloadInjectionTimer) clearTimeout(pendingReloadInjectionTimer);
+        pendingReloadInjectionTimer = null;
+        injectWidget('reload-context', context.id).catch(() => {});
+      }
+      break;
+    }
     case 'Page.loadEventFired':
       scheduleBackup('cdp-page-load');
       // 页面刷新/导航后重新注入组件（组件自带幂等清理，可安全重新注入最新代码）
@@ -1766,7 +1786,30 @@ async function cdpLoop() {
 
 async function reloadWorkBuddyPage() {
   if (!cdp.connected) throw new Error('CDP 未连接，无法自动刷新窗口');
-  await cdpSend('Page.reload', { ignoreCache: false });
+  let frameId = null;
+  try {
+    const tree = await cdpSend('Page.getFrameTree');
+    frameId = tree && tree.frameTree && tree.frameTree.frame && tree.frameTree.frame.id;
+  } catch (error) {
+    log(`[cdp] 获取主页面 frame 失败，将在页面加载完成后注入: ${error.message}`);
+  }
+  if (pendingReloadInjectionTimer) clearTimeout(pendingReloadInjectionTimer);
+  pendingReloadInjectionTimer = null;
+  pendingReloadInjection = frameId ? { frameId, expiresAt: Date.now() + 30000 } : null;
+  if (pendingReloadInjection) {
+    pendingReloadInjectionTimer = setTimeout(() => {
+      pendingReloadInjection = null;
+      pendingReloadInjectionTimer = null;
+    }, 30000);
+  }
+  try {
+    await cdpSend('Page.reload', { ignoreCache: false });
+  } catch (error) {
+    pendingReloadInjection = null;
+    if (pendingReloadInjectionTimer) clearTimeout(pendingReloadInjectionTimer);
+    pendingReloadInjectionTimer = null;
+    throw error;
+  }
 }
 
 // 切换账号后自动打开目标账号中「与切换前当前会话同标题」的会话：
@@ -2544,7 +2587,7 @@ async function claimDailyForAll() {
 }
 
 /** 通过 CDP 把右下角组件注入到 WorkBuddy 渲染进程（幂等，可反复调用） */
-function injectWidget(reason) {
+function injectWidget(reason, executionContextId) {
   if (!cdp.connected) {
     return Promise.reject(new Error('CDP 未连接，无法注入组件'));
   }
@@ -2562,7 +2605,7 @@ function injectWidget(reason) {
   // 否则 WorkBuddy 重启后仅有的注入机会会被节流吞掉（多台机器 FAB 缺失的根因：
   // launcher 检测到 CDP 就调用 manual，但被 1.5s 节流跳过，页面又不会再触发补种）。
   var now = Date.now();
-  if (reason !== 'manual' && now - lastInjectTs < 1000) {
+  if (reason !== 'manual' && reason !== 'reload-context' && now - lastInjectTs < 1000) {
     log(`[cdp] 注入节流跳过 (${reason})`);
     // 兜底：被跳过的自动注入可能是页面刚就绪的唯一一次机会，1.5s 后补种一次（脚本幂等，安全）
     if (!injectRetryTimer) {
@@ -2613,12 +2656,14 @@ function injectWidget(reason) {
   log(`[cdp] 注入右下角组件 (${reason})`);
   const cleanupExpr =
     'try{if(window.__wbsWidget&&typeof window.__wbsWidget.destroy==="function"){window.__wbsWidget.destroy();}}catch(e){}';
-  return cdpSend('Runtime.evaluate', { expression: cleanupExpr, returnByValue: false })
+  const runtimeContext = executionContextId == null ? {} : { contextId: executionContextId };
+  return cdpSend('Runtime.evaluate', { expression: cleanupExpr, returnByValue: false, ...runtimeContext })
     .catch(() => {})
     .then(() =>
       cdpSend('Runtime.evaluate', {
         expression: script,
         returnByValue: false,
+        ...runtimeContext,
       })
     )
     // 注入脚本若在页面抛错，CDP 协议不报错（无 protocol error），会被误判为"已注入"；
@@ -2643,6 +2688,7 @@ function injectWidget(reason) {
           const check = await cdpSend('Runtime.evaluate', {
             expression: '({ url: location.href, readyState: document.readyState, body: !!document.body, root: !!document.querySelector(".wbs-root"), widget: !!window.__wbsWidget })',
             returnByValue: true,
+            ...runtimeContext,
           });
           state = check && check.result && check.result.value;
         } catch (e) {

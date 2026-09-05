@@ -93,6 +93,13 @@ test('model, wallpaper, and account cards escape each dynamic HTML sink', () => 
   assert.doesNotMatch(accounts, /var idVal = a\.phone \? a\.phone/);
 });
 
+test('account masking preference persists per WorkDaddy profile', () => {
+  assert.match(source, /var WBS_ACCOUNT_MASK_KEY = 'workdaddy\.account\.mask\.' \+ PROFILE_ID;/);
+  assert.match(source, /localStorage\.getItem\(WBS_ACCOUNT_MASK_KEY\) === '1'/);
+  const toggle = sourceBetween('function toggleAccountMask()', 'function refresh()');
+  assert.match(toggle, /localStorage\.setItem\(WBS_ACCOUNT_MASK_KEY, state\.mask \? '1' : '0'\)/);
+});
+
 test('dynamic error and check-in messages are escaped before HTML insertion', () => {
   assert.match(source, /wbs-checkin-tag fail[^\n]+esc\(msg\)/);
   assert.match(source, /会话加载失败: ' \+ esc\(e\.message \|\| e\)/);
