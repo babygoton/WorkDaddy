@@ -9573,7 +9573,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
           expiresAt: nearestCreditExpiry(account),
         };
       }).sort(function (a, b) {
-        if (a.isCurrent !== b.isCurrent) return a.isCurrent ? -1 : 1;
+        // 不再置顶当前账号：统一按积分到期时间升序（最近到期最前），无到期信息排最后
         if (a.expiresAt !== b.expiresAt) return a.expiresAt - b.expiresAt;
         return a.index - b.index;
       }).map(function (item) { return item.account; });
@@ -9633,14 +9633,13 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     function render(data) {
       state.current = data.current;
       state.accounts = (data.accounts || []).slice();
-      if (state.current && state.current.uid) {
-        state.accounts.sort(function (left, right) {
-          var leftIsCurrent = !!(left && left.uid === state.current.uid);
-          var rightIsCurrent = !!(right && right.uid === state.current.uid);
-          if (leftIsCurrent === rightIsCurrent) return 0;
-          return leftIsCurrent ? -1 : 1;
-        });
-      }
+      // 账号排序：按积分到期时间升序（最近到期最前），不再把当前账号置顶
+      state.accounts.sort(function (left, right) {
+        var le = nearestCreditExpiry(left);
+        var re = nearestCreditExpiry(right);
+        if (le !== re) return le - re;
+        return 0;
+      });
       state.creditRemaining = state.accounts.length;
       updateAccountSummary();
       var list = accountsPane.querySelector('.wbs-acct-list');

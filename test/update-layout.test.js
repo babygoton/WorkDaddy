@@ -821,11 +821,15 @@ test('account cards keep the compact three-row layout', () => {
   assert.doesNotMatch(script, /wbs-checkin-cell/);
 });
 
-test('account cards place the current logged-in account first', () => {
+test('account cards sort by credit expiry without pinning the current account', () => {
   const script = read('inject.js');
   assert.match(script, /state\.current = data\.current;\s*state\.accounts = \(data\.accounts \|\| \[\]\)\.slice\(\);/);
-  assert.match(script, /state\.accounts\.sort\(function \(left, right\) \{[\s\S]*left\.uid === state\.current\.uid[\s\S]*right\.uid === state\.current\.uid[\s\S]*return leftIsCurrent \? -1 : 1;[\s\S]*\}\);/);
-  assert.match(script, /function sortAccountsByCreditExpiry\(\) \{[\s\S]*isCurrent:[\s\S]*if \(a\.isCurrent !== b\.isCurrent\) return a\.isCurrent \? -1 : 1;[\s\S]*if \(a\.expiresAt !== b\.expiresAt\)/);
+  // render()：不再把当前账号置顶，统一按积分到期时间升序
+  assert.doesNotMatch(script, /state\.accounts\.sort\(function \(left, right\) \{[\s\S]*left\.uid === state\.current\.uid[\s\S]*right\.uid === state\.current\.uid[\s\S]*return leftIsCurrent \? -1 : 1;[\s\S]*\}\);/);
+  assert.match(script, /function render\(data\) \{[\s\S]*state\.accounts\.sort\(function \(left, right\) \{[\s\S]*nearestCreditExpiry\(left\)[\s\S]*nearestCreditExpiry\(right\)[\s\S]*le - re[\s\S]*\}\);/);
+  // sortAccountsByCreditExpiry：去掉当前账号置顶，仅按到期时间 + 稳定序
+  assert.match(script, /function sortAccountsByCreditExpiry\(\) \{[\s\S]*isCurrent:[\s\S]*a\.expiresAt !== b\.expiresAt[\s\S]*a\.expiresAt - b\.expiresAt[\s\S]*a\.index - b\.index/);
+  assert.doesNotMatch(script, /function sortAccountsByCreditExpiry\(\) \{[\s\S]*if \(a\.isCurrent !== b\.isCurrent\) return a\.isCurrent \? -1 : 1;/);
 });
 
 test('quick-phrase layering does not reposition WorkBuddy native chat toolbar', () => {
