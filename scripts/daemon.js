@@ -94,6 +94,7 @@ const {
   moveAutoCopySession,
   removeAutoCopySession,
   removeAutoCopyAccount,
+  collectLineageMembersForDelete,
   getAutoCopyMapping,
   setAutoCopyMapping,
   deleteAutoCopyMapping,
@@ -266,8 +267,20 @@ const DATA_DIR = defaultDataDir();
 // 1.1.39：账号脱敏状态按 profile 持久化；WorkDaddy 触发页面重载后在主执行上下文创建时提前注入。
 // 1.1.40：跨账号重载跟随新主 frame，并在会话自动复制占用事件循环前等待组件实际挂载。
 // 1.1.41：后台会话自动复制在文件边界让出 I/O；账号重载期间暂停复制，优先完成组件挂载。
-const DAEMON_VERSION = '1.1.41';
-const DAEMON_BUILD_ID = 'release-1.1.41-20260905-prioritize-switch-reload';
+// 1.1.42：删除账号时同步清理旧版 HelloBuddy 迁移源，避免重启后账号备份复活。
+// 1.1.43：更新缓存只保存发布信息，每次按当前 daemon 版本重新判断，避免同版本重复提示。
+// 1.1.45：导出使用 gzip + AES-GCM v3，导入兼容 v2；页面刷新失败不阻塞导入响应。
+// 1.1.46：删除会话按 lineage 级联删除其他账号的同源副本（DB+消息文件+复制规则），
+//         修复「删除某账号会话后切走再切回，auto-copy 把副本复制回来导致会话复活」。
+// 1.1.47：会话导入返回逐条失败原因，导入结果停留在弹窗供用户查看。
+// 1.1.48：会话导入不再自动刷新页面，结果弹窗曾提供手动刷新入口。
+// 1.1.49：会话导入完成后完全不刷新页面，只展示导入结果并由用户关闭弹窗。
+// 1.1.50：新增 /api/cdp-click 真实鼠标点击（CDP Input.dispatchMouseEvent）——官方侧栏/确认
+//         类 UI 拒绝 isTrusted=false 的 click()，仅原生输入可触发；供自动批准等链路使用。
+// 1.1.51：Rule1/Auto-Continue 完成标记由零宽字符改为 Markdown 引用定义 [wbs-reply-done]: #
+//         （零宽会被官方存储链路转义成字面 \u200b 显形）；inject 完成检测同步兼容。
+const DAEMON_VERSION = '1.1.51';
+const DAEMON_BUILD_ID = 'release-1.1.51-20260906-rule1-markdown-marker';
 const HOST = '127.0.0.1';
 const IS_WIN = process.platform === 'win32'; // Windows 移植：平台分支开关（macOS 行为保持不变）
 // Windows 安装目录（install.ps1 铺、launcher 用、更新替换目标），对应 macOS 的 /Applications/WorkDaddy.app
@@ -645,7 +658,8 @@ function checkUpdate(force) {
       updateState.checkedAt = Date.now();
       updateState.status = 'idle';
       updateState.message = updateState.hasUpdate ? '发现新版本 v' + latest : '已是最新版本';
-      try { fs.writeFileSync(UPDATE_CHECK_CACHE, JSON.stringify({ latest, hasUpdate: updateState.hasUpdate, dmgUrl: updateState.dmgUrl, dmgSize: updateState.dmgSize, dmgSha256: updateState.dmgSha256, assetName: updateState.assetName, notes: updateState.notes, checkedAt: updateState.checkedAt })); } catch (_) {}
+      // 缓存发布信息，不缓存依赖当前运行版本的判断结果。
+      try { fs.writeFileSync(UPDATE_CHECK_CACHE, JSON.stringify({ latest, dmgUrl: updateState.dmgUrl, dmgSize: updateState.dmgSize, dmgSha256: updateState.dmgSha256, assetName: updateState.assetName, notes: updateState.notes, checkedAt: updateState.checkedAt })); } catch (_) {}
       log(`[update] 检查完成: latest=${latest} hasUpdate=${updateState.hasUpdate} (current=${DAEMON_VERSION})`);
       updateDebug('check-result', { current: DAEMON_VERSION, latest, hasUpdate: updateState.hasUpdate, assetName: updateState.assetName, assetSize: updateState.dmgSize, assetSha256: updateState.dmgSha256 });
       return updateState;
@@ -659,14 +673,16 @@ function checkUpdate(force) {
       // 尝试读缓存兜底（上次成功的结果）
       try {
         const c = JSON.parse(fs.readFileSync(UPDATE_CHECK_CACHE, 'utf8'));
-        updateState.latest = c.latest;
-        updateState.hasUpdate = !!c.hasUpdate;
+        const cachedLatest = String(c.latest || '').replace(/^v/, '');
+        updateState.latest = cachedLatest;
+        updateState.hasUpdate = semverCompare(cachedLatest, DAEMON_VERSION) > 0;
         updateState.dmgUrl = c.dmgUrl;
         updateState.dmgSize = Number(c.dmgSize) || 0;
         updateState.assetName = c.assetName || null;
         updateState.dmgSha256 = normalizeAssetSha256(c.dmgSha256) || parseSha256(c.notes);
         updateState.notes = c.notes;
         updateState.checkedAt = c.checkedAt || Date.now();
+        updateState.message = updateState.hasUpdate ? '发现新版本 v' + cachedLatest : '已是最新版本';
       } catch (_) {}
       return updateState;
     });
@@ -1865,16 +1881,35 @@ async function cdpLoop() {
 
 async function reloadWorkBuddyPage() {
   if (!cdp.connected) throw new Error('CDP 未连接，无法自动刷新窗口');
+  const withTimeout = (promise, ms, label) => new Promise((resolve, reject) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      reject(new Error(label + '超时'));
+    }, ms);
+    promise.then((value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(value);
+    }, (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(error);
+    });
+  });
   let frameId = null;
   try {
-    const tree = await cdpSend('Page.getFrameTree');
+    const tree = await withTimeout(cdpSend('Page.getFrameTree'), 10000, '读取 WorkBuddy 页面状态');
     frameId = tree && tree.frameTree && tree.frameTree.frame && tree.frameTree.frame.id;
   } catch (error) {
     log(`[cdp] 获取主页面 frame 失败，将在页面加载完成后注入: ${error.message}`);
   }
   const pending = armPendingReloadInjection(frameId);
   try {
-    await cdpSend('Page.reload', { ignoreCache: false });
+    await withTimeout(cdpSend('Page.reload', { ignoreCache: false }), 10000, '刷新 WorkBuddy 页面');
     const mounted = await pending.ready;
     if (!mounted) log('[cdp] 页面重载后组件未在 5 秒内确认挂载，继续后台流程');
   } catch (error) {
@@ -3154,6 +3189,18 @@ async function syncAutoCopyLineage(lineageId, targetUid) {
 
 const MAX_SESSION_EXPORT_BYTES = 256 * 1024 * 1024;
 const MAX_SESSION_EXPORT_FILES = 20000;
+const MAX_SESSION_IMPORT_ERRORS = 20;
+const MAX_SESSION_IMPORT_ERROR_LENGTH = 240;
+
+function summarizeSessionImportErrors(errors) {
+  const list = Array.isArray(errors) ? errors : [];
+  return list.slice(0, MAX_SESSION_IMPORT_ERRORS).map((message) => {
+    const text = String(message || '导入失败');
+    return text.length > MAX_SESSION_IMPORT_ERROR_LENGTH
+      ? text.slice(0, MAX_SESSION_IMPORT_ERROR_LENGTH) + '…'
+      : text;
+  });
+}
 
 function archiveRelativePath(wbHome, target) {
   return path.relative(wbHome, target).split(path.sep).join('/');
@@ -3354,7 +3401,7 @@ async function importSessions(content, password, targetUid) {
     }
   }
   if (!imported.length) throw new Error(errors[0] || '没有可导入的会话');
-  return { imported, failed: errors.length };
+  return { imported, failed: errors.length, errors: summarizeSessionImportErrors(errors) };
 }
 
 async function copySessionRecord(src, targetUid, options = {}) {
@@ -4052,13 +4099,15 @@ const AC_TAG_START = '[WorkDaddy-Rule1 - activate]'; // 区块标识（v2 起改
 const AC_TAG_END = '[end WorkDaddy-Rule1]';
 // 兼容清理：新名 Rule1 与旧名 AutoContinue 的块都会被删除（旧版开关残留块升级时一并清除）
 const AC_BLOCK_RE = /\[WorkDaddy-(?:AutoContinue|Rule1)[\s\S]*?\[end WorkDaddy-(?:AutoContinue|Rule1)\]/g;
+// Rule1 v2（2026-09-06）：零宽字符会被官方消息存储链路转义成字面 \u200b 文本（显形污染），
+// 改用 Markdown 链接引用定义（[wbs-reply-done]: #）作完成标记——解析为 definition 节点、
+// 渲染时丢弃、肉眼不可见；inject 的 acHasMarker 同步支持该标记判定。
 const AC_INSTRUCTION = [
-  'Always append one invisible zero-width marker (U+200B U+200B U+2060) at the very end of the main text body of every reply that you finish producing.',
-  'The marker means the reply is complete, whether or not the underlying task is fully done.',
+  'When you finish producing a reply, mark it as complete by appending one line of Markdown link-reference definition at the very end of the main text body, for example: [wbs-reply-done]: # .',
+  'Such a definition is parsed as metadata and renders as invisible in Markdown UIs, so the completion marker never shows up to the user.',
   'Append it whenever you finish writing a reply.',
   'Only omit it if your reply is interrupted or cut short before you finished.',
-  'Write the actual invisible characters, never a visible placeholder such as text or escaped notation.',
-  'Add nothing after the marker.',
+  'Add nothing visible after the marker.',
   'Keep this active for all remaining replies in this conversation.',
 ].join(' ');
 
@@ -6031,10 +6080,10 @@ function handleApi(req, res) {
       if (!uid) return json(res, 400, { ok: false, error: '缺少 uid' });
       if (!/^[A-Za-z0-9_-]{1,128}$/.test(uid)) return json(res, 400, { ok: false, error: 'uid 格式无效' });
       try {
-        const r = deleteAccount(DATA_DIR, uid);
+        const r = deleteAccount(DATA_DIR, uid, log);
         const rulesRemoved = removeAutoCopyAccount(DATA_DIR, uid);
-        log(`[delete] 已永久删除账号备份 ${uid}`);
-        return json(res, 200, { ok: true, deleted: r.deleted, uid, rulesRemoved });
+        log(`[delete] 已永久删除账号备份 ${uid}（auth 存档清理 ${r.authFilesRemoved} 个）`);
+        return json(res, 200, { ok: true, deleted: r.deleted, uid, rulesRemoved, authFilesRemoved: r.authFilesRemoved });
       } catch (e) {
         return json(res, 500, { ok: false, error: e.message });
       }
@@ -6344,7 +6393,7 @@ function handleApi(req, res) {
     });
   }
 
-  // 导出账号：密码必填；v2 使用随机 salt，密码只在本次请求内存在
+  // 导出账号：密码必填；v3 使用 gzip + AES-GCM，密码只在本次请求内存在
   if (req.method === 'POST' && p === '/api/accounts/export') {
     return readBody(req).then((body) => {
       try {
@@ -6381,7 +6430,7 @@ function handleApi(req, res) {
     });
   }
 
-  // 导入账号：v2 必须输入密码；历史 v1 文件密码可留空（默认 workdaddy）
+  // 导入账号：v3/v2 必须输入密码；历史 v1 文件密码可留空（默认 workdaddy）
   if (req.method === 'POST' && p === '/api/accounts/import') {
     return readBody(req).then((body) => {
       try {
@@ -6888,15 +6937,13 @@ function handleApi(req, res) {
       try {
         const result = await importSessions(body && body.content, body && body.password, body && body.targetUid);
         log(`[sessions-import] 已导入 ${result.imported.length} 个会话，失败 ${result.failed} 个`);
-        let reloaded = false;
-        try {
-          await reloadWorkBuddyPage();
-          reloaded = true;
-          log('[sessions-import] 已通过 CDP 刷新 WorkBuddy 窗口');
-        } catch (reloadError) {
-          log(`[sessions-import] CDP 刷新失败: ${reloadError.message}`);
-        }
-        return json(res, 200, { ok: true, count: result.imported.length, imported: result.imported, failed: result.failed, reloaded });
+        return json(res, 200, {
+          ok: true,
+          count: result.imported.length,
+          imported: result.imported,
+          failed: result.failed,
+          errors: result.errors,
+        });
       } catch (error) {
         return json(res, 400, { ok: false, error: error.message });
       }
@@ -6973,10 +7020,16 @@ function handleApi(req, res) {
       if (!ids.length) return json(res, 400, { ok: false, error: '未选择会话' });
       if (!ids.every(isValidSessionId)) return json(res, 400, { ok: false, error: '包含无效的会话 ID' });
       try {
-        const placeholders = sqlPlaceholders(ids);
-        const before = await sqliteQuery('SELECT id, user_id FROM sessions WHERE id IN (' + placeholders + ');', ids);
-        const matchedIds = matchedSessionIds(ids, before);
-        const matchedSet = new Set(matchedIds);
+        // 展开目标会话所在的 lineage：其他账号自动复制出的同源副本一并级联删除，
+        // 避免删除后切走再切回时被 auto-copy 原样复制回来（会话「复活」）。
+        const requestedSet = new Set(ids.map(String));
+        const members = collectLineageMembersForDelete(DATA_DIR, ids);
+        const memberIds = Array.from(new Set(members.map((m) => m.id).filter((id) => isValidSessionId(id))));
+        if (!memberIds.length) return json(res, 404, { ok: false, error: '会话不存在或已删除' });
+        const placeholders = sqlPlaceholders(memberIds);
+        const before = await sqliteQuery('SELECT id, user_id FROM sessions WHERE id IN (' + placeholders + ');', memberIds);
+        const matchedSet = new Set(before.map((row) => String(row.id || '')));
+        const matchedIds = memberIds.filter((id) => matchedSet.has(String(id)));
         const matchedRows = before.filter((row) => matchedSet.has(String(row.id || '')));
         // 1) 先完成可重试的文件与规则清理；失败时保留 DB 记录作为重试锚点。
         const wbHome = PROFILE.dataRoot;
@@ -6985,7 +7038,7 @@ function handleApi(req, res) {
         let rulesRemoved = 0;
         for (const row of matchedRows) {
           try {
-            if (removeAutoCopySession(DATA_DIR, row.user_id, row.id)) rulesRemoved++;
+            if (removeAutoCopySession(DATA_DIR, String(row.user_id || '').trim(), row.id)) rulesRemoved++;
           } catch (e) {
             log(`[sessions-auto-copy] 删除规则 ${row.id} 失败: ${e.message}`);
             throw e;
@@ -6998,8 +7051,9 @@ function handleApi(req, res) {
             matchedIds
           );
         }
-        log(`[sessions-delete] 已真实删除 ${matchedIds.length} 个会话（DB + ${filesRemoved} 项文件）`);
-        return json(res, 200, { ok: true, deleted: matchedIds.length, requested: ids.length, filesRemoved, rulesRemoved });
+        const cascaded = matchedIds.filter((id) => !requestedSet.has(String(id))).length;
+        log(`[sessions-delete] 已真实删除 ${matchedIds.length} 个会话（DB + ${filesRemoved} 项文件，级联副本 ${cascaded}）`);
+        return json(res, 200, { ok: true, deleted: matchedIds.length, requested: ids.length, cascaded, filesRemoved, rulesRemoved });
       } catch (e) {
         return json(res, 500, { ok: false, error: e.message });
       }
@@ -7019,6 +7073,36 @@ function handleApi(req, res) {
         .then(() => json(res, 200, { ok: true, restored: ids.length }))
         .catch((e) => json(res, 500, { ok: false, error: e.message }));
     });
+  }
+
+  // 真实鼠标点击：POST /api/cdp-click { x, y }（视口像素坐标）。
+  // 官方侧栏等确认类 UI 拒绝 isTrusted=false 的程序化 click()，只有原生输入
+  // （CDP Input.dispatchMouseEvent）能触发切换/确认。坐标由来：渲染器
+  // getBoundingClientRect() 中心点；仅接受视口内的有限坐标，避免滥用。
+  if (req.method === 'POST' && p === '/api/cdp-click') {
+    return readBody(req).then(async (body) => {
+      const x = Number(body && body.x);
+      const y = Number(body && body.y);
+      if (!Number.isFinite(x) || !Number.isFinite(y)) {
+        return json(res, 400, { ok: false, error: '缺少合法的点击坐标' });
+      }
+      let viewport = { w: 0, h: 0 };
+      try {
+        const v = await cdpSend('Runtime.evaluate', {
+          expression: '({ w: window.innerWidth || 0, h: window.innerHeight || 0 })',
+          returnByValue: true,
+        });
+        const vv = v && v.result && v.result.value;
+        if (vv) viewport = { w: Number(vv.w) || 0, h: Number(vv.h) || 0 };
+      } catch (_) {}
+      if (x < 0 || y < 0 || x > viewport.w || y > viewport.h) {
+        return json(res, 400, { ok: false, error: '点击坐标超出视口' });
+      }
+      await cdpSend('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', clickCount: 1 });
+      await cdpSend('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', clickCount: 1 });
+      log(`[cdp-click] 真实点击 (${x}, ${y})`);
+      return json(res, 200, { ok: true, x, y });
+    }).catch((e) => json(res, 500, { ok: false, error: e.message }));
   }
 
   // 打开 WorkBuddy 的 Chrome DevTools（绕开 chrome://inspect 404 + Electron CDP 拒绝带 Origin 的 WS）

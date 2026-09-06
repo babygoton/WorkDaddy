@@ -86,7 +86,8 @@ test('session resource normalizer treats background terminal updates as final', 
     event: 'sessionUpdated',
   });
   assert.equal(normalize({ id: 'task-b', status: 'model_streaming' }, 'sessionUpdated').active, true);
-  assert.equal(normalize({ id: 'task-b', status: 'pending' }, 'sessionUpdated').active, false);
+  // 官方 status='pending' = 侧栏「待确认」（等待交互/允许），视为 active 待批准信号
+  assert.equal(normalize({ id: 'task-b', status: 'pending' }, 'sessionUpdated').active, true);
   assert.equal(normalize({ id: 'task-b', status: 'pending', activePromptStartedAt: 123 }, 'sessionUpdated').active, true);
   assert.equal(normalize({ id: 'task-b', status: 'pending', pendingInputKind: 'permission' }, 'sessionUpdated').active, true);
   assert.equal(normalize({

@@ -76,7 +76,7 @@ Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: 
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: none; ValueName: "WorkDaddy AI"; Flags: deletevalue
 
 [Run]
-Filename: "{app}\WorkDaddyLauncher.exe"; Description: "{#StartDescription}"; WorkingDir: "{app}"; Flags: nowait postinstall skipifsilent runasoriginaluser
+Filename: "{app}\WorkDaddyLauncher.exe"; Description: "{#StartDescription}"; WorkingDir: "{app}"; Flags: nowait postinstall skipifsilent runasoriginaluser; Check: ShouldAutoLaunch
 
 [UninstallRun]
 Filename: "{app}\WorkDaddyLauncher.exe"; Parameters: "--stop-lifecycle --profile ""{#ProfileId}"" --app-dir ""{app}"""; WorkingDir: "{app}"; Flags: runhidden waituntilterminated; RunOnceId: "StopWorkDaddyLifecycle"
@@ -87,6 +87,7 @@ Type: filesandordirs; Name: "{app}"
 [Code]
 var
   PreserveExistingLifecycle: Boolean;
+  ElevatedInstallConfirmed: Boolean;
   ClientPage: TInputFileWizardPage;
   ClientSourceLabel: TNewStaticText;
   ClientVersionLabel: TNewStaticText;
@@ -101,6 +102,11 @@ begin
   // runtime\node\node.exe 文件锁，跳过替换避免安装中途失败；下次启动时
   // 新版 watchdog 会用验证边界自行接管并替换旧进程。
   Result := not PreserveExistingLifecycle;
+end;
+
+function ShouldAutoLaunch(): Boolean;
+begin
+  Result := not IsAdmin;
 end;
 
 function RunNativeHelper(const Mode: String; var ResultCode: Integer): Boolean;
@@ -737,21 +743,42 @@ begin
   end;
 end;
 
+function ConfirmElevatedInstall(): Boolean;
+begin
+  if ElevatedInstallConfirmed then
+  begin
+    Result := True;
+    exit;
+  end;
+
+  Result := MsgBox(
+    '当前安装程序是以管理员权限运行的。' + #13#10 + #13#10 +
+    '仍可继续安装，但安装器不会自动启动或结束 WorkDaddy/WorkBuddy。请先手动退出它们，安装完成后再双击桌面快捷方式。' + #13#10 + #13#10 +
+    '是否仍然继续安装？',
+    mbConfirmation,
+    MB_YESNO
+  ) = IDYES;
+  if Result then
+    ElevatedInstallConfirmed := True;
+end;
+
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
   ResultCode: Integer;
 begin
   Result := '';
-  if IsAdminInstallMode then
-  begin
-    Result := '当前安装程序是以管理员权限运行的，无法继续安装。为避免 WorkDaddy 后台出现权限不一致，请点击“取消”，关闭安装程序后直接双击安装包重新运行；不要选择“以管理员身份运行”。UAC 无需关闭。';
-    exit;
-  end;
   if not ValidateClientSelection(False) then
   begin
     Result := '没有可用的 WorkBuddy 客户端路径。请返回“WorkBuddy 客户端”页面选择 .exe 主程序。';
     exit;
   end;
+  if IsAdmin and not ConfirmElevatedInstall then
+  begin
+    Result := '你已选择不继续管理员安装。可以取消安装，或返回后重新选择继续。';
+    exit;
+  end;
+  if IsAdmin then
+    exit;
   if not EnsureWorkBuddyClosed() then
   begin
     Result := '无法确认 WorkBuddy 已退出。可能原因是客户端仍有后台进程、进程权限高于当前用户、系统正在退出客户端，或安全软件阻止了进程检测。请手动结束当前客户端后重新运行安装程序。';

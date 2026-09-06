@@ -25,6 +25,7 @@ const {
   moveAutoCopySession,
   removeAutoCopySession,
   removeAutoCopyAccount,
+  collectLineageMembersForDelete,
   setAutoCopyMapping,
   getAutoCopyMapping,
   getAutoCopySessionMemberRecords,
@@ -128,6 +129,47 @@ test('deleting the last lineage member removes mappings, while other members ret
   assert.equal(getAutoCopyMapping(dataDir, lineageId, 's').targetId, 'session-s');
   assert.equal(removeAutoCopyAccount(dataDir, 's'), 1);
   assert.equal(getAutoCopyMapping(dataDir, lineageId, 's'), null);
+});
+
+test('delete expansion covers every physical copy of one lineage across accounts', () => {
+  const dataDir = tempDataDir();
+  setAutoCopyRule(dataDir, { uid: 'bala', kind: 'session', key: 'sess-bala', enabled: true });
+  const lineageId = getAutoCopySession(dataDir, 'bala', 'sess-bala').lineageId;
+  addAutoCopySessionMember(dataDir, lineageId, 'h', 'sess-h');
+  addAutoCopySessionMember(dataDir, lineageId, 'x', 'sess-x');
+  // 另一个独立 lineage，删除请求不涉及，必须原样保留
+  setAutoCopyRule(dataDir, { uid: 'h', kind: 'session', key: 'keep-h', enabled: true });
+
+  assert.deepEqual(
+    collectLineageMembersForDelete(dataDir, ['sess-bala']),
+    [
+      { uid: 'bala', id: 'sess-bala', lineageId },
+      { uid: 'h', id: 'sess-h', lineageId },
+      { uid: 'x', id: 'sess-x', lineageId },
+    ]
+  );
+  // 只按会话 id 命中 lineage，与传入账号无关；孤儿 id 映射回自身（uid 为空）
+  assert.deepEqual(collectLineageMembersForDelete(dataDir, ['sess-h']).map((m) => m.id), ['sess-bala', 'sess-h', 'sess-x']);
+  assert.deepEqual(collectLineageMembersForDelete(dataDir, ['keep-h']).map((m) => m.id), ['keep-h']);
+  assert.deepEqual(collectLineageMembersForDelete(dataDir, ['nope', 'sess-bala', 'sess-bala']).map((m) => m.id),
+    ['nope', 'sess-bala', 'sess-h', 'sess-x']);
+  assert.deepEqual(collectLineageMembersForDelete(dataDir, []), []);
+});
+
+test('delete expansion dedupes repeated members and survives dirty indices', () => {
+  const dataDir = tempDataDir();
+  setAutoCopyRule(dataDir, { uid: 'bala', kind: 'session', key: 'sess-bala', enabled: true });
+  const lineageId = getAutoCopySession(dataDir, 'bala', 'sess-bala').lineageId;
+  addAutoCopySessionMember(dataDir, lineageId, 'h', 'sess-h');
+  addAutoCopySessionMember(dataDir, lineageId, 'h', 'sess-h');
+  const meta = JSON.parse(fs.readFileSync(metaFile(dataDir), 'utf8'));
+  // 脏索引：lineage 已删但 sessionIndex 残留，或 lineage 引用缺失成员 —— 只影响被收集成员集合
+  delete meta.autoCopy.sessions[lineageId];
+  fs.writeFileSync(metaFile(dataDir), JSON.stringify(meta, null, 2), { mode: 0o600 });
+
+  const members = collectLineageMembersForDelete(dataDir, ['sess-bala', 'sess-bala']);
+  assert.deepEqual(members.map((m) => m.id), ['sess-bala']);
+  assert.equal(members[0].uid, '');
 });
 
 test('lineage member lookup is deduplicated and one member can be removed without deleting the lineage', () => {

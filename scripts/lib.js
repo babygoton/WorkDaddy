@@ -917,6 +917,60 @@ function removeAutoCopySession(dataDir, uid, sessionId) {
   return true;
 }
 
+// 真实删除路径的展开器：把要删除的会话按 lineage 扩展到全部物理副本（其他
+// 账号自动复制出来的同源会话）。否则删除某个账号的会话后，副本仍留在其他
+// 账号，切换回来时 auto-copy 会把它们原样复制回来（用户观察到的「删除后
+// 切走再切回、会话复活」现象）。无 lineage 的会话映射回自身。
+// 返回 [{ uid, id, lineageId }]；uid 可能为空（脏索引），id 必有值。
+function collectLineageMembersForDelete(dataDir, sessionIds) {
+  const meta = readMeta(dataDir);
+  const config = ensureAutoCopyMeta(meta);
+  const ids = new Set(
+    (Array.isArray(sessionIds) ? sessionIds : [])
+      .map((s) => String(s || '').trim())
+      .filter(Boolean)
+  );
+  if (!ids.size) return [];
+  // 跨账号全表反向索引：sessionId -> lineageId（会话 id 全局唯一）
+  const lineageBySession = new Map();
+  for (const owner of Object.keys(config.sessionIndex || {})) {
+    const index = config.sessionIndex[owner] || {};
+    for (const sessionId of Object.keys(index)) {
+      const lineageId = String(index[sessionId] || '');
+      if (lineageId) lineageBySession.set(sessionId, lineageId);
+    }
+  }
+  const members = [];
+  const seenKeys = new Set();
+  const seenLineages = new Set();
+  const addMember = (memberUid, memberId, lineageId) => {
+    const uid = String(memberUid || '').trim();
+    const id = String(memberId || '').trim();
+    if (!id) return;
+    const key = (uid || '*') + '::' + id;
+    if (seenKeys.has(key)) return;
+    seenKeys.add(key);
+    members.push({ uid, id, lineageId: String(lineageId || '') });
+  };
+  for (const id of ids) {
+    const lineageId = lineageBySession.get(id);
+    if (!lineageId || !config.sessions[lineageId]) {
+      addMember('', id, '');
+      continue;
+    }
+    if (seenLineages.has(lineageId)) continue;
+    seenLineages.add(lineageId);
+    const lineage = config.sessions[lineageId];
+    const lineageMembers = Array.isArray(lineage.members) ? lineage.members : [];
+    if (!lineageMembers.length) {
+      addMember('', id, lineageId);
+      continue;
+    }
+    lineageMembers.forEach((m) => addMember(m && m.uid, m && m.id, lineageId));
+  }
+  return members;
+}
+
 function removeAutoCopyAccount(dataDir, uid) {
   const sourceUid = String(uid || '').trim();
   if (!sourceUid) return 0;
@@ -1248,15 +1302,69 @@ function listAccounts(dataDir) {
   );
 }
 
+/** 删除 auth 目录中属于该 uid 的全部登录文件（官方固定文件 + 带时间戳的历史存档）。
+ *  只删 listAuthRecords 能发现（parseAuthFile 可解析并匹配）的记录，确保之后的
+ *  backupCurrent 扫描不会再把这个账号重新备份回来——这是「删除账号重启后又出现」
+ *  的根因：删除只清了 backups 目录，auth 目录里残留的存档会在下一次扫描时复活账号。 */
+function deleteAuthFilesForUid(uid, log = () => {}) {
+  if (!AUTH_FILE) return { removed: 0 };
+  if (!DYNAMIC_AUTH_DISCOVERY) {
+    const record = parseAuthFile(AUTH_FILE, { strict: false });
+    if (record && record.uid === uid && fs.existsSync(AUTH_FILE)) {
+      fs.unlinkSync(AUTH_FILE);
+      log(`[delete] 已删除固定登录文件 ${path.basename(AUTH_FILE)}`);
+      return { removed: 1 };
+    }
+    return { removed: 0 };
+  }
+  const dir = authDir();
+  let names;
+  try { names = fs.readdirSync(dir); } catch (_) { return { removed: 0 }; }
+  let removed = 0;
+  for (const name of names) {
+    if (!safeAuthFileName(name)) continue;
+    const file = path.join(dir, name);
+    const record = parseAuthFile(file);
+    if (record && record.uid === uid && fs.existsSync(file)) {
+      try {
+        fs.unlinkSync(file);
+        removed += 1;
+      } catch (e) {
+        log(`[delete] 删除认证存档 ${name} 失败: ${e.message}`);
+      }
+    }
+  }
+  return { removed };
+}
+
 /** 永久删除某个账号的备份文件（不影响当前登录） */
-function deleteAccount(dataDir, uid) {
+function deleteAccount(dataDir, uid, log = () => {}) {
   if (!ACTIVE_PROFILE.capabilities.accounts) throw new Error(`${ACTIVE_PROFILE.name} 暂不支持账号切换`);
+  // 防御：面板已对当前登录账号隐藏删除按钮；走到这里说明状态异常，
+  // 拒绝直接删官方正在读取的登录位（删了 WorkBuddy 也会重新写回，删不干净）。
+  const current = resolveCurrentAuth();
+  if (current.file && !current.ambiguous) {
+    const record = parseAuthFile(current.file, { strict: false });
+    if (record && record.uid === uid) {
+      throw new Error('不能删除当前登录的账号（请先退出登录或切换到其他账号）');
+    }
+  }
   migrateLegacyDataDir(dataDir);
-  const file = backupPath(dataDir, uid);
+  // 关键：先清掉 auth 目录里该 uid 的全部登录文件（固定文件 + 历史存档），
+  // 否则 backupCurrent 的下一次扫描会把账号重新备份回来（删除后复活的根因）。
+  const authResult = deleteAuthFilesForUid(uid, log);
+  const files = [backupPath(dataDir, uid)];
+  // 旧版 HelloBuddy 目录仍会在每次启动时迁移缺失的账号备份。删除新目录
+  // 的文件后若留下旧源文件，下一次 daemon 启动就会把账号重新复制回来。
+  if (!IS_WIN && samePath(dataDir, PLATFORM_DATA_DIR)) {
+    files.push(backupPath(LEGACY_DATA_DIR, uid));
+  }
   let deletedFile = false;
-  if (fs.existsSync(file)) {
-    fs.unlinkSync(file);
-    deletedFile = true;
+  for (const file of files) {
+    if (fs.existsSync(file)) {
+      fs.unlinkSync(file);
+      deletedFile = true;
+    }
   }
   const mf = metaFile(dataDir);
   try {
@@ -1268,7 +1376,7 @@ function deleteAccount(dataDir, uid) {
   } catch (_) {
     /* meta 不存在则忽略 */
   }
-  return { deleted: deletedFile, uid };
+  return { deleted: deletedFile, uid, authFilesRemoved: authResult.removed };
 }
 
 /** 切换登录账号：把备份文件复制回登录信息文件（先校验 uid 匹配） */
@@ -1393,6 +1501,7 @@ module.exports = {
   moveAutoCopySession,
   removeAutoCopySession,
   removeAutoCopyAccount,
+  collectLineageMembersForDelete,
   getAutoCopyMapping,
   setAutoCopyMapping,
   deleteAutoCopyMapping,

@@ -111,6 +111,71 @@ test('explicit WBSWITCH_AUTH_FILE keeps the legacy single-file behavior', () => 
   }
 });
 
+test('deleting a migrated account also removes the legacy source so it stays deleted after restart', () => {
+  if (os.platform() === 'win32') return;
+  const f = fixture();
+  const dataDir = path.join(f.root, 'Library', 'Application Support', 'WorkDaddy');
+  const legacyDir = path.join(f.root, 'Library', 'Application Support', 'HelloBuddy');
+  try {
+    const legacyAccounts = path.join(legacyDir, 'accounts');
+    fs.mkdirSync(path.join(legacyAccounts), { recursive: true });
+    fs.writeFileSync(path.join(legacyAccounts, 's.info'), JSON.stringify(auth('s', 'https://www.workbuddy.cn/auth/realms/copilot')));
+
+    const deleted = run(f.root, dataDir, 'process.stdout.write(JSON.stringify(lib.deleteAccount(process.env.WBSWITCH_DATA_DIR, "s")))');
+    assert.equal(deleted.deleted, true);
+    assert.equal(fs.existsSync(path.join(dataDir, 'accounts', 's.info')), false);
+    assert.equal(fs.existsSync(path.join(legacyAccounts, 's.info')), false);
+
+    // A fresh process models the next daemon start/list request.
+    const accounts = run(f.root, dataDir, 'process.stdout.write(JSON.stringify(lib.listAccounts(process.env.WBSWITCH_DATA_DIR)))');
+    assert.deepEqual(accounts, []);
+  } finally {
+    fs.rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
+test('deleting an account also removes its auth archives so a later backup scan cannot resurrect it', () => {
+  const f = fixture();
+  try {
+    // 真实复活形态：当前登录 = b（官方固定位）；s 只有历史存档（lastLogin 残留）。
+    // 删除只清 accounts/s.info 的话，下次 backupCurrent 扫描 auth 目录又会把 s 备份回来。
+    const canonical = path.join(f.authDir, 'workbuddy-desktop.info');
+    fs.writeFileSync(canonical, JSON.stringify(auth('b', 'https://www.workbuddy.cn/auth/realms/copilot')));
+    fs.writeFileSync(path.join(f.authDir, 's-archive.info'), JSON.stringify(auth('s', 'https://www.workbuddy.cn/auth/realms/copilot', true)));
+    // 先让扫描发现并备份 s
+    run(f.root, f.dataDir, 'lib.backupCurrent(process.env.WBSWITCH_DATA_DIR); process.stdout.write("null")');
+    assert.equal(fs.existsSync(path.join(f.dataDir, 'accounts', 's.info')), true);
+
+    const deleted = run(f.root, f.dataDir, 'process.stdout.write(JSON.stringify(lib.deleteAccount(process.env.WBSWITCH_DATA_DIR,"s")))');
+    assert.equal(deleted.deleted, true);
+    assert.ok(deleted.authFilesRemoved >= 1, '应清理 auth 目录中的存档');
+    assert.equal(fs.existsSync(path.join(f.dataDir, 'accounts', 's.info')), false);
+    assert.equal(fs.existsSync(path.join(f.authDir, 's-archive.info')), false);
+    assert.equal(fs.existsSync(canonical), true); // 其他账号的固定登录位不受影响
+
+    // 新进程模拟 daemon 重启后的备份扫描：s 不得复活
+    run(f.root, f.dataDir, 'lib.backupCurrent(process.env.WBSWITCH_DATA_DIR); process.stdout.write("null")');
+    assert.equal(fs.existsSync(path.join(f.dataDir, 'accounts', 's.info')), false);
+    const accounts = run(f.root, f.dataDir, 'process.stdout.write(JSON.stringify(lib.listAccounts(process.env.WBSWITCH_DATA_DIR).map(x=>x.uid)))');
+    assert.deepEqual(accounts, ['b']);
+  } finally {
+    fs.rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
+test('deleting the currently logged-in account is refused', () => {
+  const f = fixture();
+  try {
+    const canonical = path.join(f.authDir, 'workbuddy-desktop.info');
+    fs.writeFileSync(canonical, JSON.stringify(auth('s', 'https://www.workbuddy.cn/auth/realms/copilot')));
+    const result = run(f.root, f.dataDir, `try { lib.deleteAccount(process.env.WBSWITCH_DATA_DIR,'s'); process.stdout.write('unexpected') } catch (e) { process.stdout.write(JSON.stringify(e.message)) }`);
+    assert.match(result, /当前登录/);
+    assert.equal(fs.existsSync(canonical), true);
+  } finally {
+    fs.rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
 test('missing filename metadata refuses a switch instead of falling back to a guessed file', () => {
   const f = fixture();
   try {
