@@ -917,6 +917,60 @@ function removeAutoCopySession(dataDir, uid, sessionId) {
   return true;
 }
 
+// 真实删除路径的展开器：把要删除的会话按 lineage 扩展到全部物理副本（其他
+// 账号自动复制出来的同源会话）。否则删除某个账号的会话后，副本仍留在其他
+// 账号，切换回来时 auto-copy 会把它们原样复制回来（用户观察到的「删除后
+// 切走再切回、会话复活」现象）。无 lineage 的会话映射回自身。
+// 返回 [{ uid, id, lineageId }]；uid 可能为空（脏索引），id 必有值。
+function collectLineageMembersForDelete(dataDir, sessionIds) {
+  const meta = readMeta(dataDir);
+  const config = ensureAutoCopyMeta(meta);
+  const ids = new Set(
+    (Array.isArray(sessionIds) ? sessionIds : [])
+      .map((s) => String(s || '').trim())
+      .filter(Boolean)
+  );
+  if (!ids.size) return [];
+  // 跨账号全表反向索引：sessionId -> lineageId（会话 id 全局唯一）
+  const lineageBySession = new Map();
+  for (const owner of Object.keys(config.sessionIndex || {})) {
+    const index = config.sessionIndex[owner] || {};
+    for (const sessionId of Object.keys(index)) {
+      const lineageId = String(index[sessionId] || '');
+      if (lineageId) lineageBySession.set(sessionId, lineageId);
+    }
+  }
+  const members = [];
+  const seenKeys = new Set();
+  const seenLineages = new Set();
+  const addMember = (memberUid, memberId, lineageId) => {
+    const uid = String(memberUid || '').trim();
+    const id = String(memberId || '').trim();
+    if (!id) return;
+    const key = (uid || '*') + '::' + id;
+    if (seenKeys.has(key)) return;
+    seenKeys.add(key);
+    members.push({ uid, id, lineageId: String(lineageId || '') });
+  };
+  for (const id of ids) {
+    const lineageId = lineageBySession.get(id);
+    if (!lineageId || !config.sessions[lineageId]) {
+      addMember('', id, '');
+      continue;
+    }
+    if (seenLineages.has(lineageId)) continue;
+    seenLineages.add(lineageId);
+    const lineage = config.sessions[lineageId];
+    const lineageMembers = Array.isArray(lineage.members) ? lineage.members : [];
+    if (!lineageMembers.length) {
+      addMember('', id, lineageId);
+      continue;
+    }
+    lineageMembers.forEach((m) => addMember(m && m.uid, m && m.id, lineageId));
+  }
+  return members;
+}
+
 function removeAutoCopyAccount(dataDir, uid) {
   const sourceUid = String(uid || '').trim();
   if (!sourceUid) return 0;
@@ -1447,6 +1501,7 @@ module.exports = {
   moveAutoCopySession,
   removeAutoCopySession,
   removeAutoCopyAccount,
+  collectLineageMembersForDelete,
   getAutoCopyMapping,
   setAutoCopyMapping,
   deleteAutoCopyMapping,

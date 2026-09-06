@@ -174,8 +174,9 @@ test('delete route validates before SQL and deletes the matched set only', () =>
   const selectAt = route.indexOf("SELECT id, user_id FROM sessions");
   assert.ok(normalizeAt >= 0 && normalizeAt < validateAt, 'the raw batch must be bounded before path validation');
   assert.ok(validateAt < selectAt, 'all IDs must be validated before SELECT or DELETE');
-  assert.match(route, /SELECT id, user_id FROM sessions WHERE id IN \(' \+ placeholders \+ '\);', ids/);
-  assert.match(route, /const matchedIds = matchedSessionIds\(ids, before\)/);
+  assert.match(route, /SELECT id, user_id FROM sessions WHERE id IN \(' \+ placeholders \+ '\);', memberIds/);
+  assert.match(route, /collectLineageMembersForDelete\(DATA_DIR, ids\)/);
+  assert.match(route, /\.filter\(\(id\) => isValidSessionId\(id\)\)/);
   assert.match(route, /DELETE FROM sessions WHERE id IN \(" \+ sqlPlaceholders\(matchedIds\) \+ "\);",\s+matchedIds/s);
   assert.match(route, /for \(const id of matchedIds\) filesRemoved \+= deleteSessionFiles\(wbHome, id\)/);
   assert.doesNotMatch(route, /for \(const id of ids\) filesRemoved/);

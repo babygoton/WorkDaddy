@@ -2,9 +2,12 @@
 
 const crypto = require('node:crypto');
 const path = require('node:path');
+const zlib = require('node:zlib');
 
 const MAX_PASSWORD_LENGTH = 1024;
 const EXPORT_KDF = 'aes-256-gcm+scrypt';
+const EXPORT_VERSION = 3;
+const EXPORT_COMPRESSION = 'gzip';
 
 function requiredPassword(value) {
   const password = typeof value === 'string' ? value : '';
@@ -17,19 +20,20 @@ function exportSecretKey(password, salt) {
   return crypto.scryptSync(String(password), salt, 32);
 }
 
-function encryptExport(plain, password) {
+function encryptBinary(plain, password) {
   const checkedPassword = requiredPassword(password);
   const salt = crypto.randomBytes(16);
   const iv = crypto.randomBytes(12);
   const cipher = crypto.createCipheriv('aes-256-gcm', exportSecretKey(checkedPassword, salt), iv);
-  const encrypted = Buffer.concat([cipher.update(String(plain), 'utf8'), cipher.final()]);
+  const input = Buffer.isBuffer(plain) ? plain : Buffer.from(String(plain), 'utf8');
+  const encrypted = Buffer.concat([cipher.update(input), cipher.final()]);
   return {
     data: Buffer.concat([iv, cipher.getAuthTag(), encrypted]).toString('base64'),
     salt: salt.toString('base64'),
   };
 }
 
-function decryptExport(data, password, saltBase64) {
+function decryptBinary(data, password, saltBase64) {
   const checkedPassword = requiredPassword(password);
   const packed = Buffer.from(String(data || ''), 'base64');
   if (packed.length <= 28) throw new Error('导出数据不完整或已损坏');
@@ -38,10 +42,20 @@ function decryptExport(data, password, saltBase64) {
   try {
     const decipher = crypto.createDecipheriv('aes-256-gcm', exportSecretKey(checkedPassword, salt), packed.subarray(0, 12));
     decipher.setAuthTag(packed.subarray(12, 28));
-    return Buffer.concat([decipher.update(packed.subarray(28)), decipher.final()]).toString('utf8');
+    return Buffer.concat([decipher.update(packed.subarray(28)), decipher.final()]);
   } catch (_) {
     throw new Error('密码错误或导出文件已损坏');
   }
+}
+
+// v2 exports remain readable through the text helpers; new exports use the
+// binary helper so compression happens before encryption and is authenticated.
+function encryptExport(plain, password) {
+  return encryptBinary(plain, password);
+}
+
+function decryptExport(data, password, saltBase64) {
+  return decryptBinary(data, password, saltBase64).toString('utf8');
 }
 
 function normalizeExportKind(kind) {
@@ -55,13 +69,15 @@ function createEncryptedExport(kind, payload, password, createdAt) {
   if (!payload || typeof payload !== 'object' || payload.exportType !== 'WorkDaddy-' + normalizedKind) {
     throw new Error('导出数据类型不匹配');
   }
-  const encrypted = encryptExport(JSON.stringify(payload), password);
+  const compressed = zlib.gzipSync(Buffer.from(JSON.stringify(payload), 'utf8'));
+  const encrypted = encryptBinary(compressed, password);
   return JSON.stringify({
     wbsExport: 'WorkDaddy',
-    version: 2,
+    version: EXPORT_VERSION,
     exportType: normalizedKind,
     createdAt: createdAt || new Date().toISOString(),
     kdf: EXPORT_KDF,
+    compression: EXPORT_COMPRESSION,
     salt: encrypted.salt,
     data: encrypted.data,
   });
@@ -72,12 +88,17 @@ function openEncryptedExport(content, expectedKind, password) {
   let envelope;
   try { envelope = JSON.parse(String(content || '')); }
   catch (_) { throw new Error('文件不是有效的导出 JSON'); }
-  if (!envelope || envelope.wbsExport !== 'WorkDaddy' || Number(envelope.version) < 2) {
+  if (!envelope || envelope.wbsExport !== 'WorkDaddy' || ![2, EXPORT_VERSION].includes(Number(envelope.version))) {
     throw new Error('不是有效的 WorkDaddy 加密导出文件');
   }
   if (envelope.exportType && envelope.exportType !== normalizedKind) throw new Error('导出文件类型不匹配');
   let payload;
-  try { payload = JSON.parse(decryptExport(envelope.data, password, envelope.salt)); }
+  try {
+    const plaintext = Number(envelope.version) === EXPORT_VERSION
+      ? zlib.gunzipSync(decryptBinary(envelope.data, password, envelope.salt)).toString('utf8')
+      : decryptExport(envelope.data, password, envelope.salt);
+    payload = JSON.parse(plaintext);
+  }
   catch (error) {
     if (/密码|损坏|salt/.test(String(error && error.message))) throw error;
     throw new Error('导出数据无法解析或已损坏');
@@ -118,6 +139,8 @@ function resolveArchiveTarget(root, relativePath) {
 }
 
 module.exports = {
+  EXPORT_VERSION,
+  EXPORT_COMPRESSION,
   MAX_PASSWORD_LENGTH,
   createEncryptedExport,
   decryptExport,

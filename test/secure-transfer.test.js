@@ -5,7 +5,10 @@ const path = require('node:path');
 const test = require('node:test');
 
 const {
+  EXPORT_COMPRESSION,
+  EXPORT_VERSION,
   createEncryptedExport,
+  encryptExport,
   openEncryptedExport,
   remapSessionArchivePath,
   resolveArchiveTarget,
@@ -21,12 +24,34 @@ test('encrypted transfers require a password, randomize ciphertext, and bind the
   const second = createEncryptedExport('quick-phrases', payload, 'correct horse', '2026-08-28T00:00:00.000Z');
 
   assert.notEqual(first, second, 'salt and IV must make repeated exports distinct');
+  const envelope = JSON.parse(first);
+  assert.equal(envelope.version, EXPORT_VERSION);
+  assert.equal(envelope.compression, EXPORT_COMPRESSION);
   assert.doesNotMatch(first, /继续执行|correct horse/);
   assert.deepEqual(openEncryptedExport(first, 'quick-phrases', 'correct horse'), payload);
   assert.throws(() => createEncryptedExport('quick-phrases', payload, '   '), /密码不能为空/);
   assert.throws(() => openEncryptedExport(first, 'quick-phrases', ''), /密码不能为空/);
   assert.throws(() => openEncryptedExport(first, 'sessions', 'correct horse'), /类型不匹配/);
   assert.throws(() => openEncryptedExport(first, 'quick-phrases', 'wrong password'), /密码错误|损坏/);
+});
+
+test('new imports remain compatible with the previous v2 encrypted export format', () => {
+  const payload = {
+    exportType: 'WorkDaddy-quick-phrases',
+    version: 1,
+    phrases: [{ text: '旧版短语' }],
+  };
+  const encrypted = encryptExport(JSON.stringify(payload), 'legacy password');
+  const legacy = JSON.stringify({
+    wbsExport: 'WorkDaddy',
+    version: 2,
+    exportType: 'quick-phrases',
+    createdAt: '2026-08-28T00:00:00.000Z',
+    kdf: 'aes-256-gcm+scrypt',
+    salt: encrypted.salt,
+    data: encrypted.data,
+  });
+  assert.deepEqual(openEncryptedExport(legacy, 'quick-phrases', 'legacy password'), payload);
 });
 
 test('session archive paths remap only managed session payload locations', () => {
@@ -76,7 +101,7 @@ test('daemon and injected panel expose password-protected account, session, and 
   assert.match(inject, /requirePassword:\s*true/);
 });
 
-test('successful session import reloads WorkBuddy through CDP without restarting it', () => {
+test('session import never reloads WorkBuddy and only returns import results', () => {
   const daemon = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'daemon.js'), 'utf8');
   const routeStart = daemon.indexOf("if (req.method === 'POST' && p === '/api/sessions/import')");
   const routeEnd = daemon.indexOf("if (req.method === 'POST' && p === '/api/sessions/copy')", routeStart);
@@ -84,8 +109,33 @@ test('successful session import reloads WorkBuddy through CDP without restarting
   assert.notEqual(routeEnd, -1);
   const route = daemon.slice(routeStart, routeEnd);
   const imported = route.indexOf('await importSessions(');
-  const reloaded = route.indexOf('await reloadWorkBuddyPage()');
-  assert.ok(imported >= 0 && reloaded > imported, 'reload must happen only after session import succeeds');
-  assert.match(route, /reloaded\s*=\s*true/);
+  assert.ok(imported >= 0, 'session import must complete before its response');
+  assert.doesNotMatch(route, /await reloadWorkBuddyPage\(\)/, 'session import must not refresh automatically');
+  assert.doesNotMatch(daemon, /\/api\/sessions\/reload/);
   assert.doesNotMatch(route, /quitWorkBuddy|relaunchWorkBuddy/);
+});
+
+test('session import returns bounded import diagnostics without refresh controls', () => {
+  const daemon = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'daemon.js'), 'utf8');
+  const inject = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'inject.js'), 'utf8');
+  const routeStart = daemon.indexOf("if (req.method === 'POST' && p === '/api/sessions/import')");
+  const routeEnd = daemon.indexOf("if (req.method === 'POST' && p === '/api/sessions/copy')", routeStart);
+  const route = daemon.slice(routeStart, routeEnd);
+  const importUiStart = inject.indexOf("title: '导入会话'");
+  const importUiEnd = inject.indexOf('// 删除选中', importUiStart);
+  const importUi = inject.slice(importUiStart, importUiEnd);
+
+  assert.match(daemon, /MAX_SESSION_IMPORT_ERRORS\s*=\s*20/);
+  assert.match(daemon, /MAX_SESSION_IMPORT_ERROR_LENGTH\s*=\s*240/);
+  assert.match(daemon, /errors:\s*summarizeSessionImportErrors\(errors\)/);
+  assert.match(route, /errors:\s*result\.errors/);
+  assert.doesNotMatch(route, /reloaded|reloadError/);
+  assert.doesNotMatch(daemon, /\/api\/sessions\/reload/);
+  assert.match(inject, /keepOpenOnSuccess:\s*true/);
+  assert.match(inject, /successMessage:\s*function \(result\)/);
+  assert.match(importUi, /successDoneLabel:\s*'关闭'/);
+  assert.match(inject, /closeOnError:\s*true/);
+  assert.doesNotMatch(importUi, /successAction|刷新页面|页面刷新/);
+  assert.match(inject, /cancelButton\.style\.display\s*=\s*'none'/);
+  assert.match(inject, /if \(completed\)[\s\S]*?if \(!completeAction\)[\s\S]*?close\(\);/);
 });

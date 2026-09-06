@@ -357,6 +357,10 @@ function normalizeSessionMonitorResourceRecord(record, eventName) {
   }
   var status = terminalStatus || tokens[0] || '';
   var pendingInputKind = normalizeSessionMonitorStatus(value.pendingInputKind);
+  // 官方侧栏「待确认」= status 'pending'（cb-agent-card__status-tag「待确认」，
+  // pending.fallback.waiting 文案；列表分运行中/规划中 vs 待确认）。store 未推
+  // pendingInputKind 时，用该语义把 pending 视作待批准信号。
+  if (!pendingInputKind && String(value.status || '') === 'pending') pendingInputKind = 'permission';
   var queueRuntime = value.messageQueueRuntime && typeof value.messageQueueRuntime === 'object' ? value.messageQueueRuntime : null;
   var queueActive = !!(queueRuntime && queueRuntime.paused !== true &&
     (queueRuntime.inflightItemId || Number(queueRuntime.pendingItemCount || 0) > 0 ||
@@ -595,7 +599,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '一个基于': 'A ', '个备选': 'standby', '备选': 'standby', '个失败': ' failed', '个已不存在': ' no longer exist', '项失败': ' failed', '已选': ' selected', '例如 deepseek-v4-flash': 'e.g. deepseek-v4-flash', '例如我的 DeepSeek': 'e.g. my DeepSeek', '加载失败': 'Load failed', '发起授权失败:': 'Authorization failed:', '开启': 'Enable', '关闭': 'Close', '失败': 'Failed', '用户消息': 'User message',
     'OLED 纯黑': 'OLED Pure Black', '未发现 CDP 端口（WorkBuddy 需以 --remote-debugging-port 启动）': 'No CDP port found (start WorkBuddy with --remote-debugging-port)', '本地 API 未授权': 'Local API unauthorized', '仅支持 http(s) 链接': 'Only http(s) links are supported', '图片不能超过 10MB': 'Image must not exceed 10MB', '图片必须是 PNG/JPEG/WebP base64': 'Image must be PNG/JPEG/WebP base64', '遥测开关值必须是布尔值': 'Telemetry switch must be a boolean', 'blur 必须是数字': 'Blur must be a number', 'opacity 必须是数字': 'Opacity must be a number', '查询返回空结果': 'Query returned empty results',
     '正在解包新应用…': 'Unpacking new app…', '挂载 dmg 失败:': 'Failed to mount dmg:', '缺少解包后的新应用': 'Unpacked new app missing', '解包应用失败': 'Failed to unpack app', '缺少 apply-update.sh': 'apply-update.sh missing', '（仓库暂无 Release）': ' (no Releases in the repository yet)', 'auth/state 响应缺少 state': 'auth/state response is missing state',
-    'WBSWITCH_WORKBUDDY_BIN 不是可验证的当前 profile 主程序；登录信息未修改': 'WBSWITCH_WORKBUDDY_BIN is not a verified main program for the current profile; login info unchanged', '无法以普通用户权限安全退出 WorkBuddy。请手动关闭该程序；若它以管理员身份运行，请先退出后再重试。登录信息未修改': 'Cannot safely quit WorkBuddy at standard user privilege. Please close it manually; if it runs as admin, quit it first and retry. Login info unchanged', '未找到 WorkBuddy 可执行文件，无法安全退出；登录信息未修改': 'WorkBuddy executable not found; cannot quit safely. Login info unchanged', 'workbuddy-target.json 指定的路径不是可验证的当前 profile 主程序；登录信息未修改': 'The path in workbuddy-target.json is not a verified main program for the current profile; login info unchanged', '存在当前 profile 进程，但没有进程属于已验证安装目录；登录信息未修改': 'A current profile process exists, but none belongs to a verified install directory; login info unchanged', '检测到当前 profile 正从另一安装目录运行，登录信息未修改': 'The current profile is running from another install directory; login info unchanged', '检测到多个 dormant WorkBuddy 安装目录，按发现优先级选择:': 'Multiple dormant WorkBuddy installs found; selecting by discovery priority:', 'WorkBuddy 数据目录不是受管目录': 'WorkBuddy data directory is not managed', 'WorkBuddy 页面尚未完成加载': 'WorkBuddy page has not finished loading', '注入脚本页面抛错': 'Injected script page threw an error', '读取注入脚本失败:': 'Failed to read the injected script:', '运行时桥接文件未生成': 'Runtime bridge file was not created',
+    'WBSWITCH_WORKBUDDY_BIN 不是可验证的当前 profile 主程序；登录信息未修改': 'WBSWITCH_WORKBUDDY_BIN is not a verified main program for the current profile; login info unchanged', '无法以普通用户权限安全退出 WorkBuddy。请手动关闭该程序；若它以管理员身份运行，请先退出后再重试。登录信息未修改': 'Cannot safely quit WorkBuddy at standard user privilege. Please close it manually; if it runs as admin, quit it first and retry. Login info unchanged', '未找到 WorkBuddy 可执行文件，无法安全退出；登录信息未修改': 'WorkBuddy executable not found; cannot quit safely. Login info unchanged', 'workbuddy-target.json 指定的路径不是可验证的当前 profile 主程序；登录信息未修改': 'The path in workbuddy-target.json is not a verified main program for the current profile; login info unchanged', '存在当前 profile 进程，但没有进程属于已验证安装目录；登录信息未修改': 'A current profile process exists, but none belongs to a verified install directory; login info unchanged', '检测到当前 profile 正从另一安装目录运行，登录信息未修改': 'The current profile is running from another install directory; login info unchanged', '检测到多个 dormant WorkBuddy 安装目录，按发现优先级选择:': 'Multiple dormant WorkBuddy installs found; selecting by discovery priority:', 'WorkBuddy 数据目录不是受管目录': 'WorkBuddy data directory is not managed', 'WorkBuddy 页面尚未完成加载': 'WorkBuddy page has not finished loading', '刷新 WorkBuddy 页面': 'Refresh WorkBuddy page', '注入脚本页面抛错': 'Injected script page threw an error', '读取注入脚本失败:': 'Failed to read the injected script:', '运行时桥接文件未生成': 'Runtime bridge file was not created',
     // —— 第三批：daemon 端口/路径校验/发送链路错误（可能进入 toast/API 返回）——
     '9222-9232、9333 均被占用，无法为 WorkBuddy 分配 CDP 端口': 'Ports 9222-9232 and 9333 are all occupied; cannot allocate a CDP port for WorkBuddy', 'cwd 不是绝对路径': 'cwd is not an absolute path', 'cwd 路径包含符号链接或普通文件': 'cwd path contains a symlink or regular file', '发送按钮禁用（输入内容未被识别）': 'Send button disabled (input not recognized)', '无法清空输入框': 'Could not clear the composer', '无法聚焦输入框': 'Could not focus the composer', '未找到发送按钮': 'Send button not found', '未找到操作栏': 'Toolbar not found',
     // —— 第四批：真机扫描发现的整句/半动态拼接（杜绝中英混合）——
@@ -628,7 +632,8 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '会话正在等待决策确认': 'Session awaiting a decision confirmation', '会话出现模型或网络错误': 'Session hit a model or network error',
     '会话疑似异常停止，请检查结尾内容': 'Session may have stopped unexpectedly; check the tail',
     'WorkBuddy 队列删除接口不可用': 'WorkBuddy queue delete API is unavailable', 'WorkBuddy 队列响应超时（': 'WorkBuddy queue response timed out (',
-    '已导出': 'Exported', '成功导入': 'Imported successfully', '当前账号': 'Current account', '个账号': ' account(s)', '个账号（已加密）': ' account(s) (encrypted)',
+    '已导出': 'Exported', '成功导入': 'Imported successfully', '当前账号': 'Current account', '个账号': ' account(s)', '个账号（已加密）': ' account(s) (encrypted)', '，但页面刷新失败，请手动刷新': ', but the page refresh failed; please refresh manually',
+    '操作成功': 'Operation succeeded', '导入完成：成功': 'Import complete: succeeded', '失败原因：': 'Failure reasons:', '页面刷新失败：': 'Page refresh failed:', '未知原因': 'Unknown reason', '会话已写入，请手动刷新。': 'Sessions were written; please refresh manually.', '刷新页面': 'Refresh page', '刷新中…': 'Refreshing…', '页面刷新成功。': 'Page refreshed successfully.', '页面尚未刷新，请点击“刷新页面”。': 'The page has not been refreshed; click “Refresh page”.',
     '随空间自动复制': 'Auto-copy with workspace', '切换账号时自动复制': 'Auto-copy on account switch',
     '切换账号时自动复制当前账号的所有会话，包括之后新增的会话': 'Auto-copy all sessions of the current account on switch, including new ones afterwards',
     '已开启切换账号时自动复制': 'Auto-copy on account switch is on', '(未指定空间)': ' (no workspace specified)',
@@ -732,6 +737,8 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '展开': 'Expand', '共': 'Total', '条（': ' (', '备份': 'Backup',
     '无可复制的目标账号（已排除会话所属账号）': 'No target accounts to copy to (the session owner account is excluded)',
     '删除后会话将从列表中移除，该账号下的本地消息文件将被永久删除，此操作不可恢复。': 'The sessions are removed from the list and their local message files are permanently deleted; this cannot be undone.',
+    '删除后会话将从列表中移除，本账号的会话与其自动复制到其他账号的同源副本（本地消息文件）都将被永久删除，此操作不可恢复。': 'The sessions are removed from the list. These sessions and their auto-copied counterparts in other accounts (local message files) are permanently deleted; this cannot be undone.',
+    '含其他账号副本 {n} 个': ' including {n} other-account copies',
     '以「不让当前账号登录身份过期」的方式切到登录页，可以登录新账号，也可以切回已登录账号': 'Goes to the login page without letting the current account expire; log in a new account or switch back to an existing one.',
     '不退出 WorkBuddy，在浏览器完成授权后新账号自动加入列表': 'Keeps WorkBuddy running; after authorizing in the browser, the new account is added to the list automatically.',
     '正在发起授权…': 'Starting authorization…', '再想想': 'Not now',
@@ -1345,6 +1352,9 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         '[role="dialog"]', '[class*="_dialog_"]', '[class*="_modal_"]', '[class*="_permission_"]',
         '[class*="_confirm_"]', '[class*="_decision_"]', '[class*="_approval_"]', '[class*="_question_"]', '[class*="_ask_"]',
         '[class*="permission-dialog"]', '[class*="confirm-dialog"]', '[class*="decision-dialog"]',
+        // 官方 cb-chat-ui confirm-dialog（CSS Modules hash 类名，语义前缀无下划线包裹）
+        '[class*="dialogOverlay"]', '[class*="dialogContainer"]', '[class*="dialogContent"]', '[class*="dialogFooter"]',
+        '[class*="confirmDialog"]', '[class*="ConfirmDialog"]',
       ];
       var nodes = [];
       for (var i = 0; i < selectors.length; i++) {
@@ -1355,7 +1365,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         var node = nodes[k];
         if (!isVisibleHealthNode(node)) continue;
         var text = String(node.innerText || node.textContent || '').replace(/\s+/g, ' ').trim();
-        if (!text || text.length > 1800) continue;
+        if (!text || text.length > 4000) continue;
         var buttons = Array.prototype.map.call(node.querySelectorAll('button,[role="button"]'), function (b) {
           return String(b.innerText || b.getAttribute('aria-label') || b.getAttribute('title') || '').trim();
         }).join(' ');
@@ -4096,7 +4106,11 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       var input = mask.querySelector('#wbs-transfer-password');
       var error = mask.querySelector('#wbs-transfer-error');
       var confirm = mask.querySelector('#wbs-transfer-confirm');
+      var cancelButton = mask.querySelector('#wbs-transfer-cancel');
       var close = function () { closeSecureTransferModal(mask); };
+      var completed = false;
+      var completeAction = null;
+      var successText = '';
       function selectedIds() { return Object.keys(selected).filter(function (id) { return selected[id]; }); }
       function syncSelection() {
         var checks = mask.querySelectorAll('[data-transfer-id]');
@@ -4124,6 +4138,30 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       mask.querySelector('#wbs-transfer-cancel').addEventListener('click', close);
       mask.addEventListener('click', function (ev) { if (ev.target === mask) close(); });
       confirm.addEventListener('click', function () {
+        if (completed) {
+          if (!completeAction) {
+            close();
+            return;
+          }
+          if (completeAction.running) return;
+          completeAction.running = true;
+          confirm.disabled = true;
+          confirm.textContent = completeAction.busyLabel || '处理中…';
+          Promise.resolve().then(function () { return completeAction.callback(); }).then(function () {
+            completeAction = null;
+            confirm.disabled = false;
+            confirm.textContent = options.successDoneLabel || '关闭';
+            error.className = 'wbs-password-error wbs-password-success';
+            error.textContent = successText + '\n页面刷新成功。';
+          }).catch(function (err) {
+            completeAction.running = false;
+            confirm.disabled = false;
+            confirm.textContent = completeAction.label || '刷新页面';
+            error.className = 'wbs-password-error';
+            error.textContent = successText + '\n页面刷新失败：' + ((err && err.message) || String(err || '未知原因'));
+          });
+          return;
+        }
         var value = input.value;
         if (items.length && !selectedIds().length) {
           error.textContent = '请至少选择一项';
@@ -4139,10 +4177,51 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         confirm.textContent = '处理中…';
         Promise.resolve().then(function () {
           return options.onConfirm(value, selectedIds());
-        }).then(close).catch(function (err) {
+        }).then(function (result) {
+          if (!options.keepOpenOnSuccess) {
+            close();
+            return;
+          }
+          completed = true;
+          successText = typeof options.successMessage === 'function'
+            ? options.successMessage(result)
+            : (options.successMessage || '操作成功');
+          input.disabled = true;
+          if (cancelButton) cancelButton.style.display = 'none';
+          error.className = 'wbs-password-error wbs-password-success';
+          error.textContent = successText;
+          var configuredAction = typeof options.successAction === 'function'
+            ? options.successAction(result)
+            : options.successAction;
+          if (configuredAction && typeof configuredAction.callback === 'function') {
+            completeAction = {
+              callback: configuredAction.callback,
+              label: configuredAction.label || '刷新页面',
+              busyLabel: configuredAction.busyLabel || '处理中…',
+              running: false,
+            };
+            confirm.textContent = completeAction.label;
+          } else {
+            confirm.textContent = options.successDoneLabel || '关闭';
+          }
+          confirm.disabled = false;
+        }).catch(function (err) {
+          if (options.closeOnError) {
+            completed = true;
+            input.disabled = true;
+            if (cancelButton) cancelButton.style.display = 'none';
+            completeAction = null;
+            error.className = 'wbs-password-error';
+            error.textContent = (err && err.message) || String(err || '操作失败');
+            confirm.disabled = false;
+            confirm.textContent = options.errorDoneLabel || '关闭';
+            return;
+          }
+          error.className = 'wbs-password-error';
           error.textContent = (err && err.message) || String(err || '操作失败');
           confirm.disabled = false;
           confirm.textContent = options.confirmText || '确定';
+          input.disabled = false;
           input.focus();
         });
       });
@@ -4272,7 +4351,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     }
 
     // ===== 会话 pane（构建：账号/时间筛选 + 按空间分组[默认2条/展开10条] + 刷新 + 批量操作[迁移/删除]）=====
-    var sessionsState = { uid: undefined, currentUid: '', range: '7d', list: [], selected: {}, wsExpanded: {}, accounts: [], batchMode: false, autoCopy: null, autoCopyAll: false };
+    var sessionsState = { uid: undefined, currentUid: '', range: 'all', list: [], selected: {}, wsExpanded: {}, accounts: [], batchMode: false, autoCopy: null, autoCopyAll: false };
     function isTaskSessionRecordUI(s) {
       // 任务（未选择项目/一次性）会话：以官方 is_playground=1 为准。
       // 普通工作区也用 WorkBuddy\\YYYY-MM-DD-HH-MM-SS 命名，仅凭 cwd 无法区分。
@@ -4304,9 +4383,9 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         '<div class="wbs-sess-filter-row"><span class="wbs-sess-flabel">账号</span><select class="wbs-sess-select" id="wbs-sess-account-select" title="选择要查看的账号"><option value="">加载中…</option></select></div>' +
         '<div class="wbs-sess-filter-row"><span class="wbs-sess-flabel">时间</span><div class="wbs-sess-seg" id="wbs-sess-range-seg">' +
         '<button class="wbs-sess-seg-btn" type="button" data-range="today">今天</button>' +
-        '<button class="wbs-sess-seg-btn active" type="button" data-range="7d">近 7 天</button>' +
+        '<button class="wbs-sess-seg-btn" type="button" data-range="7d">近 7 天</button>' +
         '<button class="wbs-sess-seg-btn" type="button" data-range="30d">近 30 天</button>' +
-        '<button class="wbs-sess-seg-btn" type="button" data-range="all">全部</button>' +
+        '<button class="wbs-sess-seg-btn active" type="button" data-range="all">全部</button>' +
         '</div></div>' +
         '</div>' +
         '<div class="wbs-sess-toolbar">' +
@@ -4794,15 +4873,40 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
               title: '导入会话',
               requirePassword: true,
               confirmText: '导入',
+              keepOpenOnSuccess: true,
               hint: targetUid ? '会话将导入到「' + ((target && target.nickname) || '当前账号') + '」。' : '会话将保留导出时的账号归属。',
               onConfirm: function (password) { return api('/api/sessions/import', {
                 method: 'POST',
                 headers: { 'content-type': 'application/json' },
                 body: JSON.stringify({ content: content, password: password, targetUid: targetUid }),
               }).then(function (result) {
-                toast('已导入 ' + result.count + ' 个会话' + (result.failed ? '，' + result.failed + ' 个失败' : ''), !!result.failed, root);
+                var count = Number(result.count || (result.imported && result.imported.length) || 0);
+                var lines = ['导入完成：成功 ' + count + ' 个会话'];
+                if (result.failed) lines.push('失败：' + result.failed + ' 个');
+                var importErrors = Array.isArray(result.errors) ? result.errors : [];
+                if (importErrors.length) {
+                  lines.push('失败原因：');
+                  for (var ei = 0; ei < importErrors.length; ei++) lines.push('· ' + importErrors[ei]);
+                }
+                var summary = lines.join('\n');
+                toast(summary, !!result.failed, root);
                 loadSessions();
+                return result;
               }); },
+              successMessage: function (result) {
+                var count = Number(result && (result.count || (result.imported && result.imported.length)) || 0);
+                var lines = ['导入完成：成功 ' + count + ' 个会话'];
+                if (result && result.failed) lines.push('失败：' + result.failed + ' 个');
+                var importErrors = result && Array.isArray(result.errors) ? result.errors : [];
+                if (importErrors.length) {
+                  lines.push('失败原因：');
+                  for (var ei = 0; ei < importErrors.length; ei++) lines.push('· ' + importErrors[ei]);
+                }
+                return lines.join('\n');
+              },
+              closeOnError: true,
+              successDoneLabel: '关闭',
+              errorDoneLabel: '关闭',
             });
           }).catch(function (error) { toast(error.message || '读取文件失败', true, root); });
         });
@@ -4890,15 +4994,16 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       var body = sessionsPane.querySelector('#wbs-sess-modal-body');
       var okBtn = sessionsPane.querySelector('#wbs-sess-modal-ok');
       titleEl.textContent = '删除 ' + ids.length + ' 个会话？';
-      body.innerHTML = '<div class="wbs-modal-warn">删除后会话将从列表中移除，该账号下的本地消息文件将被永久删除，此操作不可恢复。</div>';
+      body.innerHTML = '<div class="wbs-modal-warn">删除后会话将从列表中移除，本账号的会话与其自动复制到其他账号的同源副本（本地消息文件）都将被永久删除，此操作不可恢复。</div>';
       showSessModal(true);
       okBtn.onclick = function () {
         api('/api/sessions/delete', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ ids: ids }),
-        }).then(function () {
-          toast('已删除 ' + ids.length + ' 个会话', false, root);
+        }).then(function (d) {
+          var extra = (d && d.cascaded) ? '，含其他账号副本 ' + d.cascaded + ' 个' : '';
+          toast('已删除 ' + ((d && d.deleted) || ids.length) + ' 个会话' + extra, false, root);
           showSessModal(false);
           loadSessions();
         }).catch(function (e) {
@@ -7219,13 +7324,16 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       return picked || children[children.length - 1];
     }
 
-    /** 完成标记判定：正文文本末尾（去除可见空白后）为严格三连标记 或 任一零宽字符。可见转义文本不算 */
+    /** 完成标记判定：正文文本末尾（去除可见空白后）为严格三连标记 或 任一零宽字符。
+     * 可见转义文本（\u200b 字面）不算。Rule1 v2：Markdown 链接引用定义完成标记，
+     * 匹配消息末尾的 [wbs-reply-done]: … 行（渲染不可见）。 */
     function acHasMarker(text) {
       if (typeof text !== 'string' || !text.length) return false;
       var t = text.replace(/[ \t\r\n\f\v\u00A0]+$/, ''); // 只去除可见空白，保留零宽字符（含 U+FEFF）
       if (!t.length) return false;
       if (t.slice(-AC_STRICT_MARKER.length) === AC_STRICT_MARKER) return true;
       if (/[\u200B\uFEFF\u2060\u200D]$/.test(t)) return true;
+      if (/(^|\n)\s*\[wbs-reply-done\]:\s*[^\n]*$/im.test(t)) return true;
       return false;
     }
 
@@ -8298,11 +8406,11 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
           session.resourceActive ? { source: 'session-resource' } : undefined);
         return;
       }
-      if (snapshot.blocked) {
+      if (snapshot.blocked || findBlockingPrompt()) {
         session.lastBusy = true;
         session.idleAt = 0;
         session.lastVersion = snapshot.version;
-        acMultiUpdateStatus(session, 'awaiting-approval', { state: snapshot.state || '' });
+        acMultiUpdateStatus(session, 'awaiting-approval', { state: snapshot.state || '', source: snapshot.blocked ? 'controller-state' : 'dom' });
         return;
       }
       if (snapshot.busy) {
@@ -8430,8 +8538,223 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       session.sending = false;
     }
 
+    function acMultiProbeSidebarApproval() {
+      // 官方侧栏 cb-agent-card 状态标签（如「待确认」）是会话等待决策的权威可见
+      // 信号：直接读 DOM 文本并按标题匹配会话，不依赖 fiber 私有字段。命中即标
+      // awaiting-approval，配合 _probeApprovalTag 去重避免每心跳刷日志。
+      if (!acRunning || acMulti.mode !== 'multi') return;
+      var tags;
+      try {
+        tags = document.querySelectorAll(
+          '.cb-agent-card__status-tag, .conversation-item [class*="status-tag"], .conversation-item [class*="statusTag"]'
+        );
+      } catch (_) { return; }
+      for (var i = 0; i < tags.length; i++) {
+        var label = (tags[i].textContent || '').replace(/\s+/g, ' ').trim();
+        if (!label || !/(待确认|等待确认|等待允许|待处理|待审批|等待批准|待用户确认|待人工确认|awaiting|pending.*approval|waiting.*approval|needs approval|requires approval)/i.test(label)) continue;
+        var item = tags[i].closest('.conversation-item');
+        if (!item) continue;
+        var title = '';
+        var titleEl = item.querySelector('[class*="title"],[class*="name"],[class*="agentName"],[class*="agent-name"]');
+        if (titleEl) title = (titleEl.textContent || '').replace(/\s+/g, ' ').trim();
+        var matched = null;
+        Object.keys(acMulti.sessions).forEach(function (id) {
+          if (matched) return;
+          var s = acMulti.sessions[id];
+          var st = String(s.title || '').replace(/\s+/g, ' ').trim();
+          if (title && st && (st === title || st.indexOf(title) !== -1 || title.indexOf(st) !== -1)) matched = s;
+        });
+        if (matched) {
+          if (matched._probeApprovalTag !== label) {
+            matched._probeApprovalTag = label;
+            acMultiUpdateStatus(matched, 'awaiting-approval', { source: 'sidebar-tag', tag: label });
+          }
+        } else {
+          var now2 = Date.now();
+          if (!acMulti._probeUnknownAt || now2 - acMulti._probeUnknownAt > 30000) {
+            acMulti._probeUnknownAt = now2;
+            acMonitorLog('(sidebar)', 'awaiting-approval', { source: 'sidebar-tag', tag: label, title: title.slice(0, 60) });
+          }
+        }
+      }
+    }
+
+    // 侧栏待确认会话 → 自动批准链路：仅当「弹窗自动点允许」已开启（ndAutoObserver 激活）
+    // 时，检测到待确认会话（官方侧栏 cb-agent-card__status-tag「待确认」等）就切过去让
+    // ND 自动点掉弹窗，再切回原来的会话。busy 防重入 + 15s 冷却 + 15s 超时兜底恢复。
+    // 切换必须走 daemon /api/cdp-click 真实鼠标点击（官方拒绝 isTrusted=false 的 click()）。
+    // 已知边界：已停住且官方不渲染「允许/拒绝」按钮的 pending 会话，激活后无弹窗可点，
+    // 3s 内判 approval-no-dialog 立即切回。
+    var acAutoApprove = { busy: false, lastRunAt: 0, timer: null, gateLogAt: 0 };
+    var AC_AUTO_APPROVE_ENABLED = true;
+    function acCdpClick(x, y) {
+      if (!Number.isFinite(x) || !Number.isFinite(y)) return Promise.resolve(false);
+      return api('/api/cdp-click', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ x: Math.round(x), y: Math.round(y) }),
+      }).then(function () { return true; }).catch(function () { return false; });
+    }
+    function acAutoApproveClickItem(item) {
+      if (!item) return Promise.resolve(false);
+      var rect = item.getBoundingClientRect();
+      var vw = (window.innerWidth || 0);
+      var vh = (window.innerHeight || 0);
+      if (!rect || rect.width <= 0 || rect.height <= 0) return Promise.resolve(false);
+      if (rect.left < 0 || rect.top < 0 || rect.right > vw || rect.bottom > vh) {
+        // 列表视口外：先滚动到可见再取坐标（daemon 只接受视口内坐标）
+        try { item.scrollIntoView({ block: 'center', inline: 'nearest' }); } catch (_) { try { item.scrollIntoView(); } catch (_) {} }
+        return new Promise(function (resolve) {
+          setBuildTimeout(function () {
+            var r2 = item.getBoundingClientRect();
+            if (!r2 || r2.width <= 0) { resolve(false); return; }
+            resolve(acCdpClick(r2.left + r2.width / 2, r2.top + r2.height / 2));
+          }, 160);
+        });
+      }
+      return acCdpClick(rect.left + rect.width / 2, rect.top + rect.height / 2);
+    }
+    function acAutoApproveItemByTitle(title) {
+      if (!title) return null;
+      var items = document.querySelectorAll('.conversation-item');
+      for (var i = 0; i < items.length; i++) {
+        var cands = items[i].querySelectorAll('[class*="title"],[class*="name"],[class*="agentName"],[class*="agent-name"]');
+        for (var j = 0; j < cands.length; j++) {
+          var t = (cands[j].textContent || '').replace(/\s+/g, ' ').trim();
+          if (t === title || (t && (t.indexOf(title) !== -1 || title.indexOf(t) !== -1))) return items[i];
+        }
+      }
+      return null;
+    }
+    function acAutoApprovePendingOnce() {
+      if (!AC_AUTO_APPROVE_ENABLED) return;
+      // 调试门控（30s 限频）：暴露各前置条件状态，便于定位不触发原因
+      if (!acAutoApprove.gateLogAt || Date.now() - acAutoApprove.gateLogAt > 30000) {
+        acAutoApprove.gateLogAt = Date.now();
+        try {
+          window.__wbsAutoApproveGate = {
+            nd: !!ndAutoObserver, busy: !!acAutoApprove.busy, running: !!acRunning,
+            mode: acMulti.mode, at: new Date().toISOString(),
+            tags: (function () { try { return document.querySelectorAll('.cb-agent-card__status-tag, .conversation-item [class*="status-tag"]').length; } catch (_) { return -1; } })(),
+          };
+        } catch (_) {}
+      }
+      if (!ndAutoObserver || acAutoApprove.busy || !acRunning || acMulti.mode !== 'multi') return;
+      var now = Date.now();
+      if (now - acAutoApprove.lastRunAt < 5000) return;
+      var tags;
+      try {
+        tags = document.querySelectorAll('.cb-agent-card__status-tag, .conversation-item [class*="status-tag"], .conversation-item [class*="statusTag"]');
+      } catch (_) { return; }
+      var target = null;
+      var targetTitle = '';
+      for (var i = 0; i < tags.length; i++) {
+        var label = (tags[i].textContent || '').replace(/\s+/g, ' ').trim();
+        if (!/(待确认|等待确认|等待允许|待处理|待审批|等待批准|待用户确认|待人工确认|awaiting.*approval|waiting.*approval|needs approval|requires approval)/i.test(label)) continue;
+        var item = tags[i].closest('.conversation-item');
+        if (!item) continue;
+        if ((item.className || '').indexOf('selected') !== -1) return;
+        target = item;
+        var titleEl = item.querySelector('[class*="title"],[class*="name"],[class*="agentName"],[class*="agent-name"]');
+        targetTitle = titleEl ? (titleEl.textContent || '').replace(/\s+/g, ' ').trim() : '';
+        break;
+      }
+      if (!target) { try { window.__wbsAutoApproveGateTarget = { found: false, at: new Date().toISOString() }; } catch (_) {} return; }
+      // 记录原会话：优先官方激活会话 id → registry title；回退取 selected 侧栏项标题
+      var originTitle = '';
+      var originItemRef = null;
+      try {
+        var activeId = acActiveConversationId();
+        var activeSession = acMulti.sessions[String(activeId || '')];
+        if (activeSession) originTitle = String(activeSession.title || '').replace(/\s+/g, ' ').trim();
+      } catch (_) {}
+      var items = document.querySelectorAll('.conversation-item');
+      for (var j = 0; j < items.length; j++) {
+        if ((items[j].className || '').indexOf('selected') !== -1) {
+          originItemRef = items[j];
+          if (!originTitle) {
+            var ot = items[j].querySelector('[class*="title"],[class*="name"],[class*="agentName"],[class*="agent-name"]');
+            originTitle = ot ? (ot.textContent || '').replace(/\s+/g, ' ').trim() : '';
+          }
+          break;
+        }
+      }
+      try { window.__wbsAutoApproveOrigin = { title: originTitle.slice(0, 40), hasRef: !!originItemRef, at: new Date().toISOString() }; } catch (_) {}
+      acAutoApprove.lastRunAt = now;
+      acAutoApprove.busy = true;
+      try { window.__wbsAutoApproveGateTarget = { found: true, title: targetTitle.slice(0, 40), clickedAt: new Date().toISOString() }; } catch (_) {}
+      acMonitorLog('(auto-approve)', 'approval-activating', { title: targetTitle.slice(0, 40), source: 'sidebar-tag' });
+      // 真实鼠标点击（daemon CDP）：官方拒绝 isTrusted=false 的 click()
+      acAutoApproveClickItem(target);
+      var waited = 0;
+      var tTitle = targetTitle;
+      var oTitle = originTitle;
+      acAutoApprove.timer = setBuildInterval(function () {
+        waited += 1000;
+        var still = false;
+        var cur;
+        try {
+          cur = document.querySelectorAll('.cb-agent-card__status-tag, .conversation-item [class*="status-tag"], .conversation-item [class*="statusTag"]');
+        } catch (_) { cur = []; }
+        for (var k = 0; k < cur.length; k++) {
+          var le = (cur[k].textContent || '').trim();
+          if (!/(待确认|等待确认|等待允许|待处理|待审批|等待批准|待用户确认|待人工确认|awaiting.*approval|waiting.*approval|needs approval|requires approval)/i.test(le)) continue;
+          var ie = cur[k].closest('.conversation-item');
+          var te = ie ? ie.querySelector('[class*="title"],[class*="name"],[class*="agentName"],[class*="agent-name"]') : null;
+          var tt = te ? (te.textContent || '').replace(/\s+/g, ' ').trim() : '';
+          if (!ie || (tt && tTitle && (tt === tTitle || tt.indexOf(tTitle) !== -1 || tTitle.indexOf(tt) !== -1))) { still = true; break; }
+        }
+        // 官方对后台停留的 pending 会话不渲染可点弹窗：激活后若一直不存在「允许/拒绝」
+        // 按钮，继续等待毫无意义 —— 立即判定不可批准并切回原会话。
+        var noDialog = false;
+        if (still && waited >= 3000) {
+          var noBtns = true;
+          try {
+            var bs = document.querySelectorAll('button');
+            for (var b2 = 0; b2 < bs.length; b2++) {
+              var bt = (bs[b2].textContent || '').trim().replace(/^\d+\s*/, '');
+              if (/^(允许|允许一次|Allow|Yes|同意|批准|确认允许|始终允许|Always allow)$/i.test(bt)) { noBtns = false; break; }
+            }
+          } catch (_) {}
+          noDialog = noBtns;
+        }
+        if (still && !noDialog && waited < 15000) return;
+        if (acAutoApprove.timer) { clearInterval(acAutoApprove.timer); acAutoApprove.timer = null; }
+        acMonitorLog('(auto-approve)', still ? (noDialog ? 'approval-no-dialog' : 'approval-timeout') : 'approval-resolved', { title: tTitle.slice(0, 40), waitedMs: waited * 1000 });
+        // no-dialog（官方不渲染按钮）场景拉长冷却，避免反复激活/切回造成页面闪烁
+        if (still && noDialog) acAutoApprove.lastRunAt = Date.now() + 10000;
+        // 切回原会话：优先复用激活前捕获的 DOM 引用，其次按标题（包含匹配）重查，
+        // 全部走真实点击（daemon CDP）。结果写入 window.__wbsAutoApproveRestored 供诊断。
+        var originItem = (originItemRef && originItemRef.isConnected) ? originItemRef : null;
+        if (!originItem && oTitle) originItem = acAutoApproveItemByTitle(oTitle);
+        try {
+          window.__wbsAutoApproveRestored = { title: oTitle.slice(0, 40), itemByRef: !!(originItemRef && originItemRef.isConnected), itemByTitle: !!(!((originItemRef && originItemRef.isConnected)) && originItem), at: new Date().toISOString() };
+        } catch (_) {}
+        if (originItem) acAutoApproveClickItem(originItem);
+        acMonitorLog('(auto-approve)', 'approval-restored', { title: oTitle.slice(0, 40), itemFound: !!originItem });
+        acAutoApprove.busy = false;
+      }, 1000);
+    }
+
+    var acAutoApproveFastTimer = null;
+    function acAutoApproveFastStart() {
+      if (acAutoApproveFastTimer) return;
+      // 1s 快轮询：只扫侧栏待确认标签（轻量 DOM），出现即尽快进入自动批准，
+      // 由 acAutoApprovePendingOnce 的冷却/busy 兜底去重
+      acAutoApproveFastTimer = setBuildInterval(function () {
+        if (!AC_AUTO_APPROVE_ENABLED || !acRunning || acMulti.mode !== 'multi') return;
+        if (!ndAutoObserver) return;
+        acAutoApprovePendingOnce();
+      }, 1000);
+    }
+    function acAutoApproveFastStop() {
+      if (acAutoApproveFastTimer) { clearInterval(acAutoApproveFastTimer); acAutoApproveFastTimer = null; }
+    }
+
     function acMultiDiscover() {
       if (!acRunning || acMulti.mode !== 'multi') return;
+      acMultiProbeSidebarApproval();
+      acAutoApprovePendingOnce();
       var controllers = [];
       try {
         if (WBS_COMPAT && typeof WBS_COMPAT.findConversationControllers === 'function') {
@@ -8477,6 +8800,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         acMultiUnbindSessionResource();
         return false;
       }
+      acAutoApproveFastStart();
       acShowStatus();
       return true;
     }
@@ -8484,6 +8808,9 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     function acStopMultiMonitor() {
       acMulti.mode = 'none';
       acMulti.generation++;
+      acAutoApproveFastStop();
+      if (acAutoApprove.timer) { clearInterval(acAutoApprove.timer); acAutoApprove.timer = null; }
+      acAutoApprove.busy = false;
       if (acMulti.discoveryTimer) { clearTimeout(acMulti.discoveryTimer); acMulti.discoveryTimer = null; }
       acMultiUnbindSessionResource();
       Object.keys(acMulti.sessions).forEach(function (id) {
@@ -8545,7 +8872,16 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       var tabs = host.querySelector('.wbs-monitor-log-session-list');
       var list = host.querySelector('.wbs-monitor-log-list');
       if (!tabs || !list) return;
-      var sessions = acMonitorRegistry.list();
+      // 只显示进行中/待处理的真实会话：
+    //  - completed/stopped 是终态，不出现在「进行中的会话」；
+    //  - id 以 '(' 开头的（(auto-approve)/(sidebar)）是日志通道占位，不作为会话 tab；
+    //  - 超过 10 分钟无任何更新的"运行中/已发现"视为已结束（官方背景态回收滞后）。
+    var sessions = acMonitorRegistry.list().filter(function (s) {
+      if (s.status === 'completed' || s.status === 'stopped') return false;
+      if (String(s.id || '').charAt(0) === '(') return false;
+      if (!(Number(s.updatedAt) > 0) || Date.now() - Number(s.updatedAt) > 10 * 60 * 1000) return false;
+      return true;
+    });
       if (!sessions.length) {
         acMonitorSelectedId = '';
         tabs.textContent = '';
@@ -10604,6 +10940,8 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '.wbs-password-field input:focus{border-color:var(--wb-button-primary-bg,#1f1f1f);box-shadow:0 0 0 2px color-mix(in srgb,var(--wb-button-primary-bg,#1f1f1f) 16%,transparent)}',
     '.wbs-password-hint{margin-top:7px;color:var(--wb-icon-tertiary,#999);font-size:11px;line-height:1.5}',
     '.wbs-password-error{min-height:17px;margin-top:4px;color:#d14343;font-size:11px;line-height:1.5}',
+    '.wbs-password-success{color:#238636;white-space:pre-line;word-break:break-word}',
+    'html.cb-dark .wbs-password-success,html[data-theme="dark"] .wbs-password-success{color:#72d18c}',
     '.wbs-transfer-modal{display:flex;max-height:min(520px,calc(100% - 28px));flex-direction:column}',
     '.wbs-transfer-select-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:0 0 6px;color:var(--wb-icon-secondary,#666);font-size:12px}',
     '.wbs-transfer-toggle{border:0;padding:3px 0;background:transparent;color:var(--wb-button-primary-bg,#1f1f1f);font:inherit;font-size:11px;font-weight:600;cursor:pointer}',
