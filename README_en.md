@@ -16,8 +16,8 @@ It injects UI components into the running WorkBuddy renderer without patching or
 
 ## Preview
 
-<img src="docs/images/accounts-light.jpg" width="440">
-<img src="docs/images/accounts-dark.jpg" width="440">
+<img src="docs/images/accounts-light.jpg" width="600">
+<img src="docs/images/accounts-dark.jpg" width="600">
 
 ![界面预览图](docs/images/pannel-enhance.png)
 ![界面预览图](docs/images/pannel-robot.png)
