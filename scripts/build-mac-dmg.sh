@@ -56,7 +56,7 @@ chmod 644 "$APP/Contents/Resources/AppIcon.icns"
 echo "==> 应用图标已同步（背景 #e1e1e1）"
 
 # 2) 只覆盖前端代码（保留壳的其余一切：launcher/Info.plist/builtin/node_modules/theme-audit.js）
-for f in daemon.js token-refresh.js session-db.js secure-transfer.js windows-process-boundary.js workbuddy-compat.js inject.js theme-patches.js credit-segments.js credit-resource-queries.js credit-request-usage.js credit-usage-store.js growth-active.js atomic-file-write.js ui-port.js checkin-result.js lib.js profiles.js workbuddy-target.js cdp-targets.js sentry-report.js install.sh relaunch-with-cdp.sh uninstall.sh apply-update.sh; do
+for f in daemon.js toast-runtime.js toast-options.js primary-account.js completion-report.js automation-runtime.js automation-packages.js automation-compatibility.js automation-transfer.js automation-zip.js automation.js automation-picker.js token-refresh.js session-db.js secure-transfer.js windows-process-boundary.js workbuddy-compat.js inject.js theme-patches.js credit-segments.js credit-resource-queries.js credit-request-usage.js credit-usage-store.js growth-active.js atomic-file-write.js ui-port.js checkin-result.js lib.js profiles.js workbuddy-target.js cdp-targets.js sentry-report.js install.sh relaunch-with-cdp.sh uninstall.sh apply-update.sh; do
   [ -f "scripts/$f" ] && cp "scripts/$f" "$APP/Contents/Resources/scripts/$f"
 done
 if [ -f "scripts/picker-internal.js" ]; then
@@ -80,6 +80,8 @@ chmod 755 "$APP/Contents/Resources/scripts/daemon.js" \
   "$APP/Contents/Resources/scripts/uninstall.sh" \
   "$APP/Contents/Resources/scripts/apply-update.sh"
 chmod 644 "$APP/Contents/Resources/scripts/session-db.js" \
+  "$APP/Contents/Resources/scripts/automation.js" \
+  "$APP/Contents/Resources/scripts/automation-picker.js" \
   "$APP/Contents/Resources/scripts/token-refresh.js" \
   "$APP/Contents/Resources/scripts/workbuddy-target.js" \
   "$APP/Contents/Resources/scripts/secure-transfer.js" \

@@ -23,7 +23,7 @@ test('injected panel exposes persisted bilingual language selection', () => {
 
 test('all dynamic panel text and toast nodes pass through the translator', () => {
   assert.match(source, /function applyI18n\(scope\)/);
-  assert.match(source, /applyI18n\(t\);/);
+  assert.match(source, /toastRuntime\.show\(\{ message: wbsTranslateString/);
   assert.match(source, /i18nObserver\.observe\(root/);
   assert.match(source, /'账号': 'Accounts'/);
   assert.match(source, /'设置语言': 'Language'/);

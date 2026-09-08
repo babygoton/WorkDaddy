@@ -405,3 +405,56 @@ test('AI profile does not claim a domestic Tencent/CodeBuddy auth file', () => {
     fs.rmSync(f.root, { recursive: true, force: true });
   }
 });
+
+for (const issuerOnly of [false, true]) {
+  test(`CN discovers, backs up and switches the Tencent issuer (issuerOnly=${issuerOnly})`, () => {
+    const f = fixture();
+    try {
+      const canonical = path.join(f.authDir, 'workbuddy-desktop.info');
+      const fresh = auth('new-cn', 'https://copilot.tencent.com/auth/realms/copilot');
+      if (issuerOnly) delete fresh.auth.domain;
+      fs.writeFileSync(canonical, JSON.stringify(fresh));
+      const current = run(f.root, f.dataDir, 'const r=lib.resolveCurrentAuth(); process.stdout.write(JSON.stringify({file:r.file,ambiguous:r.ambiguous,uid:r.record&&r.record.uid}))');
+      assert.deepEqual(current, { file: canonical, ambiguous: false, uid: 'new-cn' });
+      run(f.root, f.dataDir, 'lib.backupCurrent(process.env.WBSWITCH_DATA_DIR); process.stdout.write("null")');
+      assert.equal(fs.existsSync(path.join(f.dataDir, 'accounts', 'new-cn.info')), true);
+      fs.writeFileSync(canonical, JSON.stringify(auth('old-cn', 'https://www.workbuddy.cn/auth/realms/copilot')));
+      const switched = run(f.root, f.dataDir, 'const r=lib.switchTo(process.env.WBSWITCH_DATA_DIR,"new-cn"); process.stdout.write(JSON.stringify({uid:r.uid}))');
+      assert.equal(switched.uid, 'new-cn');
+      assert.equal(JSON.parse(fs.readFileSync(canonical, 'utf8')).account.uid, 'new-cn');
+    } finally { fs.rmSync(f.root, { recursive: true, force: true }); }
+  });
+}
+
+test('Tencent CN issuer is excluded from AI and lookalike origins stay rejected', () => {
+  const f = fixture();
+  try {
+    const canonical = path.join(f.authDir, 'workbuddy-desktop-ai.info');
+    fs.writeFileSync(canonical, JSON.stringify(auth('cn', 'https://copilot.tencent.com/auth/realms/copilot')));
+    assert.deepEqual(run(f.root, f.dataDir, 'process.stdout.write(JSON.stringify(lib.listAuthRecords().map(r=>r.uid)))', 'workbuddy-ai'), []);
+    for (const origin of ['https://copilot.tencent.com.attacker.example', 'http://copilot.tencent.com', 'https://other.tencent.com']) {
+      fs.writeFileSync(canonical, JSON.stringify(auth('unknown', origin + '/auth/realms/copilot')));
+      assert.deepEqual(run(f.root, f.dataDir, 'process.stdout.write(JSON.stringify(lib.listAuthRecords().map(r=>r.uid)))'), []);
+    }
+  } finally { fs.rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test('soft logout can be retried after the login file was removed and login was cancelled', () => {
+  const f = fixture();
+  try {
+    const canonical = path.join(f.authDir, 'workbuddy-desktop.info');
+    fs.writeFileSync(canonical, JSON.stringify(auth('cn', 'https://copilot.tencent.com/auth/realms/copilot')));
+    run(f.root, f.dataDir, 'lib.backupCurrent(process.env.WBSWITCH_DATA_DIR); process.stdout.write("null")');
+    fs.unlinkSync(canonical); // First soft logout succeeded, subsequent login did not.
+    const resolution = run(f.root, f.dataDir, 'const r=lib.resolveLogoutAuth(); process.stdout.write(JSON.stringify({file:r.file,ambiguous:r.ambiguous}))');
+    assert.deepEqual(resolution, { file: canonical, ambiguous: false });
+    assert.equal(fs.existsSync(path.join(f.dataDir, 'accounts', 'cn.info')), true);
+    fs.writeFileSync(canonical, '{incomplete');
+    const invalid = run(f.root, f.dataDir, 'const r=lib.resolveLogoutAuth(); process.stdout.write(JSON.stringify({file:r.file}))');
+    assert.equal(invalid.file, null);
+    fs.unlinkSync(canonical);
+    fs.writeFileSync(path.join(f.authDir, 'unknown.info'), '{incomplete');
+    const unknown = run(f.root, f.dataDir, 'const r=lib.resolveLogoutAuth(); process.stdout.write(JSON.stringify({file:r.file}))');
+    assert.equal(unknown.file, null);
+  } finally { fs.rmSync(f.root, { recursive: true, force: true }); }
+});

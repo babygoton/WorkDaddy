@@ -12,6 +12,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const inject = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'inject.js'), 'utf8');
+const automationPicker = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'automation-picker.js'), 'utf8');
 const daemon = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'daemon.js'), 'utf8');
 const lib = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'lib.js'), 'utf8');
 
@@ -96,16 +97,18 @@ function extractKeys() {
   return keys.sort((a, b) => b.length - a.length);
 }
 
-test('every Chinese UI literal in inject.js translates at runtime with zero Chinese residue', () => {
+test('every Chinese UI literal in injected UI modules translates at runtime with zero Chinese residue', () => {
   const t = buildTranslator();
   const missed = [];
-  for (const lit of chineseLiterals(stripComments(inject))) {
-    if (LOG_LIKE.test(lit)) continue;
-    if (FRAGMENT_LIKE.test(lit)) continue;
-    const text = uiText(lit);
-    if (text.length < 2) continue;
-    const out = t(text, 'en');
-    if (/[\u4e00-\u9fff]/.test(out)) missed.push(`「${lit}」-> ${out}`);
+  for (const source of [inject, automationPicker]) {
+    for (const lit of chineseLiterals(stripComments(source))) {
+      if (LOG_LIKE.test(lit)) continue;
+      if (FRAGMENT_LIKE.test(lit)) continue;
+      const text = uiText(lit);
+      if (text.length < 2) continue;
+      const out = t(text, 'en');
+      if (/[\u4e00-\u9fff]/.test(out)) missed.push(`「${lit}」-> ${out}`);
+    }
   }
   assert.deepEqual(missed, [], `运行时仍产中文（中英混合）:\n${missed.map((m, i) => `  ${i + 1}. ${m}`).join('\n')}`);
 });

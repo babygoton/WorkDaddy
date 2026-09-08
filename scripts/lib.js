@@ -101,6 +101,8 @@ function allowedAuthOrigins(profile = ACTIVE_PROFILE) {
   if (profile.region === 'cn') {
     origins.add('https://www.workbuddy.cn');
     origins.add('https://www.codebuddy.cn');
+    // 国内版新版 Keycloak issuer；保留旧域名以兼容已有账号备份。
+    origins.add('https://copilot.tencent.com');
   } else if (profile.region === 'intl') {
     origins.add('https://www.workbuddy.ai');
     origins.add('https://www.codebuddy.ai');
@@ -178,6 +180,19 @@ function resolveCurrentAuth() {
 
 function currentAuthFile() {
   return resolveCurrentAuth().file;
+}
+
+function resolveLogoutAuth() {
+  const resolution = resolveCurrentAuth();
+  if (resolution.file || resolution.ambiguous || !DYNAMIC_AUTH_DISCOVERY) return resolution;
+  // 假退出已删掉登录文件，扫码取消后可以再次打开登录页。仅在认证目录
+  // 可读且没有任何 info 文件时使用官方固定路径；未知/损坏文件仍拒绝猜测。
+  try {
+    if (!fs.readdirSync(authDir()).some(safeAuthFileName)) {
+      return { file: AUTH_FILE, record: null, ambiguous: false };
+    }
+  } catch (_) { /* 不把权限或路径错误当成未登录 */ }
+  return resolution;
 }
 
 function defaultDataDir() {
@@ -265,10 +280,8 @@ function sanitizeModel(model, opts) {
   };
 }
 
-function checkinDisplayValue(record, today, pending) {
-  if (!record || record.date !== today) return null;
-  // 正在签到时保留已确认的成功标记；只有失败/未完成记录才暂不展示，避免首屏把已签到账号误显示为“签到中”。
-  if (pending && !record.ok) return null;
+function checkinDisplayValue(record, today) {
+  if (!record || record.date !== today || !record.ok) return null;
   return { ok: !!record.ok, already: !!record.already, code: record.code, message: record.message };
 }
 
@@ -1454,6 +1467,7 @@ module.exports = {
   parseAuthFile,
   listAuthRecords,
   resolveCurrentAuth,
+  resolveLogoutAuth,
   currentAuthFile,
   resolveAuthTarget,
   ACTIVE_PROFILE,

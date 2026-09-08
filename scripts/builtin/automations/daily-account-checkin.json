@@ -1,0 +1,62 @@
+{
+  "schemaVersion": 1,
+  "id": "daily-account-checkin",
+  "name": "循环账号静默签到",
+  "description": "使用各账号 token 签到，不切换当前账号；跳过今日已签到账号。每小时、客户端加载和打开面板时检查。",
+  "enabled": true,
+  "trigger": {
+    "type": "clientLoaded",
+    "types": [
+      "clientLoaded",
+      "panelOpened"
+    ],
+    "oncePerNavigation": true
+  },
+  "schedule": {
+    "type": "interval",
+    "minutes": 60
+  },
+  "variables": {},
+  "steps": [
+    {
+      "op": "account.forEach",
+      "accounts": "all",
+      "switch": false,
+      "steps": [
+        {
+          "op": "logic.catch",
+          "steps": [
+            {
+              "op": "account.checkin",
+              "saveAs": "checkin"
+            },
+            {
+              "op": "logic.if",
+              "condition": {
+                "left": "{{vars.checkin.skipped}}",
+                "operator": "falsy"
+              },
+              "then": [
+                {
+                  "op": "logic.delay",
+                  "ms": 250
+                }
+              ]
+            },
+            {
+              "op": "logic.assert",
+              "condition": {
+                "left": "{{vars.checkin.ok}}",
+                "operator": "truthy"
+              },
+              "message": "该账号签到未成功，请检查登录状态或签到活动"
+            }
+          ],
+          "onError": []
+        }
+      ]
+    }
+  ],
+  "onSuccess": [],
+  "onFailure": []
+}

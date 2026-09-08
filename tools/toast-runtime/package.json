@@ -1,0 +1,7 @@
+{
+  "name": "workdaddy-toast-runtime",
+  "private": true,
+  "scripts": { "build": "node build.mjs" },
+  "dependencies": { "react": "18.3.1", "react-dom": "18.3.1", "react-hot-toast": "2.6.0", "goober": "2.1.18" },
+  "devDependencies": { "esbuild": "0.25.9" }
+}

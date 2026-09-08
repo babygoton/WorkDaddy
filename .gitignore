@@ -7,6 +7,11 @@ npm-debug.log*
 
 # 构建产物与安装包
 WorkDaddy.app
+/release/**/*.dmg
+/release/**/*.exe
+/release/**/*.zip
+/release/**/*.pkg
+/release/**/*.tar.gz
 
 # 本地运行数据与日志
 *.log
@@ -18,6 +23,9 @@ scripts/picker-internal.js
 # 工作区元数据（WorkBuddy 项目数据，不入库）
 .workbuddy/
 .workbuddy-ai/
+
+# 本地维护文档与排查记录
+/.private-docs/
 
 # 构建缓存(安装器临时产物)
 release/.cache/

@@ -1,0 +1,53 @@
+{
+  "schemaVersion": 1,
+  "id": "keep-accounts-active-1-plus-1",
+  "name": "逐账号例行发送固定提示词消息",
+  "description": "依次切换所有账号，新建会话发送 1+1=，按会话回执等待回复完成，最后恢复开始时的账号。",
+  "enabled": true,
+  "trigger": {
+    "type": "manual",
+    "types": [],
+    "oncePerNavigation": true
+  },
+  "schedule": {
+    "type": "manual"
+  },
+  "variables": {},
+  "steps": [
+    {
+      "op": "account.forEach",
+      "accounts": "all",
+      "switch": true,
+      "steps": [
+        {
+          "op": "logic.delay",
+          "ms": 1500
+        },
+        {
+          "op": "session.create",
+          "message": "1+1=",
+          "saveAs": "receipt"
+        },
+        {
+          "op": "session.wait",
+          "timeoutMs": 180000,
+          "receipt": "{{vars.receipt}}"
+        }
+      ]
+    }
+  ],
+  "onSuccess": [
+    {
+      "op": "notify.toast",
+      "level": "success",
+      "message": "所有账号已按序处理完毕，已恢复开始时的账号"
+    }
+  ],
+  "onFailure": [
+    {
+      "op": "notify.toast",
+      "level": "error",
+      "message": "存在账号未完成处理，已尝试恢复开始时的账号"
+    }
+  ]
+}
