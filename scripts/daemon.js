@@ -170,6 +170,7 @@ const {
 const { assertAccountRequestUrl, createTaskState, cancellableWait, createRendererGate, probeSessionReceipt, receiptComplete } = require('./automation-runtime.js');
 const acquireAutomationRenderer = createRendererGate();
 const acquireAutomationInput = createRendererGate();
+let automationInputActive = false;
 
 const { previewPackage, PACKAGE_FORMAT_VERSION } = require('./automation-packages.js');
 const { exportTasks, previewImport, importTasks, readTransferBody } = require('./automation-transfer.js');
@@ -329,8 +330,8 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 // 1.1.65：自动化会话发送前确保进入新版 WorkBuddy 新建任务页。
 // 1.1.66：新版侧栏 tab 共用 conversation-list-tab-button-box，改用文字确认新建任务。
 // 1.1.67：项目页存在普通 composer 时仍强制定位并点击新建任务 tab。
-const DAEMON_VERSION = '1.2.0';
-const DAEMON_BUILD_ID = 'release-1.2.0-20260908-account-cache-composer-r2';
+const DAEMON_VERSION = '1.2.2';
+const DAEMON_BUILD_ID = 'release-1.2.2-20260908-automation-send-readiness-panel-r2';
 configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const HOST = '127.0.0.1';
 const IS_WIN = process.platform === 'win32'; // Windows 移植：平台分支开关（macOS 行为保持不变）
@@ -2798,6 +2799,17 @@ function automationPublicRun(run) { return { id: run.id, taskId: run.taskId, sta
 // 实现：不注入 <style> 硬改 display（老板 09-07：旧法会连 FAB 一起藏 / 破坏面板 DOM 状态），
 // 而是 dispatch 事件让 inject 走「点关闭按钮」同一条 setOpen(false) —— 等价于点一次面板关闭。
 // 运行结束若运行前面板本是展开的，再走「点机器人按钮」同一条 setOpen(true) 恢复。全程可逆。
+function automationPanelSetInputActive(active) {
+  automationInputActive = !!active;
+  if (!cdp.connected) return active ? Promise.reject(new Error('CDP 未连接')) : Promise.resolve();
+  return cdpSend('Runtime.evaluate', {
+    expression: `window.__wbsAutomationInputActive=${!!active};${active ? "window.dispatchEvent(new CustomEvent('workdaddy:panel-open',{detail:{open:false,automation:true}}));" : ''}`,
+    returnByValue: false,
+  }).then((result) => {
+    if (result && result.exceptionDetails) throw new Error('无法关闭面板，请重试');
+  });
+}
+
 function automationPanelSetOpen(open) {
   if (!cdp.connected) return Promise.resolve(false);
   return cdpSend('Runtime.evaluate', {
@@ -2918,7 +2930,19 @@ function startAutomationRun(task, event = null) {
   });
   const scopedState = createTaskState(task.id, readAutomationState, writeAutomationState);
   const runScopedState = scopedState.get, setRunState = scopedState.set;
-  const withInput = async (fn, restoring = false) => { const release = await acquireAutomationInput(restoring ? () => false : isCancelled); try { return await fn(); } finally { release(); } };
+  const withInput = async (fn, restoring = false) => {
+    const release = await acquireAutomationInput(restoring ? () => false : isCancelled);
+    try {
+      if (requiresLease) {
+        if (await automationPanelIsOpen()) run.wasPanelOpen = true;
+        await automationPanelSetInputActive(true);
+      }
+      return await fn();
+    } finally {
+      try { if (requiresLease) await automationPanelSetInputActive(false).catch(() => {}); }
+      finally { release(); }
+    }
+  };
   let lastReceipt = null;
   const readSession = async () => {
     if (isCancelled()) throw new Error('任务已停止');
@@ -3253,6 +3277,9 @@ function injectWidget(reason, executionContextId) {
         ...runtimeContext,
       })
     )
+    // Reinjection and daemon replacement must reflect the current input lease,
+    // including a reset after an interrupted run. Reply-waiting never locks UI.
+    .then(async (r) => { await automationPanelSetInputActive(automationInputActive); return r; })
     // 注入脚本若在页面抛错，CDP 协议不报错（无 protocol error），会被误判为"已注入"；
     // 显式检查 exceptionDetails 让失败可见、留痕，便于定位 WorkBuddy 版本差异导致的挂载失败。
     .then((r) => {
@@ -5989,7 +6016,11 @@ async function sendStashToComposer(record) {
       }
       if (!ed) return { ok: false, error: 'no editor' };
       ed.focus();
-      return { ok: true, hasContent: ((ed.innerText || '').replace(/[\\uFEFF\\u200B\\u00A0]/g, '').trim().length > 0) || !!ed.querySelector('[data-contentblock]') };
+      // Slate renders its placeholder inside the editor. It is not a draft;
+      // inspect a detached clone so the live editor and its selection stay intact.
+      var clone = ed.cloneNode(true);
+      clone.querySelectorAll('[data-slate-placeholder="true"],[data-slate-zero-width]').forEach(function(node){ node.remove(); });
+      return { ok: true, hasContent: ((clone.innerText || clone.textContent || '').replace(/[\\uFEFF\\u200B\\u00A0]/g, '').trim().length > 0) || !!ed.querySelector('[data-contentblock]') };
     } catch (e) { return { ok: false, error: String(e) }; }
   })()`;
   const clr = await guardedSend('Runtime.evaluate', { expression: clearExpr, returnByValue: true });
@@ -6131,7 +6162,10 @@ async function sendStashToComposer(record) {
       if (official) {
         var or = official.getBoundingClientRect(), os = getComputedStyle(official);
         var od = official.disabled === true || official.hasAttribute('disabled') || official.getAttribute('aria-disabled') === 'true';
-        if (or.width >= 16 && or.height >= 16 && or.bottom > 0 && os.display !== 'none' && os.visibility !== 'hidden' && !od) {
+        if (or.width >= 16 && or.height >= 16 && or.bottom > 0 && os.display !== 'none' && os.visibility !== 'hidden') {
+          // A disabled official button is still the correct target. Account/model
+          // startup may enable it later; never fall through to another control.
+          if (od) return { ok: false, retryable: true, error: '发送按钮禁用（输入内容未被识别）' };
           official.scrollIntoView({ block: 'center', inline: 'center' });
           or = official.getBoundingClientRect();
           return { ok: true, x: or.x + or.width / 2, y: or.y + or.height / 2, selector: 'official-send-button' };
@@ -6171,14 +6205,22 @@ async function sendStashToComposer(record) {
       if (!matches.length) return { ok: false, error: '未找到发送按钮' };
       var btn = matches[matches.length - 1];
       var dis = btn.disabled === true || (btn.hasAttribute && btn.hasAttribute('disabled'));
-      if (dis) return { ok: false, error: '发送按钮禁用（输入内容未被识别）' };
+      if (dis) return { ok: false, retryable: true, error: '发送按钮禁用（输入内容未被识别）' };
       btn.scrollIntoView({ block: 'center', inline: 'center' });
       var b = btn.getBoundingClientRect();
       return { ok: true, x: b.x + b.width / 2, y: b.y + b.height / 2 };
     } catch (e) { return { ok: false, error: String(e) }; }
   })()`;
-  const sr = await guardedSend('Runtime.evaluate', { expression: sendExpr, returnByValue: true });
-  const sv = sr.result && sr.result.value;
+  // Only retry the readiness probe, never typing or submitting: after a switch
+  // React may need more than one frame to enable the official send button.
+  let sv;
+  for (let attempt = 0; attempt <= 50; attempt++) {
+    if (record.isCancelled && record.isCancelled()) throw new Error('任务已停止');
+    const sr = await guardedSend('Runtime.evaluate', { expression: sendExpr, returnByValue: true });
+    sv = sr.result && sr.result.value;
+    if (!sv || sv.ok || !sv.retryable || attempt === 50) break;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
   if (!sv || !sv.ok) throw new Error((sv && sv.error) || '未找到发送按钮');
   if (record.guard) await record.guard();
   await cdpMouseClick('automation:sendPhrase', sv.x, sv.y, { textLen: text.length, button: sv });
@@ -8804,7 +8846,7 @@ for (const preset of ['close-buddy-popups.json', ...(PROFILE.capabilities.accoun
   try { installBuiltinTask(DATA_DIR, path.join(__dirname, 'builtin/automations', preset)); }
   catch (_) { log('[automation] 初始化内置任务失败'); }
 }
-if (PROFILE.capabilities.accounts && PROFILE.capabilities.checkin !== false && PROFILE.id !== 'workbuddy-ai') {
+if (PROFILE.capabilities.accounts && PROFILE.capabilities.checkin !== false) {
   try { installBuiltinTask(DATA_DIR, path.join(__dirname, 'builtin/automations/daily-account-checkin.json')); }
   catch (_) { log('[automation] 初始化签到任务失败'); }
 }

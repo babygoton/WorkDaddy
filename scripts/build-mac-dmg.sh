@@ -59,6 +59,9 @@ echo "==> 应用图标已同步（背景 #e1e1e1）"
 for f in daemon.js toast-runtime.js toast-options.js primary-account.js completion-report.js automation-runtime.js automation-packages.js automation-compatibility.js automation-transfer.js automation-zip.js automation.js automation-picker.js token-refresh.js session-db.js secure-transfer.js windows-process-boundary.js workbuddy-compat.js inject.js theme-patches.js credit-segments.js credit-resource-queries.js credit-request-usage.js credit-usage-store.js growth-active.js atomic-file-write.js ui-port.js checkin-result.js lib.js profiles.js workbuddy-target.js cdp-targets.js sentry-report.js install.sh relaunch-with-cdp.sh uninstall.sh apply-update.sh; do
   [ -f "scripts/$f" ] && cp "scripts/$f" "$APP/Contents/Resources/scripts/$f"
 done
+# Presets are runtime source, independent of the reusable wallpaper/theme shell.
+mkdir -p "$APP/Contents/Resources/scripts/builtin/automations"
+cp scripts/builtin/automations/*.json "$APP/Contents/Resources/scripts/builtin/automations/"
 if [ -f "scripts/picker-internal.js" ]; then
   cp "scripts/picker-internal.js" "$APP/Contents/Resources/scripts/picker-internal.js"
   chmod 644 "$APP/Contents/Resources/scripts/picker-internal.js"

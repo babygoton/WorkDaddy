@@ -111,7 +111,7 @@ test('panel-open emits once per user opening and excludes automation restoration
   const start=ui.indexOf('    function setOpen(open, options)');
   const end=ui.indexOf('    function setupFabDrag()',start);
   const calls=[];const noop=()=>{};
-  const ctx={state:{open:false,creditRunId:0},panel:{classList:{toggle:noop}},fab:{classList:{toggle:noop}},
+  const ctx={window:{},state:{open:false,creditRunId:0},panel:{classList:{toggle:noop}},fab:{classList:{toggle:noop}},
     api:(route,options)=>{calls.push([route,JSON.parse(options.body).type]);return Promise.resolve();},
     CAPS:{accounts:false},refresh:noop,checkForUpdate:noop,acCheckPromptOnOpen:noop,syncSessionModule:noop,fabQuietMode:{wake:noop}};
   vm.createContext(ctx);vm.runInContext(ui.slice(start,end),ctx);
@@ -127,4 +127,20 @@ test('automation editor assigns remaining height to the code field without an ou
   assert.match(rules,/\.wbs-auto-steps-field\{[^}]*flex:1 1 0;min-height:0/);
   assert.match(rules,/textarea\[data-auto-field="steps"\]\{[^}]*height:0;min-height:0;resize:none;overflow:auto/);
   assert.doesNotMatch(rules,/height:calc\(100% - 164px\)|min-height:190px/);
+});
+
+test('fresh CN and AI profiles receive all three presets without reinstalling deleted tasks', () => {
+  const init = source.slice(source.indexOf("for (const preset of ['close-buddy-popups.json'"), source.indexOf('\nrestoreSleepMode();'));
+  const { PROFILES } = require('../scripts/profiles');
+  for (const id of ['workbuddy-cn', 'workbuddy-ai']) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wd-presets-'));
+    try {
+      const context = { PROFILE: PROFILES[id], DATA_DIR: dir, path, __dirname: path.join(__dirname, '../scripts'), installBuiltinTask: automation.installBuiltinTask, log() {} };
+      vm.runInNewContext(init, context);
+      assert.deepEqual(automation.readAutomations(dir).map(t => t.id).sort(), ['buddy-fuel-station-close-on-account-switch', 'daily-account-checkin', 'keep-accounts-active-1-plus-1']);
+      automation.writeAutomations(dir, []);
+      vm.runInNewContext(init, context);
+      assert.equal(automation.readAutomations(dir).length, 0);
+    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  }
 });

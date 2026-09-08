@@ -628,6 +628,22 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
   var WBS_LANGUAGE_KEY = 'workdaddy.ui.language';
   var WBS_ACCOUNT_MASK_KEY = 'workdaddy.account.mask.' + PROFILE_ID;
   var WBS_I18N_EN = {
+    '无法关闭面板，请重试': 'Could not close the panel. Please try again.',
+    '正在输入或切换账号，请稍后打开面板': 'Typing or switching accounts. Please open the panel in a moment.',
+    "逐账号例行发送固定提示词消息": "Send a fixed prompt with each account",
+    "依次切换所有账号，新建会话发送 1+1=，按会话回执等待回复完成，最后恢复开始时的账号。": "Switch through all accounts, send 1+1= in a new conversation, wait for each reply to finish, then restore the starting account.",
+    "依次切换所有账号，等待当前会话输入框出现后发送 1+1=，等待回复完成，最后恢复开始时的账号。": "Switch through all accounts, wait for the composer, send 1+1=, wait for each reply to finish, then restore the starting account.",
+    "页面就绪后自动关闭首页弹窗": "Close home popups when the page is ready",
+    "页面就绪后立即检查三类弹窗，每 300 毫秒补查，持续约 30 秒；重新出现的弹窗继续关闭，快速切换账号时重新检测新页面。": "Check for three types of home popups every 300 ms for about 30 seconds. Close any that reappear and restart detection after account switches.",
+    "循环账号静默签到": "Check in all accounts in the background",
+    "使用各账号 token 签到，不切换当前账号；跳过今日已签到账号。每小时、客户端加载和打开面板时检查。": "Check in with each account without switching the active account. Skip accounts already checked in today. Check hourly, on client load, and when the panel opens.",
+    "所有账号已按序处理完毕，已恢复开始时的账号": "All accounts have been processed. The starting account has been restored.",
+    "存在账号未完成处理，已尝试恢复开始时的账号": "Some accounts could not be processed. An attempt was made to restore the starting account.",
+    "该账号签到未成功，请检查登录状态或签到活动": "Check-in failed for this account. Check its login status and check-in availability.",
+    "识别到 Buddy 加油站弹窗，已关闭": "Buddy Fuel Station popup detected and closed.",
+    "已关闭相关玩法推荐，今日不再展示": "Related playbook recommendations dismissed for today.",
+    "已关闭首页活动弹窗": "Home activity popup closed.",
+    "会话输入框非空，未覆盖草稿、未发送": "The composer contains a draft. Nothing was overwritten or sent.",
     '页面就绪': 'Page ready', '删除选中的': 'Delete selected', '删除该自动化任务？': 'Delete this automation task?', '删除选中的自动化任务？': 'Delete selected automation tasks?', '删除后无法恢复。': 'This cannot be undone.', '清除': 'Clear', '清除日志': 'Clear logs', '清除运行日志？': 'Clear run logs?', '仅清除已结束的运行记录。': 'Only completed run records will be cleared.', '清除日志失败': 'Failed to clear logs', '任务已启用': 'Task enabled', '任务已停用': 'Task disabled', '发送中': 'Sending',
     '账号': 'Accounts', '主题': 'Theme', '会话': 'Sessions', '模型': 'Models', '增强': 'Enhance', '自动化': 'Automation', '电脑': 'Computer', '关于': 'About', '设置': 'Settings',
     '导出': 'Export', '导入': 'Import', '删除': 'Delete', '编辑': 'Edit', '保存': 'Save', '取消': 'Cancel', '确定': 'Confirm', '确认': 'Confirm', '复制': 'Copy', '切换': 'Switch', '启用': 'Enable', '停用': 'Disable', '停止': 'Stop', '立即运行': 'Run now', '新建任务': 'New task', '刷新': 'Refresh', '步骤 JSON': 'Steps JSON', '任务说明': 'Task description', '任务名称': 'Task name', '调度': 'Schedule', '手动运行': 'Manual', '手动': 'Manual', '每小时': 'Hourly', '每天': 'Daily', '选择任务': 'Select tasks', '查看接口': 'View capabilities', '拾取元素': 'Pick element', '复制 XPath': 'Copy XPath', '运行中': 'Running', '已成功': 'Succeeded', '失败': 'Failed', '未运行': 'Not run', '页面加载完成': 'Page loaded', '账号切换完成': 'Account switched', '新自动化任务': 'New automation task', '任务已保存': 'Task saved', '任务已开始运行': 'Task started', '步骤 JSON 格式无效': 'Invalid steps JSON', '步骤 JSON 必须是数组': 'Steps JSON must be an array', '查看接口说明': 'View interface docs', '自动化接口协议': 'Automation interface protocol', '复制全部': 'Copy all', '接口协议已复制': 'Interface protocol copied', '暂无自动化任务，点击“新建任务”开始。': 'No automation tasks yet. Click “New task” to start.', '编辑任务': 'Edit task', '触发方式': 'Trigger', '插入点击步骤': 'Insert click step', 'XPath 已复制': 'XPath copied', '点击步骤已插入': 'Click step inserted', '请先拾取元素': 'Pick an element first', '加载自动化失败': 'Failed to load automations', '读取接口失败': 'Failed to read interfaces', '批量操作失败': 'Batch operation failed', '删除失败': 'Delete failed', '确认删除该任务？': 'Delete this task?', '执行': 'Apply', '已拾取': 'Picked', '运行失败': 'Run failed', '（副本）': ' (copy)', '查看提示词': 'View prompt', '交给 WorkBuddy 创建': 'Ask WorkBuddy to create', '正在打开新任务…': 'Opening a new task…', '已创建新会话，WorkBuddy 完成后任务会自动出现': 'New session created. The task will appear after WorkBuddy finishes.', 'WorkBuddy 创建失败': 'WorkBuddy creation failed', '加载示例失败': 'Failed to load examples', '暂无示例': 'No examples available', '运行日志': 'Run logs', '暂无运行日志': 'No run logs yet', '开始时间': 'Started', '结束时间': 'Finished', '捕获错误': 'Caught error', '暂无执行日志': 'No execution log entries', '执行日志': 'Execution log', '尚未结束': 'Still running',
@@ -1013,6 +1029,49 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       }
     }
     return out;
+  }
+
+  function wbsBuiltinAutomationText(task, field) {
+    var defaults = {
+      "daily-account-checkin": {
+        "name": [
+          "循环账号静默签到"
+        ],
+        "description": [
+          "使用各账号 token 签到，不切换当前账号；跳过今日已签到账号。每小时、客户端加载和打开面板时检查。"
+        ]
+      },
+      "keep-accounts-active-1-plus-1": {
+        "name": [
+          "逐账号例行发送固定提示词消息"
+        ],
+        "description": [
+          "依次切换所有账号，新建会话发送 1+1=，按会话回执等待回复完成，最后恢复开始时的账号。",
+          "依次切换所有账号，等待当前会话输入框出现后发送 1+1=，等待回复完成，最后恢复开始时的账号。"
+        ]
+      },
+      "buddy-fuel-station-close-on-account-switch": {
+        "name": [
+          "页面就绪后自动关闭首页弹窗"
+        ],
+        "description": [
+          "页面就绪后立即检查三类弹窗，每 300 毫秒补查，持续约 30 秒；重新出现的弹窗继续关闭，快速切换账号时重新检测新页面。"
+        ]
+      }
+    };
+    var values = task && defaults[task.id] && defaults[task.id][field];
+    return !!values && values.indexOf(task[field]) >= 0;
+  }
+
+  function wbsAutomationText(task, field) {
+    var text = String(task && task[field] || '');
+    return WBS_LANGUAGE === 'en' && wbsBuiltinAutomationText(task, field) ? WBS_I18N_EN[text] : text;
+  }
+
+  function wbsAutomationEditedText(task, field, value) {
+    var text = String(value || '').trim();
+    // Saving only a schedule edit must not persist the English display translation.
+    return task && text === wbsAutomationText(task, field) ? task[field] : text;
   }
 
   // ===== 全局错误钩子：捕获渲染进程不可捕获的 error / unhandledrejection，把完整消息+栈
@@ -4637,9 +4696,9 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
           var stateClass = active ? 'running' : !task.enabled && !task.manualRunnable ? 'off' : 'idle';
           var action = running ? '<button type="button" class="wbs-auto-icon is-running' + (stopping ? ' is-stopping' : '') + '" data-auto-stop="' + escAttr(run.id) + '" title="' + (stopping ? '正在停止…' : '停止本次执行') + '" aria-label="' + (stopping ? '正在停止…' : '停止本次执行') + '" aria-busy="true"' + (stopping ? ' disabled' : '') + '>' + (stopping ? AUTO_STOPPING_SVG : AUTO_STOP_SVG) + '</button>'
             : task.manualRunnable ? '<button type="button" class="wbs-auto-icon" data-auto-run="' + escAttr(task.id) + '" title="立即运行" aria-label="立即运行">' + MODEL_ENABLE_SVG + '</button>' : '';
-          row.innerHTML = '<div class="wbs-auto-row-head">' + check + '<div class="wbs-auto-name" title="' + escAttr(task.name) + '">' + esc(task.name) + '</div>' +
+          row.innerHTML = '<div class="wbs-auto-row-head">' + check + '<div class="wbs-auto-name"' + (wbsBuiltinAutomationText(task, 'name') ? '' : ' data-wbs-i18n-skip="1"') + ' title="' + escAttr(task.name) + '">' + esc(task.name) + '</div>' +
             '<label class="wbs-switch wbs-auto-enabled" title="' + (task.manualRunnable ? '手动任务无需自动触发' : '启用自动触发') + '"' + (task.manualRunnable || task.compatible === false ? ' hidden' : '') + '><input type="checkbox" data-auto-enabled="' + escAttr(task.id) + '" aria-label="启用自动触发"' + (task.enabled ? ' checked' : '') + '><span class="wbs-switch-slider"></span></label></div>' +
-            (task.description ? '<div class="wbs-auto-description" title="' + escAttr(task.description) + '">' + esc(task.description) + '</div>' : '') +
+            (task.description ? '<div class="wbs-auto-description"' + (wbsBuiltinAutomationText(task, 'description') ? '' : ' data-wbs-i18n-skip="1"') + ' title="' + escAttr(task.description) + '">' + esc(task.description) + '</div>' : '') +
             '<div class="wbs-auto-row-foot"><div class="wbs-auto-details"><div class="wbs-auto-triggers" aria-label="触发方式">' + triggerBadgesHtml(task) + '</div><div class="wbs-auto-state-line"><span class="wbs-auto-state ' + stateClass + '">' + esc(taskStatusLabel(task, run, stopping)) + '</span>' +
             (lastRunLabel(run) ? '<span class="wbs-auto-last-run' + (run.status === 'failed' ? ' failed' : '') + '">' + esc(lastRunLabel(run)) + '</span>' : '') + '</div></div><div class="wbs-auto-actions">' + action +
             '<button type="button" class="wbs-auto-icon" data-auto-logs="' + escAttr(task.id) + '" title="运行日志" aria-label="运行日志">' + AUTO_LOG_SVG + '</button><button type="button" class="wbs-auto-icon" data-auto-edit="' + escAttr(task.id) + '" title="编辑" aria-label="编辑">' + MODEL_EDIT_SVG + '</button><button type="button" class="wbs-auto-icon" data-auto-copy="' + escAttr(task.id) + '" title="复制" aria-label="复制">' + MODEL_COPY_SVG + '</button><button type="button" class="wbs-auto-icon danger" data-auto-delete="' + escAttr(task.id) + '" title="删除" aria-label="删除">' + TRASH_SVG + '</button></div></div>';
@@ -4722,6 +4781,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         mask.className = 'wbs-modal-mask wbs-modal-mask-panel';
         mask.innerHTML = '<div class="wbs-modal wbs-auto-log-modal" role="dialog" aria-modal="true" aria-labelledby="wbs-auto-log-title"><div class="wbs-auto-modal-head"><div><div class="wbs-modal-title" id="wbs-auto-log-title">运行日志</div><div class="wbs-auto-modal-subtitle"></div></div><div class="wbs-auto-log-head-actions"><button class="wbs-auto-textbtn" type="button" id="wbs-auto-clear-logs">清除日志</button><button class="wbs-auto-modal-close" type="button" title="关闭" aria-label="关闭"><svg aria-hidden="true" viewBox="0 0 16 16"><path d="M3 3l10 10M13 3 3 13"/></svg></button></div></div><div class="wbs-auto-log-list"></div></div>';
         mask.querySelector('.wbs-auto-modal-subtitle').textContent = task.name || '';
+        if (!wbsBuiltinAutomationText(task, 'name')) mask.querySelector('.wbs-auto-modal-subtitle').setAttribute('data-wbs-i18n-skip', '1');
         var list = mask.querySelector('.wbs-auto-log-list');
         if (!runs.length) {
           var empty = document.createElement('div'); empty.className = 'wbs-auto-log-empty'; empty.textContent = '暂无运行日志'; list.appendChild(empty);
@@ -4767,8 +4827,8 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         (panel || root).appendChild(mask);
         var editor = mask.querySelector('.wbs-auto-editor-modal');
         automationState.editingId = task && task.id || null;
-        editor.querySelector('[data-auto-field="name"]').value = task ? task.name : '';
-        editor.querySelector('[data-auto-field="description"]').value = task ? task.description : '';
+        editor.querySelector('[data-auto-field="name"]').value = wbsAutomationText(task, 'name');
+        editor.querySelector('[data-auto-field="description"]').value = wbsAutomationText(task, 'description');
         var trigger = task && task.trigger || {};
         var triggerTypes = Array.isArray(trigger.types) ? trigger.types : [trigger.type || 'manual'];
         editor.querySelectorAll('[data-auto-field="trigger"] input').forEach(function (input) { input.checked = triggerTypes.indexOf(input.value) >= 0; });
@@ -4828,7 +4888,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
           if (!schedule.at || (new Date(schedule.at).getTime() <= Date.now() && (!existing || !existing.schedule || existing.schedule.at !== schedule.at))) { toast('请选择将来的执行日期和时间', true, root); return; }
         }
         task.schedule = schedule;
-        task.id = automationState.editingId || task.id; task.name = editor.querySelector('[data-auto-field="name"]').value.trim() || '未命名任务'; task.description = editor.querySelector('[data-auto-field="description"]').value.trim(); task.enabled = existing ? existing.enabled !== false : true; task.trigger = Object.assign({}, task.trigger || {}, { type: selectedTriggers[0] || 'manual', types: selectedTriggers, oncePerNavigation: true }); task.steps = steps;
+        task.id = automationState.editingId || task.id; task.name = wbsAutomationEditedText(existing, 'name', editor.querySelector('[data-auto-field="name"]').value) || '未命名任务'; task.description = wbsAutomationEditedText(existing, 'description', editor.querySelector('[data-auto-field="description"]').value); task.enabled = existing ? existing.enabled !== false : true; task.trigger = Object.assign({}, task.trigger || {}, { type: selectedTriggers[0] || 'manual', types: selectedTriggers, oncePerNavigation: true }); task.steps = steps;
         api('/api/automations', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ task: task }) }).then(function () { hideEditor(); toast('任务已保存', false, root); return load(); }).catch(function (e) { toast(e.message || '保存失败', true, root); });
       }
       function mountAutomationModal(mask) {
@@ -6990,6 +7050,10 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     }
 
     function setOpen(open, options) {
+      if (open && window.__wbsAutomationInputActive) {
+        toast('正在输入或切换账号，请稍后打开面板', false, root);
+        return;
+      }
       var newlyOpened = open && !state.open;
       // 面板还不可见时应用最新到期顺序；本次打开期间只更新数值，不移动账号。
       if (newlyOpened && CAPS.accounts) {

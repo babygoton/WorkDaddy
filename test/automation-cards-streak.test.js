@@ -65,7 +65,10 @@ test('task cards render triggers separately, show start only for manual tasks, a
   document:{createElement:()=>({setAttribute(){}})},
   esc:s=>String(s).replaceAll('<','&lt;').replaceAll('>','&gt;'),escAttr:s=>String(s).replaceAll('<','&lt;').replaceAll('"','&quot;'),
   applyI18n(){},AUTO_STOPPING_SVG:'',AUTO_STOP_SVG:'',MODEL_ENABLE_SVG:'',AUTO_LOG_SVG:'',MODEL_EDIT_SVG:'',MODEL_COPY_SVG:'',TRASH_SVG:''};
-  vm.createContext(ctx);vm.runInContext(ui.slice(start,end),ctx);ctx.render();
+  ctx.WBS_I18N_EN = {};
+  vm.createContext(ctx);
+  vm.runInContext(ui.slice(ui.indexOf('  function wbsBuiltinAutomationText('), ui.indexOf('  // ===== 全局错误钩子')), ctx);
+  vm.runInContext(ui.slice(start,end),ctx);ctx.render();
   assert.match(rows[0],/data-auto-run="manual"/);
   assert.doesNotMatch(rows[1],/data-auto-run|data-auto-stop|<img|<script>/);
   for(const label of ['客户端加载','打开面板','每 60 分钟','等待触发'])assert.ok(rows[1].includes(label));

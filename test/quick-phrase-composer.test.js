@@ -69,3 +69,103 @@ test('failed selection aborts before deleting, inserting or submitting', async (
   await assert.rejects(send('replacement'), /selection failed/);
   assert.equal(calls.some(({ method, params }) => method === 'submit' || method === 'Input.insertText' || params?.key === 'Backspace'), false);
 });
+
+function guardedComposerHarness({ draft = '', attachment = false } = {}) {
+  const calls = [];
+  const editor = {
+    innerText: 'Ask WorkBuddy anything\u200b' + draft,
+    focus() {}, scrollIntoView() {},
+    getBoundingClientRect: () => ({ width: 400, height: 80, bottom: 400 }),
+    querySelector: () => attachment ? {} : null,
+    cloneNode() {
+      const clone = { textContent: this.innerText };
+      clone.querySelectorAll = () => [{ remove: () => { clone.textContent = draft; } }];
+      return clone;
+    },
+  };
+  const dom = { document: { querySelector: () => null, querySelectorAll: () => [editor] }, window: { getSelection: () => null } };
+  const context = { cdp: { connected: true }, log() {}, waitAiIdle: async () => true, setTimeout: fn => fn(),
+    cdpSend: async (method, params) => {
+      calls.push(method);
+      if (method !== 'Runtime.evaluate') return {};
+      // Execute both real composer expressions; only the final send-button lookup is stubbed.
+      const value = params.expression.includes('official-send-button') ? { ok: true, x: 1, y: 1 }
+        : vm.runInNewContext(params.expression, dom);
+      return { result: { value } };
+    }, cdpMouseClick: async () => calls.push('submit'),
+  };
+  vm.runInNewContext(source.slice(start, end), context);
+  return { calls, send: () => context.sendStashToComposer({ requireEmpty: true, content: { text: '1+1=', items: [] } }) };
+}
+
+test('automation sends from an empty Slate editor containing a visible placeholder', async () => {
+  const h = guardedComposerHarness();
+  assert.equal((await h.send()).sent, true);
+  assert.ok(h.calls.includes('Input.insertText'));
+  assert.equal(h.calls.at(-1), 'submit');
+  assert.ok(!h.calls.includes('Input.dispatchKeyEvent'), 'placeholder must not trigger draft deletion');
+});
+
+test('automation still rejects real drafts and attachment-only editors before input', async () => {
+  for (const options of [{ draft: 'my unsent draft' }, { attachment: true }]) {
+    const h = guardedComposerHarness(options);
+    await assert.rejects(h.send(), /会话输入框非空/);
+    assert.ok(!h.calls.some(method => method.startsWith('Input.') || method === 'submit'));
+  }
+});
+
+function delayedButtonHarness({ enableAfter = 3, cancelAfter = Infinity } = {}) {
+  const calls = [];
+  let probes = 0, evaluations = 0, guardChecks = 0;
+  const button = {
+    tagName: 'BUTTON',
+    get disabled() { return probes < enableAfter; },
+    hasAttribute: () => button.disabled,
+    getAttribute: () => button.disabled ? 'true' : null,
+    getBoundingClientRect: () => ({ x: 10, y: 10, width: 32, height: 32, bottom: 42 }),
+    scrollIntoView() {},
+  };
+  button.parentElement = { children: [button] };
+  const context = { cdp: { connected: true }, log() {}, waitAiIdle: async () => true, setTimeout: fn => fn(),
+    cdpSend: async (method, params) => {
+      calls.push(method);
+      if (method !== 'Runtime.evaluate') return {};
+      evaluations++;
+      if (evaluations <= 2) return { result: { value: { ok: true, hasContent: false } } };
+      probes++;
+      const dom = {
+        document: { querySelector: () => button, querySelectorAll: () => [] },
+        getComputedStyle: () => ({ display: 'block', visibility: 'visible', borderRadius: '50%' }),
+      };
+      return { result: { value: vm.runInNewContext(params.expression, dom) } };
+    }, cdpMouseClick: async () => calls.push('submit'),
+  };
+  vm.runInNewContext(source.slice(start, end), context);
+  return { calls, probes: () => probes, send: () => context.sendStashToComposer({ requireEmpty: true, content: { text: '1+1=', items: [] }, guard: async () => { if (++guardChecks >= cancelAfter) throw Error('account changed'); } }) };
+}
+
+test('after an account switch, delayed official send readiness is awaited without retyping', async () => {
+  // The first account is already ready; the next account needs several UI updates.
+  for (const enableAfter of [1, 4]) {
+    const h = delayedButtonHarness({ enableAfter });
+    assert.equal((await h.send()).sent, true);
+    assert.equal(h.probes(), enableAfter);
+    assert.equal(h.calls.filter(m => m === 'Input.insertText').length, 1);
+    assert.equal(h.calls.filter(m => m === 'submit').length, 1);
+  }
+});
+
+test('a disabled official send button never falls through to an unrelated toolbar control', async () => {
+  const h = delayedButtonHarness({ enableAfter: Infinity });
+  await assert.rejects(h.send(), /发送按钮禁用/);
+  assert.ok(h.probes() > 1 && h.probes() <= 51);
+  assert.equal(h.calls.filter(m => m === 'Input.insertText').length, 1);
+  assert.ok(!h.calls.includes('submit'));
+});
+
+test('changing account during readiness polling aborts without submitting or retyping', async () => {
+  const h = delayedButtonHarness({ enableAfter: Infinity, cancelAfter: 7 });
+  await assert.rejects(h.send(), /account changed/);
+  assert.equal(h.calls.filter(m => m === 'Input.insertText').length, 1);
+  assert.ok(!h.calls.includes('submit'));
+});

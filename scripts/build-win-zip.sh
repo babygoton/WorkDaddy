@@ -149,6 +149,9 @@ cp -R scripts "$STAGE/scripts"
 rm -rf "$STAGE/scripts/builtin"
 mkdir -p "$STAGE/scripts/builtin"
 cp -R "$BUILTIN_SRC/." "$STAGE/scripts/builtin/"
+# The asset fallback may be an older app shell; always use current task presets.
+mkdir -p "$STAGE/scripts/builtin/automations"
+cp scripts/builtin/automations/*.json "$STAGE/scripts/builtin/automations/"
 if [ -f "$WALLPAPER_OVERRIDE" ]; then
   mkdir -p "$STAGE/scripts/builtin/wallpapers" "$STAGE/scripts/builtin/nebula"
   cp "$WALLPAPER_OVERRIDE" "$STAGE/scripts/builtin/wallpapers/wallpaper-06.webp"

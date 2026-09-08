@@ -190,3 +190,24 @@ test('zh mode leaves text untouched', () => {
   const t = buildTranslator();
   assert.equal(t('已切换为「h」，开始领取积分…', 'zh'), '已切换为「h」，开始领取积分…');
 });
+
+test('all built-in task names, descriptions and feedback have full English translations', () => {
+  const translate = buildTranslator();
+  const directory = path.join(__dirname, '../scripts/builtin/automations');
+  const inspect = value => {
+    if (!value || typeof value !== 'object') return;
+    for (const [key, text] of Object.entries(value)) {
+      if (['name', 'description', 'message'].includes(key) && typeof text === 'string' && /[\u4e00-\u9fff]/.test(text)) {
+        assert.doesNotMatch(translate(text, 'en'), /[\u4e00-\u9fff]/, text);
+        assert.equal(translate(text, 'zh'), text);
+      } else if (text && typeof text === 'object') inspect(text);
+    }
+  };
+  for (const filename of fs.readdirSync(directory).filter(f => f.endsWith('.json'))) inspect(JSON.parse(fs.readFileSync(path.join(directory, filename), 'utf8')));
+});
+
+test('previously installed fixed-prompt task descriptions also switch to English', () => {
+  const original = '依次切换所有账号，等待当前会话输入框出现后发送 1+1=，等待回复完成，最后恢复开始时的账号。';
+  assert.doesNotMatch(buildTranslator()(original, 'en'), /[\u4e00-\u9fff]/);
+  assert.equal(buildTranslator()(original, 'zh'), original);
+});

@@ -23,6 +23,7 @@ function harness() {
   }
   const pane = el('div', 'pane');
   const ctx = vm.createContext({
+    window: {},
     state: { accounts: [], current: null, open: true, creditRunId: 0, activityRunId: 0, creditRemaining: 0 },
     alive: true, CAPS: { accounts: true }, accountsPane: pane, panel: el(), fab: el(), fabQuietMode: { wake() {} },
     api(route, options) { return new Promise((resolve, reject) => requests.push({ route, options, resolve, reject })); },
