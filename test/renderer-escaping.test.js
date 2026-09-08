@@ -6,6 +6,7 @@ const path = require('node:path');
 const test = require('node:test');
 
 const source = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'inject.js'), 'utf8');
+const automationPicker = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'automation-picker.js'), 'utf8');
 // 内部调试模块（git 不跟踪）：存在才测试，缺失（他人环境）则跳过
 const pickerPath = path.join(__dirname, '..', 'scripts', 'picker-internal.js');
 const picker = fs.existsSync(pickerPath) ? fs.readFileSync(pickerPath, 'utf8') : null;
@@ -32,7 +33,10 @@ test('HTML and attribute escaping cover markup and quoted attributes', () => {
 
 test('toast content is always written as text', () => {
   const toast = sourceBetween('function toast(msg', 'registerDisposer(function () {');
-  assert.match(toast, /textContent\s*=\s*String\(msg/);
+  assert.match(toast, /toastRuntime\.show\(\{ message: wbsTranslateString\(String\(msg/);
+  const runtime = fs.readFileSync(path.join(__dirname, '../tools/toast-runtime/entry.jsx'), 'utf8');
+  assert.doesNotMatch(runtime, /dangerouslySetInnerHTML|innerHTML/);
+  assert.match(runtime, /const message = String\(detail\.message/);
   assert.doesNotMatch(toast, /el\([^\n]+,\s*msg\s*\)/);
   const elementHelper = sourceBetween('function el(tag', 'function maskPhone');
   assert.match(elementHelper, /textContent\s*=\s*String\(text\)/);
@@ -71,7 +75,7 @@ test('model, wallpaper, and account cards escape each dynamic HTML sink', () => 
   assert.doesNotMatch(models, /data-model-(?:backup|test|delete-official)="' \+ model\.index/);
   assert.doesNotMatch(models, /data-model-(?:copy|edit|enable)="' \+ model\.backupId/);
 
-  const wallpapers = sourceBetween('function loadWallpapers(force)', 'function setOpen(open)');
+  const wallpapers = sourceBetween('function loadWallpapers(force)', 'function setOpen(open, options)');
   assert.match(wallpapers, /data-wp="' \+ escAttr\(w\.name\)/);
   assert.match(wallpapers, /title="' \+ escAttr\(w\.title\)/);
   assert.match(wallpapers, /data-src="' \+ escAttr\(wallpaperUrl\)/);
@@ -82,7 +86,8 @@ test('model, wallpaper, and account cards escape each dynamic HTML sink', () => 
   assert.doesNotMatch(wallpapers, /(?:data-wp|title|data-src|alt)="' \+ (?:w\.|wallpaperUrl)/);
 
   const accounts = sourceBetween('function render(data)', 'function updateAccountSummary()');
-  assert.equal((accounts.match(/escAttr\(a\.uid\)/g) || []).length, 2);
+  assert.equal((accounts.match(/escAttr\(a\.uid\)/g) || []).length, 3);
+  assert.match(accounts, /data-primary-uid="' \+ escAttr\(a\.uid\)/);
   assert.equal((accounts.match(/escAttr\(a\.nickname \|\| '未命名'\)/g) || []).length, 2);
   assert.match(accounts, /var nameVal = state\.mask \? maskAccountName\(rawName\) : rawName;/);
   assert.match(accounts, /var idVal = state\.mask \? maskAccountId\(rawId\) : rawId;/);
@@ -100,24 +105,19 @@ test('account masking preference persists per WorkDaddy profile', () => {
   assert.match(toggle, /localStorage\.setItem\(WBS_ACCOUNT_MASK_KEY, state\.mask \? '1' : '0'\)/);
 });
 
-test('dynamic error and check-in messages are escaped before HTML insertion', () => {
-  assert.match(source, /wbs-checkin-tag fail[^\n]+esc\(msg\)/);
+test('dynamic errors are escaped and check-in messages never enter badge HTML', () => {
+  assert.doesNotMatch(sourceBetween('function checkinHtml', 'function el(tag'), /c\.message|esc\(msg\)/);
   assert.match(source, /会话加载失败: ' \+ esc\(e\.message \|\| e\)/);
   assert.match(source, /模型加载失败：' \+ esc\(e\.message \|\| e\)/);
   assert.match(source, /无法连接本地服务: ' \+ esc\(e\.message \|\| e\)/);
   assert.doesNotMatch(source, /innerHTML\s*=\s*'[^\n]*'\s*\+\s*\(e\.message \|\| e\)/);
 });
 
-test('inspector escapes page-controlled labels, attributes, paths and computed style values', (t) => {
-  if (!picker) return t.skip('picker-internal.js 未就绪（内部模块不入库）');
-  const inspector = sourceBetween('function showInspector(stack, fallbackEl)', 'function stopInspect()', picker);
+test('automation inspector escapes page-controlled tree labels and copies element details as plain text', () => {
+  const inspector = sourceBetween('function showAutomationInspector(stack, fallbackEl)', 'function stopAutomationInspect()', automationPicker);
   assert.match(inspector, /esc\(nodeLabel\(node\)\)/);
-  assert.match(inspector, /esc\(queryPath\)/);
-  assert.match(inspector, /esc\(attr\.name\)/);
-  assert.match(inspector, /esc\(attr\.value\)/);
-  assert.match(inspector, /esc\(value \|\| '未定义'\)/);
-  assert.match(inspector, /textContent = selected\.outerHTML/);
+  assert.match(inspector, /copyPlainText\(payload\)/);
+  assert.match(inspector, /selected\.outerHTML/);
   assert.doesNotMatch(inspector, /\+ nodeLabel\(node\) \+/);
-  assert.doesNotMatch(inspector, /\+ queryPath \+/);
   assert.doesNotMatch(inspector, /innerHTML = selected\.outerHTML/);
 });

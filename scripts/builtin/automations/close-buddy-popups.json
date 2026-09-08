@@ -1,0 +1,126 @@
+{
+  "schemaVersion": 1,
+  "id": "buddy-fuel-station-close-on-account-switch",
+  "name": "页面就绪后自动关闭首页弹窗",
+  "description": "页面就绪后立即检查三类弹窗，每 300 毫秒补查，持续约 30 秒；重新出现的弹窗继续关闭，快速切换账号时重新检测新页面。",
+  "enabled": true,
+  "trigger": {
+    "type": "pageReady",
+    "types": [
+      "pageReady"
+    ],
+    "oncePerNavigation": true,
+    "restartOnNavigation": true
+  },
+  "schedule": {
+    "type": "manual"
+  },
+  "variables": {},
+  "steps": [
+    {
+      "op": "logic.repeat",
+      "times": 100,
+      "steps": [
+        {
+          "op": "logic.catch",
+          "steps": [
+            {
+              "op": "dom.click",
+              "locator": {
+                "kind": "css",
+                "value": "#fuel-compact-close",
+                "visible": true
+              }
+            },
+            {
+              "op": "dom.wait",
+              "locator": {
+                "kind": "css",
+                "value": "#fuel-compact-close",
+                "visible": true
+              },
+              "until": {
+                "state": "hidden"
+              },
+              "timeoutMs": 750
+            },
+            {
+              "op": "notify.toast",
+              "level": "success",
+              "message": "识别到 Buddy 加油站弹窗，已关闭"
+            }
+          ],
+          "onError": []
+        },
+        {
+          "op": "logic.catch",
+          "steps": [
+            {
+              "op": "dom.click",
+              "locator": {
+                "kind": "css",
+                "value": "button.wb-related-playbooks__dismiss-today",
+                "visible": true
+              }
+            },
+            {
+              "op": "dom.wait",
+              "locator": {
+                "kind": "css",
+                "value": "button.wb-related-playbooks__dismiss-today",
+                "visible": true
+              },
+              "until": {
+                "state": "hidden"
+              },
+              "timeoutMs": 750
+            },
+            {
+              "op": "notify.toast",
+              "level": "success",
+              "message": "已关闭相关玩法推荐，今日不再展示"
+            }
+          ],
+          "onError": []
+        },
+        {
+          "op": "logic.catch",
+          "steps": [
+            {
+              "op": "dom.click",
+              "locator": {
+                "kind": "css",
+                "value": "button.activity-bubble__close",
+                "visible": true
+              }
+            },
+            {
+              "op": "dom.wait",
+              "locator": {
+                "kind": "css",
+                "value": "button.activity-bubble__close",
+                "visible": true
+              },
+              "until": {
+                "state": "hidden"
+              },
+              "timeoutMs": 750
+            },
+            {
+              "op": "notify.toast",
+              "level": "success",
+              "message": "已关闭首页活动弹窗"
+            }
+          ],
+          "onError": []
+        },
+        {
+          "op": "logic.delay",
+          "ms": 300
+        }
+      ]
+    }
+  ],
+  "onSuccess": [],
+  "onFailure": []
+}

@@ -2,7 +2,7 @@
 
 **语言：** [简体中文](README.md) · [English](README_en.md)
 
-> **WorkDaddy 是 WorkBuddy 桌面端增强助手：多账号独立备份、点切即用；免打扰模式让 AI 无人值守跑长任务；跨账号会话迁移、异常中断自动续接；暂存/快捷提示词；毛玻璃主题与更多实用功能，账号与配置全部留在本机。**
+> **WorkDaddy 是 WorkBuddy 桌面端增强助手：多账号独立备份、点切即用；免打扰模式让 AI 无人值守跑长任务；跨账号会话迁移、异常中断自动续接；自动化任务按事件或定时执行；暂存/快捷提示词；毛玻璃主题与更多实用功能，账号与配置全部留在本机。**
 > 本机回环 CDP 注入 · 不改官方安装包。
 
 一个基于 **Chrome DevTools Protocol (CDP)** 的 [WorkBuddy](https://www.workbuddy.cn/)、[WorkBuddy AI](https://www.workbuddy.ai/) 桌面端增强工具。
@@ -12,20 +12,16 @@
 ![Platform](https://img.shields.io/badge/platform-macOS%2011%2B%20%7C%20Windows%2010%2F11-lightgrey)
 ![Node](https://img.shields.io/badge/node-%E2%89%A518-green)
 
-
 ---
 
 ## 演示
 
-**面板预览**
-![面板预览图](docs/images/accounts.png)
+<img src="docs/images/accounts-light.jpg" width="440">
+<img src="docs/images/accounts-dark.jpg" width="440">
 
-**输入框预览**
-![输入框预览图](docs/images/input1.jpg)
-![输入框预览图](docs/images/input2.png)
-
-**主题效果（非最新版）**
-![WorkDaddy 演示](docs/images/demo.gif)
+![界面预览图](docs/images/pannel-enhance.png)
+![界面预览图](docs/images/pannel-robot.png)
+![界面预览图](docs/images/pannel-theme.png)
 
 ---
 
@@ -34,7 +30,8 @@
 - **方便切换账号**：每个 WorkBuddy 账号独立备份，点一下就切，再也不用每次扫码。
 - **无感登录新账号**：「登录新账号」支持免退出 OAuth 授权——不退出 WorkBuddy，在浏览器完成扫码后新账号自动加入列表；也可选传统的「假退出」方式回登录页扫码。
 - **账号导入导出**：把全部账号备份加密导出，在另一台电脑安装 WorkDaddy 后一键导入，方便电脑之间迁移账号。
-- **自动领每日积分**：打开面板即对全部账号静默签到，幂等缓存，不打断你。
+- **自动领每日积分**：由自动化任务管理多账号每日签到，缓存已完成状态，不打断你。
+- **自动化任务**：用自然语言让 WorkBuddy 创建任务，或自行编辑步骤；支持手动、事件和定时触发，以及运行日志、停止任务和 JSON / ZIP 导入导出。
 - **权限弹窗免打扰**：真正的零决策弹窗弹出，可以放心开启任务后睡觉。
 - **暂存提示词**：输入框边上一键把草稿「暂存」到待发送队列——图片 / 文件 / 引用原样保留，择机发送。
 - **切换精美主题**：内置毛玻璃官方主题，多套预设壁纸，支持自定义壁纸。
@@ -44,25 +41,28 @@
 - **异常中断会话自动继续**：AI 回复因网络波动、超时等原因中断时，自动让异常中断任务继续执行。
 - **快捷短语**：常用语存进面板，输入框操作栏一键点发；
 
-
 ---
 
 ## 安装
 
->- 国内版 [WorkBuddy](https://www.workbuddy.cn/) 请下载 `WorkDaddy` 安装包
->- 国际版 [WorkBuddy AI](https://www.workbuddy.ai/) 请下载 `WorkDaddy AI` 安装包
+> - 国内版 [WorkBuddy](https://www.workbuddy.cn/) 请下载 `WorkDaddy` 安装包
+> - 国际版 [WorkBuddy AI](https://www.workbuddy.ai/) 请下载 `WorkDaddy AI` 安装包
 
 ### macOS
 
 1. 在 [Releases](../../releases) 下载最新 `WorkDaddy-x.y.z.dmg`
+
 2. 打开 dmg，把 `WorkDaddy.app` 拖进 **应用程序** 文件夹
+
 3. 第一次打开如果遇到「无法打开，因为 Apple 无法检查恶意软件」：
+
    1. 打开「系统设置 → 隐私与安全性」
    2. 在「WorkDaddy 已被阻止」处点 **仍要打开**
    3. 输入开机密码确认
-   ![安装引导](docs/images/install-guide.png)
+      ![安装引导](docs/images/install-guide.png)
 
 4. 双击 `WorkDaddy.app` 启动：它会自带守护进程并把组件注入到 WorkBuddy
+
 5. 看到机器人按钮？**搞定**。
 
 #### 企业专享版 / VPC 客户端
@@ -76,7 +76,6 @@ node scripts/workbuddy-target.js --configure --platform darwin \
   --data-dir "$HOME/Library/Application Support/WorkDaddy"
 ```
 
-
 ### Windows
 
 1. 在 [Releases](../../releases) 下载对应客户端的 `WorkDaddy-Setup-x.y.z.exe` 或 `WorkDaddy-AI-Setup-x.y.z.exe`
@@ -88,7 +87,6 @@ node scripts/workbuddy-target.js --configure --platform darwin \
 企业专享版用户仍安装与界面最接近的 `WorkDaddy` 或 `WorkDaddy AI`。安装程序会先自动识别对应的官方客户端，并在安装向导中显示路径和版本；企业版用户点击「浏览」改选自己的 `.exe` 主程序即可，不需要修改配置文件或设置系统环境变量。
 
 选择结果保存在 WorkDaddy 的个人数据目录中。更新安装默认保留上次选择，也可以在安装向导中修改；需要改回官方客户端时，重新运行安装程序并选择自动识别出的官方 `.exe`。WorkDaddy 会锁定所选客户端版本，客户端升级或移动后同样通过安装程序重新确认。
-
 
 ### 从源码运行（开发者）
 
@@ -108,7 +106,7 @@ WBSWITCH_PROFILE=workbuddy-ai bash scripts/relaunch-with-cdp.sh
 
 暂存提示词和主题功能在两个 WorkBuddy profile 开启。CodeBuddy profile 的适配暂缓，不进入当前发布包。
 
-当前发布脚本只打包两个 WorkBuddy 客户端，共 4 个包：`WorkDaddy-<version>.dmg`、`WorkDaddy-AI-<version>.dmg`，以及对应的 `-win64.zip`；传 `WORKDADDY_BUILD_PROFILE=workbuddy-cn` 或 `workbuddy-ai` 可单独重打一个客户端。CodeBuddy profile 代码暂不进入发布包。
+当前发布脚本只打包两个 WorkBuddy 客户端，共 4 个包：`WorkDaddy-<version>.dmg`、`WorkDaddy-AI-<version>.dmg`、`WorkDaddy-Setup-<version>.exe`、`WorkDaddy-AI-Setup-<version>.exe`。macOS 构建时传 `WORKDADDY_BUILD_PROFILE=workbuddy-cn` 或 `workbuddy-ai` 可单独重打一个客户端。Windows ZIP 仅作安装器构建的临时输入，不作为发布包。
 
 `install.sh` 做了：
 
@@ -139,9 +137,9 @@ WBSWITCH_PROFILE=workbuddy-ai bash scripts/relaunch-with-cdp.sh
 
 1. **不修改 WorkBuddy 二进制**：用 `launcher` 启动 WorkBuddy 时多带一个 `--remote-debugging-port=9222` 参数，**二进制与签名原封不动**。
 2. **守护进程通过 CDP 连接 WorkBuddy**：监听登录/认证网络事件 + 文件监听兜底，每次登录/刷新令牌都把当前登录信息按 `account.uid` 备份到稳定目录。
-3. **注入界面组件**：`Runtime.evaluate` 把 `inject.js` 推到渲染进程执行，在右下角渲染机器人按钮和 7 标签页面板（账号 / 主题 / 会话 / 模型 / 增强 / 电脑 / 关于）。
+3. **注入界面组件**：`Runtime.evaluate` 把 `inject.js` 推到渲染进程执行，在右下角渲染机器人按钮和多标签页面板（账号 / 主题 / 会话 / 模型 / 增强 / 自动化 / 电脑 / 关于 / 设置）。
 4. **本地 HTTP API**：daemon 在 `127.0.0.1:47832` 起服务，组件通过 fetch 调用（账号切换、主题应用、签到、决策弹窗开关、休眠控制等）。
-5. **数据边界清晰**：账号备份和本地配置保存在本机；按功能访问 WorkBuddy 官方 API（登录、积分）和 GitHub Releases（更新检查），显式执行模型连通测试时会向你配置的模型服务发送请求及对应 API Key；默认不发送诊断遥测。
+5. **数据边界清晰**：账号备份和本地配置保存在本机；按功能访问 WorkBuddy 官方 API（登录、积分）和 GitHub Releases（更新检查），显式执行模型连通测试时会向你配置的模型服务发送请求及对应 API Key；脱敏错误诊断默认开启，可在「关于」页关闭。
 
 > 为什么用 CDP 而不是官方插件机制：直接面向运行中的应用实例，事件级感知登录变化，
 > 主动注入界面与样式补丁，**官方升级 WorkBuddy 后只要界面没大改就照常工作**。
@@ -154,20 +152,33 @@ WBSWITCH_PROFILE=workbuddy-ai bash scripts/relaunch-with-cdp.sh
 
 WorkBuddy 右下角的机器人按钮 → 弹出面板 → 选你要的操作：
 
-| Tab      | 能做什么 |
-| -------- | -------- |
-| **账号** | 查看账号数、积分、签到和登录状态；切换、删除或登录新账号，并加密导入导出账号备份 |
-| **主题** | 切换默认 / WorkDaddy 主题，选择或上传壁纸、更换头像，调整毛玻璃和背景蒙版 |
-| **会话** | 按账号和时间筛选会话，批量复制或删除，并设置会话 / 工作空间在切换账号时自动复制 |
-| **模型** | 管理当前模型和备选模型，支持备份、复制、编辑、启用、连通测试及批量删除 |
-| **增强** | 配置权限免打扰、异常中断自动续接、暂存提示词和快捷短语 |
-| **电脑** | 允许或持续禁止休眠，也可在所有 AI 任务结束后自动恢复休眠 |
-| **关于** | 查看版本和项目说明、检查并安装更新、控制脱敏错误诊断 |
-| **设置** | 选择中文或英语；首次打开按系统语言匹配，未匹配时使用英语 |
+| Tab     | 能做什么                                                 |
+| ------- | ---------------------------------------------------- |
+| **账号**  | 查看账号数、积分、签到和登录状态；切换、删除或登录新账号，并加密导入导出账号备份             |
+| **主题**  | 切换默认 / WorkDaddy 主题，选择或上传壁纸、更换头像，调整毛玻璃和背景蒙版          |
+| **会话**  | 按账号和时间筛选会话，批量复制或删除，并设置会话 / 工作空间在切换账号时自动复制            |
+| **模型**  | 管理当前模型和备选模型，支持备份、复制、编辑、启用、连通测试及批量删除                  |
+| **增强**  | 配置权限免打扰、异常中断自动续接、暂存提示词和快捷短语                          |
+| **自动化** | 创建和管理任务，配置事件或定时触发，查看运行日志，停止运行中的任务，以及 JSON / ZIP 导入导出 |
+| **电脑**  | 允许或持续禁止休眠，也可在所有 AI 任务结束后自动恢复休眠                       |
+| **关于**  | 查看版本和项目说明、检查并安装更新、控制脱敏错误诊断                           |
+| **设置**  | 选择中文或英语；首次打开按系统语言匹配，未匹配时使用英语                         |
 
 **输入框插件**：在「增强」页分别开启「暂存提示词」和「快捷短语」后，输入框操作栏会显示对应按钮。
 暂存提示词可把当前草稿（文字、图片、文件、引用等**完整原样**）加入 WorkBuddy 自带的待发送队列，并暂停自动发送；
 入队后输入框自动清空，内容按会话独立保存，可随时发送、编辑或删除。快捷短语可在增强页新增、编辑和批量管理，并从输入框操作栏一键发送，发送后不会自动删除。
+
+### 自动化
+
+把重复操作保存成任务，例如每日签到、查询账号积分、按条件显示提醒，或在指定会话发送消息并等待回复。
+
+1. 打开「自动化」页，通过「一键创建」选择示例，或使用「让 WorkBuddy 帮我创建」描述需求。WorkBuddy 会在新会话中生成任务，完成后自动加入列表；也可以用「新建任务」自行编辑步骤 JSON，「查看接口」提供当前支持的操作说明。
+2. 设置触发方式：手动运行，或在客户端加载、打开面板、页面就绪、账号切换等事件发生时执行；也支持按间隔、每日、每周、每月或指定时间调度。
+3. 在列表中启用、停用、编辑或复制任务。手动任务可立即运行，事件和定时任务按配置触发；执行过程中可停止，并通过「运行日志」查看结果和失败步骤。
+
+**任务导入导出**：点击「导入」选择 JSON 或 ZIP，预览后勾选需要的任务。导入后保持停用，不覆盖相同 ID 的已有任务；不兼容任务会提示原因。通过批量操作选择任务导出，单个保存为 JSON，多个保存为 ZIP，方便备份和分享。
+
+任务定义保存在本机，由 WorkDaddy 本地服务执行；定时和事件触发需要服务保持运行，涉及页面交互的步骤还需要对应 WorkBuddy 客户端可用。任务导出不包含账号备份或运行日志；当前支持本地文件导入导出，尚不支持在线任务市场和自动更新任务。
 
 ### 账号迁移到其他电脑
 
@@ -179,13 +190,12 @@ WorkBuddy 右下角的机器人按钮 → 弹出面板 → 选你要的操作：
 
 新版导出会使用你输入的密码、每次导出随机 salt 和 AES-256-GCM 加密；密码不会写入导出文件。文件中仍包含可恢复登录状态的 token，请像保护密码一样安全保存和传输，迁移完成后及时删除不再需要的副本。旧版 v1 导出仍可兼容导入。
 
-
 ## 安全与隐私
 
 - **本地数据优先**：账号备份、主题和本地配置不会在后台上传；登录、积分等功能会访问 WorkBuddy 官方 API，自动更新会访问 GitHub Releases；显式执行模型连通测试时，会向你配置的第三方模型地址发送请求及对应 API Key。
 - **发送错误诊断默认开启**：关于页的「发送错误诊断」开关同时控制 Sentry 远程错误诊断和本地脱敏渲染器日志，帮助定位版本和兼容性问题；处理内容经过脱敏、截断，远程上报不包含账号、会话内容、Token 或 API Key。随时可以在关于页关闭；`WORKDADDY_TELEMETRY=0`/`1` 可作为启动时的明确关闭/开启覆盖。
 
-完整威胁模型见 [`SECURITY.md`](SECURITY.md)（可选；未提供时本节即为完整说明）。
+独立的 `SECURITY.md` 可补充完整威胁模型；未提供时，本节即为安全与隐私说明。
 
 ---
 

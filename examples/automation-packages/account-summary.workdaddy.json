@@ -1,0 +1,105 @@
+{
+  "kind": "workdaddy.automation-package",
+  "formatVersion": 1,
+  "id": "org.example.account-summary",
+  "version": "1.0.0",
+  "name": "账号积分与活跃天数",
+  "description": "页面加载或账号切换后显示当前账号概况。",
+  "author": "Example author",
+  "license": "MIT",
+  "tags": [
+    "accounts",
+    "notification"
+  ],
+  "requires": {
+    "minWorkDaddyVersion": "1.1.91",
+    "taskSchemaVersion": 1,
+    "capabilities": [
+      "event.pageReady",
+      "account.getCurrent",
+      "account.status",
+      "vars.set",
+      "logic.if",
+      "notify.toast"
+    ],
+    "profiles": [
+      "workbuddy-cn"
+    ],
+    "platforms": [
+      "darwin",
+      "win32"
+    ]
+  },
+  "inputs": {
+    "label": {
+      "type": "string",
+      "title": "提示标题",
+      "default": "账号概况"
+    }
+  },
+  "task": {
+    "schemaVersion": 1,
+    "name": "账号积分与活跃天数",
+    "trigger": {
+      "type": "pageReady",
+      "oncePerNavigation": true,
+      "restartOnNavigation": true
+    },
+    "steps": [
+      {
+        "op": "account.getCurrent"
+      },
+      {
+        "op": "account.status",
+        "fields": [
+          "credits",
+          "activity.streak"
+        ],
+        "saveAs": "status"
+      },
+      {
+        "op": "vars.set",
+        "key": "creditsLabel",
+        "value": "{{vars.status.credits.total}}"
+      },
+      {
+        "op": "logic.if",
+        "condition": {
+          "left": "{{vars.status.credits.unlimited}}",
+          "operator": "truthy"
+        },
+        "then": [
+          {
+            "op": "vars.set",
+            "key": "creditsLabel",
+            "value": "不限量"
+          }
+        ]
+      },
+      {
+        "op": "vars.set",
+        "key": "daysLabel",
+        "value": "{{vars.status.activity.streak.days}} 天"
+      },
+      {
+        "op": "logic.if",
+        "condition": {
+          "left": "{{vars.status.activity.streak.days}}",
+          "operator": "equals",
+          "right": null
+        },
+        "then": [
+          {
+            "op": "vars.set",
+            "key": "daysLabel",
+            "value": "暂不可用"
+          }
+        ]
+      },
+      {
+        "op": "notify.toast",
+        "message": "{{vars.label}} · {{account.nickname}}：剩余积分 {{vars.creditsLabel}}，连续活跃 {{vars.daysLabel}}"
+      }
+    ]
+  }
+}

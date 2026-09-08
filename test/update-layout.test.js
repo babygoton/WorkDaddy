@@ -772,7 +772,7 @@ test('account cards keep the compact three-row layout', () => {
   assert.match(script, /var idLbl = a\.phone \? '手机' : \(a\.uin \? 'UIN' : '账号'\)/);
   assert.match(script, /\.wbs-phone-cell\.wbs-uin-cell\{gap:4px\}/);
   // 国际版：签到标签不展示；新版布局按能力把暂存按钮内联进操作栏按钮组第一位。
-  assert.match(script, /if \(PROFILE_ID === 'workbuddy-ai'\) return '';/);
+  assert.match(script, /if \(WBS_PROFILE_IS_AI\) return '';/);
   assert.match(script, /WBS_COMPAT\.findComposerToolbar\(document\)/);
   assert.match(script, /wbs-stash-inline-inline/);
   assert.match(script, /row0\.insertBefore\(stashBtn, row0\.firstChild\)/);
@@ -802,8 +802,8 @@ test('account cards keep the compact three-row layout', () => {
   assert.match(script, /html\.cb-dark \.wbs-credit-segment\.safe\{background:rgba\(126,134,255,\.82\)/);
   assert.match(script, /html\.cb-dark \.wbs-credit-segment\.within1\{background:rgba\(126,134,255,\.12\)/);
   assert.match(script, /\.wbs-checkin-tag\.ok\{background:#edf9ef/);
-  assert.match(script, /html\.cb-dark \.wbs-checkin-tag\.ok\{/);
-  assert.match(script, /今日已签到✓/);
+  assert.match(script, /html\.cb-dark \.wbs-checkin-tag\.ok,html\[data-theme="dark"\] \.wbs-checkin-tag\.ok\{/);
+  assert.match(script, /今日签到/);
   assert.match(script, /function accountStatusTagsHtml\(a\)/);
   assert.match(script, /function checkinBadgeHtml\(a\)/);
   assert.match(script, /badge \+ checkinBadge/);
@@ -823,10 +823,10 @@ test('account cards keep the compact three-row layout', () => {
 
 test('account cards sort by credit expiry without pinning the current account', () => {
   const script = read('inject.js');
-  assert.match(script, /state\.current = data\.current;\s*state\.accounts = \(data\.accounts \|\| \[\]\)\.slice\(\);/);
+  assert.match(script, /state\.current = data\.current;\s*state\.accounts = mergeAccountSnapshot\(previous, data\.accounts \|\| \[\]\);/);
   // render()：不再把当前账号置顶，统一按积分到期时间升序
   assert.doesNotMatch(script, /state\.accounts\.sort\(function \(left, right\) \{[\s\S]*left\.uid === state\.current\.uid[\s\S]*right\.uid === state\.current\.uid[\s\S]*return leftIsCurrent \? -1 : 1;[\s\S]*\}\);/);
-  assert.match(script, /function render\(data\) \{[\s\S]*state\.accounts\.sort\(function \(left, right\) \{[\s\S]*nearestCreditExpiry\(left\)[\s\S]*nearestCreditExpiry\(right\)[\s\S]*le - re[\s\S]*\}\);/);
+  assert.match(script, /function render\(data\) \{[\s\S]*if \(!previous\.length \|\| !state\.open\) sortAccountsByCreditExpiry\(\);/);
   // sortAccountsByCreditExpiry：去掉当前账号置顶，仅按到期时间 + 稳定序
   assert.match(script, /function sortAccountsByCreditExpiry\(\) \{[\s\S]*isCurrent:[\s\S]*a\.expiresAt !== b\.expiresAt[\s\S]*a\.expiresAt - b\.expiresAt[\s\S]*a\.index - b\.index/);
   assert.doesNotMatch(script, /function sortAccountsByCreditExpiry\(\) \{[\s\S]*if \(a\.isCurrent !== b\.isCurrent\) return a\.isCurrent \? -1 : 1;/);
@@ -1224,11 +1224,11 @@ test('session summary counts effective sessions and models tab only exposes sani
   assert.match(inject, /data-model-tab="mine">备选模型/);
   assert.match(inject, /data-model-import=/);
   assert.match(inject, /\/api\/models\/import/);
-  assert.match(inject, /签到请求完成后再查询积分/);
+  assert.match(inject, /workdaddy:accounts-updated/);
   assert.match(inject, /fetchCreditsForAccounts\(\);/);
-  assert.match(read('lib.js'), /function checkinDisplayValue\(record, today, pending\)/);
+  assert.match(read('lib.js'), /function checkinDisplayValue\(record, today\)/);
   assert.match(daemon, /CREDIT_USAGE_STORE\.listDailyCheckins/);
-  assert.match(daemon, /checkin: checkinDisplayValue\(checked, today, checkinPending\)/);
+  assert.match(daemon, /checkin: checkinDisplayValue\(checked, today\)/);
   assert.doesNotMatch(inject, /id="wbs-model-refresh"/);
   assert.match(inject, /wbs-model-group-title/);
   assert.match(inject, /delete-official/);

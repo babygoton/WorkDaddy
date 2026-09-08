@@ -101,7 +101,7 @@ async function activateGrowthAccount(accessToken, options = {}) {
   if (!accessToken || typeof fetchImpl !== 'function') throw new Error('成长活跃发起参数不完整');
 
   const prompt = typeof options.prompt === 'string' && options.prompt.trim()
-    ? options.prompt.trim().slice(0, 100)
+    ? options.prompt.trim().slice(0, options.purpose === 'completion-report' ? 2000 : 100)
     : DEFAULT_GROWTH_PROMPT;
   const model = typeof options.model === 'string' && options.model.trim()
     ? options.model.trim()
@@ -190,7 +190,7 @@ async function activateGrowthAccount(accessToken, options = {}) {
       body: JSON.stringify({
         prompt,
         model,
-        plugins: [{ name: 'weixinpay', marketplace: 'codebuddy-builtin' }],
+        plugins: options.purpose === 'completion-report' ? [] : [{ name: 'weixinpay', marketplace: 'codebuddy-builtin' }],
       }),
     });
     const createdSession = created && created.session && typeof created.session === 'object' ? created.session : null;
@@ -241,7 +241,7 @@ async function activateGrowthAccount(accessToken, options = {}) {
     }
     await sendRpc(endpoint, { jsonrpc: '2.0', id: nextRpcId++, method: 'initialize', params: {
       protocolVersion: 1,
-      clientInfo: { name: 'workdaddy-growth', version: '1.1.31' },
+      clientInfo: { name: options.purpose === 'completion-report' ? 'workdaddy-report' : 'workdaddy-growth', version: '1.1.31' },
       clientCapabilities: {
         fs: { readTextFile: false, writeTextFile: false },
         _meta: { 'codebuddy.ai': { question: false, terminalOutput: false } },
@@ -259,6 +259,7 @@ async function activateGrowthAccount(accessToken, options = {}) {
     if (connectionId && runtimeToken) {
       await fetchImpl(endpoint, {
         method: 'DELETE',
+        signal: AbortSignal.timeout(3000),
         headers: requestHeaders(apiHost, runtimeToken, { 'acp-connection-id': connectionId }),
       }).catch(() => {});
     }
@@ -326,4 +327,57 @@ async function fetchGrowthTodayActive(accessToken, options = {}) {
   }
 }
 
-module.exports = { fetchGrowthTodayActive, activateGrowthAccount };
+/** Official growth-center calendar reads data.streak.days (not monthly totals or heatmap score). */
+async function fetchGrowthStreak(accessToken, options = {}) {
+  const apiHost = String(options.apiHost || 'https://www.workbuddy.cn').replace(/\/+$/, '');
+  const fetchImpl = options.fetchImpl || globalThis.fetch;
+  if (!accessToken || typeof fetchImpl !== 'function') throw new Error('成长活跃查询参数不完整');
+  const timeoutMs = Number.isFinite(options.timeoutMs) && options.timeoutMs > 0 ? options.timeoutMs : GROWTH_ACTIVE_TIMEOUT_MS;
+  const { controller, timer } = timeoutSignal(timeoutMs);
+  try {
+    const response = await fetchImpl(`${apiHost}/activity/growth/streak`, {
+      method: 'GET', redirect: 'error', signal: controller.signal,
+      headers: requestHeaders(apiHost, accessToken, { referer: `${apiHost}/profile/growth-center` }),
+    });
+    const data = await readJsonResponse(response, '成长活跃');
+    const days = data && data.streak && data.streak.days;
+    if (!Number.isSafeInteger(days) || days < 0) throw new Error('成长活跃接口缺少有效连续天数');
+    return { days };
+  } catch (error) {
+    if (error && error.name === 'AbortError') throw new Error('成长活跃接口请求超时');
+    throw error;
+  } finally { clearTimeout(timer); }
+}
+
+function createGrowthStreakCache(load, options = {}) {
+  const now = options.now || Date.now;
+  const entries = new Map();
+  const pending = new Map();
+  const day = (at) => new Date(at).toDateString();
+  const peek = (uid) => {
+    const entry = entries.get(uid);
+    const at = now();
+    return entry && at < entry.expiresAt && day(at) === day(entry.fetchedAt)
+      ? { days: entry.days, status: entry.status, fetchedAt: entry.fetchedAt } : null;
+  };
+  const get = (uid) => {
+    const hit = peek(uid);
+    if (hit) return Promise.resolve(hit);
+    if (pending.has(uid)) return pending.get(uid);
+    const startedAt = now();
+    const request = Promise.resolve().then(() => load(uid)).then((result) => {
+      if (!result || !Number.isSafeInteger(result.days) || result.days < 0) throw new Error('Invalid streak');
+      return { days: result.days, status: 'ready' };
+    }).catch(() => ({ days: null, status: 'unavailable' })).then((result) => {
+      const value = { ...result, fetchedAt: startedAt };
+      entries.set(uid, { ...value, expiresAt: startedAt + (result.status === 'ready' ? 300000 : 30000) });
+      if (entries.size > 500) entries.delete(entries.keys().next().value);
+      return value;
+    }).finally(() => pending.delete(uid));
+    pending.set(uid, request);
+    return request;
+  };
+  return { get, peek };
+}
+
+module.exports = { fetchGrowthTodayActive, activateGrowthAccount, fetchGrowthStreak, createGrowthStreakCache };

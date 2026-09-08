@@ -12,6 +12,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const inject = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'inject.js'), 'utf8');
+const automationPicker = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'automation-picker.js'), 'utf8');
 const daemon = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'daemon.js'), 'utf8');
 const lib = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'lib.js'), 'utf8');
 
@@ -96,16 +97,18 @@ function extractKeys() {
   return keys.sort((a, b) => b.length - a.length);
 }
 
-test('every Chinese UI literal in inject.js translates at runtime with zero Chinese residue', () => {
+test('every Chinese UI literal in injected UI modules translates at runtime with zero Chinese residue', () => {
   const t = buildTranslator();
   const missed = [];
-  for (const lit of chineseLiterals(stripComments(inject))) {
-    if (LOG_LIKE.test(lit)) continue;
-    if (FRAGMENT_LIKE.test(lit)) continue;
-    const text = uiText(lit);
-    if (text.length < 2) continue;
-    const out = t(text, 'en');
-    if (/[\u4e00-\u9fff]/.test(out)) missed.push(`「${lit}」-> ${out}`);
+  for (const source of [inject, automationPicker]) {
+    for (const lit of chineseLiterals(stripComments(source))) {
+      if (LOG_LIKE.test(lit)) continue;
+      if (FRAGMENT_LIKE.test(lit)) continue;
+      const text = uiText(lit);
+      if (text.length < 2) continue;
+      const out = t(text, 'en');
+      if (/[\u4e00-\u9fff]/.test(out)) missed.push(`「${lit}」-> ${out}`);
+    }
   }
   assert.deepEqual(missed, [], `运行时仍产中文（中英混合）:\n${missed.map((m, i) => `  ${i + 1}. ${m}`).join('\n')}`);
 });
@@ -186,4 +189,25 @@ test('variant keys: error prefixes with and without trailing space both translat
 test('zh mode leaves text untouched', () => {
   const t = buildTranslator();
   assert.equal(t('已切换为「h」，开始领取积分…', 'zh'), '已切换为「h」，开始领取积分…');
+});
+
+test('all built-in task names, descriptions and feedback have full English translations', () => {
+  const translate = buildTranslator();
+  const directory = path.join(__dirname, '../scripts/builtin/automations');
+  const inspect = value => {
+    if (!value || typeof value !== 'object') return;
+    for (const [key, text] of Object.entries(value)) {
+      if (['name', 'description', 'message'].includes(key) && typeof text === 'string' && /[\u4e00-\u9fff]/.test(text)) {
+        assert.doesNotMatch(translate(text, 'en'), /[\u4e00-\u9fff]/, text);
+        assert.equal(translate(text, 'zh'), text);
+      } else if (text && typeof text === 'object') inspect(text);
+    }
+  };
+  for (const filename of fs.readdirSync(directory).filter(f => f.endsWith('.json'))) inspect(JSON.parse(fs.readFileSync(path.join(directory, filename), 'utf8')));
+});
+
+test('previously installed fixed-prompt task descriptions also switch to English', () => {
+  const original = '依次切换所有账号，等待当前会话输入框出现后发送 1+1=，等待回复完成，最后恢复开始时的账号。';
+  assert.doesNotMatch(buildTranslator()(original, 'en'), /[\u4e00-\u9fff]/);
+  assert.equal(buildTranslator()(original, 'zh'), original);
 });

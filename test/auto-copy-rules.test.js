@@ -404,14 +404,12 @@ test('api keys keep their full masked length without exposing the middle', () =>
   assert.equal(masked.includes('abcdef'), false);
 });
 
-test('checkin display keeps a confirmed result while the current claim is still running', () => {
+test('checkin display exposes only today’s confirmed result', () => {
   const record = { date: '2026-08-23', ok: true, already: false, code: 0, message: 'ok' };
-  assert.deepEqual(checkinDisplayValue(record, '2026-08-23', true), {
+  assert.deepEqual(checkinDisplayValue(record, '2026-08-23'), {
     ok: true, already: false, code: 0, message: 'ok',
   });
-  assert.equal(checkinDisplayValue({ date: '2026-08-23', ok: false }, '2026-08-23', true), null);
-  assert.deepEqual(checkinDisplayValue(record, '2026-08-23', false), {
-    ok: true, already: false, code: 0, message: 'ok',
-  });
-  assert.equal(checkinDisplayValue(record, '2026-08-22', false), null);
+  assert.equal(checkinDisplayValue({ date: '2026-08-23', ok: false }, '2026-08-23'), null);
+  assert.equal(checkinDisplayValue(null, '2026-08-23'), null);
+  assert.equal(checkinDisplayValue(record, '2026-08-24'), null);
 });

@@ -67,6 +67,7 @@ const {
   listAuthRecords,
   currentAuthFile,
   resolveCurrentAuth,
+  resolveLogoutAuth,
   defaultDataDir,
   logFile,
   ensureDirs,
@@ -122,7 +123,7 @@ const {
   shouldRefreshAccessToken,
   normalizeTimestamp: normalizeTokenTimestamp,
 } = require('./token-refresh.js');
-const { fetchGrowthTodayActive, activateGrowthAccount } = require('./growth-active.js');
+const { fetchGrowthTodayActive, activateGrowthAccount, fetchGrowthStreak, createGrowthStreakCache } = require('./growth-active.js');
 const {
   captureException,
   captureMessage,
@@ -143,9 +144,43 @@ const {
 } = require('./secure-transfer.js');
 const { replaceFileWithRetry } = require('./atomic-file-write.js');
 const { parseUiPortState, profileUiPortCandidates } = require('./ui-port.js');
+const {
+  CAPABILITIES: AUTOMATION_CAPABILITIES,
+  AGENT_EXAMPLES: AUTOMATION_AGENT_EXAMPLES,
+  capabilityText: automationCapabilityText,
+  agentBridgePaths,
+  ensureAgentBridge,
+  createAgentRequest,
+  importAgentInbox,
+  readAutomations,
+  writeAutomations,
+  validateTask,
+  executeTask,
+  canManuallyRunTask,
+  taskMatchesEvent,
+  createScheduleTicker,
+  taskNeedsPanelClosed,
+  taskIsPassiveCleanup,
+  isSupportedTaskSchema,
+  isTaskCompatible,
+  configureAutomationRuntime,
+  installBuiltinTask,
+} = require('./automation.js');
 
+const { assertAccountRequestUrl, createTaskState, cancellableWait, createRendererGate, probeSessionReceipt, receiptComplete } = require('./automation-runtime.js');
+const acquireAutomationRenderer = createRendererGate();
+const acquireAutomationInput = createRendererGate();
+let automationInputActive = false;
+
+const { previewPackage, PACKAGE_FORMAT_VERSION } = require('./automation-packages.js');
+const { exportTasks, previewImport, importTasks, readTransferBody } = require('./automation-transfer.js');
+
+const { createAutomationNotifier } = require('./toast-options.js');
+const { runCompletionReport, probeAccountCompletion } = require('./completion-report.js');
+const { createPrimaryAccountStore } = require('./primary-account.js');
 const PROFILE = getProfile();
 const DATA_DIR = defaultDataDir();
+const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.existsSync(accountBackupFile(uid)));
 // 版本号：改动 daemon/inject/theme-patches/builtin 资产后递增，launcher 检测到运行中版本不一致会强制用 app 内置代码重启
 // 0.6.6：品牌 HelloBuddy→WorkDaddy 期间版本号未递增，旧 HelloBuddy daemon 会被 launcher 误判为"同版本"而不重启，导致旧代码继续注入；递增后强制升级
 // 0.6.7：新增「关于」tab（/api/about + __WBS_VERSION__ 注入）；必须递增，否则旧 daemon 不重启、面板看不到关于页
@@ -279,8 +314,25 @@ const DATA_DIR = defaultDataDir();
 //         类 UI 拒绝 isTrusted=false 的 click()，仅原生输入可触发；供自动批准等链路使用。
 // 1.1.51：Rule1/Auto-Continue 完成标记由零宽字符改为 Markdown 引用定义 [wbs-reply-done]: #
 //         （零宽会被官方存储链路转义成字面 \u200b 显形）；inject 完成检测同步兼容。
-const DAEMON_VERSION = '1.1.51';
-const DAEMON_BUILD_ID = 'release-1.1.51-20260906-rule1-markdown-marker';
+// 1.1.52：新增声明式自动化任务中心、任务执行器和 DOM/HTTP 基础能力路由。
+// 1.1.53：自动化复用内部 DOM 检查器，补齐可执行能力协议并扩宽面板与接口说明。
+// 1.1.54：修复接口协议弹窗宽度被通用样式覆盖，并补全 agent 使用的纯文本协议参考。
+// 1.1.55：自动化协议落盘到 profile 持久目录；新增受校验的 Agent 任务收件箱和示例任务创建入口。
+// 1.1.56：欢迎页 Agent 输入检测忽略 Slate 占位节点；自动化拾取器与私有 debug 拾取器完全隔离。
+// 1.1.57：自动化 DOM 能力支持开放 Shadow DOM；新增逐步骤运行日志和任务编辑弹窗。
+// 1.1.58：自动化页面加载和账号切换统一为 pageReady 生命周期触发。
+// 1.1.59：自动化日志支持按任务清除已结束运行记录。
+// 1.1.60：账号循环支持真实切换账号并在结束后恢复原账号。
+// 1.1.61：自动化发送复用官方发送按钮链路，避免仅输入未提交。
+// 1.1.62：自动化任务运行中显示停止按钮并可中断等待回复。
+// 1.1.63：快捷短语/自动化发送优先命中新版官方 cr-send-button，避免输入后未提交。
+// 1.1.64：发送按钮定位的国际化选择器与 daemon 保持一致，避免源码检查误判。
+// 1.1.65：自动化会话发送前确保进入新版 WorkBuddy 新建任务页。
+// 1.1.66：新版侧栏 tab 共用 conversation-list-tab-button-box，改用文字确认新建任务。
+// 1.1.67：项目页存在普通 composer 时仍强制定位并点击新建任务 tab。
+const DAEMON_VERSION = '1.2.4';
+const DAEMON_BUILD_ID = 'release-1.2.4-20260908-send-button-poll-200ms';
+configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const HOST = '127.0.0.1';
 const IS_WIN = process.platform === 'win32'; // Windows 移植：平台分支开关（macOS 行为保持不变）
 // Windows 安装目录（install.ps1 铺、launcher 用、更新替换目标），对应 macOS 的 /Applications/WorkDaddy.app
@@ -1525,6 +1577,8 @@ let manualInjectPromise = null; // launcher 超时重试时复用同一轮注入
 let pendingReloadInjection = null; // 仅对 WorkDaddy 主动触发的页面重载做一次主 frame 早期注入
 let mainFrameNavigationSerial = 0;
 let suppressPageLoadInjectionForNavigation = 0;
+const automationEventKeys = new Set();
+let pendingAutomationAccountSwitch = null;
 
 function settlePendingReloadInjection(pending, mounted) {
   if (!pending || pendingReloadInjection !== pending || pending.settled) return;
@@ -1570,6 +1624,7 @@ function runPendingReloadInjection(reason, executionContextId) {
       if (pendingReloadInjection !== pending || pending.settled) return;
       pending.injecting = false;
       if (info && info.mounted) {
+        restoreSavedTheme().catch((e) => log('[theme] 早期恢复失败: ' + e.message));
         settlePendingReloadInjection(pending, true);
         return;
       }
@@ -1689,6 +1744,30 @@ async function cleanupForeignInjectedTarget(target) {
   });
 }
 
+function cdpFocusDiagnostics(label, extra = {}) {
+  if (!cdp.connected || !cdp.ws || cdp.ws.readyState !== 1) return Promise.resolve(null);
+  const expression = `(function(){try{
+    var a=document.activeElement;
+    var r=a&&a.getBoundingClientRect?a.getBoundingClientRect():null;
+    return {href:location.href,title:document.title,readyState:document.readyState,viewport:{w:window.innerWidth,h:window.innerHeight,dpr:window.devicePixelRatio},active:a?{tag:a.tagName,id:a.id||'',cls:typeof a.className==='string'?a.className.slice(0,180):'',editable:a.isContentEditable===true||a.tagName==='TEXTAREA'||a.tagName==='INPUT',rect:r?{x:r.x,y:r.y,w:r.width,h:r.height}:null}:null,hasSelection:!!(window.getSelection&&!window.getSelection().isCollapsed)}
+  }catch(e){return {error:String(e)}}})()`;
+  return cdpSend('Runtime.evaluate', { expression, returnByValue: true }).then((r) => {
+    const data = r && r.result && r.result.value;
+    log('[cdp-focus-diagnostics] ' + label + ' ' + JSON.stringify({ targetUrl: cdp.targetUrl, targetTitle: cdp.targetTitle, extra, page: data }));
+    return data;
+  }).catch((e) => { log('[cdp-focus-diagnostics] ' + label + ' failed=' + e.message); return null; });
+}
+
+async function cdpMouseClick(source, x, y, extra = {}, options = {}) {
+  await cdpFocusDiagnostics('mouse-click:before', { source, x, y, ...extra });
+  log('[cdp-focus-diagnostics] mouse-click:dispatch ' + JSON.stringify({ source, x, y, extra, targetUrl: cdp.targetUrl, targetTitle: cdp.targetTitle }));
+  // 页面未产出绘制帧时，mouseMoved 的 ACK 可卡约 5 秒，期间坐标可能已过期。
+  // 明确定位的弹窗关闭按钮不依赖 hover，直接按下/松开即可。
+  if (!options.skipMove) await cdpSend('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y });
+  await cdpSend('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', clickCount: 1 });
+  await cdpSend('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', clickCount: 1 });
+}
+
 function cdpSend(method, params = {}, _retry = 0) {
   if (!cdp.ws || cdp.ws.readyState !== 1) return Promise.reject(new Error('CDP 未连接'));
   const id = ++cdp.id;
@@ -1751,9 +1830,17 @@ async function connectCdp() {
       setTimeout(() => scheduleBackup('cdp-connect'), 800);
       setTimeout(() => {
         injectWidget('connect').catch((e) => log(`[cdp] 注入失败: ${e.message}`));
+        // 清理可能残留的历史「运行期间隐藏面板」临时样式（1.1.73 及更早用 wbs-auto-hide-ui；
+        // 上次运行被中断/重启可能没清掉，会导致页面一直收不起面板的兄弟状态）。只删 tag，不误开面板。
+        automationClearStaleHideTag();
         // 恢复已保存的主题（页面刷新/WorkBuddy 重启后 WorkBuddy 回到官方浅色，
         // 这里重新应用，保证「WorkDaddy 主题=深色 / WorkBuddy 默认主题=浅色」在重启后仍生效）
         restoreSavedTheme().catch((e) => log(`[theme] 恢复主题失败: ${e.message}`));
+        // 某些旧版 renderer 在 daemon 连接后不会再发送 loadEventFired；
+        // readyState 已完成时补发一次首屏生命周期事件，按导航序号去重。
+        cdpSend('Runtime.evaluate', { expression: 'document.readyState', returnByValue: true }).then((r) => {
+          if (r && r.result && r.result.value === 'complete') dispatchAutomationEvent('pageReady', { navigationSerial: mainFrameNavigationSerial, source: 'connect' });
+        }).catch(() => {});
       }, 1200);
       resolve(true);
     };
@@ -1786,6 +1873,38 @@ async function connectCdp() {
       if (pendingReloadInjection) settlePendingReloadInjection(pendingReloadInjection, false);
       log('[cdp] 连接已断开，5 秒后重连');
     };
+  });
+}
+
+function dispatchAutomationEvent(type, detail = {}) {
+  const eventType = String(type || '').trim();
+  if (!['pageReady', 'pageLoaded', 'accountSwitched', 'panelOpened'].includes(eventType)) return;
+  const canonicalType = eventType === 'pageReady' ? 'pageReady' : eventType;
+  const key = canonicalType + ':' + String(detail.navigationSerial == null ? mainFrameNavigationSerial : detail.navigationSerial);
+  if (canonicalType === 'pageReady' && automationEventKeys.has(key)) return;
+  if (canonicalType === 'pageReady') {
+    automationEventKeys.add(key);
+    while (automationEventKeys.size > 40) automationEventKeys.delete(automationEventKeys.values().next().value);
+  }
+  const tasks = readAutomations(DATA_DIR).filter((task) => taskMatchesEvent(task, canonicalType, detail));
+  if (!tasks.length) return;
+  const account = detail.account || currentAccount();
+  tasks.forEach((task) => {
+    try {
+      const event = { type: canonicalType, navigationSerial: detail.navigationSerial == null ? mainFrameNavigationSerial : detail.navigationSerial, source: detail.source || 'cdp', account: account ? { uid: account.uid, nickname: account.nickname } : null };
+      const run = Array.from(automationRuns.values()).find((item) => item.taskId === task.id && item.status === 'running');
+      if (run) {
+        if (task.trigger.restartOnNavigation && run.navigationSerial !== event.navigationSerial) {
+          run.superseded = true;
+          run.pendingEvent = event;
+        }
+        return;
+      }
+      startAutomationRun(task, event);
+      log(`[automation] 生命周期 ${canonicalType} 已启动任务 ${task.id}`);
+    } catch (error) {
+      log(`[automation] 生命周期 ${canonicalType} 启动任务失败: ${error.message}`);
+    }
   });
 }
 
@@ -1833,6 +1952,7 @@ function onCdpEvent(method, params) {
     }
     case 'Page.loadEventFired': {
       scheduleBackup('cdp-page-load');
+      const loadedNavigationSerial = mainFrameNavigationSerial;
       if (pendingReloadInjection) {
         pendingReloadInjection.loadFired = true;
         runPendingReloadInjection('reload-page-load');
@@ -1846,6 +1966,12 @@ function onCdpEvent(method, params) {
       }
       // 页面刷新后 WorkBuddy 回到官方浅色，重新应用已保存主题（WorkDaddy=深色 / 默认=浅色）
       restoreSavedTheme().catch((e) => log(`[theme] 页面刷新恢复主题失败: ${e.message}`));
+      const switchEvent = pendingAutomationAccountSwitch;
+      if (switchEvent) {
+        pendingAutomationAccountSwitch = null;
+        dispatchAutomationEvent('pageReady', { navigationSerial: loadedNavigationSerial, source: 'account-switch', account: switchEvent.account });
+      }
+      dispatchAutomationEvent('pageReady', { navigationSerial: loadedNavigationSerial, source: 'load' });
       break;
     }
     case 'Page.frameNavigated': {
@@ -2413,10 +2539,10 @@ async function clickByText(text, { tag = null, exact = false } = {}) {
   const found = r.result && r.result.value;
   if (!found) throw new Error('未找到元素');
   if (found.error) throw new Error('查找异常: ' + found.error);
+  // 记录点击前的页面焦点、视口和目标坐标；不改变点击行为。
+  await cdpFocusDiagnostics('clickByText:before-mouse', { text: String(text), tag, exact, found });
   // 用 Input 事件模拟真实鼠标点击（trusted）
-  await cdpSend('Input.dispatchMouseEvent', { type: 'mouseMoved', x: found.x, y: found.y });
-  await cdpSend('Input.dispatchMouseEvent', { type: 'mousePressed', x: found.x, y: found.y, button: 'left', clickCount: 1 });
-  await cdpSend('Input.dispatchMouseEvent', { type: 'mouseReleased', x: found.x, y: found.y, button: 'left', clickCount: 1 });
+  await cdpMouseClick('clickByText:' + String(text), found.x, found.y, { tag, exact, found });
   return found;
 }
 
@@ -2495,14 +2621,441 @@ async function waitPageLoaded(timeoutMs = 6000) {
 
 const CHECKIN_CACHE_FILE = path.join(DATA_DIR, 'checkin-cache.json');
 const CHECKIN_REQUEST_TIMEOUT_MS = 12000;
-const CHECKIN_QUEUE_DELAY_MS = 250;
-const CHECKIN_STARTUP_DELAY_MS = 30 * 1000;
-const CHECKIN_INTERVAL_MS = 60 * 60 * 1000;
-let claimInFlight = false;
-let checkinState = { running: false, total: 0, done: 0, startedAt: 0, finishedAt: 0 };
+// 声明式自动化任务：任务 JSON 只保存步骤，不保存账号 Token；运行时按账号上下文
+// 读取受管备份并把凭据限制在一次 HTTP 请求内。第三方代码执行不在此模块范围内。
+const growthStreakCache = createGrowthStreakCache(async (uid) => {
+  const raw = JSON.parse(fs.readFileSync(accountBackupFile(uid), 'utf8'));
+  const auth = raw && raw.auth || {};
+  return fetchGrowthStreak(auth.accessToken || auth.access_token || auth.token, { apiHost: PROFILE.apiHost });
+});
+const automationRuns = new Map();
+let completionReportRunning = false;
+const automationStateFile = () => path.join(DATA_DIR, 'automation-state.json');
+function readAutomationState() {
+  try { const value = JSON.parse(fs.readFileSync(automationStateFile(), 'utf8')); return value && typeof value === 'object' ? value : {}; } catch (_) { return {}; }
+}
+function writeAutomationState(value) {
+  const file = automationStateFile();
+  const tmp = file + '.tmp-' + process.pid;
+  fs.writeFileSync(tmp, JSON.stringify(value || {}, null, 2) + '\n', { mode: 0o600 });
+  fs.renameSync(tmp, file);
+}
+async function automationAccountStatus(account, fields) {
+  const target = account || currentAccount();
+  if (!target || !target.uid) throw new Error('没有可用账号');
+  const file = accountBackupFile(target.uid);
+  if (!fs.existsSync(file)) throw new Error('账号备份不存在');
+  const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
+  const auth = raw && raw.auth && typeof raw.auth === 'object' ? raw.auth : {};
+  const result = { uid: target.uid, isPrimary: primaryAccountStore.get() === target.uid, checkin: {}, activity: {}, credits: {} };
+  const wanted = Array.isArray(fields) && fields.length ? fields : ['checkin.today', 'activity.today'];
+  if (wanted.includes('checkin.today')) {
+    const today = todayStr();
+    let mark = null;
+    try { mark = await CREDIT_USAGE_STORE.getDailyCheckin(target.uid, today); } catch (_) {}
+    const cache = loadCheckinCache();
+    const hit = mark || cache[target.uid];
+    result.checkin = { today: !!(hit && hit.date === today && hit.ok && (hit.verified === true || classifyCheckinResult({ httpOk: true, code: hit.code, message: hit.message }).ok)), verified: !!(hit && hit.date === today && hit.verified === true), source: mark ? 'sqlite' : 'cache' };
+  }
+  if (wanted.includes('activity.today')) {
+    const token = auth.accessToken || auth.access_token || auth.token;
+    if (!token) throw new Error('备份中无 accessToken');
+    result.activity = Object.assign({ source: 'server' }, await fetchGrowthTodayActive(token, { apiHost: PROFILE.apiHost }));
+  }
+  if (wanted.includes('activity.streak')) {
+    const streak = await growthStreakCache.get(target.uid);
+    result.activity.streak = { days: Number.isFinite(streak && streak.days) ? streak.days : null, status: streak && streak.status || 'unavailable' };
+  }
+  if (wanted.includes('credits')) {
+    const token = auth.accessToken || auth.access_token || auth.token;
+    if (!token) throw new Error('备份中无 accessToken');
+    const credits = await fetchCredits(token, raw.account || {});
+    result.credits = { total: credits.credits, unlimited: !!credits.unlimited, cycleResetTime: credits.cycleResetTime || null };
+  }
+  return result;
+}
+function automationDeepLocatorExpression(locator) {
+  if (Array.isArray(locator)) return `(function(){var candidates=[${locator.map(automationDeepLocatorExpression).join(',')}].filter(Boolean);return candidates.find(function(el){var r=el.getBoundingClientRect();var cs=el.ownerDocument.defaultView.getComputedStyle(el);return r.width>0&&r.height>0&&cs.display!=='none'&&cs.visibility!=='hidden'})||candidates[0]||null})()`;
+  const l = locator && typeof locator === 'object' ? locator : {};
+  const kind = JSON.stringify(String(l.kind || 'css'));
+  const value = JSON.stringify(String(l.value || ''));
+  return `(function(){
+    var kind=${kind};var value=${value};var preferVisible=${l.visible === true};var roots=[document];var seen=new Set(roots);
+    for(var ri=0;ri<roots.length&&ri<200;ri++){
+      var root=roots[ri];var elements=[];try{elements=Array.from(root.querySelectorAll('*'))}catch(_){}
+      for(var ei=0;ei<elements.length;ei++){
+        var element=elements[ei];
+        if(element.shadowRoot&&!seen.has(element.shadowRoot)){seen.add(element.shadowRoot);roots.push(element.shadowRoot)}
+        if(element.tagName==='IFRAME'){try{var frameDocument=element.contentDocument;if(frameDocument&&!seen.has(frameDocument)){seen.add(frameDocument);roots.push(frameDocument)}}catch(_){}}
+      }
+    }
+    function first(selector){var fallback=null;for(var i=0;i<roots.length;i++){try{
+      if(!preferVisible){var found=roots[i].querySelector(selector);if(found)return found;continue}
+      var matches=roots[i].querySelectorAll(selector);
+      for(var j=0;j<matches.length;j++){var el=matches[j];if(!fallback)fallback=el;var r=el.getBoundingClientRect();var cs=getComputedStyle(el);if(r.width>0&&r.height>0&&cs.display!=='none'&&cs.visibility!=='hidden')return el}
+    }catch(_){}}return fallback}
+    function choose(matches){if(!preferVisible)return matches[0]||null;return matches.find(function(el){var r=el.getBoundingClientRect();var cs=el.ownerDocument.defaultView.getComputedStyle(el);return r.width>0&&r.height>0&&cs.display!=='none'&&cs.visibility!=='hidden'})||matches[0]||null}
+    function firstByAttribute(name){var matches=[];for(var i=0;i<roots.length;i++){var all=[];try{all=roots[i].querySelectorAll('['+name+']')}catch(_){}for(var j=0;j<all.length;j++){if((all[j].getAttribute(name)||'')===value)matches.push(all[j])}}return choose(matches)}
+    if(kind==='xpath'){var matches=[];for(var xi=0;xi<roots.length;xi++){try{var doc=roots[xi].ownerDocument||roots[xi];var match=doc.evaluate(value,roots[xi],null,7,null);for(var xj=0;xj<match.snapshotLength;xj++)matches.push(match.snapshotItem(xj))}catch(_){}}return choose(matches)}
+    if(kind==='text'){var matches=[];for(var ti=0;ti<roots.length;ti++){var candidates=[];try{candidates=roots[ti].querySelectorAll('button,a,[role="button"],input,textarea,[contenteditable="true"]')}catch(_){}for(var ci=0;ci<candidates.length;ci++){var text=(candidates[ci].innerText||candidates[ci].textContent||candidates[ci].value||'').trim();if(text.includes(value))matches.push(candidates[ci])}}return choose(matches)}
+    if(kind==='ariaLabel')return firstByAttribute('aria-label');
+    if(kind==='placeholder')return firstByAttribute('placeholder');
+    if(kind==='role')return firstByAttribute('role');
+    if(kind==='attribute')return first('['+value+']');
+    return first(value);
+  })()`;
+}
+async function automationDomAction(op, locator, detail) {
+  const assertActive = () => { if (detail && detail.isCancelled && detail.isCancelled()) throw new Error('任务已停止'); };
+  assertActive();
+  if (!cdp.connected) throw new Error('CDP 未连接');
+  const expr = automationDeepLocatorExpression(locator);
+  const attribute = JSON.stringify(String(detail && (detail.attribute || detail.until && detail.until.attribute) || ''));
+  const inspect = `(function(){var el=${expr};if(!el)return null;var r=el.getBoundingClientRect();var cs=getComputedStyle(el);var blocked=false;
+    if(${op === 'dom.click' || op === 'dom.wait'}){var root=el.getRootNode();var hit=root.elementFromPoint(r.x+r.width/2,r.y+r.height/2);blocked=!hit||!(hit===el||el.contains(hit))||el.disabled===true||el.getAttribute('aria-disabled')==='true';}
+    return {inFrame:el.ownerDocument!==document,editable:el.isContentEditable||/^(INPUT|TEXTAREA)$/.test(el.tagName),x:r.x,y:r.y,w:r.width,h:r.height,blocked:blocked,visible:cs.display!=='none'&&cs.visibility!=='hidden'&&r.width>0&&r.height>0,text:(el.innerText||el.textContent||el.value||'').trim().slice(0,100000),value:el.value||'',attribute:el.getAttribute(${attribute})}})()`;
+  const read = async () => {
+    assertActive();
+    const r = await cdpSend('Runtime.evaluate', { expression: inspect, returnByValue: true });
+    assertActive();
+    if (r && r.exceptionDetails) throw new Error('DOM locator evaluation failed: ' + String(r.exceptionDetails.text || 'unknown error'));
+    return r && r.result && r.result.value;
+  };
+  if (op === 'dom.wait' && detail && detail.until) {
+    const timeout = Math.min(300000, Math.max(100, Number(detail.timeoutMs) || 10000)); const started = Date.now();
+    while (Date.now() - started < timeout) {
+      const item = await read();
+      // 关闭后节点通常直接移除；不存在同样满足 hidden，不能一直等到超时。
+      const until = detail.until;
+      const matched = until.state === 'hidden' ? !item || !item.visible : until.state === 'attached' ? !!item : until.state === 'detached' ? !item : !!item && item.visible &&
+        (until.state !== 'clickable' || !item.blocked) && (until.text == null || item.text.includes(String(until.text))) && (until.attribute == null || item.attribute === String(until.value == null ? '' : until.value));
+      if (matched) return item || { visible: false };
+      await cancellableWait(100, detail.isCancelled);
+    }
+    throw new Error('等待页面元素超时');
+  }
+  if (op === 'dom.wait') { await new Promise((resolve) => setTimeout(resolve, Math.min(300000, Math.max(0, Number(detail && detail.seconds) * 1000 || 0)))); return { ok: true }; }
+  const found = await read();
+  if (!found) throw new Error('未找到页面元素');
+  if (op === 'dom.find') return found;
+  if (op === 'dom.readText') return found.text;
+  if (op === 'dom.readAttribute') return found.attribute;
+  if (found.inFrame) throw new Error('暂不支持 iframe 内的输入或点击，请使用主页面定位器');
+  if (op === 'dom.clear' && !found.editable) throw new Error('目标不是可编辑输入框');
+  if (!found.visible) throw new Error('页面元素不可见');
+  if (op === 'dom.click') {
+    assertActive();
+    if (found.blocked) throw new Error('页面元素被遮挡或禁用，稍后重试');
+    const x = found.x + found.w / 2; const y = found.y + found.h / 2;
+    await cdpMouseClick('dom.click:' + String(locator && locator.value || ''), x, y, { op, found }, { skipMove: locator && locator.visible === true });
+    return found;
+  }
+  const focus = `(function(){var el=${expr};if(!el)return false;el.focus();return true})()`;
+  const focused = await cdpSend('Runtime.evaluate', { expression: focus, returnByValue: true });
+  assertActive();
+  if (!(focused && focused.result && focused.result.value)) throw new Error('无法聚焦页面元素');
+  if (op === 'dom.clear') {
+    // Chromium editing commands support input, textarea and rich contenteditable,
+    // without synthesizing macOS menu shortcuts (the historical About-window bug).
+    await cdpSend('Input.dispatchKeyEvent', { type: 'keyDown', key: 'a', commands: ['selectAll'] });
+    assertActive();
+    await cdpSend('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Backspace', code: 'Backspace' });
+    await cdpSend('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Backspace', code: 'Backspace' });
+    const empty = await read();
+    if (empty && (empty.value || empty.text)) throw new Error('输入框未确认清空');
+  }
+  if (op === 'dom.type') await cdpSend('Input.insertText', { text: String(detail && detail.text || '') });
+  if (op === 'dom.press') { const key = String(detail && detail.key || 'Enter'); await cdpSend('Input.dispatchKeyEvent', { type: 'keyDown', key, code: key }); await cdpSend('Input.dispatchKeyEvent', { type: 'keyUp', key, code: key }); }
+  return { ok: true };
+}
+async function automationHttpRequest(request, account) {
+  const url = new URL(String(request.url || ''));
+  if (!/^https?:$/.test(url.protocol)) throw new Error('HTTP URL 仅支持 http(s)');
+  if (request.query && typeof request.query === 'object') Object.keys(request.query).forEach((key) => url.searchParams.set(key, String(request.query[key])));
+  const headers = {};
+  if (request.headers && typeof request.headers === 'object') Object.keys(request.headers).slice(0, 40).forEach((key) => { if (!/^(authorization|cookie|proxy-authorization)$/i.test(key)) headers[key] = String(request.headers[key]).slice(0, 2000); });
+  if (account && account.uid) {
+    assertAccountRequestUrl(url, PROFILE.apiHost);
+    const raw = JSON.parse(fs.readFileSync(accountBackupFile(account.uid), 'utf8')); const auth = raw && raw.auth && typeof raw.auth === 'object' ? raw.auth : {};
+    const token = auth.accessToken || auth.access_token || auth.token; if (!token) throw new Error('账号没有 accessToken'); headers.authorization = 'Bearer ' + token;
+  }
+  if (request.isCancelled && request.isCancelled()) throw new Error('任务已停止');
+  if (request.body && typeof request.body === 'object' && !Object.keys(headers).some(k => k.toLowerCase() === 'content-type')) headers['content-type'] = 'application/json';
+  const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), Math.min(60000, Math.max(500, Number(request.timeoutMs) || 15000)));
+  const cancelTimer = setInterval(() => { if (request.isCancelled && request.isCancelled()) controller.abort(); }, 100);
+  try {
+    const response = await fetch(url, { method: request.method || 'GET', headers, body: request.body == null ? undefined : (typeof request.body === 'string' ? request.body : JSON.stringify(request.body)), signal: controller.signal, redirect: 'manual' });
+    let text = ''; const chunks = []; let size = 0;
+    if (response.body) { const reader = response.body.getReader(); try { while (true) { const part = await reader.read(); if (part.done) break; size += part.value.byteLength; if (size > 1024 * 1024) { await reader.cancel(); throw new Error('HTTP 响应超过 1 MiB'); } chunks.push(Buffer.from(part.value)); } } finally { reader.releaseLock(); } text = Buffer.concat(chunks).toString('utf8'); }
+    let jsonBody = null; try { jsonBody = text ? JSON.parse(text) : null; } catch (_) {}
+    return { ok: response.ok, status: response.status, headers: { 'content-type': response.headers.get('content-type') || '' }, text, json: jsonBody };
+  } catch (e) { if (request.isCancelled && request.isCancelled()) throw new Error('任务已停止'); if (e && e.name === 'AbortError') throw new Error('HTTP 请求超时'); throw new Error(e && e.message === 'HTTP 响应超过 1 MiB' ? e.message : 'HTTP 请求失败'); } finally { clearTimeout(timer); clearInterval(cancelTimer); }
+}
+function automationPublicRun(run) { return { id: run.id, taskId: run.taskId, status: run.status, phase: run.phase || 'executing', startedAt: run.startedAt, finishedAt: run.finishedAt || 0, error: run.error || '', logs: run.logs.slice(-80), result: run.result || null }; }
 
-function checkinSnapshot() {
-  return Object.assign({}, checkinState, { running: !!claimInFlight });
+// 自动化运行前收拢 WorkDaddy 面板「窗口」，避免其 contenteditable/悬浮层与 WorkBuddy 原生
+// composer 抢焦点或遮挡，导致任务把提示词键入到 WorkDaddy 面板输入框 / 点不到官方发送按钮
+// （用户实测：面板开着任务发不出去，关了才行）。
+// 实现：不注入 <style> 硬改 display（老板 09-07：旧法会连 FAB 一起藏 / 破坏面板 DOM 状态），
+// 而是 dispatch 事件让 inject 走「点关闭按钮」同一条 setOpen(false) —— 等价于点一次面板关闭。
+// 运行结束若运行前面板本是展开的，再走「点机器人按钮」同一条 setOpen(true) 恢复。全程可逆。
+function automationPanelSetInputActive(active) {
+  automationInputActive = !!active;
+  if (!cdp.connected) return active ? Promise.reject(new Error('CDP 未连接')) : Promise.resolve();
+  return cdpSend('Runtime.evaluate', {
+    expression: `window.__wbsAutomationInputActive=${!!active};${active ? "window.dispatchEvent(new CustomEvent('workdaddy:panel-open',{detail:{open:false,automation:true}}));" : ''}`,
+    returnByValue: false,
+  }).then((result) => {
+    if (result && result.exceptionDetails) throw new Error('无法关闭面板，请重试');
+  });
+}
+
+function automationPanelSetOpen(open) {
+  if (!cdp.connected) return Promise.resolve(false);
+  return cdpSend('Runtime.evaluate', {
+    expression: `window.dispatchEvent(new CustomEvent('workdaddy:panel-open',{detail:{open:${!!open},automation:true}}))`,
+    returnByValue: false,
+  }).then(() => true).catch(() => false);
+}
+// 读当前面板是否展开（.wbs-panel 是否带 .show，且视觉可见）
+function automationPanelIsOpen() {
+  if (!cdp.connected) return Promise.resolve(false);
+  return cdpSend('Runtime.evaluate', {
+    expression: `(function(){try{var p=document.querySelector('.wbs-root .wbs-panel');if(!p)return false;var r=p.getBoundingClientRect();return p.classList.contains('show')&&r.width>0&&r.height>0;}catch(e){return false}})()`,
+    returnByValue: true,
+  }).then((r) => !!(r && r.result && r.result.value)).catch(() => false);
+}
+// 清理历史遗留的「运行期间隐藏面板」临时 <style>（1.1.73 及更早版本用过 wbs-auto-hide-ui；
+// daemon 重启/运行中断可能残留，页面会一直面板不可见）。无 tag 时是 no-op，不影响面板开合状态。
+function automationClearStaleHideTag() {
+  if (!cdp.connected) return Promise.resolve();
+  return cdpSend('Runtime.evaluate', {
+    expression: `(function(){var h=document.getElementById('wbs-auto-hide-ui');if(h){h.remove();return true}return false})()`,
+    returnByValue: false,
+  }).catch(() => {});
+}
+
+/** CDP 探测当前会话「最后一条完整 assistant 回复」：
+ *  用不可见完成标记（结尾零宽字符 / [wbs-reply-done] 行）判定回复是否真正结束，
+ *  不再依赖 5.5.3 已删除的 .cb-assistant-message。消息列表容器取 5.5.3 的
+ *  .cr-message-list / .cr-conversation-timeline，assistant 块过滤 loading。
+ *  返回值 { lastText, lastDone, rowCount } */
+function automationMarkerProbeExpression() {
+  return '(function(){try{' +
+    'function visible(e){if(!e)return false;var r=e.getBoundingClientRect();return r.width>0&&r.height>0}' +
+    'function hasMarker(t){if(!t)return false;var ts=t.replace(/[ \\t\\r\\n\\f\\v\\u00A0]+$/,\'\');if(!ts)return false;' +
+      'if(ts.slice(-3)===\'\\u200B\\u200B\\u2060\')return true;' +
+      'if(/[\\u200B\\u200C\\u200D\\u2060\\uFEFF]$/.test(ts))return true;' +
+      'if(/(^|\\n)\\s*\\[wbs-reply-done\\]:/im.test(ts))return true;return false}' +
+    'var list=document.querySelector(\'.cr-message-list,.cr-conversation-timeline,.conversation-timeline\')||document;' +
+    'var rows=[];try{rows=Array.from(list.querySelectorAll(\'[class*="assistant-message"],[class*="_assistantMessage_"]\')).filter(visible)}catch(e){}' +
+    'var last=null;for(var i=rows.length-1;i>=0;i--){var c=typeof rows[i].className===\'string\'?rows[i].className:\'\';if(/loading/i.test(c))continue;' +
+      'var t=\'\';try{t=(rows[i].innerText||rows[i].textContent||\'\').replace(/[\\s\\u00A0]+$/,\'\')}catch(e){continue}if(!t)continue;last={text:t};break}' +
+    'return {lastText:last?last.text:\'\',lastDone:last?hasMarker(last.text):false,rowCount:rows.length}' +
+  '}catch(e){return {err:String(e&&e.message||e)}}})()';
+}
+
+async function automationNotifyToast(detail) {
+  if (!cdp.connected) throw new Error('WorkBuddy 未连接，无法显示通知');
+  const response = await cdpSend('Runtime.evaluate', {
+    expression: `typeof window.__wbsNotifyToast === 'function' ? window.__wbsNotifyToast(${JSON.stringify(detail)}) : null`,
+    returnByValue: true,
+  });
+  if (response.exceptionDetails || !response.result || !response.result.value || !response.result.value.ok) throw new Error('WorkBuddy 通知组件未就绪');
+  return response.result.value;
+}
+let automationAccountSwitchTail = Promise.resolve();
+function automationSwitchAccount(account) {
+  const target = account && typeof account === 'object' ? account : { uid: String(account || '').trim() };
+  const run = automationAccountSwitchTail.then(async () => {
+    const uid = String(target.uid || '').trim();
+    if (!uid) throw new Error('账号切换缺少 uid');
+    const active = currentAccount();
+    if (active && active.uid === uid) return { ok: true, uid, switched: false };
+    const releaseRendererReload = beginRendererReloadPriority();
+    try {
+      const acct = switchTo(DATA_DIR, uid, log);
+      pendingAutomationAccountSwitch = { account: { uid: acct.uid, nickname: acct.nickname } };
+      await reloadWorkBuddyPage();
+      if (pendingAutomationAccountSwitch) {
+        const switchEvent = pendingAutomationAccountSwitch;
+        pendingAutomationAccountSwitch = null;
+        dispatchAutomationEvent('pageReady', { navigationSerial: mainFrameNavigationSerial, source: 'automation-account-switch', account: switchEvent.account });
+      }
+      return { ok: true, uid: acct.uid, nickname: acct.nickname, switched: true };
+    } catch (error) {
+      pendingAutomationAccountSwitch = null;
+      throw error;
+    } finally {
+      releaseRendererReload();
+    }
+  });
+  automationAccountSwitchTail = run.catch(() => {});
+  return run;
+}
+function startAutomationRun(task, event = null) {
+  if (event && event.navigationSerial == null) event = { ...event, navigationSerial: mainFrameNavigationSerial };
+  if (automationRuns.size > 200) {
+    for (const [key, value] of automationRuns) {
+      if (value.status !== 'running') automationRuns.delete(key);
+      if (automationRuns.size <= 160) break;
+    }
+  }
+  const id = 'run_' + Date.now().toString(36) + '_' + crypto.randomBytes(3).toString('hex');
+  const run = { id, taskId: task.id, status: 'running', startedAt: Date.now(), finishedAt: 0, error: '', logs: [], result: null, navigationSerial: event && event.navigationSerial };
+  const isCancelled = () => run.status === 'cancelled' || run.superseded === true ||
+    (task.trigger.restartOnNavigation && event && event.navigationSerial !== mainFrameNavigationSerial);
+  log('[automation-focus-diagnostics] automation:start ' + JSON.stringify({ runId: id, taskId: task.id, source: event && event.source || '', account: event && event.account || null, cdpTargetUrl: cdp.targetUrl, cdpTargetTitle: cdp.targetTitle }));
+  const appendRunLog = (message) => {
+    run.logs.push({ at: Date.now(), message: String(message || '').slice(0, 300) });
+    if (run.logs.length > 200) run.logs.splice(0, run.logs.length - 200);
+  };
+  automationRuns.set(id, run);
+  run.wasPanelOpen = false;
+  const requiresLease = taskNeedsPanelClosed(task) && !taskIsPassiveCleanup(task);
+  run.phase = requiresLease ? 'queued' : 'executing';
+  // 运行前若面板正展开，先「点一下关闭按钮」把它收起（走 inject 同一 setOpen，等价于点面板 ✕），
+  // 避免面板 contenteditable/悬浮层干扰官方 composer 键入与发送（用户实测：面板开着发不出去）。
+  // 结束时会按 wasPanelOpen 恢复。机器人按钮 .wbs-fab 始终保留可见。
+  let releaseRenderer = () => {};
+  const panelPrepare = (requiresLease ? acquireAutomationRenderer(isCancelled).then(release => { releaseRenderer = release; run.phase = 'executing'; return automationPanelIsOpen(); }) : Promise.resolve(false)).then((open) => {
+    if (isCancelled()) return;
+    run.wasPanelOpen = open;
+    log('[automation-focus-diagnostics] automation:panel-state ' + JSON.stringify({ runId: id, open }));
+    if (open) return automationPanelSetOpen(false).then((result) => {
+      log('[automation-focus-diagnostics] automation:panel-close ' + JSON.stringify({ runId: id, result }));
+      return result;
+    });
+    return undefined;
+  });
+  const scopedState = createTaskState(task.id, readAutomationState, writeAutomationState);
+  const runScopedState = scopedState.get, setRunState = scopedState.set;
+  const withInput = async (fn, restoring = false) => {
+    const release = await acquireAutomationInput(restoring ? () => false : isCancelled);
+    try {
+      if (requiresLease) {
+        if (await automationPanelIsOpen()) run.wasPanelOpen = true;
+        await automationPanelSetInputActive(true);
+      }
+      return await fn();
+    } finally {
+      try { if (requiresLease) await automationPanelSetInputActive(false).catch(() => {}); }
+      finally { release(); }
+    }
+  };
+  let lastReceipt = null;
+  const readSession = async () => {
+    if (isCancelled()) throw new Error('任务已停止');
+    const response = await cdpSend('Runtime.evaluate', { expression: '(' + probeSessionReceipt.toString() + ')()', returnByValue: true });
+    return response && response.result && response.result.value || null;
+  };
+  const sessionAction = async (op, detail) => {
+    if (isCancelled()) throw new Error('任务已停止');
+    if (op === 'session.wait') {
+      const receipt = detail.receipt || lastReceipt;
+      if (!receipt || !receipt.userMessageId || !receipt.conversationId || !receipt.accountUid) throw new Error('需要本轮发送返回的会话回执');
+      const end = Date.now() + Math.min(300000,Math.max(1000,Number(detail.timeoutMs)||120000));
+      while (Date.now() < end) {
+        if ((currentAccount() || {}).uid !== receipt.accountUid) throw new Error('账号已变化，已停止等待');
+        const snapshot = await readSession();
+        if (receiptComplete(receipt,snapshot)) {
+          if (detail.contains) {
+            const response = await cdpSend('Runtime.evaluate', {expression: `(function(){var c=window.__wbsWorkBuddyCompat.findConversationControllers(document).find(c=>String(c.conversationId)===${JSON.stringify(receipt.conversationId)});if(!c)return false;var m=c.messageStore.getState().messages.find(m=>String(m.id||m.requestId||'')===${JSON.stringify(snapshot.assistantId)});return !!m&&JSON.stringify(m.content||[]).includes(${JSON.stringify(String(detail.contains))});})()`,returnByValue:true});
+            if (!(response && response.result && response.result.value)) throw new Error('回复已完成但不包含指定内容');
+          }
+          return {ok:true,conversationId:receipt.conversationId,requestId:receipt.requestId,assistantId:snapshot.assistantId};
+        }
+        await cancellableWait(250,isCancelled);
+      }
+      throw new Error('等待会话回复超时');
+    }
+    const accountUid = (currentAccount() || {}).uid;
+    if (!accountUid) throw new Error('没有可用账号');
+    if (op === 'session.create') await withInput(() => ensureAutomationNewTask({ guard: () => {
+      if (isCancelled() || (currentAccount() || {}).uid !== accountUid) throw new Error('发送前账号或运行状态已变化');
+    } }));
+    const before = await readSession();
+    if (op === 'session.send') {
+      if (!detail.conversationId || !before || before.conversationId !== detail.conversationId) throw new Error('只能发送到已选中的指定会话');
+      if (before.busy) throw new Error('目标会话正在运行');
+      // The common sender checks the exact editor immediately before typing.
+      // New Task surface discovery cannot identify a conversation composer.
+    }
+    if (isCancelled() || (currentAccount() || {}).uid !== accountUid) throw new Error('发送前账号或运行状态已变化');
+    await withInput(() => acSendPhrase(String(detail.message || ''), { requireEmpty: true, isCancelled, guard: async () => {
+      if (isCancelled() || (currentAccount() || {}).uid !== accountUid) throw new Error('账号或运行状态已变化，停止发送');
+      const selected = await readSession();
+      if (op === 'session.send' ? !selected || selected.conversationId !== detail.conversationId : selected && (!before || selected.conversationId !== before.conversationId)) throw new Error('会话已变化，停止发送');
+    } }));
+    // Do not retry an unconfirmed send: it may already have reached WorkBuddy.
+    const end = Date.now() + 12000;
+    while (Date.now() < end) {
+      if ((currentAccount() || {}).uid !== accountUid) throw new Error('发送后账号已变化，请检查会话；不会自动重发');
+      const snapshot = await readSession();
+      if (snapshot && snapshot.userMessageId && (!before || snapshot.conversationId !== before.conversationId || snapshot.userMessageId !== before.userMessageId)) {
+        if (op === 'session.send' && snapshot.conversationId !== detail.conversationId) throw new Error('发送后会话发生变化，请检查发送结果');
+        lastReceipt = {ok:true,accountUid,conversationId:snapshot.conversationId,userMessageId:snapshot.userMessageId,requestId:snapshot.requestId,baselineAssistantId:before && before.conversationId===snapshot.conversationId ? before.assistantId : ''};
+        return lastReceipt;
+      }
+      await cancellableWait(100,isCancelled);
+    }
+    throw new Error('未确认会话发送回执，请检查 WorkBuddy；不会自动重发');
+  };
+  // Compatibility aliases retain the historical New Task send behavior.
+  const sessionSendCurrent = async message => sessionAction('session.create',{message});
+  const sessionWaitReply = async detail => sessionAction('session.wait',{...detail,receipt:lastReceipt});
+  const completionReport = async ({ timeoutMs }) => {
+    if (PROFILE.id !== 'workbuddy-cn') throw new Error('主账号云端汇报目前仅支持 WorkBuddy 国内版');
+    if (completionReportRunning) throw new Error('已有主账号完成汇报任务正在监听');
+    completionReportRunning = true;
+    try {
+      const result = await runCompletionReport({ timeoutMs, currentAccount, primaryUid: () => primaryAccountStore.get(), isCancelled, log: appendRunLog,
+        snapshot: async (uid) => {
+          if (!cdp.connected) throw new Error('WorkBuddy 未连接，未发送汇报');
+          const response = await cdpSend('Runtime.evaluate', { expression: '(' + probeAccountCompletion.toString() + ')(' + JSON.stringify(uid) + ')', awaitPromise: true, returnByValue: true });
+          return response && response.result && response.result.value;
+        },
+        send: async (uid, message) => {
+          if (isCancelled()) throw new Error('用户停止任务');
+          const raw = JSON.parse(fs.readFileSync(accountBackupFile(uid), 'utf8'));
+          const auth = raw.auth || {};
+          const token = auth.accessToken || auth.access_token || auth.token;
+          if (!token) throw new Error('主账号凭据不可用');
+          try { return await activateGrowthAccount(token, { apiHost: PROFILE.apiHost, prompt: message, purpose: 'completion-report', timeoutMs: 60000 }); }
+          catch (_) { throw new Error('云端汇报未确认成功，请检查主账号云端会话；不会自动重试，避免重复发送'); }
+        },
+      });
+      appendRunLog(result.skipped ? result.reason : '已向主账号发送云端汇报会话');
+      return result;
+    } finally { completionReportRunning = false; }
+  };
+  const runNotifier = createAutomationNotifier(automationNotifyToast, 'automation:' + id);
+  run.cleanupNotifications = runNotifier.cleanup;
+  const publicAccounts = () => listAccounts(DATA_DIR).map(a => ({uid:a.uid,nickname:a.nickname,isPrimary:primaryAccountStore.get()===a.uid}));
+  const publicCurrent = () => { const a = currentAccount(); return a ? {uid:a.uid,nickname:a.nickname,isPrimary:primaryAccountStore.get()===a.uid} : null; };
+  const runDeps = { sessionAction, primaryAccount: async () => publicAccounts().find(a=>a.isPrimary) || null, dismissToast: runNotifier.dismiss, completionReport, event, listAccounts: async () => publicAccounts(), currentAccount: publicCurrent, accountSwitch: (account, detail) => withInput(() => automationSwitchAccount(account), !!(detail && detail.restore)), accountStatus: automationAccountStatus, accountCheckin: async (account) => {
+    if (!account || !account.uid) throw new Error('没有可用账号');
+    const result = await claimDailyForUid(account.uid);
+    appendRunLog('account:checkin:' + (result.skipped ? 'skipped' : result.ok ? 'success' : 'failed'));
+    if (result.ok && !result.skipped && cdp.connected) cdpSend('Runtime.evaluate', { expression: "window.dispatchEvent(new CustomEvent('workdaddy:accounts-updated'))" }).catch(() => {});
+    return result;
+  }, httpRequest: automationHttpRequest, domAction: (op, locator, detail) => ['dom.click','dom.type','dom.clear','dom.press'].includes(op) ? withInput(() => automationDomAction(op, locator, { ...detail, isCancelled })) : automationDomAction(op, locator, { ...detail, isCancelled }), sessionSendCurrent, sessionWaitReply, getState: runScopedState, setState: setRunState, isCancelled, notifyToast: async (level, message, detail) => { const result = await runNotifier.show(level, message, detail); appendRunLog('notify:toast:' + level); return result; }, notifySession: async () => { throw new Error('主账号会话通知尚未启用，请先验证 WorkBuddy 会话 API'); }, log: appendRunLog };
+  // 等「收起面板」完成后才开始执行任务（executeTask 内部第一步就点新建任务/聚焦 composer，
+  // 若面板还没收会抢焦点）。结束按 run.wasPanelOpen 恢复展开，若运行前本就收起则保持收起。
+  run.completion = panelPrepare
+    .then(() => executeTask(task, runDeps))
+    .then(async (result) => { if (isCancelled()) throw new Error('任务已停止'); if (run.wasPanelOpen) await automationPanelSetOpen(true); if (run.status === 'running') { run.status = 'success'; run.result = result; run.finishedAt = Date.now(); } log('[automation-focus-diagnostics] automation:finish ' + JSON.stringify({ runId: id, status: run.status, error: run.error })); })
+    .catch(async (error) => { if (run.wasPanelOpen && !run.superseded && (!task.trigger.restartOnNavigation || !event || event.navigationSerial === mainFrameNavigationSerial)) await automationPanelSetOpen(true); run.status = isCancelled() ? 'cancelled' : 'failed'; run.error = run.superseded ? '页面已切换，重新检测新页面' : String(error && error.message || error); run.finishedAt = Date.now(); appendRunLog(run.error); log('[automation-focus-diagnostics] automation:finish ' + JSON.stringify({ runId: id, status: run.status, error: run.error })); })
+    .finally(async () => { try { await runNotifier.cleanup(); } finally { releaseRenderer(); resumeAutomationAfterNavigation(run); } });
+  return run;
+}
+
+function resumeAutomationAfterNavigation(run) {
+  const next = run.pendingEvent;
+  run.pendingEvent = null;
+  if (!next || next.navigationSerial !== mainFrameNavigationSerial) return;
+  const task = readAutomations(DATA_DIR).find((item) => item.id === run.taskId && item.enabled && item.trigger.restartOnNavigation);
+  if (task) startAutomationRun(task, next);
 }
 
 function todayStr(d) {
@@ -2614,24 +3167,31 @@ async function dailyCheckin(accessToken, account = {}) {
 }
 
 /** 对单个账号签到（带每日缓存，幂等：今日已成功过则跳过） */
-async function claimDailyForUid(uid) {
+const checkinClaims = new Map();
+function claimDailyForUid(uid) {
+  if (!PROFILE.capabilities.accounts || PROFILE.capabilities.checkin === false) throw new Error('当前客户端不支持账号签到');
+  if (!/^[A-Za-z0-9_-]{1,128}$/.test(String(uid || ''))) throw new Error('账号 ID 无效');
+  if (checkinClaims.has(uid)) return checkinClaims.get(uid);
+  const promise = performAccountCheckin(uid).finally(() => checkinClaims.delete(uid));
+  checkinClaims.set(uid, promise);
+  return promise;
+}
+
+async function performAccountCheckin(uid) {
   const today = todayStr();
-  const refreshed = await refreshAccountBackupToken(uid);
-  const accountRoot = refreshed.root;
-  const refreshError = refreshed.error || '';
   let dbHit = null;
   try { dbHit = await CREDIT_USAGE_STORE.getDailyCheckin(uid, today); } catch (e) {
     log('[checkin] 读取 SQLite 标记失败: ' + e.message);
   }
-  if (!refreshError && dbHit && dbHit.ok === true && dbHit.verified === true) {
+  if (dbHit && dbHit.date === today && dbHit.ok === true && dbHit.verified === true) {
     return { uid, skipped: true, ...dbHit };
   }
   const cache = loadCheckinCache();
   const hit = cache[uid];
-  const cachedResult = hit && hit.date === today
+  const cachedResult = hit && hit.date === today && hit.ok === true && hit.verified !== false
     ? classifyCheckinResult({ httpOk: true, code: hit.code, message: hit.message })
     : null;
-  if (!refreshError && cachedResult && cachedResult.ok) {
+  if (cachedResult && cachedResult.ok) {
     const migrated = { uid, skipped: true, date: today, ...cachedResult, at: Number(hit.at) || Date.now(), verified: true };
     try {
       await CREDIT_USAGE_STORE.saveDailyCheckin({ uid, date: today, checkedAt: migrated.at, code: migrated.code, message: migrated.message });
@@ -2640,6 +3200,9 @@ async function claimDailyForUid(uid) {
     }
     return migrated;
   }
+  const refreshed = await refreshAccountBackupToken(uid);
+  const accountRoot = refreshed.root;
+  const refreshError = refreshed.error || '';
   if (!accountRoot) return { uid, ok: false, reason: refreshed.error || 'no-backup' };
   const auth = accountRoot.auth && typeof accountRoot.auth === 'object' ? accountRoot.auth : {};
   const tk = auth.accessToken || auth.access_token || auth.token;
@@ -2647,8 +3210,8 @@ async function claimDailyForUid(uid) {
   const account = { uid, domain: auth.domain || '' };
   const r = await dailyCheckin(tk, account);
   const rec = { date: today, ok: !!r.ok, already: !!r.already, inactive: !!r.inactive, code: r.code, message: r.message, at: Date.now(), verified: !!r.ok };
-  cache[uid] = rec;
-  saveCheckinCache(cache);
+  // Merge with the latest cache: different automation tasks may finish different accounts concurrently.
+  saveCheckinCache(Object.assign(loadCheckinCache(), { [uid]: rec }));
   if (rec.ok) {
     try {
       await CREDIT_USAGE_STORE.saveDailyCheckin({ uid, date: today, checkedAt: rec.at, code: rec.code, message: rec.message });
@@ -2657,39 +3220,6 @@ async function claimDailyForUid(uid) {
     }
   }
   return { uid, ...(refreshError ? { refreshError } : {}), ...rec };
-}
-
-/** 对所有账号执行每日签到（自动跳过今日已成功过的，带并发保护） */
-async function claimDailyForAll() {
-  if (!PROFILE.capabilities.accounts) return { skipped: true, reason: 'profile-no-account-files' };
-  if (claimInFlight) return { skipped: true, reason: 'in-flight', checkin: checkinSnapshot() };
-  claimInFlight = true;
-  try {
-    const list = listAccounts(DATA_DIR).map((a) => a.uid);
-    checkinState = { running: true, total: list.length, done: 0, startedAt: Date.now(), finishedAt: 0 };
-    const results = [];
-    for (let i = 0; i < list.length; i++) {
-      const uid = list[i];
-      // 即使 access token 尚未临期，也每天主动刷新一次，避免 refresh token 因长期闲置失效。
-      await refreshAccountBackupToken(uid, { dailyKeepalive: true });
-      let result;
-      try {
-        result = await claimDailyForUid(uid);
-      } catch (e) {
-        result = { uid, ok: false, reason: e.message };
-      }
-      results.push(result);
-      checkinState.done = i + 1;
-      // 账号之间留一点间隔，避免多个账号同时触发服务端限流/连接排队。
-      if (i < list.length - 1 && !result.skipped) await sleep(CHECKIN_QUEUE_DELAY_MS);
-    }
-    log('[checkin] 本轮回检 ' + results.length + ' 个账号');
-    return { total: results.length, results };
-  } finally {
-    checkinState.running = false;
-    checkinState.finishedAt = Date.now();
-    claimInFlight = false;
-  }
 }
 
 /** 通过 CDP 把右下角组件注入到 WorkBuddy 渲染进程（幂等，可反复调用） */
@@ -2749,6 +3279,9 @@ function injectWidget(reason, executionContextId) {
         ...runtimeContext,
       })
     )
+    // Reinjection and daemon replacement must reflect the current input lease,
+    // including a reset after an interrupted run. Reply-waiting never locks UI.
+    .then(async (r) => { await automationPanelSetInputActive(automationInputActive); return r; })
     // 注入脚本若在页面抛错，CDP 协议不报错（无 protocol error），会被误判为"已注入"；
     // 显式检查 exceptionDetails 让失败可见、留痕，便于定位 WorkBuddy 版本差异导致的挂载失败。
     .then((r) => {
@@ -2800,8 +3333,15 @@ function injectWidget(reason, executionContextId) {
 }
 
 function buildInjectScript() {
+  const toastScript = fs.readFileSync(path.join(__dirname, 'toast-runtime.js'), 'utf8');
   const compatScript = fs.readFileSync(path.join(__dirname, 'workbuddy-compat.js'), 'utf8');
   let injectScript = fs.readFileSync(path.join(__dirname, 'inject.js'), 'utf8');
+  const anchor = 'return { destroy: lifecycle.destroy, alive: lifecycle.alive };';
+  if (!injectScript.includes(anchor)) {
+    throw new Error('自动化拾取器注入锚点不存在');
+  }
+  const automationPickerCode = fs.readFileSync(path.join(__dirname, 'automation-picker.js'), 'utf8');
+  injectScript = injectScript.replace(anchor, automationPickerCode + '\n' + anchor);
   // 内部调试模块（元素检查/DevTools）：picker-internal.js 存在才注入（git 不跟踪，
   // 他人环境无此文件 → 隐藏入口的拾取按钮点击会报错，符合预期，不影响面板其他功能）。
   // 注入位置：放进 build() 函数体末尾（与面板共享闭包作用域：root/toast/esc 等），
@@ -2809,14 +3349,13 @@ function buildInjectScript() {
   const pickerPath = path.join(__dirname, 'picker-internal.js');
   if (fs.existsSync(pickerPath)) {
     const pickerCode = fs.readFileSync(pickerPath, 'utf8');
-    const anchor = 'return { destroy: lifecycle.destroy, alive: lifecycle.alive };';
     if (!injectScript.includes(anchor)) {
       throw new Error('picker-internal.js 注入锚点不存在');
     }
     injectScript = injectScript.replace(anchor, pickerCode + '\n' + anchor);
   }
   // 组件内通过 fetch 调用本机 API，注入时写入实际端口
-  return (compatScript + '\n' + injectScript)
+  return (toastScript + '\n' + compatScript + '\n' + injectScript)
     .replace(/__WBS_API__/g, `http://${HOST}:${ACTUAL_PORT}`)
     .replace(/__WBS_VERSION__/g, DAEMON_VERSION)
     // 注入本地 API 能力凭证；旧版面板不会携带该 header，但新版 daemon 会在启动时重新注入新版面板。
@@ -4377,17 +4916,131 @@ function importQuickPhrases(content, password) {
   return { state: readSessionState(), imported, skipped };
 }
 /** 通过 CDP 发送指定短语：聚焦 composer → 全选 → 真实输入短语 → 真实 Enter（replace 式发送，多行短语按段落插入） */
-async function acSendPhrase(text) {
+async function acSendPhrase(text, options = {}) {
   if (!cdp.connected) throw new Error('CDP 未连接');
-  const r = await cdpSend('Runtime.evaluate', {
-    expression: `(()=>{const ce=document.querySelector('.chat-container [contenteditable="true"]')||document.querySelector('[contenteditable="true"]');if(!ce)return 'no-composer';ce.focus();var sel=window.getSelection();var r=document.createRange();r.selectNodeContents(ce);sel.removeAllRanges();sel.addRange(r);return 'ok'})()`,
+  const message = String(text || '').trim();
+  if (!message) throw new Error('发送内容为空');
+  // 新版 toolbar 的 Enter 行为会受输入法/多行模式影响；复用快捷短语的完整
+  // Slate 输入链路，并在提交阶段优先点击官方 cr-send-button。
+  return sendStashToComposer({ content: { text: message, items: [] }, ...options });
+}
+
+function automationAgentSurfaceExpression(focusComposer) {
+  return `(function(){
+    function visible(el){if(!el||el.closest('.wbs-root'))return false;var r=el.getBoundingClientRect();var s=getComputedStyle(el);return r.width>0&&r.height>0&&s.display!=='none'&&s.visibility!=='hidden'}
+    function isNewTask(el){var aria=(el.getAttribute('aria-label')||'').trim();var text=(el.innerText||el.textContent||'').trim();return /^(新建任务|New Task)$/i.test(aria)||/^(新建任务|New Task)$/i.test(text)}
+    function composerText(el){
+      if(!el)return '';
+      if(el.tagName==='TEXTAREA')return String(el.value||'').replace(/[\\uFEFF\\u200B]/g,'').trim();
+      var clone=el.cloneNode(true);
+      clone.querySelectorAll('[data-slate-placeholder="true"],[data-slate-zero-width]').forEach(function(node){node.remove()});
+      return String(clone.innerText||clone.textContent||'').replace(/[\\uFEFF\\u200B]/g,'').trim();
+    }
+    var activeNewTask=Array.from(document.querySelectorAll('button.conversation-list-tab-button.active,button.conversation-list-tab-button.conversation-list-tab-button-box')).some(function(el){return visible(el)&&isNewTask(el)&&(/\\bactive\\b/.test(typeof el.className==='string'?el.className:'')||el.getAttribute('aria-selected')==='true')});
+    var composers=Array.from(document.querySelectorAll('[contenteditable="true"],textarea')).filter(visible);
+    var composer=composers.find(function(el){return !!el.closest('.wb-home-composer')})||(activeNewTask?composers[0]:null);
+    var ready=!!composer&&(activeNewTask||!!composer.closest('.wb-home-composer'));
+    var newTaskReady=!!composer&&activeNewTask;
+    var button=null;
+    // 普通项目页也可能有 composer；自动化发送必须以 newTaskReady 为准，不能被 ready 短路。
+    if(!newTaskReady){
+      var candidates=Array.from(document.querySelectorAll('button.workspace-new-task-button,button.conversation-list-tab-button.conversation-list-tab-button-box,button.conversation-list-tab-button,button[aria-label="新建任务"],button[aria-label="New Task"]'));
+      var target=candidates.find(function(el){return visible(el)&&isNewTask(el)});
+      if(target){var b=target.getBoundingClientRect();button={x:b.left+b.width/2,y:b.top+b.height/2}}
+    }
+    if(ready&&composer&&${focusComposer ? 'true' : 'false'}){
+      composer.focus();
+      if(composer.tagName!=='TEXTAREA'){var selection=window.getSelection();var range=document.createRange();range.selectNodeContents(composer);selection.removeAllRanges();selection.addRange(range)}
+    }
+    return {ready:ready,newTaskReady:newTaskReady,activeNewTask:activeNewTask,hasComposer:!!composer,composerText:composerText(composer),button:button};
+  })()`;
+}
+
+async function readAutomationAgentSurface(focusComposer = false) {
+  const response = await cdpSend('Runtime.evaluate', {
+    expression: automationAgentSurfaceExpression(focusComposer),
     returnByValue: true,
   });
-  if (!(r && r.result && r.result.value === 'ok')) throw new Error('no-composer');
-  await cdpSend('Input.insertText', { text: String(text || '') });
-  await new Promise((r) => setTimeout(r, 260)); // 等待 React/Slate 落定
-  await cdpSend('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 });
-  await cdpSend('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 });
+  return response && response.result && response.result.value;
+}
+
+async function ensureAutomationNewTask(options = {}) {
+  if (!cdp.connected) throw new Error('CDP 未连接');
+  let surface = null;
+  let clicked = false;
+  let readySince = null;
+  let settled = false;
+  const started = Date.now();
+  // Injection can finish before WorkBuddy's account route mounts its sidebar.
+  // Wait for both the entry and destination; never send into a project composer.
+  while (Date.now() - started < 15000) {
+    if (options.guard) await options.guard();
+    try {
+      surface = await readAutomationAgentSurface(false);
+    } catch (error) {
+      if (!/Execution context was destroyed|Cannot find (?:default execution context|context with specified id)/i.test(String(error && error.message || error))) throw error;
+      surface = null;
+    }
+    if (surface && surface.newTaskReady && surface.hasComposer) {
+      // Allow route initialization to settle before focusing a newly mounted editor.
+      if (readySince === null) readySince = Date.now();
+      if (Date.now() - readySince >= 400) { settled = true; break; }
+    } else {
+      readySince = null;
+      if (!clicked && surface && surface.button) {
+        await cdpMouseClick('automation:ensureNewTask', surface.button.x, surface.button.y);
+        clicked = true;
+      }
+    }
+    await sleep(200);
+  }
+  if (options.guard) await options.guard();
+  if ((!surface || !surface.newTaskReady) && !clicked) throw new Error('未找到 WorkBuddy 的新建任务入口');
+  if (!settled) throw new Error('新建任务页面未准备完成，拒绝发送到当前会话');
+  const originalDraftText = surface.composerText;
+  // WorkBuddy retains the home draft. Preserve it through the existing local
+  // stash before trusted editor commands replace it; never log the contents.
+  const backup = await cdpSend('Runtime.evaluate', {
+    expression: `(async function(){var s=${automationAgentSurfaceExpression(false)};if(!s.newTaskReady||typeof window.__wbsSaveAutomationDraft!=='function')return {saved:false};return window.__wbsSaveAutomationDraft()})()`,
+    returnByValue: true, awaitPromise: true,
+  });
+  const saved = backup && backup.result && backup.result.value;
+  if (!saved || !saved.saved) throw new Error('未能安全保存新建任务草稿，请重试');
+  if (options.guard) await options.guard();
+  surface = await readAutomationAgentSurface(true);
+  if (!surface || !surface.newTaskReady || surface.composerText !== originalDraftText) throw new Error('页面或草稿已变化，已保留草稿并取消发送');
+  // The renderer helper already verified the saved draft. These
+  // commands go to the editor directly, avoiding native macOS menu shortcuts.
+  if (surface.composerText) {
+    await cdpSend('Input.dispatchKeyEvent', { type: 'rawKeyDown', commands: ['selectAll'] });
+    await cdpSend('Input.dispatchKeyEvent', { type: 'keyUp' });
+    await cdpSend('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Backspace', code: 'Backspace', windowsVirtualKeyCode: 8 });
+    await cdpSend('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Backspace', code: 'Backspace', windowsVirtualKeyCode: 8 });
+    await sleep(150);
+  }
+  surface = await readAutomationAgentSurface(false);
+  if (!surface || !surface.newTaskReady || surface.composerText) throw new Error('新建任务输入框尚未清空，原草稿已保留在暂存');
+  return surface;
+}
+
+let automationAgentCreating = false;
+async function openNewAutomationAgentTask(prompt) {
+  if (!cdp.connected) throw new Error('CDP 未连接');
+  if (automationAgentCreating) throw new Error('正在创建 Agent 任务，请稍候');
+  const text = String(prompt || '').trim();
+  if (!text || text.length > 50000) throw new Error('Agent 提示词为空或过长');
+  automationAgentCreating = true;
+  try {
+    await ensureAutomationNewTask();
+    // Reuse the tested Slate multiline input and official send-button path.
+    await sendStashToComposer({ content: { text, items: [] } });
+    for (let attempt = 0; attempt < 25; attempt++) {
+      await sleep(200);
+      const after = await readAutomationAgentSurface(false);
+      if (after && (!after.newTaskReady || !after.composerText)) return { sent: true };
+    }
+    throw new Error('Agent 提示词未发送，请重试');
+  } finally { automationAgentCreating = false; }
 }
 
 function currentAccount() {
@@ -4546,20 +5199,28 @@ function buildBusyExpr() {
 }
 
 /** 等待 AI 空闲；超时返回 false */
-async function waitAiIdle(maxMs = 60000, pollMs = 500) {
+async function waitAiIdle(maxMs = 60000, pollMs = 500, isCancelled = () => false) {
   if (!cdp.connected) return true; // CDP 未连接时不等待（后续会报错）
+  log('[quick-phrase-diagnostics] wait-idle:start ' + JSON.stringify({ maxMs, pollMs, targetUrl: cdp.targetUrl }));
   const expr = buildBusyExpr();
   const t0 = Date.now();
+  let probes = 0;
+  if (isCancelled()) throw new Error('任务已停止');
   while (Date.now() - t0 < maxMs) {
+    if (isCancelled()) throw new Error('任务已停止');
     try {
       const r = await cdpSend('Runtime.evaluate', { expression: expr, returnByValue: true });
       const busy = (r.result && r.result.value) === true;
-      if (!busy) return true;
-    } catch (_) {
+      probes++;
+      log('[quick-phrase-diagnostics] wait-idle:probe ' + JSON.stringify({ probe: probes, elapsedMs: Date.now() - t0, busy, active: await cdpFocusDiagnostics('wait-idle:probe', { probe: probes, busy }) }));
+      if (!busy) { log('[quick-phrase-diagnostics] wait-idle:finish ' + JSON.stringify({ ok: true, probes, elapsedMs: Date.now() - t0 })); return true; }
+    } catch (error) {
+      log('[quick-phrase-diagnostics] wait-idle:finish ' + JSON.stringify({ ok: true, reason: 'evaluate-error', error: error.message, probes, elapsedMs: Date.now() - t0 }));
       return true; // evaluate 异常按空闲处理
     }
     await new Promise((res) => setTimeout(res, pollMs));
   }
+  log('[quick-phrase-diagnostics] wait-idle:finish ' + JSON.stringify({ ok: false, reason: 'timeout', probes, elapsedMs: Date.now() - t0 }));
   return false;
 }
 
@@ -4890,7 +5551,6 @@ async function restoreSavedTheme() {
     const f = path.join(DATA_DIR, 'current-theme.json');
     if (fs.existsSync(f)) id = String(JSON.parse(fs.readFileSync(f, 'utf8')).id || 'default');
   } catch (_) {}
-  if (id === 'default') return; // 默认主题 = 官方浅色，无需处理
   await applyThemeByCdp(id);
 }
 
@@ -5092,6 +5752,7 @@ async function applyThemeByCdp(id) {
   const expr = `(function(){
     var h = document.documentElement, b = document.body;
     if (!h || !b) return { pending: true };
+    if (window.__wbsThemeGuard) window.__wbsThemeGuard.disconnect();
     var WBS_UID = ${JSON.stringify(uid || null)};
     // WorkDaddy 自定义主题已应用标记：theme-patches 里部分规则用 html[data-wbs-theme] 限定
     // 只在 WorkDaddy 内置自定义主题下生效（官方默认主题不激活）。
@@ -5137,8 +5798,8 @@ async function applyThemeByCdp(id) {
       h.setAttribute('data-theme', mode);
     }
     var s = document.getElementById('wbs-theme-style');
-    if (s) s.remove();
     if (${id === 'default' ? 'true' : 'false'}) {
+      if (s) s.remove();
       // 默认主题：完全恢复官方浅色（移除 dark 标记，body 恢复官方浅色主题名）
       h.removeAttribute('data-theme'); h.classList.remove('cb-dark');
       b.setAttribute('data-vscode-theme-name', 'IDE Light'); b.classList.remove('vscode-dark');
@@ -5162,10 +5823,33 @@ async function applyThemeByCdp(id) {
         ${JSON.stringify(localCssStr)} +
         ${JSON.stringify(themeVarsCss(isDark))} +
         ${JSON.stringify(extrasCss)} + ${JSON.stringify(bgCssStr)};
-      var st = document.createElement('style');
+      var st = s || document.createElement('style');
       st.id = 'wbs-theme-style';
-      st.textContent = css;
-      (document.head || document.documentElement).appendChild(st);
+      if (st.textContent !== css) st.textContent = css;
+      if (!s) (document.head || document.documentElement).appendChild(st);
+    }
+    // 账号外观在 React 加载后可能再次写入深浅色；只守住已选主题的根属性，
+    // 不扫描会话 DOM。手动切主题时上方会断开旧 observer，避免多份守护互相争抢。
+    var wantedMode = ${JSON.stringify(id === 'default' || !isDark ? 'light' : 'dark')};
+    var wantedDark = wantedMode === 'dark';
+    var wantedKind = wantedDark ? 'vscode-dark' : 'vscode-light';
+    var wantedName = wantedDark ? 'IDE Night' : 'IDE Light';
+    function keepSelectedTheme() {
+      if (h.getAttribute('data-theme') === wantedMode &&
+          h.classList.contains('cb-dark') === wantedDark &&
+          b.getAttribute('data-vscode-theme-kind') === wantedKind &&
+          b.getAttribute('data-vscode-theme-name') === wantedName &&
+          b.classList.contains('vscode-dark') === wantedDark) return;
+      h.classList.toggle('cb-dark', wantedDark);
+      b.classList.toggle('vscode-dark', wantedDark);
+      wbsSyncNativeTheme(wantedMode);
+    }
+    keepSelectedTheme();
+    if (typeof MutationObserver !== 'undefined') {
+      var guard = new MutationObserver(keepSelectedTheme);
+      guard.observe(h, { attributes: true, attributeFilter: ['class', 'data-theme'] });
+      guard.observe(b, { attributes: true, attributeFilter: ['class', 'data-vscode-theme-kind', 'data-vscode-theme-name'] });
+      window.__wbsThemeGuard = guard;
     }
     var cs = getComputedStyle(b);
     return { applied: ${id === 'default' ? 'false' : 'true'}, dark: ${isDark ? 'true' : 'false'}, bg: cs.getPropertyValue('--vscode-editor-background').trim(), text: cs.getPropertyValue('--vscode-editor-foreground').trim() };
@@ -5262,8 +5946,11 @@ async function clearComposerByCdp() {
  */
 async function sendStashToComposer(record) {
   if (!cdp.connected) throw new Error('CDP 未连接，无法发送');
+  log('[quick-phrase-diagnostics] composer:start ' + JSON.stringify({ targetUrl: cdp.targetUrl, itemCount: record && record.content && Array.isArray(record.content.items) ? record.content.items.length : 0 }));
   // 等待 AI 空闲：若正在回复，最多等 60 秒；期间前端会提示"等待空闲"
-  const idle = await waitAiIdle();
+  const idle = await waitAiIdle(60000, record.isCancelled ? 100 : 500, record.isCancelled);
+  if (record.guard) await record.guard();
+  const guardedSend = async (method, params) => { if (record.guard) await record.guard(); return cdpSend(method, params); };
   if (!idle) throw new Error('对话持续回复中（等待 60 秒仍未空闲），已取消发送，请稍后再试');
   const content = record.content || {};
   const allItems = (content.items || []).filter((it) => it && typeof it === 'object');
@@ -5325,14 +6012,14 @@ async function sendStashToComposer(record) {
       return { ok: true };
     } catch (e) { return { ok: false, error: String(e) }; }
   })()`;
-  const fr = await cdpSend('Runtime.evaluate', { expression: focusExpr, returnByValue: true });
+  const fr = await guardedSend('Runtime.evaluate', { expression: focusExpr, returnByValue: true });
   const fv = fr.result && fr.result.value;
   if (!fv || !fv.ok) throw new Error((fv && fv.error) || '无法聚焦输入框');
 
   // 1.5) 清空输入框已有内容（避免与暂存内容拼接）。
   // 关键：不能用 document.execCommand('delete') —— execCommand 绕过 Slate 的 model 同步，
   // 会破坏编辑器内部 selection 状态，导致之后「退格/全选失效、只能追加文字」。
-  // 改用 CDP 真实键盘事件：Cmd+A 全选 + Backspace 删除，Slate 完全感知（onKeyDown -> beforeinput 链路）。
+  // 使用 CDP 编辑命令全选 + 真实 Backspace 删除，让 Slate 感知 selection / beforeinput。
   const clearExpr = `(function(){
     try {
       var mic = document.querySelector('.voice-mic-wrap');
@@ -5351,19 +6038,25 @@ async function sendStashToComposer(record) {
       }
       if (!ed) return { ok: false, error: 'no editor' };
       ed.focus();
-      return { ok: true, hasContent: ((ed.innerText || '').replace(/[\\uFEFF\\u200B\\u00A0]/g, '').trim().length > 0) || !!ed.querySelector('[data-contentblock]') };
+      // Slate renders its placeholder inside the editor. It is not a draft;
+      // inspect a detached clone so the live editor and its selection stay intact.
+      var clone = ed.cloneNode(true);
+      clone.querySelectorAll('[data-slate-placeholder="true"],[data-slate-zero-width]').forEach(function(node){ node.remove(); });
+      return { ok: true, hasContent: ((clone.innerText || clone.textContent || '').replace(/[\\uFEFF\\u200B\\u00A0]/g, '').trim().length > 0) || !!ed.querySelector('[data-contentblock]') };
     } catch (e) { return { ok: false, error: String(e) }; }
   })()`;
-  const clr = await cdpSend('Runtime.evaluate', { expression: clearExpr, returnByValue: true });
+  const clr = await guardedSend('Runtime.evaluate', { expression: clearExpr, returnByValue: true });
   const clrV = clr.result && clr.result.value;
   if (!clrV || !clrV.ok) throw new Error((clrV && clrV.error) || '无法聚焦输入框');
+  if (record.requireEmpty && clrV.hasContent) throw new Error('会话输入框非空，未覆盖草稿、未发送');
   if (clrV.hasContent) {
-    // Cmd+A 全选（macOS meta=4）→ Backspace 删除
-    await cdpSend('Input.dispatchKeyEvent', { type: 'keyDown', key: 'a', code: 'KeyA', modifiers: 4, windowsVirtualKeyCode: 65, nativeVirtualKeyCode: 65 });
-    await cdpSend('Input.dispatchKeyEvent', { type: 'keyUp', key: 'a', code: 'KeyA', modifiers: 4, windowsVirtualKeyCode: 65, nativeVirtualKeyCode: 65 });
+    // 直接执行 renderer 编辑命令，不经过 macOS 原生菜单快捷键。
+    // 旧 Cmd+A 把 Windows 的 65 当作 macOS 原生键码，会误弹“关于 WorkBuddy”并阻塞 CDP。
+    await guardedSend('Input.dispatchKeyEvent', { type: 'rawKeyDown', commands: ['selectAll'] });
+    await guardedSend('Input.dispatchKeyEvent', { type: 'keyUp' });
     await new Promise((r) => setTimeout(r, 120));
-    await cdpSend('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Backspace', code: 'Backspace', windowsVirtualKeyCode: 8, nativeVirtualKeyCode: 8 });
-    await cdpSend('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Backspace', code: 'Backspace', windowsVirtualKeyCode: 8, nativeVirtualKeyCode: 8 });
+    await guardedSend('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Backspace', code: 'Backspace', windowsVirtualKeyCode: 8 });
+    await guardedSend('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Backspace', code: 'Backspace', windowsVirtualKeyCode: 8 });
     await new Promise((r) => setTimeout(r, 300));
   }
 
@@ -5374,13 +6067,13 @@ async function sendStashToComposer(record) {
     if (lines[li]) {
       const CHUNK = 4000;
       for (let i = 0; i < lines[li].length; i += CHUNK) {
-        await cdpSend('Input.insertText', { text: lines[li].slice(i, i + CHUNK) });
+        await guardedSend('Input.insertText', { text: lines[li].slice(i, i + CHUNK) });
         if (i + CHUNK < lines[li].length) await new Promise((r) => setTimeout(r, 40));
       }
     }
     if (li < lines.length - 1) {
-      await cdpSend('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', modifiers: 8 }); // Shift+Enter
-      await cdpSend('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', code: 'Enter', modifiers: 8 });
+      await guardedSend('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', modifiers: 8 }); // Shift+Enter
+      await guardedSend('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', code: 'Enter', modifiers: 8 });
     }
   }
 
@@ -5402,7 +6095,7 @@ async function sendStashToComposer(record) {
     return ed ? ed.querySelectorAll('[data-contentblock]').length : 0;
   })()`;
   const countBlocks = async () => {
-    const r = await cdpSend('Runtime.evaluate', { expression: countExpr, returnByValue: true });
+    const r = await guardedSend('Runtime.evaluate', { expression: countExpr, returnByValue: true });
     return (r.result && r.result.value) || 0;
   };
   let imagesRestored = 0;
@@ -5435,7 +6128,7 @@ async function sendStashToComposer(record) {
         return { ok: true };
       } catch (e) { return { ok: false, error: String(e) }; }
     })()`;
-    const ir = await cdpSend('Runtime.evaluate', { expression: pasteExpr, returnByValue: true });
+    const ir = await guardedSend('Runtime.evaluate', { expression: pasteExpr, returnByValue: true });
     const iv = ir.result && ir.result.value;
     if (!iv || !iv.ok) return false;
     // 轮询验证（最多 ~3 秒）contentblock 数量是否增加
@@ -5479,11 +6172,41 @@ async function sendStashToComposer(record) {
   if (blockText) text = text ? text + '\n' + blockText : blockText;
   blocksFailed = blockItems.length;
 
-  // 等 React 重渲染使发送按钮可用
-  await new Promise((r) => setTimeout(r, 250));
-
   const sendExpr = `(function(){
     try {
+      // WorkBuddy 新版输入框有稳定的官方发送按钮；优先使用它，避免把增强/语音
+      // 等同样是圆形的 toolbar 控件误判为发送。
+      var sendLabel = '\\u53d1\\u9001';
+      function visible(button) {
+        var r = button.getBoundingClientRect(), s = getComputedStyle(button);
+        return r.width >= 16 && r.height >= 16 && r.bottom > 0 && s.display !== 'none' && s.visibility !== 'hidden';
+      }
+      var active = document.activeElement;
+      var inputBox = active && active.closest ? active.closest('.cr-input-box') : null;
+      if (!inputBox) {
+        var boxes = Array.from(document.querySelectorAll('.cr-input-box')).filter(visible);
+        if (boxes.length > 1) return { ok: false, retryable: true, error: '未找到发送按钮' };
+        inputBox = boxes[0] || null;
+      }
+      var officialButtons = Array.from((inputBox || document).querySelectorAll('button.cr-send-button,button[aria-label="' + sendLabel + '"],[role="button"][aria-label="' + sendLabel + '"],button[aria-label="Send"],[role="button"][aria-label="Send"]'));
+      var official = officialButtons.find(function(button) {
+        return visible(button) && !button.closest('.wbs-root') && !button.classList.contains('cr-send-button--stop');
+      });
+      if (official) {
+        var or = official.getBoundingClientRect(), os = getComputedStyle(official);
+        var od = official.disabled === true || official.hasAttribute('disabled') || official.getAttribute('aria-disabled') === 'true';
+        if (or.width >= 16 && or.height >= 16 && or.bottom > 0 && os.display !== 'none' && os.visibility !== 'hidden') {
+          // A disabled official button is still the correct target. Account/model
+          // startup may enable it later; never fall through to another control.
+          if (od || os.pointerEvents === 'none') return { ok: false, retryable: true, error: '发送按钮禁用（输入内容未被识别）' };
+          official.scrollIntoView({ block: 'center', inline: 'center' });
+          or = official.getBoundingClientRect();
+          return { ok: true, x: or.x + or.width / 2, y: or.y + or.height / 2, selector: 'official-send-button' };
+        }
+      }
+      // The modern toolbar may still be mounting. Keep waiting within this
+      // composer instead of guessing a different toolbar's circular control.
+      if (inputBox || officialButtons.length) return { ok: false, retryable: true, error: '未找到发送按钮' };
       var mic = document.querySelector('.voice-mic-wrap');
       var row = mic ? mic.parentElement : null;
       if (!row) {
@@ -5518,19 +6241,30 @@ async function sendStashToComposer(record) {
       if (!matches.length) return { ok: false, error: '未找到发送按钮' };
       var btn = matches[matches.length - 1];
       var dis = btn.disabled === true || (btn.hasAttribute && btn.hasAttribute('disabled'));
-      if (dis) return { ok: false, error: '发送按钮禁用（输入内容未被识别）' };
+      if (dis) return { ok: false, retryable: true, error: '发送按钮禁用（输入内容未被识别）' };
       btn.scrollIntoView({ block: 'center', inline: 'center' });
       var b = btn.getBoundingClientRect();
       return { ok: true, x: b.x + b.width / 2, y: b.y + b.height / 2 };
     } catch (e) { return { ok: false, error: String(e) }; }
   })()`;
-  const sr = await cdpSend('Runtime.evaluate', { expression: sendExpr, returnByValue: true });
-  const sv = sr.result && sr.result.value;
+  // Only retry the readiness probe, never typing or submitting: after a switch
+  // React may need more than one frame to enable the official send button.
+  const sendDeadline = Date.now() + 5000;
+  let sv;
+  while (Date.now() < sendDeadline) {
+    if (record.isCancelled && record.isCancelled()) throw new Error('任务已停止');
+    const sr = await guardedSend('Runtime.evaluate', { expression: sendExpr, returnByValue: true });
+    sv = sr.result && sr.result.value;
+    if (!sv || sv.ok || !sv.retryable || Date.now() >= sendDeadline) break;
+    await new Promise((resolve) => setTimeout(resolve, Math.min(200, sendDeadline - Date.now())));
+  }
+  if (Date.now() >= sendDeadline) throw new Error('等待发送按钮可点击超时（5 秒），未发送');
   if (!sv || !sv.ok) throw new Error((sv && sv.error) || '未找到发送按钮');
-  await cdpSend('Input.dispatchMouseEvent', { type: 'mouseMoved', x: sv.x, y: sv.y });
-  await cdpSend('Input.dispatchMouseEvent', { type: 'mousePressed', x: sv.x, y: sv.y, button: 'left', clickCount: 1 });
-  await cdpSend('Input.dispatchMouseEvent', { type: 'mouseReleased', x: sv.x, y: sv.y, button: 'left', clickCount: 1 });
-  return { sent: true, textLen: text.length, itemCount: allItems.length, imagesRestored, imagesFailed, blocksRestored, blocksFailed };
+  if (record.guard) await record.guard();
+  await cdpMouseClick('automation:sendPhrase', sv.x, sv.y, { textLen: text.length, button: sv });
+  const result = { sent: true, textLen: text.length, itemCount: allItems.length, imagesRestored, imagesFailed, blocksRestored, blocksFailed };
+  log('[quick-phrase-diagnostics] composer:finish ' + JSON.stringify({ ok: true, result: { sent: result.sent, textLen: result.textLen, itemCount: result.itemCount } }));
+  return result;
 }
 
 /**
@@ -5898,6 +6632,183 @@ function handleApi(req, res) {
     );
   }
 
+  if (req.method === 'GET' && p === '/api/automations/capabilities') {
+    return json(res, 200, { ok: true, schemaVersion: 1, capabilities: AUTOMATION_CAPABILITIES.filter(item => item.available !== false), protocolZh: automationCapabilityText('zh'), protocolEn: automationCapabilityText('en') });
+  }
+
+  if (req.method === 'POST' && ['/api/automations/export', '/api/automations/import/preview', '/api/automations/import'].includes(p)) {
+    return readTransferBody(req).then(body => {
+      const runtime = { version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform };
+      if (p === '/api/automations/export') return exportTasks(readAutomations(DATA_DIR), body && body.ids);
+      if (p === '/api/automations/import/preview') return previewImport(body, readAutomations(DATA_DIR), runtime);
+      return importTasks(DATA_DIR, body, runtime);
+    }).then(result => json(res, 200, { ok: true, ...result }))
+      .catch(error => json(res, 400, { ok: false, error: error.message }));
+  }
+
+  if (req.method === 'POST' && p === '/api/automations/packages/preview') {
+    return readBody(req).then(body => {
+      try {
+        const preview = previewPackage(body && body.document, { values: body && body.values, runtime: { version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform } });
+        return json(res,200,{ok:true,packageFormatVersion:PACKAGE_FORMAT_VERSION,...preview});
+      } catch(error) { return json(res,400,{ok:false,error:error.message}); }
+    });
+  }
+
+  if (req.method === 'POST' && ['/api/automations/validate','/api/automations/dry-run'].includes(p)) {
+    return readBody(req).then(body => {
+      try {
+        if (body && body.kind != null) throw new Error('任务包或索引不能作为本地任务执行');
+        const task = validateTask(body && body.task ? body.task : body);
+        const operations = [];
+        const walk = value => { if (Array.isArray(value)) value.forEach(walk); else if (value && typeof value === 'object') { if (value.op) operations.push(value.op); Object.values(value).forEach(walk); } };
+        walk([task.steps,task.onSuccess,task.onFailure]);
+        return json(res,200,{ok:true,taskId:task.id,mode:'static',executed:false,requiresRenderer:taskNeedsPanelClosed(task),operations,warnings:[...new Set(operations.filter(op=>AUTOMATION_CAPABILITIES.some(c=>c.id===op&&c.deprecated)).map(op=>'Deprecated: '+op))]});
+      } catch(error) { return json(res,400,{ok:false,error:error.message}); }
+    });
+  }
+
+  if (req.method === 'GET' && p === '/api/automations/agent-info') {
+    try {
+      const paths = ensureAgentBridge(DATA_DIR, { profileId: PROFILE.id });
+      const examples = AUTOMATION_AGENT_EXAMPLES.map((item) => ({
+        id: item.id,
+        titleZh: item.titleZh,
+        titleEn: item.titleEn,
+        descriptionZh: item.descriptionZh,
+        descriptionEn: item.descriptionEn,
+        promptZh: item.promptZh,
+        promptEn: item.promptEn,
+      }));
+      return json(res, 200, { ok: true, profileId: PROFILE.id, examples, protocolZh: paths.protocolZh, protocolEn: paths.protocolEn });
+    } catch (error) { return json(res, 500, { ok: false, error: error.message }); }
+  }
+
+  if (req.method === 'POST' && p === '/api/automations/agent-generate') {
+    return readBody(req).then(async (body) => {
+      try {
+        const request = createAgentRequest(DATA_DIR, {
+          exampleId: body && body.exampleId,
+          prompt: body && body.prompt,
+          language: body && body.language,
+          profileId: PROFILE.id,
+        });
+        await openNewAutomationAgentTask(request.prompt);
+        log(`[automation-agent] 已发送自动化创建请求 example=${request.exampleId} request=${request.requestId}`);
+        return json(res, 202, {
+          ok: true,
+          requestId: request.requestId,
+          exampleId: request.exampleId,
+          title: request.title,
+          resultFile: request.resultFile,
+        });
+      } catch (error) {
+        return json(res, 409, { ok: false, error: error.message });
+      }
+    });
+  }
+
+  if (req.method === 'POST' && p === '/api/automations/events') {
+    return readBody(req).then((body) => {
+      if (!body || body.type !== 'panelOpened') return json(res, 400, { ok: false, error: '不支持的面板事件' });
+      dispatchAutomationEvent('panelOpened', { source: 'panel' });
+      return json(res, 200, { ok: true });
+    });
+  }
+
+  if (req.method === 'GET' && p === '/api/automations') {
+    const imported = importAgentInbox(DATA_DIR, { profileId: PROFILE.id });
+    imported.forEach((item) => log(`[automation-agent] request=${item.requestId} ${item.ok ? 'imported=' + item.taskId : 'rejected=' + item.error}`));
+    const tasks = readAutomations(DATA_DIR);
+    const runs = Array.from(automationRuns.values()).slice(-50).map(automationPublicRun);
+    return json(res, 200, { ok: true, tasks: tasks.map((task) => ({ ...task, manualRunnable: canManuallyRunTask(task), compatible: isTaskCompatible(task) })), runs });
+  }
+
+  if (req.method === 'POST' && p === '/api/automations/logs/clear') {
+    return readBody(req).then((body) => {
+      const taskId = String(body && body.taskId || '').trim();
+      if (!taskId) return json(res, 400, { ok: false, error: '自动化任务 ID 不能为空' });
+      let cleared = 0;
+      for (const [runId, run] of automationRuns) {
+        if (run.taskId === taskId && run.status !== 'running') {
+          automationRuns.delete(runId);
+          cleared += 1;
+        }
+      }
+      return json(res, 200, { ok: true, taskId, cleared });
+    });
+  }
+
+  if (req.method === 'POST' && p === '/api/automations') {
+    return readBody(req).then((body) => {
+      try {
+        if (body && body.kind != null) throw new Error('任务包或索引不能作为本地任务执行');
+        const task = validateTask(body && body.task ? body.task : body);
+        const tasks = readAutomations(DATA_DIR);
+        const index = tasks.findIndex((item) => item.id === task.id);
+        if (index >= 0 && !isSupportedTaskSchema(tasks[index])) throw new Error('任务使用更新的协议，请升级 WorkDaddy 后再编辑');
+        if (index < 0 && tasks.length >= 200) throw new Error('自动化任务数量已达到上限');
+        if (index >= 0) tasks[index] = task; else tasks.unshift(task);
+        writeAutomations(DATA_DIR, tasks);
+        return json(res, 200, { ok: true, task });
+      } catch (error) { return json(res, 400, { ok: false, error: error.message }); }
+    });
+  }
+
+  if (req.method === 'POST' && p === '/api/automations/run') {
+    return readBody(req).then((body) => {
+      try {
+        const id = String(body && body.id || '').trim();
+        const task = readAutomations(DATA_DIR).find((item) => item.id === id);
+        if (!task) return json(res, 404, { ok: false, error: '自动化任务不存在' });
+        if (!canManuallyRunTask(task)) return json(res, 409, { ok: false, error: '此任务由事件或定时自动触发，无需手动运行' });
+        const running = Array.from(automationRuns.values()).find((run) => run.taskId === id && run.status === 'running');
+        if (running) return json(res, 409, { ok: false, error: '任务正在运行', run: automationPublicRun(running) });
+        const run = startAutomationRun(task);
+        return json(res, 202, { ok: true, run: automationPublicRun(run) });
+      } catch (error) { return json(res, 400, { ok: false, error: error.message }); }
+    });
+  }
+
+  if (req.method === 'GET' && p === '/api/automations/run-status') {
+    const run = automationRuns.get(String(url.searchParams.get('id') || ''));
+    return run ? json(res, 200, { ok: true, run: automationPublicRun(run) }) : json(res, 404, { ok: false, error: '运行记录不存在' });
+  }
+
+  if (req.method === 'POST' && p === '/api/automations/stop') {
+    return readBody(req).then(async (body) => {
+      const run = automationRuns.get(String(body && body.runId || ''));
+      if (!run) return json(res, 404, { ok: false, error: '运行记录不存在' });
+      // 当前执行器的网络/CDP调用由超时控制；停止请求先标记状态，避免新的批量运行进入。
+      if (run.status === 'running') { run.pendingEvent = null; run.status = 'cancelled'; run.finishedAt = Date.now(); run.error = '用户停止任务'; }
+      if (run.cleanupNotifications) await run.cleanupNotifications();
+      return json(res, 200, { ok: true, run: automationPublicRun(run) });
+    });
+  }
+
+  if (req.method === 'POST' && p === '/api/automations/bulk') {
+    return readBody(req).then((body) => {
+      try {
+        const ids = Array.isArray(body && body.ids) ? body.ids.map((id) => String(id || '').trim()).filter(Boolean).slice(0, 200) : [];
+        const action = String(body && body.action || '').trim();
+        const tasks = readAutomations(DATA_DIR);
+        const selected = tasks.filter((task) => ids.includes(task.id));
+        if (!selected.length) return json(res, 400, { ok: false, error: '未选择自动化任务' });
+        if (action === 'delete') {
+          writeAutomations(DATA_DIR, tasks.filter((task) => !ids.includes(task.id)));
+        } else if (action === 'enable' || action === 'disable') {
+          if (selected.some(task => !isTaskCompatible(task))) throw new Error('任务使用更新的协议，请升级 WorkDaddy 后再编辑');
+          selected.forEach((task) => { task.enabled = action === 'enable'; task.updatedAt = Date.now(); });
+          writeAutomations(DATA_DIR, tasks);
+        } else if (action === 'run') {
+          if (selected.some((task) => !canManuallyRunTask(task))) return json(res, 409, { ok: false, error: '此任务由事件或定时自动触发，无需手动运行' });
+          selected.forEach((task) => { if (!Array.from(automationRuns.values()).some((run) => run.taskId === task.id && run.status === 'running')) startAutomationRun(task); });
+        } else return json(res, 400, { ok: false, error: '不支持的批量操作' });
+        return json(res, 200, { ok: true, action, count: selected.length, tasks: readAutomations(DATA_DIR) });
+      } catch (error) { return json(res, 400, { ok: false, error: error.message }); }
+    });
+  }
+
   if (req.method === 'GET' && p === '/api/ask-mode') {
     return json(res, 200, { ok: true, ...getAskModeState() });
   }
@@ -6051,11 +6962,13 @@ function handleApi(req, res) {
   }
   // 会话模块：POST /api/quick-phrase-send { text }（CDP 替换输入框内容并发送）
   if (req.method === 'POST' && p === '/api/quick-phrase-send') {
-    return readBody(req).then((body) =>
-      acSendPhrase(body.text)
-        .then(() => json(res, 200, { ok: true }))
-        .catch((e) => json(res, 500, { ok: false, error: e.message }))
-    );
+    log('[quick-phrase-diagnostics] api:received ' + JSON.stringify({ method: req.method, path: p }));
+    return readBody(req).then((body) => {
+      log('[quick-phrase-diagnostics] send:start ' + JSON.stringify({ textLen: String(body && body.text || '').length }));
+      return acSendPhrase(body.text)
+        .then((result) => { log('[quick-phrase-diagnostics] send:finish ' + JSON.stringify({ ok: true, result: result && { sent: result.sent, textLen: result.textLen } })); return json(res, 200, { ok: true }); })
+        .catch((e) => { log('[quick-phrase-diagnostics] send:finish ' + JSON.stringify({ ok: false, error: e.message })); return json(res, 500, { ok: false, error: e.message }); });
+    });
   }
 
   if (req.method === 'POST' && p === '/api/click') {
@@ -6080,7 +6993,9 @@ function handleApi(req, res) {
       if (!uid) return json(res, 400, { ok: false, error: '缺少 uid' });
       if (!/^[A-Za-z0-9_-]{1,128}$/.test(uid)) return json(res, 400, { ok: false, error: 'uid 格式无效' });
       try {
+        const wasPrimary = primaryAccountStore.get() === uid;
         const r = deleteAccount(DATA_DIR, uid, log);
+        if (wasPrimary) primaryAccountStore.set('');
         const rulesRemoved = removeAutoCopyAccount(DATA_DIR, uid);
         log(`[delete] 已永久删除账号备份 ${uid}（auth 存档清理 ${r.authFilesRemoved} 个）`);
         return json(res, 200, { ok: true, deleted: r.deleted, uid, rulesRemoved, authFilesRemoved: r.authFilesRemoved });
@@ -6096,7 +7011,7 @@ function handleApi(req, res) {
     return (async () => {
       let quit = false;
       let relaunched = false;
-      const resolution = resolveCurrentAuth();
+      const resolution = resolveLogoutAuth();
       if (!resolution.file || resolution.ambiguous) {
         return json(res, 409, { ok: false, quit, relaunched, error: '当前登录文件无法唯一确认，已拒绝退出登录' });
       }
@@ -6254,16 +7169,17 @@ function handleApi(req, res) {
     return writeDiagnosticsSnapshot('api-post').then((snapshot) => json(res, 200, { ok: true, file: DIAGNOSTICS_FILE, diagnostics: snapshot }));
   }
 
+  if (req.method === 'POST' && p === '/api/accounts/primary') {
+    return readBody(req).then((body) => {
+      try { return json(res, 200, { ok: true, primaryUid: primaryAccountStore.set(body.uid) }); }
+      catch (error) { return json(res, 400, { ok: false, error: error.message }); }
+    });
+  }
+
   if (req.method === 'GET' && p === '/api/accounts') {
-    // 面板打开即自动对全部账号签到（带每日缓存，幂等，不阻塞响应）
-    // checkinStatus=1 仅回读缓存和队列状态，不重复触发一轮签到，供面板轮询使用。
-    if (url.searchParams.get('checkinStatus') !== '1') {
-      claimDailyForAll().catch((e) => log('[checkin] 自动签到失败: ' + e.message));
-    }
     const accounts = listAccounts(DATA_DIR);
     const cache = loadCheckinCache();
     const today = todayStr();
-    const checkinPending = !!claimInFlight;
     return CREDIT_USAGE_STORE.listDailyCheckins(accounts.map((a) => a.uid), today)
       .catch((error) => {
         log('[checkin] 读取 SQLite 标记失败: ' + error.message);
@@ -6276,7 +7192,8 @@ function handleApi(req, res) {
             ? c
             : null;
           return Object.assign({}, a, {
-            checkin: checkinDisplayValue(checked, today, checkinPending),
+            checkin: checkinDisplayValue(checked, today),
+            activityStreak: growthStreakCache.peek(a.uid),
           });
         });
         return listDailyUsage(enriched, today)
@@ -6284,11 +7201,11 @@ function handleApi(req, res) {
             const withUsage = enriched.map((account) => summaries[account.uid]
               ? Object.assign({}, account, { todayUsage: summaries[account.uid] })
               : account);
-            return json(res, 200, { ok: true, current: currentAccount(), accounts: withUsage, checkin: checkinSnapshot() });
+            return json(res, 200, { ok: true, current: currentAccount(), primaryUid: primaryAccountStore.get(), accounts: withUsage });
           })
           .catch((error) => {
             log('[credits-usage] 读取本地今日用量失败: ' + error.message);
-            return json(res, 200, { ok: true, current: currentAccount(), accounts: enriched, checkin: checkinSnapshot() });
+            return json(res, 200, { ok: true, current: currentAccount(), primaryUid: primaryAccountStore.get(), accounts: enriched });
           });
       });
   }
@@ -6338,6 +7255,18 @@ function handleApi(req, res) {
         if (e && e.expired) return json(res, 401, { ok: false, expired: true, error: '登录身份过期' });
         return json(res, 500, { ok: false, error: e.message });
       }
+    });
+  }
+
+  // Read-only per-account continuous activity count; never creates a conversation or changes accounts.
+  if (req.method === 'POST' && p === '/api/growth/streak') {
+    return readBody(req).then(async (body) => {
+      const uid = String(body && body.uid || '').trim();
+      if (!/^[A-Za-z0-9_-]{1,128}$/.test(uid)) return json(res, 400, { ok: false, error: 'uid 格式无效' });
+      if (PROFILE.id !== 'workbuddy-cn') return json(res, 400, { ok: false, error: '当前客户端不支持成长活跃查询' });
+      if (!fs.existsSync(accountBackupFile(uid))) return json(res, 404, { ok: false, error: '账号备份不存在' });
+      const activityStreak = await growthStreakCache.get(uid);
+      return json(res, 200, { ok: true, uid, activityStreak });
     });
   }
 
@@ -6652,7 +7581,7 @@ function handleApi(req, res) {
   if (req.method === 'GET' && p === '/api/sleep-mode') {
     let st = { mode: 'allow', displaySleep: false };
     try { st = Object.assign(st, JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'sleep-mode.json'), 'utf8'))); } catch (_) {}
-    return json(res, 200, { ok: true, mode: st.mode, displaySleep: !!st.displaySleep, preventing: st.mode === 'keep' || st.mode === 'until-done', active: !!sleepCaffeinate, antiLock: !!sleepUserActivityTimer });
+    return json(res, 200, { ok: true, mode: st.mode, displaySleep: !!st.displaySleep, preventing: st.mode === 'keep' || st.mode === 'until-done', active: !!(IS_WIN ? sleepPowershell : sleepCaffeinate), antiLock: !!sleepUserActivityTimer });
   }
   if (req.method === 'POST' && p === '/api/sleep-mode') {
     return readBody(req).then((body) => {
@@ -7607,17 +8536,21 @@ function handleApi(req, res) {
             }
           } catch (_) { /* 读不到就跳过自动聚焦会话 */ }
           try {
+            pendingAutomationAccountSwitch = { account: { uid: acct.uid, nickname: acct.nickname } };
             await reloadWorkBuddyPage();
             reloaded = true;
             log('[switch] 已通过 CDP 刷新 WorkBuddy 窗口');
-            // 切换后通过接口自动签到（带每日缓存，幂等）
-            claimDailyForUid(uid)
-              .then((r) => log('[checkin] 切换后自动签到 ' + uid + ': ' + (r.ok ? '已领取' : '失败 ' + (r.reason || r.message))))
-              .catch((e) => log('[checkin] 切换后签到异常: ' + e.message));
+            // 某些 renderer 不发送 Page.loadEventFired；刷新流程已返回且新页面已挂载时兜底。
+            if (pendingAutomationAccountSwitch) {
+              const switchEvent = pendingAutomationAccountSwitch;
+              pendingAutomationAccountSwitch = null;
+              dispatchAutomationEvent('pageReady', { navigationSerial: mainFrameNavigationSerial, source: 'account-switch-fallback', account: switchEvent.account });
+            }
             if (sourceSessionTitle) {
               autoFocusSessionByTitle(sourceSessionTitle, log);
             }
           } catch (e) {
+            pendingAutomationAccountSwitch = null;
             log(`[switch] CDP 刷新失败: ${e.message}`);
           }
         }
@@ -7724,7 +8657,7 @@ function applySleepMode(mode, displaySleep) {
       return true;
     }
     const wantArgs = displaySleep ? '-i-s-m' : '-d-i-s-m';
-    const curArgs = sleepCaffeinate ? sleepCaffeinate.spawnargs.slice(1).join('-') : null;
+    const curArgs = sleepCaffeinate ? sleepCaffeinate.spawnargs.slice(1).join('') : null;
     const wantLock = !displaySleep; // 防锁屏仅在显示器保持唤醒时有效
     const curLock = !!sleepUserActivityTimer;
     if (curArgs === wantArgs && curLock === wantLock) return true; // 已按同样参数在防休眠（含防锁屏状态），无需重启
@@ -7734,7 +8667,7 @@ function applySleepMode(mode, displaySleep) {
       log('[sleep] 禁止休眠已开启（模式=' + mode + (displaySleep ? '，允许显示器休眠，防锁屏关闭' : '，显示器保持唤醒，防锁屏开启') + '）');
     } catch (e) { log('[sleep] 开启失败: ' + e.message); return false; }
   } else {
-    if (!sleepCaffeinate && !sleepUserActivityTimer) return true;
+    if (!sleepCaffeinate && !sleepPowershell && !sleepUserActivityTimer) return true;
     stopCaffeinate();
     log('[sleep] 禁止休眠已解除（允许电脑休眠）');
   }
@@ -7924,6 +8857,12 @@ process.on('unhandledRejection', (reason) => {
 
 ensureDirs(DATA_DIR, log);
 if (!acquireDaemonLock()) process.exit(0);
+ensureAgentBridge(DATA_DIR, { profileId: PROFILE.id });
+const automationAgentInboxTimer = setInterval(() => {
+  const imported = importAgentInbox(DATA_DIR, { profileId: PROFILE.id });
+  imported.forEach((item) => log(`[automation-agent] request=${item.requestId} ${item.ok ? 'imported=' + item.taskId : 'rejected=' + item.error}`));
+}, 1000);
+automationAgentInboxTimer.unref && automationAgentInboxTimer.unref();
 CREDIT_USAGE_STORE.initialize().catch((error) => log('[credits-usage] 初始化数据库失败: ' + error.message));
 // 首次启动初始化（新电脑 / 数据目录为空时）：内置壁纸 + WorkDaddy 主题 + 默认蒙版 10%
 initBuiltinAssets();
@@ -7941,18 +8880,26 @@ log(`登录信息文件: ${currentAuthFile() || '(未唯一确认)'}`);
 log(`备份目录: ${DATA_DIR}`);
 updateDebug('daemon-start', { authFile: currentAuthFile(), dataDir: DATA_DIR, appPath: IS_WIN ? WORKDADDY_DIR_WIN : macWorkDaddyAppPath(), apiPort: UI_PORT_BASE });
 
+for (const preset of ['close-buddy-popups.json', ...(PROFILE.capabilities.accounts ? ['keep-accounts-active.json'] : [])]) {
+  try { installBuiltinTask(DATA_DIR, path.join(__dirname, 'builtin/automations', preset)); }
+  catch (_) { log('[automation] 初始化内置任务失败'); }
+}
+if (PROFILE.capabilities.accounts && PROFILE.capabilities.checkin !== false) {
+  try { installBuiltinTask(DATA_DIR, path.join(__dirname, 'builtin/automations/daily-account-checkin.json')); }
+  catch (_) { log('[automation] 初始化签到任务失败'); }
+}
 restoreSleepMode();
 startServer();
 cdpLoop();
-// 启动后给网络和本地存储留出就绪时间，再补一轮；之后每小时兜底。
-const startupCheckinTimer = setTimeout(() => {
-  claimDailyForAll().catch((e) => log('[checkin] 启动签到失败: ' + e.message));
-}, CHECKIN_STARTUP_DELAY_MS);
-startupCheckinTimer.unref && startupCheckinTimer.unref();
-const periodicCheckinTimer = setInterval(() => {
-  claimDailyForAll().catch((e) => log('[checkin] 定时签到失败: ' + e.message));
-}, CHECKIN_INTERVAL_MS);
-periodicCheckinTimer.unref && periodicCheckinTimer.unref();
+// All automatic check-in entry points are owned by the visible automation task.
+const tickAutomationSchedules = createScheduleTicker(DATA_DIR);
+function runAutomationSchedules() {
+  tickAutomationSchedules(readAutomations(DATA_DIR), startAutomationRun,
+    (id) => Array.from(automationRuns.values()).some((run) => run.taskId === id && run.status === 'running'));
+}
+runAutomationSchedules();
+const automationScheduleTimer = setInterval(runAutomationSchedules, 1000);
+automationScheduleTimer.unref && automationScheduleTimer.unref();
 // 自动更新：启动时检查一次（延迟 8s 等网络就绪），之后每 6 小时一次
 setTimeout(() => { checkUpdate(true).catch(() => {}); }, 8000);
 updateTimer = setInterval(() => { checkUpdate(false).catch(() => {}); }, UPDATE_CHECK_INTERVAL);

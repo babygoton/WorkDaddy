@@ -1,0 +1,12 @@
+{
+  "kind": "workdaddy.automation-index",
+  "formatVersion": 1,
+  "items": [
+    {
+      "id": "org.example.account-summary",
+      "version": "1.0.0",
+      "path": "account-summary.workdaddy.json",
+      "sha256": "0d349921360b293d5bf612476b03852a93badb5488cf03620b07b66c412fc837"
+    }
+  ]
+}

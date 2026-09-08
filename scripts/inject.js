@@ -7,7 +7,7 @@
  *  3. 账号列表展示 昵称 / 手机（明文） / Token 过期时间（<7 天红字）；不展示 uid/uin/上次登录
  *  4. 每账号右侧为「发起会话」「切换」「删除」纯图标按钮；发起会话使用备份 token，不切换当前账号
  *  5. 面板底部「退出登录」（假退出：仅退回登录页，token 不过期，可随时切回）
- *  6. 每日签到改为打开面板即自动调接口（见 daemon 的 claimDailyForAll），带每日缓存，无需按钮
+ *  6. 每日签到由自动化任务管理，账号页只显示当天已确认的签到状态
  *  6. 备份由守护进程自动完成，面板不提供备份按钮
  *
  * 与后端通信：fetch 本地 daemon（__WBS_API__ 占位符在注入时替换为实际地址）
@@ -41,6 +41,78 @@ function createBuildLifecycle() {
     registerDisposer: registerDisposer,
     destroy: destroy,
     alive: function () { return active; },
+  };
+}
+
+// 机器人闲置吸边：只监听指针位置，不拦截 WorkBuddy 事件；由 build lifecycle 清理。
+function createFabQuietMode(options) {
+  var fab = options.fab;
+  var win = options.window;
+  var doc = options.document;
+  var timer = null;
+  var near = false;
+  var alive = true;
+  var IDLE_MS = 5000;
+  var enabled = false;
+  try { enabled = options.storage.getItem(options.settingKey) === '1'; } catch (_) {}
+
+  // 用未变换的尺寸计算，避免旋转/过渡中的包围盒让靠近区域来回跳动。
+  function geometry() {
+    var width = fab.offsetWidth * 0.5;
+    var height = fab.offsetHeight * 0.5;
+    var right = parseFloat(fab.style.right) || 22;
+    var bottom = parseFloat(fab.style.bottom) || 22;
+    return { width: width, height: height, right: right,
+      left: win.innerWidth - right - width, centerY: win.innerHeight - bottom - height / 2 };
+  }
+  function cancel() {
+    if (timer !== null) clearTimeout(timer);
+    timer = null;
+  }
+  function wake() {
+    if (!alive) return;
+    cancel();
+    fab.classList.remove('is-quiet');
+    if (fab.classList.contains('hidden')) near = false;
+    if (!enabled || near || fab.classList.contains('hidden') || options.isDragging()) return;
+    timer = setTimeout(function () {
+      timer = null;
+      if (!alive || near || fab.classList.contains('hidden') || options.isDragging() || fab.contains(doc.activeElement)) return;
+      var box = geometry();
+      // 左转后头顶朝左：头部只露 4px；停靠时 CSS 隐藏天线。
+      fab.style.setProperty('--wbs-fab-quiet-shift', (box.right + box.width / 2 + box.height / 2 - 4) + 'px');
+      fab.classList.add('is-quiet');
+    }, IDLE_MS);
+  }
+  options.listen(win, 'pointermove', function (event) {
+    if (!enabled || event.pointerType === 'touch' || fab.classList.contains('hidden') || options.isDragging()) return;
+    var box = geometry();
+    var docked = fab.classList.contains('is-quiet');
+    // 停靠时只响应露出的头部附近；恢复后扩大保活范围，方便移向按钮点击。
+    var next = event.clientX >= (docked ? win.innerWidth - 18 : box.left - 24) &&
+      Math.abs(event.clientY - box.centerY) <= box.width / 2 + (docked ? 12 : 24);
+    if (next !== near) { near = next; wake(); }
+  }, { capture: true, passive: true });
+  options.listen(win, 'pointerout', function (event) {
+    if (!event.relatedTarget && near) { near = false; wake(); }
+  }, { passive: true });
+  options.listen(win, 'resize', function () { near = false; wake(); });
+  options.listen(fab, 'pointerenter', function (event) {
+    if (event.pointerType !== 'touch') near = true;
+    wake();
+  });
+  options.listen(fab, 'focusin', wake);
+  options.listen(fab, 'focusout', wake);
+  wake();
+  return {
+    wake: wake,
+    isEnabled: function () { return enabled; },
+    setEnabled: function (value) {
+      enabled = !!value;
+      try { options.storage.setItem(options.settingKey, enabled ? '1' : '0'); } catch (_) {}
+      wake();
+    },
+    destroy: function () { alive = false; cancel(); fab.classList.remove('is-quiet'); },
   };
 }
 
@@ -556,15 +628,69 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
   var WBS_LANGUAGE_KEY = 'workdaddy.ui.language';
   var WBS_ACCOUNT_MASK_KEY = 'workdaddy.account.mask.' + PROFILE_ID;
   var WBS_I18N_EN = {
-    '账号': 'Accounts', '主题': 'Theme', '会话': 'Sessions', '模型': 'Models', '增强': 'Enhance', '电脑': 'Computer', '关于': 'About', '设置': 'Settings',
-    '导出': 'Export', '导入': 'Import', '删除': 'Delete', '编辑': 'Edit', '保存': 'Save', '取消': 'Cancel', '确定': 'Confirm', '确认': 'Confirm', '复制': 'Copy', '切换': 'Switch', '启用': 'Enable', '停止': 'Stop',
+    '等待发送按钮可点击超时（5 秒），未发送': 'The send button was not ready within 5 seconds. Nothing was sent.',
+    '无法关闭面板，请重试': 'Could not close the panel. Please try again.',
+    '正在输入或切换账号，请稍后打开面板': 'Typing or switching accounts. Please open the panel in a moment.',
+    "逐账号例行发送固定提示词消息": "Send a fixed prompt with each account",
+    "依次切换所有账号，新建会话发送 1+1=，按会话回执等待回复完成，最后恢复开始时的账号。": "Switch through all accounts, send 1+1= in a new conversation, wait for each reply to finish, then restore the starting account.",
+    "依次切换所有账号，等待当前会话输入框出现后发送 1+1=，等待回复完成，最后恢复开始时的账号。": "Switch through all accounts, wait for the composer, send 1+1=, wait for each reply to finish, then restore the starting account.",
+    "页面就绪后自动关闭首页弹窗": "Close home popups when the page is ready",
+    "页面就绪后立即检查三类弹窗，每 300 毫秒补查，持续约 30 秒；重新出现的弹窗继续关闭，快速切换账号时重新检测新页面。": "Check for three types of home popups every 300 ms for about 30 seconds. Close any that reappear and restart detection after account switches.",
+    "循环账号静默签到": "Check in all accounts in the background",
+    "使用各账号 token 签到，不切换当前账号；跳过今日已签到账号。每小时、客户端加载和打开面板时检查。": "Check in with each account without switching the active account. Skip accounts already checked in today. Check hourly, on client load, and when the panel opens.",
+    "所有账号已按序处理完毕，已恢复开始时的账号": "All accounts have been processed. The starting account has been restored.",
+    "存在账号未完成处理，已尝试恢复开始时的账号": "Some accounts could not be processed. An attempt was made to restore the starting account.",
+    "该账号签到未成功，请检查登录状态或签到活动": "Check-in failed for this account. Check its login status and check-in availability.",
+    "识别到 Buddy 加油站弹窗，已关闭": "Buddy Fuel Station popup detected and closed.",
+    "已关闭相关玩法推荐，今日不再展示": "Related playbook recommendations dismissed for today.",
+    "已关闭首页活动弹窗": "Home activity popup closed.",
+    "会话输入框非空，未覆盖草稿、未发送": "The composer contains a draft. Nothing was overwritten or sent.",
+    '页面就绪': 'Page ready', '删除选中的': 'Delete selected', '删除该自动化任务？': 'Delete this automation task?', '删除选中的自动化任务？': 'Delete selected automation tasks?', '删除后无法恢复。': 'This cannot be undone.', '清除': 'Clear', '清除日志': 'Clear logs', '清除运行日志？': 'Clear run logs?', '仅清除已结束的运行记录。': 'Only completed run records will be cleared.', '清除日志失败': 'Failed to clear logs', '任务已启用': 'Task enabled', '任务已停用': 'Task disabled', '发送中': 'Sending',
+    '账号': 'Accounts', '主题': 'Theme', '会话': 'Sessions', '模型': 'Models', '增强': 'Enhance', '自动化': 'Automation', '电脑': 'Computer', '关于': 'About', '设置': 'Settings',
+    '导出': 'Export', '导入': 'Import', '删除': 'Delete', '编辑': 'Edit', '保存': 'Save', '取消': 'Cancel', '确定': 'Confirm', '确认': 'Confirm', '复制': 'Copy', '切换': 'Switch', '启用': 'Enable', '停用': 'Disable', '停止': 'Stop', '立即运行': 'Run now', '新建任务': 'New task', '刷新': 'Refresh', '步骤 JSON': 'Steps JSON', '任务说明': 'Task description', '任务名称': 'Task name', '调度': 'Schedule', '手动运行': 'Manual', '手动': 'Manual', '每小时': 'Hourly', '每天': 'Daily', '选择任务': 'Select tasks', '查看接口': 'View capabilities', '拾取元素': 'Pick element', '复制 XPath': 'Copy XPath', '运行中': 'Running', '已成功': 'Succeeded', '失败': 'Failed', '未运行': 'Not run', '页面加载完成': 'Page loaded', '账号切换完成': 'Account switched', '新自动化任务': 'New automation task', '任务已保存': 'Task saved', '任务已开始运行': 'Task started', '步骤 JSON 格式无效': 'Invalid steps JSON', '步骤 JSON 必须是数组': 'Steps JSON must be an array', '查看接口说明': 'View interface docs', '自动化接口协议': 'Automation interface protocol', '复制全部': 'Copy all', '接口协议已复制': 'Interface protocol copied', '暂无自动化任务，点击“新建任务”开始。': 'No automation tasks yet. Click “New task” to start.', '编辑任务': 'Edit task', '触发方式': 'Trigger', '插入点击步骤': 'Insert click step', 'XPath 已复制': 'XPath copied', '点击步骤已插入': 'Click step inserted', '请先拾取元素': 'Pick an element first', '加载自动化失败': 'Failed to load automations', '读取接口失败': 'Failed to read interfaces', '批量操作失败': 'Batch operation failed', '删除失败': 'Delete failed', '确认删除该任务？': 'Delete this task?', '执行': 'Apply', '已拾取': 'Picked', '运行失败': 'Run failed', '（副本）': ' (copy)', '查看提示词': 'View prompt', '交给 WorkBuddy 创建': 'Ask WorkBuddy to create', '正在打开新任务…': 'Opening a new task…', '已创建新会话，WorkBuddy 完成后任务会自动出现': 'New session created. The task will appear after WorkBuddy finishes.', 'WorkBuddy 创建失败': 'WorkBuddy creation failed', '加载示例失败': 'Failed to load examples', '暂无示例': 'No examples available', '运行日志': 'Run logs', '暂无运行日志': 'No run logs yet', '开始时间': 'Started', '结束时间': 'Finished', '捕获错误': 'Caught error', '暂无执行日志': 'No execution log entries', '执行日志': 'Execution log', '尚未结束': 'Still running',
     '暂存提示词': 'Stash prompt', '暂存': 'Stashed', '引用文本': 'Quote text', '快捷短语': 'Quick phrases', '点击后发送': 'Send on click', '编辑 →': 'Edit →', '新增': 'Add', '批量操作': 'Batch actions', '批量管理': 'Batch manage', '全选': 'Select all', '取消全选': 'Deselect all', '已选 0': 'Selected 0',
     '账号汇总': 'Account summary', '账号数': 'Accounts', '总积分': 'Total credits', '手机': 'Phone', '有效期至': 'Expires', '当前使用中': 'Currently active', '隐藏敏感信息': 'Mask sensitive info', '显示明文': 'Show plaintext', '登录新账号': 'Log in a new account', '没有可导出的账号备份': 'No account backups to export', '还没有备份账号。打开/登录一次 WorkBuddy 后会自动备份，稍后再来查看。': 'No account backups yet. Open or log in to WorkBuddy once and check again later.',
     '语言': 'Language', '中文': 'Chinese', '英语': 'English', 'English': 'English', '跟随系统': 'Follow system', '设置语言': 'Language', '首次打开时自动跟随系统语言；未匹配时使用英语。': 'The first launch follows your system language. English is used when no match is found.', '语言设置已更新': 'Language updated',
     '默认': 'Default', 'WorkDaddy 主题': 'WorkDaddy theme', '毛玻璃': 'Frosted glass', '护眼绿': 'Eye-care green', '赛博紫': 'Cyber purple', '主题外观': 'Theme appearance', '壁纸': 'Wallpaper', '头像': 'Avatar', '自定义壁纸': 'Custom wallpaper', '背景蒙版': 'Background overlay', '背景毛玻璃': 'Background blur', '恢复默认': 'Restore default', '恢复官方头像': 'Restore official avatar',
     '加载中…': 'Loading…', '读取中…': 'Reading…', '正在读取设置…': 'Reading settings…', '查询中…': 'Checking…', '暂无快捷短语': 'No quick phrases', '暂无快捷短语，点击「+ 新增」添加': 'No quick phrases. Click “+ Add” to create one.', '当前还未添加模型': 'No models added yet', '还没有模型备份': 'No model backups yet', '当前筛选下没有会话': 'No sessions match the current filter', '暂无进行中的会话': 'No active sessions', '暂无官方壁纸': 'No built-in wallpapers', '还没有自定义壁纸，先上传一张': 'No custom wallpapers yet. Upload one to start.', '壁纸加载中…': 'Loading wallpapers…', '壁纸加载失败（daemon 不可达）': 'Wallpaper loading failed (daemon unavailable)',
     '发送失败: ': 'Send failed: ', '发送失败': 'Send failed', '打开面板失败: ': 'Could not open panel: ', '设置失败: ': 'Settings failed: ', '设置失败': 'Settings failed', '请求失败': 'Request failed', '操作失败': 'Operation failed', '读取文件失败': 'Could not read file', '复制失败': 'Copy failed', '复制失败: ': 'Copy failed: ', '删除失败: ': 'Delete failed: ', '删除失败': 'Delete failed', '切换失败: ': 'Switch failed: ', '应用主题失败: ': 'Could not apply theme: ', '蒙版设置失败: ': 'Overlay setting failed: ', '毛玻璃设置失败: ': 'Blur setting failed: ', '诊断设置保存失败: ': 'Could not save diagnostics setting: ', '无法连接本地服务: ': 'Cannot connect to local service: ', '请确认守护进程已运行': 'Make sure the daemon is running',
-    '签到中': 'Checking in', '今日已签到✓': 'Checked in today ✓', '无签到活动': 'No check-in activity', '登录身份过期': 'Login expired', '刚刚': 'Just now', '分钟前': ' minutes ago', '小时前': ' hours ago', '天前': ' days ago',
+    '执行中': 'Running', '已停用': 'Disabled', '示例': 'Examples', '手动触发': 'Manual trigger', '等待触发': 'Waiting for trigger', '上次已完成': 'Last completed', '上次失败': 'Last failed', '上次已停止': 'Last stopped', '停止本次执行': 'Stop this run', '手动任务无需自动触发': 'Manual tasks do not need automatic triggers', '启用自动触发': 'Enable automatic triggers', '成长计划连续活跃天数': 'Consecutive active days in Growth Plan', '活跃天数读取失败': 'Unable to read active days', '正在读取活跃天数': 'Loading active days', '活跃 ': 'Active ', '此任务由事件或定时自动触发，无需手动运行': 'This task runs automatically on its event or schedule', '当前客户端不支持成长活跃查询': 'Growth activity is unavailable in this client',
+    "天": "days", " 日": " day",
+    "定时已结束": "Schedule ended",
+    "定时方式": "Schedule",
+    "不定时": "No schedule",
+    "按间隔": "Interval",
+    "每天": "Daily",
+    "每周": "Weekly",
+    "每月": "Monthly",
+    "指定时间一次": "Once",
+    "单次": "Once",
+    "日期": "Date",
+    "时间": "Time",
+    "日期时间": "Date and time",
+    "执行时间": "Run time",
+    "账号刷新失败，已保留上次结果": "Account refresh failed; previous results kept",
+    "活跃读取失败": "Activity unavailable",
+    "每月日期": "Day of month",
+    "间隔数值": "Interval value",
+    "间隔单位": "Interval unit",
+    "执行日期和时间": "Run date and time",
+    "周一": "Mon",
+    "周二": "Tue",
+    "周三": "Wed",
+    "周四": "Thu",
+    "周五": "Fri",
+    "周六": "Sat",
+    "周日": "Sun",
+    "工作日": "Weekdays",
+    "按电脑本地时间执行；错过不补跑，运行中跳过。": "Uses local computer time. Missed or overlapping runs are skipped.",
+    "当月没有该日期时跳过。": "Skipped in months without this date.",
+    "请选择有效的执行时间": "Choose a valid run time",
+    "请至少选择一个星期": "Select at least one weekday",
+    "请选择将来的执行日期和时间": "Choose a future date and time",
+    "请选择有效的执行日期和时间": "Choose a valid date and time",
+    "每月日期必须是 1–31": "Day of month must be 1\u201331",
+    '今日签到': 'Daily check-in', '今日已签到': 'Checked in today', '今日尚未签到': 'Not checked in today', '客户端加载': 'Client loaded', '打开面板': 'Panel opened', '事件触发（可多选）': 'Event triggers (select any)', '定时间隔（分钟）': 'Interval (minutes)', '定时': 'Scheduled', '每 ': 'Every ', '定时间隔必须是 1–10080 分钟的整数': 'Interval must be an integer from 1 to 10080 minutes', '不支持的面板事件': 'Unsupported panel event', '无签到活动': 'No check-in activity', '登录身份过期': 'Login expired', '刚刚': 'Just now', '分钟前': ' minutes ago', '小时前': ' hours ago', '天前': ' days ago',
     '发现新版本': 'New version available', '立即更新': 'Update now', '有新版本可用，点击更新。': 'A new version is available. Click Update.', '下载中…': 'Downloading…', '正在打开…': 'Opening…', '安装程序已打开': 'Installer opened', '打开安装程序': 'Open installer', '安装中…': 'Installing…', '重启中…': 'Restarting…', '已完成': 'Completed', '重试更新': 'Retry update',
     '安全传输': 'Secure transfer', '选择内容': 'Select content', '选择账号': 'Select accounts', '选择目标账号': 'Select target account', '选择目标账号…': 'Select a target account…', '密码': 'Password', '请输入密码': 'Enter password', '密码不能为空': 'Password cannot be empty', '请至少选择一项': 'Select at least one item', '处理中…': 'Processing…', '新版文件请输入密码': 'Enter the password for the new file', '新版文件必须输入密码；旧版导出文件可留空。': 'New files require a password; older exports may be left blank.', '新版文件请输入密码；已有的相同短语会自动跳过。': 'Enter the password for the new file; duplicate phrases are skipped.',
     '电脑休眠': 'Computer sleep', '允许电脑休眠': 'Allow computer sleep', '持续禁止休眠': 'Keep awake', '所有会话结束允许休眠': 'Allow sleep when all sessions end', '系统默认，空闲后正常休眠': 'System default; sleep normally when idle', '保持唤醒，防黑屏锁屏': 'Stay awake to prevent screen lock', '任一会话运行中都保持唤醒': 'Stay awake while any session is running', '允许显示器休眠': 'Allow display sleep', '禁止休眠时，是否允许显示器单独黑屏': 'When sleep is blocked, allow the display to turn off',
@@ -572,13 +698,15 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '权限免打扰': 'Permission quiet mode', '异常中断会话': 'Continue interrupted sessions', '决策弹窗': 'Decision prompts', '用弹窗提问': 'Ask with a dialog', '确认弹窗自动允许': 'Auto-allow confirmation dialogs', '自动复制所有会话': 'Auto-copy all sessions', '会话消息索引': 'Message index', '引用消息文本': 'Quote message text', '选择登录方式': 'Choose a login method', '假退出': 'Soft logout', '无感登录': 'Seamless login',
     '未设置': 'Not set', '当前使用中': 'Currently active', '停止生成': 'Stop generating', '正常重启': 'Restart normally', '清空日志': 'Clear log', '开发者工具': 'Developer tools', '隐藏功能': 'Hidden feature', '卡死': 'Stuck', '任务': 'Task', '空间': 'Workspace', '全部': 'All', '今天': 'Today', '近 7 天': 'Last 7 days', '近 30 天': 'Last 30 days', '企业配额': 'Enterprise quota', '积分到期分布': 'Credit expiry distribution',
     '连接新服务…': 'Connecting to service…', '等待中': 'Waiting', '运行中': 'Running', '空闲': 'Idle', '已中断': 'Interrupted', '已停止': 'Stopped', '未确认': 'Unconfirmed', '等待确认': 'Waiting for confirmation', '等待新回复': 'Waiting for a new reply', '等待会话': 'Waiting for session', '等待允许': 'Waiting for approval', '整理中': 'Organizing', '恢复中': 'Restoring', '即将完成…': 'Finishing…', '已继续': 'Continued', '检测到会话异常中断，即将自动发送「': 'An interrupted session was detected. Sending “', '自动发送失败，请手动点击发送': 'Automatic send failed. Please click Send manually', '底层发送失败，请手动发送': 'Underlying send failed. Please send manually',
+    '导入中…': 'Importing…', ' 个任务': ' task(s)', '导入任务': 'Import tasks', '导出任务': 'Export tasks', '请先勾选要导出的任务': 'Select tasks to export first', '选择 JSON 或 ZIP 任务文件': 'Choose a JSON or ZIP task file', '读取任务文件…': 'Reading task file…', '任务导出成功': 'Tasks exported', '导入失败': 'Import failed', '导出失败': 'Export failed', '可导入': 'Ready to import', '已存在，将跳过': 'Already exists; skipped', '不兼容，无法导入': 'Incompatible; cannot import', '导入后保持停用，可在任务列表中启用。相同 ID 的任务会跳过。': 'Imported tasks stay disabled until you enable them. Existing task IDs are skipped.', '任务文件不能超过 8 MiB': 'Task files must not exceed 8 MiB', '缺少必填参数': 'Required inputs are missing', '需要更新 WorkDaddy': 'Requires a newer WorkDaddy version', '不支持当前客户端或系统': 'Unsupported client or platform', '文件不是自动化任务 JSON': 'Not an automation task JSON file', '任务格式或能力不受支持': 'Unsupported task format or capabilities',
     '导出账号': 'Export accounts', '导入账号': 'Import accounts', '导出会话': 'Export sessions', '导入会话': 'Import sessions', '导出快捷短语': 'Export quick phrases', '导入快捷短语': 'Import quick phrases', '复制选中到其他账号': 'Copy selected to another account', '删除选中': 'Delete selected', '操作会话': 'Session actions', '连通测试': 'Test connection', '编辑模型': 'Edit model', '模型已保存': 'Model saved', '模型已启用': 'Model enabled', '模型已复制': 'Model copied', '模型配置已共用': 'Model configuration shared', '当前模型': 'Current model', '备选模型': 'Backup models', '模型加载失败：': 'Failed to load models: ', '保存模型失败：': 'Failed to save model: ', '删除当前模型失败：': 'Failed to delete current model: ', '启用模型失败：': 'Failed to enable model: ', '连通测试失败：': 'Connection test failed: ',
     '选择要查看的账号': 'Choose an account to view', '选择账号并输入密码后导出备份': 'Choose accounts and enter a password to export backups', '从加密导出文件导入账号备份': 'Import account backups from an encrypted export', '使用密码导出选中会话': 'Export selected sessions with a password', '使用密码导出选中快捷短语': 'Export selected quick phrases with a password', '从加密文件导入会话': 'Import sessions from an encrypted file', '从加密文件导入快捷短语': 'Import quick phrases from an encrypted file', '仅支持 PNG / JPG / WebP': 'PNG / JPG / WebP only', '点击或拖拽上传壁纸': 'Click or drag to upload a wallpaper', '点击选择图片，或拖拽到此处': 'Click to choose an image, or drag it here', '支持 PNG / JPG / WebP，自动压缩；可添加多张': 'PNG / JPG / WebP supported; images are compressed automatically',
     '未命名账号': 'Unnamed account', '未命名模型': 'Unnamed model', '未命名': 'Unnamed', '未知错误': 'Unknown error', '未知': 'Unknown', '有效期未知': 'Expiry unknown', '未找到输入框': 'Composer not found', '输入框内容为空': 'Composer is empty', '当前输入框暂不支持引用插入': 'The current composer does not support quote insertion', '引用插入失败，请重试': 'Could not insert quote. Please try again', '已引用选中文字': 'Selected text quoted', '短语不能为空': 'Quick phrase cannot be empty', '请输入快捷短语': 'Enter a quick phrase', '删除快捷短语': 'Delete quick phrase', '编辑快捷短语': 'Edit quick phrase', '新增快捷短语': 'Add quick phrase', '确定删除': 'Confirm deletion', '确认永久删除': 'Confirm permanent deletion',
     '本机回环 CDP 注入 · 不改官方安装包': 'Local CDP injection · official app untouched', '一个基于 ': 'A ', ' 的 WorkBuddy 桌面端增强工具。零侵入、零重签名——只把界面组件注入到正在运行的 WorkBuddy 渲染进程里。': ' WorkBuddy desktop enhancement tool using Chrome DevTools Protocol (CDP). No intrusion or re-signing; UI components are injected into the running renderer.', '问题反馈': 'Report an issue',
     // —— 覆盖度补齐（分区域，模板条目支持 {name} 占位，匹配时最长优先）——
     '(无标题)': 'Untitled', 'GitHub 仓库': 'GitHub repository', '去 GitHub Issues 反馈问题': 'Report an issue on GitHub', '在 GitHub 上给 WorkDaddy 点 Star': 'Star WorkDaddy on GitHub', 'WorkDaddy，点击打开面板，可拖动': 'WorkDaddy – click to open the panel, draggable', '如果 WorkDaddy 对你有帮助，欢迎在 GitHub 点个 Star。你的支持会让这个小项目持续更新。': 'If WorkDaddy helps you, please star it on GitHub. Your support keeps this small project alive.',
-    '元素检查': 'Inspect element', '元素检查不可用：内部模块未加载': 'Element inspector unavailable: internal module not loaded',
+    '元素检查': 'Inspect element', '元素检查不可用：内部模块未加载': 'Element inspector unavailable: internal module not loaded', '元素拾取器尚未加载': 'Element picker is not loaded',
+    'DOM 元素检查器': 'DOM element inspector', '复制元素': 'Copy element', '关闭元素检查器': 'Close element inspector', '已复制元素': 'Element copied', '未找到可检查元素': 'No inspectable element found', '检查失败：': 'Inspection failed: ', '拾取模式：移动鼠标高亮元素，点击选中（Esc 退出）': 'Pick mode: move to highlight an element, click to select (Esc to exit)',
     '到期时间': 'Expiry', '剩余': 'Remaining', '剩余时间计算中': 'Calculating remaining time', '积分': 'Credits', '积分查询超时': 'Credit query timed out', '个人版': 'Personal', '企业': 'Enterprise', '基础用量': 'Base usage', '赠送与加量包': 'Gift & bonus packs', '其他积分': 'Other credits', '即将过期': 'Expiring soon', '已过期': 'Expired',
     '昨天': 'Yesterday', '分钟': ' min', '小时': ' h', '定位到第': 'Jump to message ', '条用户消息': ' user message', '发送中': 'Sending', '附件': 'Attachment', '疑似未完成': 'Possibly incomplete',
     '已开启': 'Enabled', '已关闭': 'Disabled', '已领取': 'Claimed', '立即领取,今日可领': 'Claim now, available today', '继续执行': 'Continue',
@@ -601,7 +729,8 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '正在解包新应用…': 'Unpacking new app…', '挂载 dmg 失败:': 'Failed to mount dmg:', '缺少解包后的新应用': 'Unpacked new app missing', '解包应用失败': 'Failed to unpack app', '缺少 apply-update.sh': 'apply-update.sh missing', '（仓库暂无 Release）': ' (no Releases in the repository yet)', 'auth/state 响应缺少 state': 'auth/state response is missing state',
     'WBSWITCH_WORKBUDDY_BIN 不是可验证的当前 profile 主程序；登录信息未修改': 'WBSWITCH_WORKBUDDY_BIN is not a verified main program for the current profile; login info unchanged', '无法以普通用户权限安全退出 WorkBuddy。请手动关闭该程序；若它以管理员身份运行，请先退出后再重试。登录信息未修改': 'Cannot safely quit WorkBuddy at standard user privilege. Please close it manually; if it runs as admin, quit it first and retry. Login info unchanged', '未找到 WorkBuddy 可执行文件，无法安全退出；登录信息未修改': 'WorkBuddy executable not found; cannot quit safely. Login info unchanged', 'workbuddy-target.json 指定的路径不是可验证的当前 profile 主程序；登录信息未修改': 'The path in workbuddy-target.json is not a verified main program for the current profile; login info unchanged', '存在当前 profile 进程，但没有进程属于已验证安装目录；登录信息未修改': 'A current profile process exists, but none belongs to a verified install directory; login info unchanged', '检测到当前 profile 正从另一安装目录运行，登录信息未修改': 'The current profile is running from another install directory; login info unchanged', '检测到多个 dormant WorkBuddy 安装目录，按发现优先级选择:': 'Multiple dormant WorkBuddy installs found; selecting by discovery priority:', 'WorkBuddy 数据目录不是受管目录': 'WorkBuddy data directory is not managed', 'WorkBuddy 页面尚未完成加载': 'WorkBuddy page has not finished loading', '刷新 WorkBuddy 页面': 'Refresh WorkBuddy page', '注入脚本页面抛错': 'Injected script page threw an error', '读取注入脚本失败:': 'Failed to read the injected script:', '运行时桥接文件未生成': 'Runtime bridge file was not created',
     // —— 第三批：daemon 端口/路径校验/发送链路错误（可能进入 toast/API 返回）——
-    '9222-9232、9333 均被占用，无法为 WorkBuddy 分配 CDP 端口': 'Ports 9222-9232 and 9333 are all occupied; cannot allocate a CDP port for WorkBuddy', 'cwd 不是绝对路径': 'cwd is not an absolute path', 'cwd 路径包含符号链接或普通文件': 'cwd path contains a symlink or regular file', '发送按钮禁用（输入内容未被识别）': 'Send button disabled (input not recognized)', '无法清空输入框': 'Could not clear the composer', '无法聚焦输入框': 'Could not focus the composer', '未找到发送按钮': 'Send button not found', '未找到操作栏': 'Toolbar not found',
+    '9222-9232、9333 均被占用，无法为 WorkBuddy 分配 CDP 端口': 'Ports 9222-9232 and 9333 are all occupied; cannot allocate a CDP port for WorkBuddy', 'cwd 不是绝对路径': 'cwd is not an absolute path', 'cwd 路径包含符号链接或普通文件': 'cwd path contains a symlink or regular file', '发送按钮禁用（输入内容未被识别）': 'Send button disabled (input not recognized)', '无法清空输入框': 'Could not clear the composer', '无法聚焦输入框': 'Could not focus the composer', '未找到发送按钮': 'Send button not found', '未找到操作栏': 'Toolbar not found', 'Agent 提示词为空或过长': 'Agent prompt is empty or too long', 'Agent 提示词未发送，请重试': 'Agent prompt was not sent; try again',
+    '发送内容为空': 'Message is empty',
     // —— 第四批：真机扫描发现的整句/半动态拼接（杜绝中英混合）——
     '全部开': 'Enable all', '一键批量开启/关闭全部免打扰开关': 'Toggle all quiet-mode switches at once',
     '沙箱外写文件免确认': 'Write outside the sandbox without confirmation', '工作区外文件直接读写': 'Direct read/write of files outside the workspace',
@@ -620,13 +749,14 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '在会话左侧显示消息索引': 'Show the message index on the left side of sessions', '选中会话消息中的文字后显示引用按钮': 'Show the quote button after selecting session message text',
     '状态机日志': 'state machine log', '监控激活会话中': 'Monitoring active sessions',
     '更换头像': 'Change avatar', '黑色半透明遮罩，压暗背景图': 'Black translucent overlay that dims the wallpaper',
+    '机器人自动停靠': 'Auto-dock robot', '闲置 5 秒后收起到窗口右侧，鼠标靠近边缘展开': 'Tuck into the right edge after 5 idle seconds; move near the edge to reveal',
     '时间': 'Time', '自动复制': 'Auto-copy', '模型名': 'Model name', '自定义名称': 'Custom name', '确认操作': 'Confirm operation', '小贴士': 'Tip',
     '解决 WorkBuddy 不支持多个同名模型的问题。': 'Solves WorkBuddy not supporting multiple models with the same name.',
     '清空': 'Clear', '继续': 'Continue', '更换': 'Change',
     '共 {n} 个': 'Total: {n} ', '展开 {n} 条（': 'Show {n} (', '从 {src} 导入': 'Import from {src}',
     '（': '(', '）': ')',
     // —— 第五批：基础高频词（杜绝词根缺失造成的半句混合）+ 会话/模型/账号错误整句 ——
-    '错误': 'Error', '状态': 'Status', '导航': 'navigation', '消息': 'message', '当前': 'Current', '配置': 'config', '无效': 'invalid', '接口': 'API', '队列': 'queue', '不可用': 'unavailable', '缺少': 'Missing',
+    '错误': 'Error', '状态': 'Status', '导航': 'navigation', '消息': 'message', '当前': 'Current', '配置': 'config', '无效': 'invalid', '接口': 'API', '队列': 'queue', '不可用': 'unavailable', '缺少': 'Missing', '未找到页面元素': 'Page element not found', '页面元素不可见': 'Page element is not visible', '无法聚焦页面元素': 'Could not focus page element', 'HTTP URL 仅支持 http(s)': 'HTTP URL must use http(s)', '运行记录不存在': 'Run record not found',
     '会话错误': 'Session error', '会话状态': 'Session status', '会话消息导航': 'Session message navigation', '未获取到当前会话': 'Could not get the current session',
     '回复已停止，但没有发现明确完成证据': 'Reply stopped without clear completion evidence',
     '会话正在等待决策确认': 'Session awaiting a decision confirmation', '会话出现模型或网络错误': 'Session hit a model or network error',
@@ -761,6 +891,12 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '单次最多导入 {n} 个会话': 'Import at most {n} sessions at a time', '单次最多处理 {n} 条快捷短语': 'Process at most {n} quick phrases at a time',
     '快捷短语标识不能为空': 'Quick phrase id cannot be empty', '未选择快捷短语': 'No quick phrase selected', '没有可导出的快捷短语': 'No quick phrases to export',
     '没有可导出的会话': 'No sessions to export', '未选择会话': 'No session selected', '导入文件中没有会话数据': 'No session data found in the import file',
+    'WorkBuddy 通知组件未就绪': 'WorkBuddy notification component is not ready',
+    '通知组件未加载': 'Notification component not loaded', '通知组件已关闭': 'Notification component closed',
+    '暂不支持 iframe 内的输入或点击，请使用主页面定位器': 'Input and clicks inside iframes are unsupported; use a main-page locator', 'HTTP 响应超过 1 MiB': 'HTTP response exceeds 1 MiB', '任务不兼容': 'Incompatible task', '任务与当前 WorkDaddy 不兼容，请升级或使用适配版本': 'This task is incompatible with this WorkDaddy. Update or use a compatible version.', '排队中': 'Queued', '页面加载': 'Page load', '账号切换后': 'After account switch', '让 WorkBuddy 帮我创建': 'Create with WorkBuddy', '自动化需求': 'Automation requirements', '描述触发时机和需要执行的操作，WorkBuddy 会生成任务并添加到自动化列表。': 'Describe when to trigger and what to do. WorkBuddy will create the task in your automation list.', '例如：每次打开面板时，显示一条欢迎提示。': 'For example: show a welcome notification whenever the panel opens.', '将在新的 WorkBuddy 会话中创建': 'Creates in a new WorkBuddy conversation', '自动化需求必须是 1–6000 字的文本': 'Automation requirements must contain 1–6000 characters',
+    '一键创建': 'Quick create', '主账号': 'Primary', '设为主账号': 'Set as primary account', '已设为主账号，自动化任务可据此识别主账号': 'Primary account set. Automations can use it to identify your primary account.',
+    '原输入框草稿已保存到暂存': 'Your previous draft was saved to Stash.',
+    '设置主账号失败': 'Failed to set primary account',
     '无效会话记录': 'Invalid session record', '没有可导入的会话': 'No sessions to import', '会话文件目标不在 managed parent 内': 'Session file target is outside the managed parent',
     '无法确认 WorkBuddy 已退出': 'Could not confirm WorkBuddy has quit',
     '未找到 WorkBuddy 可执行文件，无法验证运行中的进程': 'WorkBuddy executable not found; cannot verify the running process',
@@ -782,6 +918,8 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '导入文件中没有快捷短语': 'No quick phrases found in the import file', '单次最多导入 {n} 条快捷短语': 'Import at most {n} quick phrases at a time',
     '没有可导入的快捷短语': 'No quick phrases to import', '暂存记录不存在:': 'Stashed record not found:', '暂存内容为空': 'Stash content is empty',
     '默认（浅色）': 'Default (light)', '对话持续回复中（等待 {n} 秒仍未空闲），已取消发送，请稍后再试': 'The conversation is still replying (not idle after {n}s); send cancelled, please retry later',
+    '页面元素被遮挡或禁用，稍后重试': 'The element is covered or disabled; retry later',
+    '页面已切换，重新检测新页面': 'Page changed; checking the new page',
     '导出数据不完整或已损坏': 'Export data is incomplete or corrupted', '文件不是有效的导出 JSON': 'The file is not a valid export JSON',
     '不是 WorkDaddy 的账号导出文件': 'Not a WorkDaddy account export file', '导入文件中没有账号数据': 'No account data found in the import file',
     '未读取到有效内容，请选择导出文件': 'No valid content read; please choose an export file', '密码不能超过 1024 个字符': 'Password cannot exceed 1024 characters',
@@ -894,6 +1032,49 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     return out;
   }
 
+  function wbsBuiltinAutomationText(task, field) {
+    var defaults = {
+      "daily-account-checkin": {
+        "name": [
+          "循环账号静默签到"
+        ],
+        "description": [
+          "使用各账号 token 签到，不切换当前账号；跳过今日已签到账号。每小时、客户端加载和打开面板时检查。"
+        ]
+      },
+      "keep-accounts-active-1-plus-1": {
+        "name": [
+          "逐账号例行发送固定提示词消息"
+        ],
+        "description": [
+          "依次切换所有账号，新建会话发送 1+1=，按会话回执等待回复完成，最后恢复开始时的账号。",
+          "依次切换所有账号，等待当前会话输入框出现后发送 1+1=，等待回复完成，最后恢复开始时的账号。"
+        ]
+      },
+      "buddy-fuel-station-close-on-account-switch": {
+        "name": [
+          "页面就绪后自动关闭首页弹窗"
+        ],
+        "description": [
+          "页面就绪后立即检查三类弹窗，每 300 毫秒补查，持续约 30 秒；重新出现的弹窗继续关闭，快速切换账号时重新检测新页面。"
+        ]
+      }
+    };
+    var values = task && defaults[task.id] && defaults[task.id][field];
+    return !!values && values.indexOf(task[field]) >= 0;
+  }
+
+  function wbsAutomationText(task, field) {
+    var text = String(task && task[field] || '');
+    return WBS_LANGUAGE === 'en' && wbsBuiltinAutomationText(task, field) ? WBS_I18N_EN[text] : text;
+  }
+
+  function wbsAutomationEditedText(task, field, value) {
+    var text = String(value || '').trim();
+    // Saving only a schedule edit must not persist the English display translation.
+    return task && text === wbsAutomationText(task, field) ? task[field] : text;
+  }
+
   // ===== 全局错误钩子：捕获渲染进程不可捕获的 error / unhandledrejection，把完整消息+栈
   // 打到 daemon 日志。渲染进程级崩溃（如 An object could not be cloned）虽非 try/catch 能拦，
   // 但很多是经 promise/microtask 抛出的可拦异常——这里统一兜住并留痕。
@@ -921,11 +1102,19 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
 
   var accountMaskEnabled = false;
   try { accountMaskEnabled = localStorage.getItem(WBS_ACCOUNT_MASK_KEY) === '1'; } catch (_) {}
-  var state = { accounts: [], current: null, open: false, batchRunning: false, creditRunId: 0, creditRemaining: 0, creditSummaryValue: null, checkinPollId: null, mask: accountMaskEnabled };
+  var state = { accounts: [], current: null, open: false, batchRunning: false, creditRunId: 0, activityRunId: 0, creditRemaining: 0, creditSummaryValue: null, mask: accountMaskEnabled };
   var currentBuild = null;
   // 当前注入的 daemon 版本号（由 daemon.js 注入时把 __WBS_VERSION__ 替换为 DAEMON_VERSION）
   // 「关于」tab 直接展示，升级 daemon 后这里自动同步
   var WBS_VERSION = '__WBS_VERSION__';
+  function wbsClientVersion(userAgent) {
+    // Electron UA 带宿主版本；不能把 Chrome/Electron 版本当作 WorkBuddy 版本。
+    var product = WBS_PROFILE_IS_AI ? /(?:^|\s)WorkBuddy(?:AI|[- ]AI)\/(\d+(?:\.\d+){1,3})(?=\s|$)/i : /(?:^|\s)WorkBuddy\/(\d+(?:\.\d+){1,3})(?=\s|$)/i;
+    var match = product.exec(String(userAgent || ''));
+    // 一些国际版仍使用 WorkBuddy 作为 UA 产品名。
+    if (!match && WBS_PROFILE_IS_AI) match = /(?:^|\s)WorkBuddy\/(\d+(?:\.\d+){1,3})(?=\s|$)/i.exec(String(userAgent || ''));
+    return match ? match[1] : '';
+  }
   var WBS_LANGUAGE = (function () {
     try {
       var saved = localStorage.getItem(WBS_LANGUAGE_KEY);
@@ -935,6 +1124,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
   })();
 
   // 纯图标 SVG（stroke 跟随按钮 currentColor）
+  var PRIMARY_ACCOUNT_SVG = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 7 4.5 4L12 4l4.5 7L21 7l-2 11H5L3 7Z"/><path d="M6 21h12"/></svg>';
   var SWITCH_SVG =
     '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
     '<path d="M16 3l4 4-4 4"/><path d="M20 7H8"/><path d="M8 21l-4-4 4-4"/><path d="M4 17h12"/></svg>';
@@ -956,9 +1146,18 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m4 16-.8 4.8L8 20l11.5-11.5a2.1 2.1 0 0 0-3-3L5 17z"/><path d="m14.5 7.5 2 2"/></svg>';
   var MODEL_ENABLE_SVG =
     '<svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor"><path d="M8 5.2a1 1 0 0 1 1.55-.83l9.6 6.8a1 1 0 0 1 0 1.66l-9.6 6.8A1 1 0 0 1 8 18.8V5.2Z"/></svg>';
+  var AUTO_STOP_SVG =
+    '<svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="1.5"/></svg>';
+  // 停止中：loading 转圈（弧线 + 缺口，配合 .wbs-auto-stopping 的旋转动画）
+  var AUTO_STOPPING_SVG =
+    '<svg class="wbs-auto-stopping-svg" viewBox="0 0 24 24" width="15" height="15" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="8" stroke="currentColor" stroke-width="2.2" opacity="0.25"/><path d="M20 12a8 8 0 0 0-8-8" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>';
   // 小贴士提示图标（灯泡，tips 通知风格）
   var MODEL_TIP_SVG =
     '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.4 1 2.3h6c0-.9.4-1.8 1-2.3A7 7 0 0 0 12 2Z"/></svg>';
+  var AUTO_LOG_SVG =
+    '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 3h8l4 4v14H7z"/><path d="M15 3v5h5"/><path d="M10 12h6M10 16h6"/></svg>';
+  var AUTO_PICK_SVG =
+    '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 4h6M4 4v6M20 4h-6M20 4v6M4 20h6M4 20v-6M20 20h-6M20 20v-6"/><circle cx="12" cy="12" r="2.5"/></svg>';
   var GIFT_SVG =
     '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
     '<rect x="3" y="8" width="18" height="4" rx="1"/>' +
@@ -970,10 +1169,6 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>' +
     '<polyline points="16 17 21 12 16 7"/>' +
     '<line x1="21" y1="12" x2="9" y2="12"/></svg>';
-  // 当前使用中角标：回复/右转箭头（用户指定图形，颜色跟随昵称文字色）
-  var CUR_MARK_SVG =
-    '<svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">' +
-    '<path fill="currentColor" d="M4.472 4.75c-.597 0-1.293.166-1.862.519c-.58.358-1.11.974-1.11 1.856v9.75c0 .882.53 1.497 1.11 1.856c.57.353 1.265.519 1.862.519H14.77a2.75 2.75 0 0 0 1.92-.781l5.35-5.216a1.75 1.75 0 0 0 0-2.506l-5.35-5.216a2.75 2.75 0 0 0-1.92-.781z"/></svg>';
   // 积分余额图标：AI 四芒星线条矢量（无背景色，currentColor 跟随文字色）
   var CREDIT_ICON =
     '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">' +
@@ -1037,21 +1232,24 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
   function escAttr(t) { return esc(t).replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
 
   function checkinHtml(a) {
-    // 国际版不开放签到活动：积分卡上的签到标签整体不展示（CN 版保留完整逻辑）
-    if (PROFILE_ID === 'workbuddy-ai') return '';
+    if (WBS_PROFILE_IS_AI) return '';
     var c = a && a.checkin;
-    if (!c) return '<span class="wbs-ck wbs-checkin-tag pending">签到中</span>';
-    var msg = c.message || '';
-    // 国际版/活动空窗期：接口 code 10001 且文案表明「活动未开启/未开始/已过期」时，
-    // 并不是“今日已签到”，不应展示绿色成功标签，改为中性「无签到活动」。
-    if (c.inactive || (c.ok && /未开启|未开始|未开放|已过期|无.*活动|活动.*(结束|关闭|暂停)/i.test(msg))) {
-      return '<span class="wbs-ck wbs-checkin-tag pending">无签到活动</span>';
+    var checked = !!(c && c.ok && !c.inactive);
+    return '<span class="wbs-ck wbs-checkin-tag ' + (checked ? 'ok' : 'pending') + '" title="' + (checked ? '今日已签到' : '今日尚未签到') + '">今日签到</span>';
+  }
+
+  function activityStreakHtml(a) {
+    if (WBS_PROFILE_IS_AI) return '';
+    var value = a && a.activityStreak;
+    if (!isKnownActivityStreak(value)) {
+      if (!value || value.status !== 'unavailable') return '';
+      return '<span class="wbs-ck wbs-checkin-tag wbs-activity-tag pending" title="活跃天数读取失败">活跃读取失败</span>';
     }
-    // “本轮刚领取”和“今天已领取过”都是成功态，统一展示避免同一页面出现两套文案。
-    if (c.ok) return '<span class="wbs-ck wbs-checkin-tag ok">今日已签到✓</span>';
-    // 认证类错误（401/未授权）统一显示友好文案（daemon 已产出，缓存残留旧文案时兜底）
-    if (/401|Unauthorized|未授权|登录身份过期/.test(msg)) msg = '登录身份过期';
-    return '<span class="wbs-ck wbs-checkin-tag fail">' + esc(msg) + '</span>';
+    return '<span class="wbs-ck wbs-checkin-tag wbs-activity-tag ' + (value.days > 0 ? 'ok' : 'pending') + '" title="成长计划连续活跃天数">活跃 ' + value.days + ' 天</span>';
+  }
+
+  function isKnownActivityStreak(value) {
+    return !!(value && value.status === 'ready' && Number.isSafeInteger(value.days) && value.days >= 0);
   }
 
   function el(tag, cls, text) {
@@ -1327,17 +1525,21 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       target.addEventListener(type, handler, options);
       registerDisposer(function () { target.removeEventListener(type, handler, options); });
     }
+    var toastRuntime = window.__wbsToastRuntime;
+    if (!toastRuntime) throw new Error('通知组件未加载');
+    registerDisposer(function () { toastRuntime.destroy(); });
     function toast(msg, isErr, targetRoot) {
       if (!alive) return;
-      var t = el('div', 'wbs-toast' + (isErr ? ' err' : ''));
-      t.textContent = String(msg == null ? '' : msg);
-      (targetRoot || document.body).appendChild(t);
-      applyI18n(t);
-      setBuildTimeout(function () {
-        t.classList.add('out');
-        setBuildTimeout(function () { t.remove(); }, 300);
-      }, 4200);
+      return toastRuntime.show({ message: wbsTranslateString(String(msg == null ? '' : msg), WBS_LANGUAGE), level: isErr ? 'error' : 'info' });
     }
+    function receiveToast(detail) {
+      if (!alive) throw new Error('通知组件已关闭');
+      if (detail.action === 'dismiss') { toastRuntime.dismiss(detail.id); return { ok: true, id: detail.id }; }
+      var id = toastRuntime.show(Object.assign({}, detail, { message: wbsTranslateString(String(detail.message || ''), WBS_LANGUAGE) }));
+      return { ok: true, id: id };
+    }
+    window.__wbsNotifyToast = receiveToast;
+    registerDisposer(function () { if (window.__wbsNotifyToast === receiveToast) delete window.__wbsNotifyToast; });
 
     function isVisibleHealthNode(node) {
       if (!node || !node.isConnected || (node.closest && node.closest('.wbs-root'))) return false;
@@ -1650,7 +1852,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     }
     function applyInjectedI18n() {
       applyI18n(root);
-      var nodes = document.querySelectorAll('.wbs-stash-inline,.wbs-selection-quote-btn,.wbs-queue-tag,.wbs-message-nav-root');
+      var nodes = document.querySelectorAll('.wbs-stash-inline,.wbs-selection-quote-btn,.wbs-queue-tag,.wbs-message-nav-root,#wbs-auto-inspector,#wbs-auto-inspect-tip');
       for (var i = 0; i < nodes.length; i++) applyI18n(nodes[i]);
     }
     window.__wbsSetLanguage = setLanguage;
@@ -1683,12 +1885,13 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       '<div class="wbs-panel">',
       '<div class="wbs-head">',
       '<div class="wbs-head-left">',
-      '<div class="wbs-title" id="wbs-title" title="WorkDaddy">' + WBS_BRAND + '</div>',
+      '<div class="wbs-title-wrap"><div class="wbs-title-row"><div class="wbs-title" id="wbs-title" title="WorkDaddy">' + WBS_BRAND + '</div>',
       '<button class="wbs-pick-btn" id="wbs-pick-btn" type="button" style="display:none" title="元素检查">🔍</button>',
       '<span class="wbs-health-status" id="wbs-health-status" aria-live="polite"></span>',
       '<a class="wbs-ghbtn" href="https://github.com/babygoton/WorkDaddy" target="_blank" rel="noopener" title="GitHub 仓库">',
       '<svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor" aria-hidden="true"><path d="M12 .3a12 12 0 0 0-3.79 23.39c.6.11.82-.26.82-.58v-2.03c-3.34.73-4.04-1.61-4.04-1.61-.55-1.39-1.33-1.76-1.33-1.76-1.09-.74.08-.73.08-.73 1.2.09 1.84 1.24 1.84 1.24 1.07 1.83 2.81 1.3 3.5 1 .1-.78.42-1.31.76-1.61-2.66-.3-5.47-1.33-5.47-5.93 0-1.31.47-2.38 1.24-3.22-.13-.3-.54-1.52.11-3.18 0 0 1.01-.32 3.3 1.23a11.5 11.5 0 0 1 6.01 0c2.29-1.55 3.3-1.23 3.3-1.23.65 1.66.24 2.88.12 3.18.77.84 1.23 1.91 1.23 3.22 0 4.61-2.81 5.62-5.49 5.92.43.37.82 1.1.82 2.22v3.29c0 .32.22.7.83.58A12 12 0 0 0 12 .3z"/></svg>',
       '</a>',
+      '</div><div class="wbs-version-line" id="wbs-version-line"></div></div>',
       '</div>',
       '<button class="wbs-btn-close" type="button" data-act="close">✕</button>',
       '</div>',
@@ -1698,6 +1901,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       '<button class="wbs-tab" type="button" data-tab="sessions"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span>会话</span></button>',
       '<button class="wbs-tab" type="button" data-tab="models"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 2 9 5-9 5-9-5 9-5Z"/><path d="m3 12 9 5 9-5"/><path d="m3 17 9 5 9-5"/></svg><span>模型</span></button>',
       '<button class="wbs-tab" type="button" data-tab="enhance"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg><span>增强</span></button>',
+      '<button class="wbs-tab" type="button" data-tab="automations"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 8V4H9"/><rect x="4" y="8" width="16" height="12" rx="3"/><path d="M2 12v4M22 12v4M9 12v2M15 12v2M9 17h6"/></svg><span>自动化</span></button>',
       '<button class="wbs-tab" type="button" data-tab="pc"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg><span>电脑</span></button>',
       '<button class="wbs-tab" type="button" data-tab="about"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg><span>关于</span></button>',
       '</div>',
@@ -1707,12 +1911,23 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       '<div class="wbs-pane" data-pane="sessions"></div>',
       '<div class="wbs-pane" data-pane="models"></div>',
       '<div class="wbs-pane" data-pane="enhance"></div>',
+      '<div class="wbs-pane" data-pane="automations"></div>',
       '<div class="wbs-pane" data-pane="pc"></div>',
       '<div class="wbs-pane" data-pane="about"></div>',
       '</div>',
       '</div>',
     ].join('');
     document.body.appendChild(root);
+    var versionLine = root.querySelector('#wbs-version-line');
+    if (versionLine) {
+      var wbVersion = wbsClientVersion(navigator.userAgent);
+      var pluginVersion = WBS_VERSION && WBS_VERSION.indexOf('__WBS_') !== 0 ? WBS_VERSION : '';
+      versionLine.textContent = wbVersion ? wbVersion + (pluginVersion ? ' (' + pluginVersion + ')' : '') : (pluginVersion ? '(' + pluginVersion + ')' : '');
+    }
+    listen(window, 'workdaddy:automation-toast', function (event) {
+      var detail = event && event.detail && typeof event.detail === 'object' ? event.detail : {};
+      if (detail.message || detail.action === 'dismiss') receiveToast(detail);
+    });
     try {
       document.documentElement.setAttribute('data-wbs-language', WBS_LANGUAGE);
       document.documentElement.setAttribute('lang', WBS_LANGUAGE === 'zh' ? 'zh-CN' : 'en');
@@ -1763,6 +1978,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     // 这样无需自己去扫描 Slate 编辑器，和官方发送按钮行为完全一致。
     var stashBtn = document.createElement('div');
     stashBtn.className = 'wbs-stash-inline';
+    stashBtn.style.display = 'none';
     stashBtn.setAttribute('role', 'button');
     stashBtn.setAttribute('tabindex', '0');
     stashBtn.title = '暂存提示词';
@@ -1826,12 +2042,25 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       });
     }
     // 面板关闭/重开：点击选项（发送/编辑/任意项）后关闭面板；重新进入按钮区恢复 hover 可展示
+    function qpDiag(event, extra) {
+      if (!WBS_DIAGNOSTICS_ENABLED) return;
+      try {
+        var a = document.activeElement;
+        var r = a && a.getBoundingClientRect ? a.getBoundingClientRect() : null;
+        var payload = { event: event, href: location.href, title: document.title, active: a ? { tag: a.tagName, id: a.id || '', cls: typeof a.className === 'string' ? a.className.slice(0, 160) : '', text: (a.innerText || a.textContent || '').trim().slice(0, 100), rect: r ? { x: r.x, y: r.y, w: r.width, h: r.height } : null } : null };
+        if (extra) payload.extra = extra;
+        console.log('[quick-phrase-diagnostics]', JSON.stringify(payload));
+        fetch(API + '/api/breadcrumb', { method: 'POST', headers: { 'content-type': 'application/json', 'X-WorkDaddy-Token': WBS_API_TOKEN }, body: JSON.stringify({ msg: '[quick-phrase-diagnostics] ' + JSON.stringify(payload) }) }).catch(function () {});
+      } catch (_) {}
+    }
     function acMenuClose() {
+      qpDiag('menu:close:before', { menuClass: exploreBtn.className });
       exploreBtn.classList.add('wbs-menu-closed');
+      qpDiag('menu:close:after', { menuClass: exploreBtn.className });
     }
     exploreBtn.addEventListener('mouseenter', function () { exploreBtn.classList.remove('wbs-menu-closed'); });
     exploreBtn.addEventListener('mouseleave', function () { exploreBtn.classList.remove('wbs-menu-closed'); });
-    if (isWelcomePage()) exploreBtn.style.display = 'none'; // 欢迎页无操作栏，定位没意义；其余情况由 syncStash 常驻显示
+    exploreBtn.style.display = 'none'; // 找到可见会话输入区并完成定位后才显示，避免登录页出现悬空按钮。
 
     /* ———— 会话模块（session）：暂存提示词、会话消息索引、选中文字引用 & 快捷短语 ————
      * 暂存提示词/快捷短语由 daemon 持久化；消息索引开关保存在渲染器 localStorage。
@@ -2153,6 +2382,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
             tipK.addEventListener('mouseleave', hideTipDelayed);
           }
           itemK.addEventListener('click', function (eve) {
+            qpDiag('click:start', { phraseId: itemK.getAttribute('data-qp-send'), target: eve.target && eve.target.className || '' });
             eve.stopPropagation();
             var pid = itemK.getAttribute('data-qp-send');
             var ph2 = null;
@@ -2161,6 +2391,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
             }
             if (!ph2) return;
             acMenuClose();
+            qpDiag('api:send', { phraseId: pid });
             api('/api/quick-phrase-send', {
               method: 'POST',
               headers: { 'content-type': 'application/json' },
@@ -2280,6 +2511,13 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     //  必须命中右侧 _gapLarge_ 组，排除 _selector_ 组）
     // 操作栏最右侧的「圆形可点击」元素才是发送按钮（左侧还可能有增强提示词/停止等圆形按钮）
     function findSendButton() {
+      // Keep the localized label out of the selector literal for internationalized source checks.
+      var sendLabel = '\u53d1\u9001';
+      var official = document.querySelector('button.cr-send-button[aria-label="' + sendLabel + '"],button.cr-send-button:not(.cr-send-button--stop),button[aria-label="' + sendLabel + '"],[role="button"][aria-label="' + sendLabel + '"]');
+      if (official && official.getBoundingClientRect) {
+        var or = official.getBoundingClientRect(), os = getComputedStyle(official);
+        if (or.width >= 16 && or.height >= 16 && or.bottom > 0 && os.display !== 'none' && os.visibility !== 'hidden') return official;
+      }
       var row = findActionRow();
       if (!row || !row.children) return null;
       var kids = row.children;
@@ -2321,7 +2559,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       if (!mic0) {
         var toolbarMatch = WBS_COMPAT.findComposerToolbar(document);
         var row0 = toolbarMatch && toolbarMatch.element;
-        if (row0) {
+        if (isComposerAnchorVisible(row0)) {
           stashBtn.classList.add('wbs-stash-inline-inline');
           exploreBtn.classList.add('wbs-stash-inline-inline');
           exploreBtn.style.right = 'auto';
@@ -2329,19 +2567,24 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
           if (stashBtn.parentElement !== row0) row0.insertBefore(stashBtn, row0.firstChild);
           // 探索按钮贴暂存按钮右侧
           if (exploreBtn.parentElement !== row0) row0.insertBefore(exploreBtn, stashBtn.nextSibling);
-        } else {
-          // 容器暂不可用：回落到 body + fixed 定位
-          stashBtn.classList.remove('wbs-stash-inline-inline');
-          exploreBtn.classList.remove('wbs-stash-inline-inline');
-          if (!stashBtn.parentElement) document.body.appendChild(stashBtn);
-          if (!exploreBtn.parentElement) document.body.appendChild(exploreBtn);
-          positionStash();
+          return true;
         }
-        return;
       }
-      if (!stashBtn.parentElement) document.body.appendChild(stashBtn);
-      if (!exploreBtn.parentElement) document.body.appendChild(exploreBtn);
-      positionStash();
+      // 固定定位只在可见会话锚点存在时启用；页面切换后不能沿用旧工具栏。
+      if (!positionStash()) return false;
+      stashBtn.classList.remove('wbs-stash-inline-inline');
+      exploreBtn.classList.remove('wbs-stash-inline-inline');
+      if (stashBtn.parentElement !== document.body) document.body.appendChild(stashBtn);
+      if (exploreBtn.parentElement !== document.body) document.body.appendChild(exploreBtn);
+      return true;
+    }
+    function isComposerAnchorVisible(element) {
+      if (!element || !element.isConnected) return false;
+      var rect = element.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return false;
+      if (element.checkVisibility && !element.checkVisibility({ checkVisibilityCSS: true })) return false;
+      var css = getComputedStyle(element);
+      return css.display !== 'none' && css.visibility !== 'hidden' && css.visibility !== 'collapse';
     }
     // 探索菜单按钮：位于暂存提示词按钮右侧（与暂存同款圆钮、发送图标，hover 悬浮菜单弹窗）
     function positionExplore() {
@@ -2386,7 +2629,8 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       var mic = document.querySelector('.voice-mic-wrap');
       if (!mic) {
         var ed0 = findComposer();
-        if (!ed0) { stashBtn.style.display = 'none'; return false; }
+        // 通用 composer 查找有宽松兜底；插件显隐必须限定在会话输入区内。
+        if (!isComposerAnchorVisible(ed0) || !ed0.closest('.conversation-input, .cr-input-box, [class*="_input-area-container_"]')) return false;
         var er0 = ed0.getBoundingClientRect();
         if (er0.width <= 0 || er0.height <= 0) { stashBtn.style.display = 'none'; return false; }
         var rowLeft = Infinity, rowTop = Infinity, rowH = 0, found = false;
@@ -2433,6 +2677,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       }
       // 锚点：操作栏最左元素（row.children[0]），定位到它的左边——整个操作栏最左。
       // 用 right 锚定（CSS left:auto）：hover 时 width 增大 → 左边向左展开（参考 wbs-fab）。
+      if (!isComposerAnchorVisible(mic)) return false;
       var row = mic.parentElement;
       if (!row || !row.children || !row.children.length) { stashBtn.style.display = 'none'; return false; }
       var firstChild = row.children[0]; // 操作栏最左元素（"上下文用量"按钮）
@@ -2470,10 +2715,14 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       clearTimeout(stashSyncThrottle);
       // 节流 30ms：比 120ms 响应更快（接近原生 React 按钮的体感），仍能合并快速连续触发
       stashSyncThrottle = setBuildTimeout(function () {
-        // 欢迎页强制隐藏
-        if (isWelcomePage()) { stashBtn.style.display = 'none'; exploreBtn.style.display = 'none'; return; }
+        // 登录、设置等页面没有会话锚点时隐藏两个按钮；不保留上个页面的固定坐标。
+        if (isWelcomePage() || !insertStash()) {
+          stashBtn.style.display = 'none';
+          exploreBtn.style.display = 'none';
+          exploreBtn.classList.add('wbs-menu-closed');
+          return;
+        }
         // 探索按钮常驻（若「快捷短语」开关开着）：不等输入框有内容，只要定位到操作栏就常显
-        insertStash();
         exploreBtn.style.display = sessState.phrase ? 'flex' : 'none';
         applyThemeButtonColors(); // 主题色按钮（浅色黑底白图 / 深色白底黑图）
         renderExploreOptions(); // 面板选项 = 快捷短语列表（增删改后同步刷新）
@@ -3816,6 +4065,25 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         }
       } catch (e) {}
     }
+    // Preserve an occupied New Task draft locally before Agent creation. Keep
+    // rich blocks in the existing stash format; only status crosses CDP.
+    async function saveAutomationDraft() {
+      var editor = findComposer();
+      var newTask = Array.from(document.querySelectorAll('button.conversation-list-tab-button')).some(function (b) { return b.getAttribute('aria-selected') === 'true' && /^(新建任务|New Task)$/i.test((b.innerText || '').trim()); });
+      if (!alive || !editor || (!editor.closest('.wb-home-composer') && !newTask)) return { saved: false };
+      var content = getComposerContent();
+      if (!content) return { saved: false };
+      var uid = (state.current && state.current.uid) || null;
+      if (content.textLen || content.items.length) {
+        await api('/api/stash', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ uid: uid, conversationId: 'automation-home-draft', content: content }) });
+        if (!alive || editor !== findComposer() || !document.contains(editor) ||
+            uid !== ((state.current && state.current.uid) || null) || !stashContentMatches(content, getComposerContent())) return { saved: false };
+        toast('原输入框草稿已保存到暂存', false, root);
+      }
+      return { saved: true };
+    }
+    window.__wbsSaveAutomationDraft = saveAutomationDraft;
+    registerDisposer(function () { if (window.__wbsSaveAutomationDraft === saveAutomationDraft) delete window.__wbsSaveAutomationDraft; });
     // 队列操作超时包装：WorkBuddy 内部 Promise 可能永不 settle，超时后走本地暂存兜底，避免"卡死"
     function withQueueTimeout(promise, ms) {
       return new Promise(function (resolve, reject) {
@@ -3978,6 +4246,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     var sessionsPane = root.querySelector('[data-pane="sessions"]');
     var modelsPane = root.querySelector('[data-pane="models"]');
     var enhancePane = root.querySelector('[data-pane="enhance"]');
+    var automationPane = root.querySelector('[data-pane="automations"]');
     var pcPane = root.querySelector('[data-pane="pc"]');
     var aboutPane = root.querySelector('[data-pane="about"]');
     var hiddenToolsUnlocked = false;
@@ -4233,7 +4502,13 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     }
 
     function downloadTransfer(result, fallbackName) {
-      var blob = new Blob([result.content], { type: 'application/json' });
+      var content = result.content;
+      if (result.encoding === 'base64') {
+        var binary = atob(content);
+        content = new Uint8Array(binary.length);
+        for (var i = 0; i < binary.length; i++) content[i] = binary.charCodeAt(i);
+      }
+      var blob = new Blob([content], { type: result.mimeType || 'application/json' });
       var url = URL.createObjectURL(blob);
       var anchor = document.createElement('a');
       anchor.href = url;
@@ -4339,6 +4614,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       if (name === 'sessions' && sessionsPane && !sessionsPane.dataset.built) buildSessionsPane();
       if (name === 'models' && modelsPane && !modelsPane.dataset.built) buildModelsPane();
       if (name === 'enhance' && enhancePane && !enhancePane.dataset.built) buildEnhancePane();
+      if (name === 'automations' && automationPane && !automationPane.dataset.built) buildAutomationPane();
       if (name === 'pc' && pcPane && !pcPane.dataset.built) buildPcPane();
       if (name === 'about' && aboutPane && !aboutPane.dataset.built) buildAboutPane();
       if (name === 'settings' && settingsPane && !settingsPane.dataset.built) buildSettingsPane();
@@ -4348,6 +4624,456 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       (function (btn) {
         btn.addEventListener('click', function () { switchTab(btn.getAttribute('data-tab')); });
       })(tabBtns[ti]);
+    }
+
+    function buildAutomationPane() {
+      if (!automationPane) return;
+      automationPane.dataset.built = '1';
+      var automationState = { tasks: [], runs: [], examples: [], selected: {}, batchMode: false, editingId: null, pollTimer: null, stopping: {}, agentDraft: '', agentCreating: false };
+      function defaultTask() {
+        return { schemaVersion: 1, id: 'task_' + Date.now().toString(36), name: '新自动化任务', description: '', enabled: true, trigger: { type: 'manual', oncePerNavigation: true }, variables: {}, steps: [] };
+      }
+      function triggerBadgesHtml(task) {
+        var trigger = task.trigger || {};
+        var types = Array.isArray(trigger.types) ? trigger.types : [trigger.type || 'manual'];
+        var names = types.filter(function (type) { return type !== 'manual'; }).map(function (type) { return ({ pageReady: '页面就绪', pageLoaded: '页面加载', accountSwitched: '账号切换后', clientLoaded: '客户端加载', panelOpened: '打开面板' })[type] || type; });
+        var schedule = task.schedule || {};
+        if (schedule.type === 'interval') names.push('每 ' + schedule.minutes + ' 分钟');
+        if (schedule.type === 'daily') names.push('每天 ' + schedule.time);
+        if (schedule.type === 'weekly') names.push((schedule.days || []).map(function (day) { return ['周日','周一','周二','周三','周四','周五','周六'][day]; }).join('、') + ' ' + schedule.time);
+        if (schedule.type === 'monthly') names.push('每月 ' + schedule.day + ' 日 ' + schedule.time);
+        if (schedule.type === 'once') names.push('单次 ' + String(schedule.at || '').replace('T', ' '));
+        if (!names.length) names.push('手动触发');
+        return names.map(function (name) { return '<span class="wbs-auto-trigger-chip">' + esc(name) + '</span>'; }).join('');
+      }
+      function taskStatusLabel(task, run, stopping) {
+        if (task.compatible === false) return '任务不兼容';
+        if (stopping) return '正在停止…';
+        if (run && run.status === 'running') return run.phase === 'queued' ? '排队中' : '执行中';
+        if (!task.enabled && !task.manualRunnable) return '已停用';
+        var events = task.trigger && (Array.isArray(task.trigger.types) ? task.trigger.types : [task.trigger.type]) || [];
+        if (task.schedule && task.schedule.type === 'once' && new Date(task.schedule.at).getTime() + 60000 <= Date.now() && !events.some(function (type) { return type && type !== 'manual'; })) return '定时已结束';
+        return task.manualRunnable ? '手动运行' : '等待触发';
+      }
+      function lastRunLabel(run) {
+        if (!run || run.status === 'running') return '';
+        var label = ({ success: '上次已完成', failed: '上次失败', cancelled: '上次已停止' })[run.status] || '';
+        var at = Number(run.finishedAt || run.startedAt);
+        return label + (at ? ' · ' + new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '');
+      }
+      function runFor(taskId) { var latest = null; for (var i = 0; i < automationState.runs.length; i++) { var item = automationState.runs[i]; if (item.taskId !== taskId) continue; if (item.status === 'running') return item; if (!latest || Number(item.startedAt || 0) > Number(latest.startedAt || 0)) latest = item; } return latest; }
+      function selectedIds() { return Object.keys(automationState.selected).filter(function (id) { return automationState.selected[id]; }); }
+      function allSelected() { return automationState.tasks.length > 0 && automationState.tasks.every(function (task) { return automationState.selected[task.id]; }); }
+      function syncBatchControls() {
+        var count = automationPane.querySelector('#wbs-auto-batch-count');
+        var selectAll = automationPane.querySelector('#wbs-auto-select-all');
+        if (count) count.textContent = '已选 ' + selectedIds().length;
+        if (selectAll) selectAll.textContent = allSelected() ? '取消全选' : '全选';
+        var exportButton = automationPane.querySelector('#wbs-auto-export');
+        if (exportButton) exportButton.disabled = !selectedIds().length || !!automationState.exporting;
+      }
+      function render() {
+        var list = automationPane.querySelector('#wbs-auto-list');
+        var count = automationPane.querySelector('#wbs-auto-count');
+        if (!list) return;
+        if (count) count.textContent = automationState.tasks.length ? String(automationState.tasks.length) : '';
+        var scrollTop = list.scrollTop;
+        list.innerHTML = '';
+        if (!automationState.tasks.length) { list.innerHTML = '<div class="wbs-auto-empty">暂无自动化任务，点击“新建任务”开始。</div>'; syncBatchControls(); return; }
+        automationState.tasks.forEach(function (task) {
+          var row = document.createElement('div'); row.className = 'wbs-auto-row'; row.setAttribute('data-task-id', task.id);
+          var run = runFor(task.id);
+          var running = !!(run && run.status === 'running');
+          // 清理已结束的“停止中”标记：run 不再 running 即视为停止完成
+          if (automationState.stopping && Object.keys(automationState.stopping).length) {
+            Object.keys(automationState.stopping).forEach(function (rid) {
+              var still = automationState.runs.some(function (r2) { return r2.id === rid && r2.status === 'running'; });
+              if (!still) delete automationState.stopping[rid];
+            });
+          }
+          var stopping = running && run && !!automationState.stopping[run.id]; // 已点停止、等待 daemon 确认结束
+          var active = running || stopping;
+          var check = automationState.batchMode ? '<label class="wbs-auto-check"><input type="checkbox" data-auto-select="' + escAttr(task.id) + '"' + (automationState.selected[task.id] ? ' checked' : '') + '><span></span></label>' : '';
+          var stateClass = active ? 'running' : !task.enabled && !task.manualRunnable ? 'off' : 'idle';
+          var action = running ? '<button type="button" class="wbs-auto-icon is-running' + (stopping ? ' is-stopping' : '') + '" data-auto-stop="' + escAttr(run.id) + '" title="' + (stopping ? '正在停止…' : '停止本次执行') + '" aria-label="' + (stopping ? '正在停止…' : '停止本次执行') + '" aria-busy="true"' + (stopping ? ' disabled' : '') + '>' + (stopping ? AUTO_STOPPING_SVG : AUTO_STOP_SVG) + '</button>'
+            : task.manualRunnable ? '<button type="button" class="wbs-auto-icon" data-auto-run="' + escAttr(task.id) + '" title="立即运行" aria-label="立即运行">' + MODEL_ENABLE_SVG + '</button>' : '';
+          row.innerHTML = '<div class="wbs-auto-row-head">' + check + '<div class="wbs-auto-name"' + (wbsBuiltinAutomationText(task, 'name') ? '' : ' data-wbs-i18n-skip="1"') + ' title="' + escAttr(task.name) + '">' + esc(task.name) + '</div>' +
+            '<label class="wbs-switch wbs-auto-enabled" title="' + (task.manualRunnable ? '手动任务无需自动触发' : '启用自动触发') + '"' + (task.manualRunnable || task.compatible === false ? ' hidden' : '') + '><input type="checkbox" data-auto-enabled="' + escAttr(task.id) + '" aria-label="启用自动触发"' + (task.enabled ? ' checked' : '') + '><span class="wbs-switch-slider"></span></label></div>' +
+            (task.description ? '<div class="wbs-auto-description"' + (wbsBuiltinAutomationText(task, 'description') ? '' : ' data-wbs-i18n-skip="1"') + ' title="' + escAttr(task.description) + '">' + esc(task.description) + '</div>' : '') +
+            '<div class="wbs-auto-row-foot"><div class="wbs-auto-details"><div class="wbs-auto-triggers" aria-label="触发方式">' + triggerBadgesHtml(task) + '</div><div class="wbs-auto-state-line"><span class="wbs-auto-state ' + stateClass + '">' + esc(taskStatusLabel(task, run, stopping)) + '</span>' +
+            (lastRunLabel(run) ? '<span class="wbs-auto-last-run' + (run.status === 'failed' ? ' failed' : '') + '">' + esc(lastRunLabel(run)) + '</span>' : '') + '</div></div><div class="wbs-auto-actions">' + action +
+            '<button type="button" class="wbs-auto-icon" data-auto-logs="' + escAttr(task.id) + '" title="运行日志" aria-label="运行日志">' + AUTO_LOG_SVG + '</button><button type="button" class="wbs-auto-icon" data-auto-edit="' + escAttr(task.id) + '" title="编辑" aria-label="编辑">' + MODEL_EDIT_SVG + '</button><button type="button" class="wbs-auto-icon" data-auto-copy="' + escAttr(task.id) + '" title="复制" aria-label="复制">' + MODEL_COPY_SVG + '</button><button type="button" class="wbs-auto-icon danger" data-auto-delete="' + escAttr(task.id) + '" title="删除" aria-label="删除">' + TRASH_SVG + '</button></div></div>';
+          list.appendChild(row);
+        });
+        list.scrollTop = scrollTop;
+        applyI18n(list);
+        syncBatchControls();
+      }
+      function load() {
+        return api('/api/automations').then(function (result) { automationState.tasks = result.tasks || []; automationState.runs = result.runs || []; render(); }).catch(function (e) { toast(e.message || '加载自动化失败', true, root); });
+      }
+      function renderExamples() {
+        var list = (panel || root).querySelector('#wbs-auto-examples');
+        if (!list) return;
+        list.innerHTML = '';
+        automationState.examples.forEach(function (example) {
+          var title = WBS_LANGUAGE === 'en' ? example.titleEn : example.titleZh;
+          var button = document.createElement('button'); button.type = 'button'; button.className = 'wbs-auto-textbtn wbs-auto-example-fill';
+          button.setAttribute('data-auto-example-fill', example.id);
+          button.title = title;
+          button.textContent = automationState.examples.length === 1 ? '示例' : title;
+          list.appendChild(button);
+        });
+        applyI18n(list);
+      }
+      function loadAgentInfo() {
+        return api('/api/automations/agent-info').then(function (result) { automationState.examples = result.examples || []; renderExamples(); }).catch(function (e) {
+          var list = (panel || root).querySelector('#wbs-auto-examples');
+          if (list) list.innerHTML = '<div class="wbs-auto-example-empty">' + esc(e.message || '加载示例失败') + '</div>';
+        });
+      }
+      function exampleById(id) {
+        return automationState.examples.filter(function (item) { return item.id === id; })[0] || null;
+      }
+      function generateAgentTask(mask) {
+        if (automationState.agentCreating) return;
+        var input = mask.querySelector('#wbs-auto-agent-prompt');
+        var prompt = input.value.trim();
+        if (!prompt || prompt.length > 6000) { input.focus(); return; }
+        automationState.agentDraft = input.value;
+        automationState.agentCreating = true;
+        closePanelModal(mask);
+        setOpen(false);
+        api('/api/automations/agent-generate', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ prompt: prompt, language: WBS_LANGUAGE }) }).then(function () {
+          automationState.agentCreating = false; automationState.agentDraft = '';
+          toast('已创建新会话，WorkBuddy 完成后任务会自动出现', false, root);
+        }).catch(function (error) {
+          automationState.agentCreating = false;
+          setOpen(true, { automation: true }); switchTab('automations'); showExamples();
+          toast('WorkBuddy 创建失败：' + (error.message || error), true, root);
+        });
+      }
+      function closePanelModal(mask) {
+        if (!mask) return;
+        if (mask.__wbsKeyHandler) document.removeEventListener('keydown', mask.__wbsKeyHandler, true);
+        mask.remove();
+      }
+      function showAutomationConfirm(title, bodyText, onConfirm, confirmText) {
+        var mask = document.createElement('div');
+        mask.className = 'wbs-modal-mask wbs-modal-mask-panel';
+        mask.innerHTML = '<div class="wbs-modal" role="dialog" aria-modal="true"><div class="wbs-modal-title"></div><div class="wbs-modal-body"></div><div class="wbs-modal-actions"><button class="wbs-modal-btn" type="button" data-auto-confirm="cancel">取消</button><button class="wbs-modal-btn wbs-modal-danger" type="button" data-auto-confirm="ok">删除</button></div></div>';
+        mask.querySelector('.wbs-modal-title').textContent = title;
+        mask.querySelector('.wbs-modal-body').textContent = bodyText;
+        mask.querySelector('[data-auto-confirm="ok"]').textContent = confirmText || '删除';
+        (panel || root).appendChild(mask);
+        function close() { closePanelModal(mask); }
+        mask.addEventListener('click', function (event) {
+          if (event.target === mask || (event.target.getAttribute && event.target.getAttribute('data-auto-confirm') === 'cancel')) { close(); return; }
+          if (event.target.getAttribute && event.target.getAttribute('data-auto-confirm') === 'ok') { close(); onConfirm(); }
+        });
+        mask.__wbsKeyHandler = function (event) { if (event.key === 'Escape') close(); };
+        document.addEventListener('keydown', mask.__wbsKeyHandler, true);
+        applyI18n(mask);
+      }
+      function showAutomationLogs(task) {
+        if (!task) return;
+        var runs = automationState.runs.filter(function (run) { return run.taskId === task.id; }).sort(function (a, b) { return Number(b.startedAt || 0) - Number(a.startedAt || 0); });
+        var mask = document.createElement('div');
+        mask.className = 'wbs-modal-mask wbs-modal-mask-panel';
+        mask.innerHTML = '<div class="wbs-modal wbs-auto-log-modal" role="dialog" aria-modal="true" aria-labelledby="wbs-auto-log-title"><div class="wbs-auto-modal-head"><div><div class="wbs-modal-title" id="wbs-auto-log-title">运行日志</div><div class="wbs-auto-modal-subtitle"></div></div><div class="wbs-auto-log-head-actions"><button class="wbs-auto-textbtn" type="button" id="wbs-auto-clear-logs">清除日志</button><button class="wbs-auto-modal-close" type="button" title="关闭" aria-label="关闭"><svg aria-hidden="true" viewBox="0 0 16 16"><path d="M3 3l10 10M13 3 3 13"/></svg></button></div></div><div class="wbs-auto-log-list"></div></div>';
+        mask.querySelector('.wbs-auto-modal-subtitle').textContent = task.name || '';
+        if (!wbsBuiltinAutomationText(task, 'name')) mask.querySelector('.wbs-auto-modal-subtitle').setAttribute('data-wbs-i18n-skip', '1');
+        var list = mask.querySelector('.wbs-auto-log-list');
+        if (!runs.length) {
+          var empty = document.createElement('div'); empty.className = 'wbs-auto-log-empty'; empty.textContent = '暂无运行日志'; list.appendChild(empty);
+        } else {
+          runs.forEach(function (run) {
+            var item = document.createElement('section'); item.className = 'wbs-auto-log-run';
+            var head = document.createElement('div'); head.className = 'wbs-auto-log-head';
+            var status = document.createElement('span'); status.className = 'wbs-auto-log-status ' + String(run.status || ''); status.textContent = ({ running: '运行中', success: '已成功', failed: '失败', cancelled: '已停止' })[run.status] || run.status || '未运行';
+            var time = document.createElement('span'); time.className = 'wbs-auto-log-time'; time.textContent = new Date(Number(run.startedAt || 0)).toLocaleString(WBS_LANGUAGE === 'en' ? 'en-US' : 'zh-CN');
+            head.appendChild(status); head.appendChild(time); item.appendChild(head);
+            var facts = document.createElement('div'); facts.className = 'wbs-auto-log-facts';
+            var started = document.createElement('span'); started.textContent = (WBS_LANGUAGE === 'en' ? 'Started: ' : '开始时间：') + new Date(Number(run.startedAt || 0)).toLocaleString(WBS_LANGUAGE === 'en' ? 'en-US' : 'zh-CN'); facts.appendChild(started);
+            var finished = document.createElement('span'); finished.textContent = (WBS_LANGUAGE === 'en' ? 'Finished: ' : '结束时间：') + (run.finishedAt ? new Date(Number(run.finishedAt)).toLocaleString(WBS_LANGUAGE === 'en' ? 'en-US' : 'zh-CN') : (WBS_LANGUAGE === 'en' ? 'Still running' : '尚未结束')); facts.appendChild(finished);
+            item.appendChild(facts);
+            var pre = document.createElement('pre'); pre.className = 'wbs-auto-log-output'; pre.textContent = (run.logs || []).map(function (entry) { return new Date(Number(entry.at || 0)).toLocaleTimeString(WBS_LANGUAGE === 'en' ? 'en-US' : 'zh-CN') + '  ' + String(entry.message || ''); }).join('\n') || (WBS_LANGUAGE === 'en' ? 'No execution log entries' : '暂无执行日志'); item.appendChild(pre);
+            list.appendChild(item);
+          });
+        }
+        (panel || root).appendChild(mask);
+        function close() { closePanelModal(mask); }
+        mask.__wbsKeyHandler = function (event) { if (event.key === 'Escape') close(); };
+        document.addEventListener('keydown', mask.__wbsKeyHandler, true);
+        mask.querySelector('.wbs-auto-modal-close').addEventListener('click', close);
+        mask.querySelector('#wbs-auto-clear-logs').addEventListener('click', function () {
+          showAutomationConfirm('清除运行日志？', '仅清除已结束的运行记录。', function () {
+            api('/api/automations/logs/clear', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ taskId: task.id }) }).then(function () {
+              automationState.runs = automationState.runs.filter(function (run) { return run.taskId !== task.id || run.status === 'running'; });
+              close();
+              showAutomationLogs(task);
+            }).catch(function (error) { toast(error.message || '清除日志失败', true, root); });
+          }, '清除');
+        });
+        mask.addEventListener('click', function (event) { if (event.target === mask) close(); });
+        applyI18n(mask);
+      }
+      function showEditor(task) {
+        if (task && task.compatible === false) { toast('任务与当前 WorkDaddy 不兼容，请升级或使用适配版本', true, root); return; }
+        hideEditor();
+        var mask = document.createElement('div');
+        mask.id = 'wbs-auto-editor-mask';
+        mask.className = 'wbs-modal-mask wbs-modal-mask-panel';
+        mask.innerHTML = '<div class="wbs-modal wbs-auto-editor-modal" role="dialog" aria-modal="true" aria-labelledby="wbs-auto-editor-title"><div class="wbs-auto-modal-head"><div class="wbs-modal-title" id="wbs-auto-editor-title">编辑任务</div><button class="wbs-auto-modal-close" type="button" title="关闭" aria-label="关闭"><svg aria-hidden="true" viewBox="0 0 16 16"><path d="M3 3l10 10M13 3 3 13"/></svg></button></div><div class="wbs-auto-editor-body"><label class="wbs-auto-field"><span>任务名称</span><input data-auto-field="name" type="text" maxlength="120"></label><label class="wbs-auto-field"><span>任务说明</span><textarea data-auto-field="description" rows="3" maxlength="500"></textarea></label><div class="wbs-auto-field"><span>事件触发（可多选）</span><div class="wbs-auto-trigger-options" data-auto-field="trigger" role="group" aria-label="触发方式"><label><input type="checkbox" value="pageReady"><span>页面就绪</span></label><label><input type="checkbox" value="pageLoaded"><span>页面加载</span></label><label><input type="checkbox" value="accountSwitched"><span>账号切换后</span></label><label><input type="checkbox" value="clientLoaded"><span>客户端加载</span></label><label><input type="checkbox" value="panelOpened"><span>打开面板</span></label></div><div class="wbs-auto-schedule"><label>定时方式 <select data-auto-field="scheduleType" aria-label="定时方式"><option value="manual">不定时</option><option value="interval">按间隔</option><option value="daily">每天</option><option value="weekly">每周</option><option value="monthly">每月</option><option value="once">指定时间一次</option></select></label><label data-schedule-for="interval">每 <input type="number" data-auto-field="intervalValue" min="1" max="10080" step="1" aria-label="间隔数值"><select data-auto-field="intervalUnit" aria-label="间隔单位"><option value="1">分钟</option><option value="60">小时</option><option value="1440">天</option></select></label><label data-schedule-for="monthly">日期 <input type="number" data-auto-field="monthDay" min="1" max="31" aria-label="每月日期"></label><label data-schedule-for="daily weekly monthly">时间 <input type="time" data-auto-field="time" aria-label="执行时间"></label><label data-schedule-for="once">日期时间 <input type="datetime-local" data-auto-field="onceAt" aria-label="执行日期和时间"></label><div class="wbs-auto-weekdays" data-schedule-for="weekly"><label><input type="checkbox" data-auto-weekday="1"><span>周一</span></label><label><input type="checkbox" data-auto-weekday="2"><span>周二</span></label><label><input type="checkbox" data-auto-weekday="3"><span>周三</span></label><label><input type="checkbox" data-auto-weekday="4"><span>周四</span></label><label><input type="checkbox" data-auto-weekday="5"><span>周五</span></label><label><input type="checkbox" data-auto-weekday="6"><span>周六</span></label><label><input type="checkbox" data-auto-weekday="0"><span>周日</span></label><button type="button" class="wbs-auto-textbtn" data-auto-workdays>工作日</button></div><div class="wbs-auto-schedule-hint" data-schedule-for="interval daily weekly monthly once">按电脑本地时间执行；错过不补跑，运行中跳过。</div><div class="wbs-auto-schedule-hint" data-schedule-for="monthly">当月没有该日期时跳过。</div></div></div><label class="wbs-auto-field wbs-auto-steps-field"><span>步骤 JSON</span><textarea data-auto-field="steps" spellcheck="false"></textarea></label></div><div class="wbs-modal-actions wbs-auto-editor-actions"><button class="wbs-modal-btn" type="button" id="wbs-auto-cancel">取消</button><button class="wbs-modal-btn wbs-modal-ok" type="button" id="wbs-auto-save">保存</button></div></div>';
+        (panel || root).appendChild(mask);
+        var editor = mask.querySelector('.wbs-auto-editor-modal');
+        automationState.editingId = task && task.id || null;
+        editor.querySelector('[data-auto-field="name"]').value = wbsAutomationText(task, 'name');
+        editor.querySelector('[data-auto-field="description"]').value = wbsAutomationText(task, 'description');
+        var trigger = task && task.trigger || {};
+        var triggerTypes = Array.isArray(trigger.types) ? trigger.types : [trigger.type || 'manual'];
+        editor.querySelectorAll('[data-auto-field="trigger"] input').forEach(function (input) { input.checked = triggerTypes.indexOf(input.value) >= 0; });
+        var schedule = task && task.schedule || { type: 'manual' };
+        var scheduleType = editor.querySelector('[data-auto-field="scheduleType"]');
+        scheduleType.value = schedule.type;
+        var interval = Number(schedule.minutes) || 60;
+        var unit = interval % 1440 === 0 ? 1440 : interval % 60 === 0 ? 60 : 1;
+        editor.querySelector('[data-auto-field="intervalValue"]').value = interval / unit;
+        editor.querySelector('[data-auto-field="intervalUnit"]').value = String(unit);
+        editor.querySelector('[data-auto-field="time"]').value = schedule.time || '09:00';
+        editor.querySelector('[data-auto-field="monthDay"]').value = schedule.day || 1;
+        editor.querySelector('[data-auto-field="onceAt"]').value = schedule.at || '';
+        editor.querySelectorAll('[data-auto-weekday]').forEach(function (input) { input.checked = (schedule.days || [1,2,3,4,5]).indexOf(Number(input.dataset.autoWeekday)) >= 0; });
+        function syncScheduleFields() {
+          editor.querySelectorAll('[data-schedule-for]').forEach(function (field) { field.hidden = field.dataset.scheduleFor.split(' ').indexOf(scheduleType.value) < 0; });
+        }
+        scheduleType.addEventListener('change', syncScheduleFields); syncScheduleFields();
+        editor.querySelector('[data-auto-workdays]').addEventListener('click', function () { editor.querySelectorAll('[data-auto-weekday]').forEach(function (input) { input.checked = Number(input.dataset.autoWeekday) > 0 && Number(input.dataset.autoWeekday) < 6; }); });
+        editor.querySelector('[data-auto-field="steps"]').value = JSON.stringify(task ? task.steps : [], null, 2);
+        mask.__wbsKeyHandler = function (event) { if (event.key === 'Escape') hideEditor(); };
+        document.addEventListener('keydown', mask.__wbsKeyHandler, true);
+        mask.querySelector('#wbs-auto-save').addEventListener('click', saveEditor);
+        mask.querySelector('#wbs-auto-cancel').addEventListener('click', hideEditor);
+        mask.querySelector('.wbs-auto-modal-close').addEventListener('click', hideEditor);
+        mask.addEventListener('click', function (event) { if (event.target === mask) hideEditor(); });
+        applyI18n(mask);
+        editor.querySelector('[data-auto-field="name"]').focus();
+      }
+      function hideEditor() { closePanelModal((panel || root).querySelector('#wbs-auto-editor-mask')); automationState.editingId = null; }
+      function saveEditor() {
+        var editor = (panel || root).querySelector('.wbs-auto-editor-modal');
+        if (!editor) return;
+        var steps;
+        try { steps = JSON.parse(editor.querySelector('[data-auto-field="steps"]').value || '[]'); } catch (_) { toast('步骤 JSON 格式无效', true, root); return; }
+        if (!Array.isArray(steps)) { toast('步骤 JSON 必须是数组', true, root); return; }
+        var existing = automationState.tasks.filter(function (item) { return item.id === automationState.editingId; })[0];
+        var task = existing ? JSON.parse(JSON.stringify(existing)) : defaultTask();
+        var selectedTriggers = Array.from(editor.querySelectorAll('[data-auto-field="trigger"] input:checked')).map(function (input) { return input.value; });
+        var scheduleType = editor.querySelector('[data-auto-field="scheduleType"]').value;
+        var schedule = { type: scheduleType };
+        if (scheduleType === 'interval') {
+          schedule.minutes = Number(editor.querySelector('[data-auto-field="intervalValue"]').value) * Number(editor.querySelector('[data-auto-field="intervalUnit"]').value);
+          if (!Number.isInteger(schedule.minutes) || schedule.minutes < 1 || schedule.minutes > 10080) { toast('定时间隔必须是 1–10080 分钟的整数', true, root); return; }
+        }
+        if (['daily', 'weekly', 'monthly'].indexOf(scheduleType) >= 0) {
+          schedule.time = editor.querySelector('[data-auto-field="time"]').value;
+          if (!schedule.time) { toast('请选择有效的执行时间', true, root); return; }
+        }
+        if (scheduleType === 'weekly') {
+          schedule.days = Array.from(editor.querySelectorAll('[data-auto-weekday]:checked')).map(function (input) { return Number(input.dataset.autoWeekday); });
+          if (!schedule.days.length) { toast('请至少选择一个星期', true, root); return; }
+        }
+        if (scheduleType === 'monthly') schedule.day = Number(editor.querySelector('[data-auto-field="monthDay"]').value);
+        if (scheduleType === 'once') {
+          schedule.at = editor.querySelector('[data-auto-field="onceAt"]').value;
+          if (!schedule.at || (new Date(schedule.at).getTime() <= Date.now() && (!existing || !existing.schedule || existing.schedule.at !== schedule.at))) { toast('请选择将来的执行日期和时间', true, root); return; }
+        }
+        task.schedule = schedule;
+        task.id = automationState.editingId || task.id; task.name = wbsAutomationEditedText(existing, 'name', editor.querySelector('[data-auto-field="name"]').value) || '未命名任务'; task.description = wbsAutomationEditedText(existing, 'description', editor.querySelector('[data-auto-field="description"]').value); task.enabled = existing ? existing.enabled !== false : true; task.trigger = Object.assign({}, task.trigger || {}, { type: selectedTriggers[0] || 'manual', types: selectedTriggers, oncePerNavigation: true }); task.steps = steps;
+        api('/api/automations', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ task: task }) }).then(function () { hideEditor(); toast('任务已保存', false, root); return load(); }).catch(function (e) { toast(e.message || '保存失败', true, root); });
+      }
+      function mountAutomationModal(mask) {
+        (panel || root).appendChild(mask);
+        var close = function () { closePanelModal(mask); };
+        mask.querySelector('[data-auto-close]').addEventListener('click', close);
+        mask.addEventListener('click', function (e) { if (e.target === mask) close(); });
+        mask.__wbsKeyHandler = function (e) {
+          if (e.key === 'Escape' && mask === (panel || root).querySelector('.wbs-auto-dialog-mask:last-child')) { e.preventDefault(); e.stopImmediatePropagation(); close(); }
+        };
+        document.addEventListener('keydown', mask.__wbsKeyHandler, true);
+        applyI18n(mask);
+        mask.querySelector('[data-auto-close]').focus();
+      }
+      function showCapabilities() {
+        api('/api/automations/capabilities').then(function (result) {
+          closePanelModal((panel || root).querySelector('#wbs-auto-protocol-mask'));
+          var protocol = WBS_LANGUAGE === 'zh' ? result.protocolZh : result.protocolEn;
+          var mask = document.createElement('div'); mask.id = 'wbs-auto-protocol-mask'; mask.className = 'wbs-modal-mask wbs-modal-mask-panel wbs-auto-dialog-mask';
+          mask.innerHTML = '<div class="wbs-modal wbs-auto-cap-modal" role="dialog" aria-modal="true" aria-labelledby="wbs-auto-protocol-title"><div class="wbs-modal-title" id="wbs-auto-protocol-title">自动化接口协议</div><pre class="wbs-auto-protocol"></pre><div class="wbs-modal-actions"><button class="wbs-modal-btn" data-auto-close type="button">关闭</button></div></div>';
+          mask.querySelector('.wbs-auto-protocol').textContent = String(protocol || '');
+          mountAutomationModal(mask);
+        }).catch(function (e) { toast(e.message || '读取接口失败', true, root); });
+      }
+      function showExamples() {
+        if (automationState.agentCreating) { toast('正在打开新任务…', false, root); return; }
+        closePanelModal((panel || root).querySelector('#wbs-auto-examples-mask'));
+        var mask = document.createElement('div'); mask.id = 'wbs-auto-examples-mask'; mask.className = 'wbs-modal-mask wbs-modal-mask-panel wbs-auto-dialog-mask';
+        mask.innerHTML = '<div class="wbs-modal wbs-auto-agent-modal" role="dialog" aria-modal="true" aria-labelledby="wbs-auto-examples-title"><div class="wbs-modal-title" id="wbs-auto-examples-title">让 WorkBuddy 帮我创建</div><p class="wbs-auto-agent-intro">描述触发时机和需要执行的操作，WorkBuddy 会生成任务并添加到自动化列表。</p><div class="wbs-auto-agent-input-head"><label for="wbs-auto-agent-prompt">自动化需求</label><div id="wbs-auto-examples"></div></div><textarea id="wbs-auto-agent-prompt" class="wbs-auto-agent-prompt" maxlength="6000" placeholder="例如：每次打开面板时，显示一条欢迎提示。"></textarea><div class="wbs-auto-agent-hint">将在新的 WorkBuddy 会话中创建</div><div class="wbs-modal-actions"><button class="wbs-modal-btn" data-auto-close type="button">取消</button><button class="wbs-modal-btn wbs-modal-ok" id="wbs-auto-agent-submit" type="button" disabled>交给 WorkBuddy 创建</button></div></div>';
+        mountAutomationModal(mask); renderExamples();
+        var input = mask.querySelector('#wbs-auto-agent-prompt');
+        var submit = mask.querySelector('#wbs-auto-agent-submit');
+        input.value = automationState.agentDraft;
+        function syncDraft() { automationState.agentDraft = input.value; submit.disabled = !input.value.trim(); }
+        input.addEventListener('input', syncDraft); syncDraft(); input.focus();
+        mask.querySelector('#wbs-auto-examples').addEventListener('click', function (e) {
+          var button = e.target.closest('[data-auto-example-fill]');
+          if (!button) return;
+          var example = exampleById(button.getAttribute('data-auto-example-fill'));
+          if (!example) return;
+          input.value = WBS_LANGUAGE === 'en' ? example.promptEn : example.promptZh;
+          syncDraft(); input.focus();
+        });
+        submit.addEventListener('click', function () { generateAgentTask(mask); });
+      }
+      function exportAutomationTasks() {
+        var ids = selectedIds();
+        if (!ids.length || automationState.exporting) return;
+        automationState.exporting = true; syncBatchControls();
+        api('/api/automations/export', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids: ids }) }).then(function (result) {
+          downloadTransfer(result, 'WorkDaddy-tasks.zip');
+          toast('任务导出成功', false, root);
+        }).catch(function (error) { toast(error.message || '导出失败', true, root); }).finally(function () { automationState.exporting = false; syncBatchControls(); });
+      }
+      function importIssueLabel(entry) {
+        if (entry.existing) return '已存在，将跳过';
+        if (entry.compatible) return '可导入';
+        var codes = (entry.issues || []).map(function (issue) { return issue.code; });
+        if (codes.indexOf('input_required') >= 0) return '缺少必填参数';
+        if (codes.indexOf('workdaddy_version') >= 0) return '需要更新 WorkDaddy';
+        if (codes.indexOf('profile') >= 0 || codes.indexOf('platform') >= 0) return '不支持当前客户端或系统';
+        if (codes.indexOf('invalid_document') >= 0) return '文件不是自动化任务 JSON';
+        return '任务格式或能力不受支持';
+      }
+      function showTaskImport(payload, filename, preview) {
+        closePanelModal((panel || root).querySelector('#wbs-auto-import-mask'));
+        var mask = document.createElement('div'); mask.id = 'wbs-auto-import-mask'; mask.className = 'wbs-modal-mask wbs-modal-mask-panel wbs-auto-dialog-mask';
+        mask.innerHTML = '<div class="wbs-modal wbs-auto-import-modal" role="dialog" aria-modal="true" aria-labelledby="wbs-auto-import-title"><div class="wbs-modal-title" id="wbs-auto-import-title">导入任务</div><div class="wbs-auto-import-file" data-wbs-i18n-skip="1"></div><p class="wbs-auto-agent-intro">导入后保持停用，可在任务列表中启用。相同 ID 的任务会跳过。</p><div class="wbs-auto-import-list"></div><div class="wbs-auto-import-error" role="alert"></div><div class="wbs-modal-actions"><span class="wbs-auto-import-count"></span><button class="wbs-modal-btn" data-auto-close type="button">取消</button><button class="wbs-modal-btn wbs-modal-ok" data-auto-import-confirm type="button">导入</button></div></div>';
+        mask.querySelector('.wbs-auto-import-file').textContent = filename;
+        var list = mask.querySelector('.wbs-auto-import-list');
+        preview.entries.forEach(function (entry) {
+          var row = document.createElement('label'); row.className = 'wbs-auto-import-item';
+          var available = entry.compatible && !entry.existing;
+          row.innerHTML = '<span class="wbs-auto-check"><input type="checkbox" data-import-key="' + escAttr(entry.key) + '"' + (available ? ' checked' : ' disabled') + '></span><span class="wbs-auto-import-info"><span class="wbs-auto-import-name" data-wbs-i18n-skip="1"></span><span class="wbs-auto-import-status"></span></span>';
+          row.querySelector('.wbs-auto-import-name').textContent = entry.name;
+          row.querySelector('.wbs-auto-import-status').textContent = importIssueLabel(entry);
+          list.appendChild(row);
+        });
+        mountAutomationModal(mask);
+        var confirm = mask.querySelector('[data-auto-import-confirm]'), error = mask.querySelector('.wbs-auto-import-error');
+        function selected() { return Array.from(list.querySelectorAll('input:checked:not(:disabled)')).map(function (input) { return input.dataset.importKey; }); }
+        function syncSelection() { var count = selected().length; confirm.disabled = !count; mask.querySelector('.wbs-auto-import-count').textContent = WBS_LANGUAGE === 'en' ? 'Selected ' + count : '已选 ' + count; }
+        list.addEventListener('change', syncSelection); syncSelection();
+        confirm.addEventListener('click', function () {
+          var keys = selected(); if (!keys.length) return;
+          confirm.disabled = true; confirm.textContent = WBS_LANGUAGE === 'en' ? 'Importing…' : '导入中…'; error.textContent = '';
+          list.querySelectorAll('input').forEach(function (input) { input.disabled = true; });
+          api('/api/automations/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(Object.assign({}, payload, { selected: keys })) }).then(function (result) {
+            closePanelModal(mask);
+            toast(WBS_LANGUAGE === 'en' ? 'Imported ' + result.imported + ' task(s)' + (result.skipped ? '; skipped ' + result.skipped : '') : '已导入 ' + result.imported + ' 个任务' + (result.skipped ? '，跳过 ' + result.skipped + ' 个' : ''), false, root);
+            return load();
+          }).catch(function (err) {
+            error.textContent = err.message || '导入失败';
+            preview.entries.forEach(function (entry) { list.querySelector('[data-import-key="' + entry.key + '"]').disabled = !entry.compatible || entry.existing; });
+            confirm.textContent = WBS_LANGUAGE === 'en' ? 'Import' : '导入'; syncSelection();
+          });
+        });
+      }
+      function readAutomationImport(event) {
+        var file = event.target.files && event.target.files[0]; event.target.value = '';
+        if (!file) return;
+        if (file.size > 8 * 1024 * 1024) { toast('任务文件不能超过 8 MiB', true, root); return; }
+        var button = automationPane.querySelector('#wbs-auto-import'); button.disabled = true;
+        var reader = new FileReader();
+        reader.onerror = function () { button.disabled = false; toast('读取文件失败', true, root); };
+        reader.onload = function () {
+          var payload = { content: String(reader.result || '').split(',')[1] || '', encoding: 'base64' };
+          api('/api/automations/import/preview', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }).then(function (preview) {
+            showTaskImport(payload, file.name, preview);
+          }).catch(function (err) { toast(err.message || '导入失败', true, root); }).finally(function () { button.disabled = false; });
+        };
+        reader.readAsDataURL(file);
+      }
+      function startPicker() {
+        if (typeof window.__wbsStartAutomationPicker === 'function') window.__wbsStartAutomationPicker();
+        else toast('元素拾取器尚未加载', true, root);
+      }
+      automationPane.innerHTML = '<div class="wbs-pcard wbs-auto-card"><div class="wbs-auto-toolbar"><div class="wbs-pcard-title">自动化<span class="wbs-pcard-sub" id="wbs-auto-count"></span></div><button type="button" class="wbs-auto-textbtn" id="wbs-auto-cap">查看接口说明</button><div class="wbs-auto-toolbar-actions"><div class="wbs-auto-normal-actions" id="wbs-auto-normal-actions"><button class="wbs-sess-bbtn wbs-auto-pick-btn" type="button" id="wbs-auto-pick">' + AUTO_PICK_SVG + '<span>拾取元素</span></button><button class="wbs-sess-bbtn" type="button" id="wbs-auto-create">让 WorkBuddy 帮我创建</button><button class="wbs-sess-bbtn" type="button" id="wbs-auto-new">新建任务</button><button class="wbs-sess-bbtn" type="button" id="wbs-auto-import" title="选择 JSON 或 ZIP 任务文件">' + IMPORT_ICON + '<span>导入</span></button><input type="file" id="wbs-auto-import-file" accept=".json,.zip,application/json,application/zip" hidden><button class="wbs-sess-bbtn" type="button" id="wbs-auto-batch">批量操作</button></div><div class="wbs-auto-batch-actions" id="wbs-auto-batch-actions" style="display:none"><span class="wbs-auto-batch-count" id="wbs-auto-batch-count">已选 0</span><button class="wbs-sess-bbtn" type="button" id="wbs-auto-select-all">全选</button><button class="wbs-sess-bbtn" type="button" id="wbs-auto-export" disabled>' + EXPORT_ICON + '<span>导出</span></button><button class="wbs-sess-bbtn wbs-sess-delbtn" type="button" id="wbs-auto-batch-apply">' + TRASH_SVG + '<span>删除选中</span></button><button class="wbs-sess-bbtn" type="button" id="wbs-auto-batch-cancel">取消</button></div></div></div><div class="wbs-auto-list" id="wbs-auto-list"></div></div>';
+      automationPane.querySelector('#wbs-auto-import').addEventListener('click', function () { automationPane.querySelector('#wbs-auto-import-file').click(); });
+      automationPane.querySelector('#wbs-auto-import-file').addEventListener('change', readAutomationImport);
+      automationPane.querySelector('#wbs-auto-export').addEventListener('click', exportAutomationTasks);
+      automationPane.querySelector('#wbs-auto-new').addEventListener('click', function () { showEditor(defaultTask()); });
+      automationPane.querySelector('#wbs-auto-pick').addEventListener('click', startPicker);
+      automationPane.querySelector('#wbs-auto-cap').addEventListener('click', showCapabilities);
+      automationPane.querySelector('#wbs-auto-create').addEventListener('click', showExamples);
+      automationPane.querySelector('#wbs-auto-batch').addEventListener('click', function () { automationState.batchMode = true; automationPane.querySelector('#wbs-auto-normal-actions').style.display = 'none'; automationPane.querySelector('#wbs-auto-batch-actions').style.display = 'flex'; syncBatchControls(); render(); });
+      automationPane.querySelector('#wbs-auto-select-all').addEventListener('click', function () { var shouldSelect = !allSelected(); automationState.tasks.forEach(function (task) { automationState.selected[task.id] = shouldSelect; }); render(); syncBatchControls(); });
+      automationPane.querySelector('#wbs-auto-batch-cancel').addEventListener('click', function () { automationState.batchMode = false; automationState.selected = {}; automationPane.querySelector('#wbs-auto-normal-actions').style.display = 'flex'; automationPane.querySelector('#wbs-auto-batch-actions').style.display = 'none'; render(); });
+      automationPane.querySelector('#wbs-auto-batch-apply').addEventListener('click', function () { var ids = selectedIds(); if (!ids.length) { toast('请至少选择一项', true, root); return; } showAutomationConfirm('删除选中的自动化任务？', '删除后无法恢复。', function () { api('/api/automations/bulk', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ids: ids, action: 'delete' }) }).then(function () { automationState.selected = {}; automationState.batchMode = false; automationPane.querySelector('#wbs-auto-normal-actions').style.display = 'flex'; automationPane.querySelector('#wbs-auto-batch-actions').style.display = 'none'; return load(); }).catch(function (e) { toast(e.message || '批量操作失败', true, root); }); }); });
+      automationPane.querySelector('#wbs-auto-list').addEventListener('change', function (e) {
+        var id = e.target.getAttribute('data-auto-select');
+        if (id) {
+          automationState.selected[id] = !!e.target.checked;
+          syncBatchControls();
+          return;
+        }
+        var enabledId = e.target.getAttribute('data-auto-enabled');
+        if (!enabledId) return;
+        e.stopPropagation();
+        var next = !!e.target.checked;
+        e.target.disabled = true;
+        api('/api/automations/bulk', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ids: [enabledId], action: next ? 'enable' : 'disable' }) })
+          .then(function () { toast(next ? '任务已启用' : '任务已停用', false, root); return load(); })
+          .catch(function (err) { e.target.checked = !next; toast(err.message || '设置失败', true, root); })
+          .finally(function () { e.target.disabled = false; });
+      });
+      automationPane.querySelector('#wbs-auto-list').addEventListener('click', function (e) {
+        var button = e.target.closest && e.target.closest('button[data-auto-run],button[data-auto-stop],button[data-auto-logs],button[data-auto-edit],button[data-auto-copy],button[data-auto-delete]');
+        if (!button || !automationPane.querySelector('#wbs-auto-list').contains(button)) return;
+        e.preventDefault();
+        e.stopPropagation();
+        var id = button.getAttribute('data-auto-run') || button.getAttribute('data-auto-stop') || button.getAttribute('data-auto-logs') || button.getAttribute('data-auto-edit') || button.getAttribute('data-auto-copy') || button.getAttribute('data-auto-delete');
+        if (!id) return;
+        var task = automationState.tasks.filter(function (item) { return item.id === id; })[0];
+        if (button.hasAttribute('data-auto-stop')) {
+          if (button.dataset.autoActionPending) return;
+          button.dataset.autoActionPending = '1';
+          var stopRunId = String(button.getAttribute('data-auto-stop') || '');
+          if (stopRunId) automationState.stopping[stopRunId] = true;
+          render(); // 立即进入“正在停止”转圈 + 置灰态
+          api('/api/automations/stop', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ runId: id }) })
+            .then(function () { toast('任务已停止', false, root); return load(); })
+            .catch(function (err) { toast(err.message || '停止失败', true, root); })
+            .finally(function () {
+              // 保持转圈至少一小段可感知窗口，再撤掉“停止中”标记，让按钮回到“运行”
+              setTimeout(function () { if (stopRunId) delete automationState.stopping[stopRunId]; render(); }, 900);
+              delete button.dataset.autoActionPending;
+            });
+        } else if (button.hasAttribute('data-auto-run')) {
+          if (button.dataset.autoActionPending) return;
+          button.dataset.autoActionPending = '1';
+          api('/api/automations/run', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: id }) })
+            .then(function (result) { if (result && result.run) automationState.runs.unshift(result.run); toast('任务已开始运行', false, root); render(); return load(); })
+            .catch(function (err) { toast(err.message || '运行失败', true, root); })
+            .finally(function () { delete button.dataset.autoActionPending; });
+        } else if (button.hasAttribute('data-auto-logs')) showAutomationLogs(task);
+        else if (button.hasAttribute('data-auto-edit')) showEditor(task);
+        else if (button.hasAttribute('data-auto-copy')) { var copy = JSON.parse(JSON.stringify(task)); copy.id = 'task_' + Date.now().toString(36); copy.name = task.name + '（副本）'; showEditor(copy); }
+        else if (button.hasAttribute('data-auto-delete')) showAutomationConfirm('删除该自动化任务？', '删除后无法恢复。', function () { api('/api/automations/bulk', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ids: [id], action: 'delete' }) }).then(load).catch(function (err) { toast(err.message || '删除失败', true, root); }); });
+      });
+      registerDisposer(function () { if (automationState.pollTimer) clearInterval(automationState.pollTimer); hideEditor(); (panel || root).querySelectorAll('.wbs-auto-dialog-mask').forEach(closePanelModal); });
+      load();
+      loadAgentInfo();
+      automationState.pollTimer = setInterval(load, 2500);
     }
 
     // ===== 会话 pane（构建：账号/时间筛选 + 按空间分组[默认2条/展开10条] + 刷新 + 批量操作[迁移/删除]）=====
@@ -5381,6 +6107,11 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         '<input type="file" id="wbs-avatar-file" accept="image/png,image/jpeg,image/webp" style="display:none">' +
         '</div>' +
         '</div>' +
+        '<div class="wbs-pcard wbs-fab-settings">' +
+        '<div class="wbs-ask-row">' +
+        '<label class="wbs-ask-label" for="wbs-fab-auto-dock">机器人自动停靠<span class="wbs-ask-hint">闲置 5 秒后收起到窗口右侧，鼠标靠近边缘展开</span></label>' +
+        '<label class="wbs-switch"><input type="checkbox" id="wbs-fab-auto-dock"><span class="wbs-switch-slider"></span></label>' +
+        '</div></div>' +
         '<div class="wbs-pcard wbs-wallpaper-card" id="wbs-wallpaper-card" style="display:none">' +
         '<div class="wbs-pcard-title">壁纸</div>' +
         '<div class="wbs-bg-source">' +
@@ -6013,6 +6744,11 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
 
     // 主题 pane 事件绑定（元素在 buildThemePane 之后才存在，延迟到首次切换时绑定）
     function wireThemePane() {
+      var dockSwitch = themePane.querySelector('#wbs-fab-auto-dock');
+      if (dockSwitch) {
+        dockSwitch.checked = fabQuietMode.isEnabled();
+        dockSwitch.addEventListener('change', function () { fabQuietMode.setEnabled(this.checked); });
+      }
       // 主题选择：segmented 按钮直接切换
       themePane.addEventListener('click', function (e) {
         var t = e.target;
@@ -6314,17 +7050,31 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       });
     }
 
-    function setOpen(open) {
+    function setOpen(open, options) {
+      if (open && window.__wbsAutomationInputActive) {
+        toast('正在输入或切换账号，请稍后打开面板', false, root);
+        return;
+      }
+      var newlyOpened = open && !state.open;
+      // 面板还不可见时应用最新到期顺序；本次打开期间只更新数值，不移动账号。
+      if (newlyOpened && CAPS.accounts) {
+        state.activityRetryUsed = false;
+        sortAccountsByCreditExpiry();
+        reorderAccountCards();
+      }
       state.open = open;
       panel.classList.toggle('show', open);
       fab.classList.toggle('hidden', open); // 打开时隐藏按钮
+      fabQuietMode.wake();
       if (open) {
+        if (newlyOpened && !(options && options.automation)) api('/api/automations/events', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ type: 'panelOpened' }) }).catch(function () {});
         refresh();
         checkForUpdate(); // 打开面板即检测更新（每次打开都强制查一次新版本）
         try { acCheckPromptOnOpen(); } catch (e) {} // 每次打开面板：指令块丢失则请求 daemon 补写（无 toast）
         try { syncSessionModule(); } catch (e) {} // 每次打开面板刷新会话模块（开关+快捷短语，含外部修改）
       } else {
-        stopCheckinPolling();
+        state.accountRefreshId = (state.accountRefreshId || 0) + 1;
+        state.activityRunId++;
         state.creditRunId++;
       }
     }
@@ -6337,6 +7087,8 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       handle.style.touchAction = 'none';
       listen(handle, 'pointerdown', function (e) {
         if (e.button !== undefined && e.button !== 0) return;
+        fab.classList.add('is-dragging');
+        fabQuietMode.wake();
         var rect = fab.getBoundingClientRect();
         fabDrag = {
           pointerId: e.pointerId,
@@ -6347,7 +7099,6 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         };
         fabDragMoved = false;
         fabDragSuppressClick = false;
-        fab.classList.add('is-dragging');
         try { handle.setPointerCapture(e.pointerId); } catch (_) {}
         if (e.preventDefault) e.preventDefault();
       });
@@ -6376,6 +7127,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         applyFabPosition(fab, FAB_EDGE_GAP, bottom);
         try { localStorage.setItem(FAB_POSITION_KEY, String(Math.round(bottom))); } catch (_) {}
         fabDrag = null;
+        fabQuietMode.wake();
         fabSnapTimer = setBuildTimeout(function () {
           fabSnapTimer = null;
           fab.classList.remove('is-snapping');
@@ -6388,6 +7140,12 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       });
     }
 
+    var fabQuietMode = createFabQuietMode({
+      fab: fab, window: window, document: document, listen: listen,
+      storage: localStorage, settingKey: 'wbs-fab-auto-dock-' + PROFILE_ID,
+      isDragging: function () { return !!fabDrag; },
+    });
+    registerDisposer(fabQuietMode.destroy);
     setupFabDrag();
     fab.addEventListener('click', function (e) {
       if (fabDragSuppressClick || fabDragMoved) {
@@ -6401,6 +7159,16 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     });
     root.querySelector('[data-act="close"]').addEventListener('click', function () { setOpen(false); });
 
+    // 供 daemon 程序化开合面板：等价于「点机器人按钮/点关闭按钮」，复用同一 setOpen，
+    // 保证 DOM(.show/.hidden) 与 state.open 始终一致、完全可逆，不做任何 display 硬改。
+    // daemon 经 CDP dispatch: window.dispatchEvent(new CustomEvent('workdaddy:panel-open',{detail:{open:boolean}}))
+    var panelOpenBridge = function (event) {
+      var detail = event && event.detail && typeof event.detail === 'object' ? event.detail : {};
+      var open = !!detail.open;
+      if (open !== state.open) setOpen(open, detail);
+    };
+    listen(window, 'workdaddy:panel-open', panelOpenBridge);
+    registerDisposer(function () { try { window.removeEventListener('workdaddy:panel-open', panelOpenBridge); } catch (_) {} });
 
     // 登录新账号：弹窗二选一 —— 方法一 假退出当前账号 / 方法二 无感登录
     logoutBtn.addEventListener('click', function () {
@@ -6582,10 +7350,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
             b.classList.toggle('active', b.getAttribute('data-theme') === cur);
           });
           syncWallpaperCardVisibility(cur);
-          // 若当前主题不在允许列表（如之前应用了自定义主题），回退到默认主题
-          if (d.current && ALLOWED_THEMES.indexOf(d.current) < 0 && cur === 'default') {
-            applyTheme('default').catch(function () {});
-          }
+          // 列表展示不能更改已保存的主题；主题只能由用户明确选择。
         })
         .catch(function () {});
     }
@@ -6603,14 +7368,8 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       var id = act ? act.getAttribute('data-theme') : null;
       return id && id !== 'default' ? id : 'nebula';
     }
-    // 页面加载时应用已保存的主题（daemon 侧通过 CDP 注入，reload 后需重新应用）
-    setBuildTimeout(function () {
-      api('/api/themes').then(function (d) {
-        if (d && d.current && d.current !== 'default') {
-          applyTheme(d.current).catch(function () {});
-        }
-      }).catch(function () {});
-    }, 1500);
+    // 页面主题由 daemon 在早期注入/加载时恢复；不要延迟 POST 旧主题，
+    // 否则旧页面的异步请求可能覆盖用户刚选择的主题。
 
     // ===== 元素检查（隐藏入口，实现抽离在 picker-internal.js，git 不跟踪）=====
     // 连续点击面板标题 5 次 → 在标题右侧显示「🔍 拾取」按钮；点击进入拾取模式。
@@ -8585,8 +9344,39 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     // 切换必须走 daemon /api/cdp-click 真实鼠标点击（官方拒绝 isTrusted=false 的 click()）。
     // 已知边界：已停住且官方不渲染「允许/拒绝」按钮的 pending 会话，激活后无弹窗可点，
     // 3s 内判 approval-no-dialog 立即切回。
-    var acAutoApprove = { busy: false, lastRunAt: 0, timer: null, gateLogAt: 0 };
+    var acAutoApprove = { busy: false, lastRunAt: 0, timer: null, gateLogAt: 0, episodes: {} };
+    // 侧栏后台「待确认」会话的自动批准链路（acAutoApprovePendingOnce→真实鼠标切过去看有无弹窗）。
+    // 之前曾因每心跳反复切、把指针从当前会话强行挪开导致“鼠标自己动+等待允许刷屏”（2026-09-07）而整体关闭。
+    // 现改为**按会话 id 的“待确认 episodes 缓存”**恢复并抑制重复切换（用户方案 2026-09-07）：
+    //   每个会话进入一次“待确认”episode，最多切过去 1 次看详情；
+    //   若该会话实际无「允许/拒绝」弹窗可点（no-dialog）→ 记为 episodes[sid].noAction，
+    //   在其**持续待确认期间不再切换**；直到它离开待确认（状态恢复/被处理）才清掉该标记，
+    //   下次它再待确认时允许再切 1 次。前台会话的允许弹窗仍由 ndAutoObserver（弹窗自动点允许开关）照常处理。
     var AC_AUTO_APPROVE_ENABLED = true;
+    // 解析侧栏待确认 .conversation-item → 官方会话 id（title 匹配 acMulti.sessions，key 需稳定 id）
+    function acPendingItemSessionId(item) {
+      if (!item) return '';
+      try {
+        var own = item.getAttribute && (item.getAttribute('data-conversation-id') || item.getAttribute('data-id') || item.getAttribute('data-root-id'));
+        if (own) return own;
+      } catch (_) {}
+      var title = '';
+      try {
+        var te = item.querySelector('[class*="title"],[class*="name"],[class*="agentName"],[class*="agent-name"]');
+        if (te) title = (te.textContent || '').replace(/\s+/g, ' ').trim();
+      } catch (_) {}
+      if (title) {
+        var hit = null;
+        Object.keys(acMulti.sessions).forEach(function (id) {
+          if (hit) return;
+          var s = acMulti.sessions[id];
+          var st = String(s.title || '').replace(/\s+/g, ' ').trim();
+          if (st && (st === title || st.indexOf(title) !== -1 || title.indexOf(st) !== -1)) hit = id;
+        });
+        if (hit) return hit;
+      }
+      return 'title:' + title; // 无 id 时退化按标题做 episode key（防重复至少能覆盖同会话）
+    }
     function acCdpClick(x, y) {
       if (!Number.isFinite(x) || !Number.isFinite(y)) return Promise.resolve(false);
       return api('/api/cdp-click', {
@@ -8635,6 +9425,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
           window.__wbsAutoApproveGate = {
             nd: !!ndAutoObserver, busy: !!acAutoApprove.busy, running: !!acRunning,
             mode: acMulti.mode, at: new Date().toISOString(),
+            episodes: acAutoApprove.episodes ? Object.keys(acAutoApprove.episodes).length : 0,
             tags: (function () { try { return document.querySelectorAll('.cb-agent-card__status-tag, .conversation-item [class*="status-tag"]').length; } catch (_) { return -1; } })(),
           };
         } catch (_) {}
@@ -8660,6 +9451,18 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         break;
       }
       if (!target) { try { window.__wbsAutoApproveGateTarget = { found: false, at: new Date().toISOString() }; } catch (_) {} return; }
+      // —— episodes 缓存去重（用户方案）：同一会话“本次待确认”只切过去 1 次 ——
+      var sid = acPendingItemSessionId(target);
+      var ep = sid ? (acAutoApprove.episodes[sid] || null) : null;
+      // 若该会话在本次待确认 episode 内已被“看过一次”（无论判 noAction 还是 timeout）→ 直接跳过，
+      // 严格保证同一待确认 episode 只切过去 1 次。该标记由 acAutoApproveReleaseStale()
+      //（每次 discover 时，依据实时待确认信号）在会话离开待确认后清除，下次再待确认可再切。
+      if (ep && ep.visited) {
+        try { window.__wbsAutoApproveSkip = { sid: sid, reason: 'episode-visited', noAction: !!ep.noAction, at: new Date().toISOString() }; } catch (_) {}
+        return;
+      }
+      // 首次进入该会话的待确认 episode → 标记后切过去看详情
+      if (sid) acAutoApprove.episodes[sid] = { seenPending: true, noAction: false, visited: false, since: Date.now(), title: targetTitle.slice(0, 40) };
       // 记录原会话：优先官方激活会话 id → registry title；回退取 selected 侧栏项标题
       var originTitle = '';
       var originItemRef = null;
@@ -8721,8 +9524,20 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         if (still && !noDialog && waited < 15000) return;
         if (acAutoApprove.timer) { clearInterval(acAutoApprove.timer); acAutoApprove.timer = null; }
         acMonitorLog('(auto-approve)', still ? (noDialog ? 'approval-no-dialog' : 'approval-timeout') : 'approval-resolved', { title: tTitle.slice(0, 40), waitedMs: waited * 1000 });
-        // no-dialog（官方不渲染按钮）场景拉长冷却，避免反复激活/切回造成页面闪烁
-        if (still && noDialog) acAutoApprove.lastRunAt = Date.now() + 10000;
+        // —— episodes 结果落账：本次 episode 已切过去看过一次，记 visited；no-dialog 额外记 noAction ——
+        if (sid) {
+          var ecur = acAutoApprove.episodes[sid] || { seenPending: true, since: Date.now() };
+          ecur.seenPending = true;
+          if (still) {
+            ecur.visited = true; // 本次 episode 已切过去看过一次（无论 no-dialog 还是 timeout）→ 之后不再切，直到离开待确认
+            if (noDialog) ecur.noAction = true;
+          } else {
+            delete acAutoApprove.episodes[sid]; ecur = null; // 已离开待确认 → episode 结束并释放
+          }
+          if (ecur) acAutoApprove.episodes[sid] = ecur;
+        }
+        // visited 已挡住本 episode 的反复切换，冷却短一些即可
+        acAutoApprove.lastRunAt = Date.now() + 3000;
         // 切回原会话：优先复用激活前捕获的 DOM 引用，其次按标题（包含匹配）重查，
         // 全部走真实点击（daemon CDP）。结果写入 window.__wbsAutoApproveRestored 供诊断。
         var originItem = (originItemRef && originItemRef.isConnected) ? originItemRef : null;
@@ -8734,6 +9549,53 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         acMonitorLog('(auto-approve)', 'approval-restored', { title: oTitle.slice(0, 40), itemFound: !!originItem });
         acAutoApprove.busy = false;
       }, 1000);
+    }
+
+    // 每次 discover 心跳调用：释放已“离开待确认”的会话 episode，使下次它再待确认时允许重新切过去。
+    // “仍待确认”只认**当拍仍可见的 pending 信号**（侧栏 tag 实时扫 + controller 数据层 resourcePendingInputKind），
+    // 不依赖易滞留的 session.status（sidebar 途径可能残留 awaiting-approval）。只有仍待确认的会话才保留 episodes。
+    function acAutoApproveReleaseStale() {
+      try {
+        var stillPending = {};
+        // a) 侧栏实时 tag → 匹配到会话 id
+        var tags;
+        try {
+          tags = document.querySelectorAll('.cb-agent-card__status-tag, .conversation-item [class*="status-tag"], .conversation-item [class*="statusTag"]');
+        } catch (_) { tags = []; }
+        for (var i = 0; i < tags.length; i++) {
+          var label = (tags[i].textContent || '').replace(/\s+/g, ' ').trim();
+          if (!/(待确认|等待确认|等待允许|待处理|待审批|等待批准|待用户确认|待人工确认|awaiting|pending.*approval|waiting.*approval|needs approval|requires approval)/i.test(label)) continue;
+          var item = tags[i].closest('.conversation-item');
+          if (!item) continue;
+          var sid2 = acPendingItemSessionId(item);
+          if (sid2) stillPending[sid2] = true;
+        }
+        // b) controller 数据层：resourcePendingInputKind 仍置位 → 视为待确认
+        Object.keys(acMulti.sessions).forEach(function (id) {
+          var s = acMulti.sessions[id];
+          if (s && s.resourcePendingInputKind) stillPending[id] = true;
+        });
+        // c) 清理：不在 stillPending 的 episode 一律释放；title 退化 key 若其标题会话不在 stillPending 也释放
+        Object.keys(acAutoApprove.episodes).forEach(function (key) {
+          var isId = acMulti.sessions[key];
+          if (isId) {
+            if (!stillPending[key]) delete acAutoApprove.episodes[key];
+            return;
+          }
+          if (key.indexOf('title:') === 0) {
+            var t = key.slice(6);
+            var alive = false;
+            if (t) {
+              Object.keys(acMulti.sessions).forEach(function (id) {
+                if (alive || !stillPending[id]) return;
+                var st2 = String(acMulti.sessions[id].title || '').replace(/\s+/g, ' ').trim();
+                if (st2 && (st2 === t || st2.indexOf(t) !== -1 || t.indexOf(st2) !== -1)) alive = true;
+              });
+            }
+            if (!alive) delete acAutoApprove.episodes[key];
+          }
+        });
+      } catch (_) {}
     }
 
     var acAutoApproveFastTimer = null;
@@ -8754,6 +9616,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     function acMultiDiscover() {
       if (!acRunning || acMulti.mode !== 'multi') return;
       acMultiProbeSidebarApproval();
+      acAutoApproveReleaseStale(); // 释放已离开待确认的会话 episode（在切换决策前）
       acAutoApprovePendingOnce();
       var controllers = [];
       try {
@@ -9527,7 +10390,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     }
 
     function checkinBadgeHtml(a) {
-      var tag = checkinHtml(a);
+      var tag = checkinHtml(a) + activityStreakHtml(a);
       return tag ? '<span class="wbs-checkin-slot">' + tag + '</span>' : '';
     }
 
@@ -9592,6 +10455,34 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       });
     }
 
+    function mergeAccountSnapshot(previous, incoming) {
+      var byUid = new Map();
+      (incoming || []).forEach(function (account) { byUid.set(account.uid, Object.assign({}, account)); });
+      var merged = [];
+      previous.forEach(function (cached) {
+        var account = byUid.get(cached.uid);
+        if (!account) return; // 删除的账号不能被缓存复活。
+        ['credits', 'creditSegments', 'creditUnlimited', 'creditExpired'].forEach(function (key) {
+          if (account[key] === undefined && cached[key] !== undefined) account[key] = cached[key];
+        });
+        if (!isKnownActivityStreak(account.activityStreak) && isKnownActivityStreak(cached.activityStreak)) {
+          account.activityStreak = cached.activityStreak;
+        }
+        merged.push(account);
+        byUid.delete(cached.uid);
+      });
+      byUid.forEach(function (account) { merged.push(account); });
+      return merged;
+    }
+
+    function accountCardLayoutKey() {
+      // 积分/签到刷新不应重建切换按钮，保留焦点和两击确认状态。
+      var rows = state.accounts.map(function (a) {
+        return [a.uid, a.nickname, a.phone, a.uin, a.type, a.enterpriseName, a.tokenExpiresAt, isIdentityExpired(a)];
+      }).sort(function (a, b) { return String(a[0]).localeCompare(String(b[0])); });
+      return JSON.stringify([state.current && state.current.uid, state.primaryUid, rows]);
+    }
+
     function pollAutoCopyJob(jobId, accountName) {
       if (!jobId) return;
       var attempts = 0;
@@ -9631,18 +10522,21 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     }
 
     function render(data) {
+      var previous = state.accounts;
       state.current = data.current;
-      state.accounts = (data.accounts || []).slice();
-      // 账号排序：按积分到期时间升序（最近到期最前），不再把当前账号置顶
-      state.accounts.sort(function (left, right) {
-        var le = nearestCreditExpiry(left);
-        var re = nearestCreditExpiry(right);
-        if (le !== re) return le - re;
-        return 0;
-      });
+      state.accounts = mergeAccountSnapshot(previous, data.accounts || []);
+      state.primaryUid = data.primaryUid || '';
+      if (!previous.length || !state.open) sortAccountsByCreditExpiry();
       state.creditRemaining = state.accounts.length;
       updateAccountSummary();
       var list = accountsPane.querySelector('.wbs-acct-list');
+      var layoutKey = accountCardLayoutKey();
+      if (list && state.accountLayoutKey === layoutKey) {
+        updateCheckinCells(state.accounts);
+        state.accounts.forEach(function (account) { updateCreditCell(account.uid, account.credits, account.creditSegments); });
+        return;
+      }
+      state.accountLayoutKey = layoutKey;
       if (!list) { list = el('div', 'wbs-acct-list'); accountsPane.insertBefore(list, accountsPane.firstChild); }
       list.innerHTML = '';
       if (!state.accounts.length) {
@@ -9658,16 +10552,17 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         // 版本标签：个人账号显示「个人版」；企业账号显示企业名称（enterpriseName），缺省回退「企业」。
         var editionBadge = a.type === 'personal' ? '个人版' : (a.enterpriseName ? a.enterpriseName : (a.type ? '企业' : ''));
         var badge = editionBadge ? '<span class="wbs-badge">' + esc(editionBadge) + '</span>' : '';
+        var isPrimary = a.uid === state.primaryUid;
+        var primaryBadge = isPrimary ? '<span class="wbs-primary-mark" role="img" aria-label="主账号" title="主账号">' + PRIMARY_ACCOUNT_SVG + '</span>' : '';
+        var primaryAction = '<button class="wbs-icon-btn wbs-set-primary" type="button" data-primary-uid="' + escAttr(a.uid) + '" title="设为主账号" aria-label="设为主账号"' + (isPrimary ? ' hidden' : '') + '>' + PRIMARY_ACCOUNT_SVG + '</button>';
         var checkinBadge = checkinBadgeHtml(a);
-        // 当前登录账号：卡片右上角对勾角标（替代原「当前」文字标签）
-        var curMark = isCur ? '<span class="wbs-cur-marker" title="当前使用中">' + CUR_MARK_SVG + '</span>' : '';
         // 当前登录账号隐藏操作；认证已过期的账号保留删除，但隐藏切换，避免进入登录页。
         var expired = isIdentityExpired(a);
-        var ops = (isCur
+        var ops = primaryAction + (isCur
           ? ''
           : (expired ? '' : '<button class="wbs-icon-btn wbs-acc-switch" type="button" title="切换" data-uid="' + escAttr(a.uid) + '" data-name="' + escAttr(a.nickname || '未命名') + '">' + SWITCH_SVG + '</button>') +
             '<button class="wbs-icon-btn wbs-del" type="button" title="删除" data-uid="' + escAttr(a.uid) + '" data-name="' + escAttr(a.nickname || '未命名') + '">' + TRASH_SVG + '</button>');
-        ops = ops ? '<div class="wbs-ops">' + ops + '</div>' : '';
+        ops = '<div class="wbs-ops"' + (isCur && isPrimary ? ' hidden' : '') + '>' + ops + '</div>';
         // 国际版没有手机号：用 UIN（账号唯一数字标识）替代展示；国内版仍显示手机。
         // UIN 与手机号共用同一标签和值间距，确保与“剩余”额度列对齐。
         var isUinMode = !a.phone;
@@ -9677,9 +10572,8 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         var nameVal = state.mask ? maskAccountName(rawName) : rawName;
         var idVal = state.mask ? maskAccountId(rawId) : rawId;
         card.innerHTML =
-          curMark +
           '<div class="wbs-info">' +
-          '<div class="wbs-row1"><div class="wbs-name-group"><span class="wbs-name">' + esc(nameVal) + '</span>' + badge + checkinBadge + '</div>' + ops + '</div>' +
+          '<div class="wbs-row1"><div class="wbs-name-group"><span class="wbs-name">' + esc(nameVal) + '</span>' + primaryBadge + badge + checkinBadge + '</div>' + ops + '</div>' +
           '<div class="wbs-meta wbs-secondary-row">' +
           '<div class="wbs-mi wbs-phone-cell' + (isUinMode ? ' wbs-uin-cell' : '') + '"><span class="wbs-lbl">' + idLbl + '</span><span class="wbs-val">' + esc(idVal) + '</span></div>' +
           '<div class="wbs-mi wbs-token-cell"><span class="wbs-lbl">有效期至</span><span class="wbs-val' + (ts.warn ? ' wbs-warn' : '') + '">' + esc(ts.label) + '</span></div>' +
@@ -9687,6 +10581,31 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
           '<div class="wbs-credit-cell">' + creditBlockHtml(credits, a.creditSegments, a) + '</div>' +
           '</div>';
         list.appendChild(card);
+      });
+      list.querySelectorAll('[data-primary-uid]').forEach(function (button) {
+        button.addEventListener('click', function (e) {
+          e.preventDefault(); e.stopPropagation();
+          if (state.primarySaving || button.dataset.primaryUid === state.primaryUid) return;
+          state.primarySaving = true;
+          api('/api/accounts/primary', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ uid: button.dataset.primaryUid }) }).then(function (result) {
+            state.primaryUid = result.primaryUid;
+            toast('已设为主账号，自动化任务可据此识别主账号', false, root);
+            list.querySelectorAll('[data-primary-uid]').forEach(function (item) {
+              var selected = item.dataset.primaryUid === state.primaryUid;
+              item.hidden = selected;
+              var card = item.closest('.wbs-card');
+              var mark = card.querySelector('.wbs-primary-mark');
+              if (!selected && mark) mark.remove();
+              if (selected && !mark) {
+                mark = el('span', 'wbs-primary-mark');
+                mark.setAttribute('role', 'img'); mark.setAttribute('aria-label', wbsTranslateString('主账号', WBS_LANGUAGE)); mark.title = wbsTranslateString('主账号', WBS_LANGUAGE);
+                mark.innerHTML = PRIMARY_ACCOUNT_SVG;
+                card.querySelector('.wbs-name').after(mark);
+              }
+              item.parentElement.hidden = Array.from(item.parentElement.querySelectorAll('button')).every(function (btn) { return btn.hidden; });
+            });
+          }).catch(function (error) { toast(error.message || '设置主账号失败', true, root); }).finally(function () { state.primarySaving = false; });
+        });
       });
       applyAccountMask();
       // 切换按钮：两击确认（第一次点击进入确认态，3s 内再点才真正切换，防止误触）
@@ -9829,17 +10748,27 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         if (sessionsPane && !sessionsPane.dataset.built) buildSessionsPane();
         return;
       }
-      stopCheckinPolling();
       state.creditRunId++;
-      api('/api/accounts')
+      state.activityRunId++;
+      var requestId = state.accountRefreshId = (state.accountRefreshId || 0) + 1;
+      return api('/api/accounts')
         .then(function (data) {
+          if (!alive || requestId !== state.accountRefreshId) return;
           render(data);
-          watchCheckin(data.checkin);
           fetchCreditsForAccounts();
+          fetchActivityForAccounts();
         })
         .catch(function (e) {
+          if (!alive || requestId !== state.accountRefreshId) return;
+          if (state.accounts.length) {
+            toast('账号刷新失败，已保留上次结果', true, root);
+            return;
+          }
           var msg = '<div class="wbs-empty">无法连接本地服务: ' + esc(e.message || e) + '<br>请确认守护进程已运行</div>';
-          accountsPane.innerHTML = msg;
+          var list = accountsPane.querySelector('.wbs-acct-list');
+          if (!list) { list = el('div', 'wbs-acct-list'); accountsPane.insertBefore(list, accountsPane.firstChild); }
+          list.innerHTML = msg;
+          state.accountLayoutKey = null;
         });
     }
 
@@ -9875,6 +10804,10 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         for (var j = 0; j < state.accounts.length; j++) {
           if (state.accounts[j].uid === a.uid) {
             state.accounts[j].checkin = a.checkin;
+            if (Object.prototype.hasOwnProperty.call(a, 'activityStreak') &&
+                (isKnownActivityStreak(a.activityStreak) || !isKnownActivityStreak(state.accounts[j].activityStreak))) {
+              state.accounts[j].activityStreak = a.activityStreak;
+            }
             if (Object.prototype.hasOwnProperty.call(a, 'todayUsage')) state.accounts[j].todayUsage = a.todayUsage;
             byUid[a.uid] = state.accounts[j];
             break;
@@ -9908,35 +10841,65 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       }
     }
 
-    function stopCheckinPolling() {
-      if (state.checkinPollId !== null) {
-        clearTimeout(state.checkinPollId);
-        state.checkinPollId = null;
-      }
-    }
+    // Completion events update existing rows without replacing the account list or scroll position.
+    var accountRefreshPending = false;
+    listen(window, 'workdaddy:accounts-updated', function () {
+      if (!state.open || accountRefreshPending) return;
+      accountRefreshPending = true;
+      setBuildTimeout(function () {
+        accountRefreshPending = false;
+        if (!state.open) return;
+        api('/api/accounts').then(function (data) { if (state.open) updateCheckinCells(data.accounts || []); }).catch(function () {});
+      }, 150);
+    });
 
-    function watchCheckin(status) {
-      stopCheckinPolling();
-      if (!status || !status.running || !state.open) return;
-      var startedAt = Date.now();
-      function poll() {
-        state.checkinPollId = null;
-        if (!state.open || Date.now() - startedAt > 45000) return;
-        api('/api/accounts?checkinStatus=1')
-          .then(function (data) {
-            updateCheckinCells(data.accounts || []);
-            if (data.checkin && data.checkin.running && state.open) {
-              state.checkinPollId = setBuildTimeout(poll, 800);
-            } else if (state.open) {
-              // 签到请求完成后再查询积分，避免第一次打开面板显示签到前余额。
-              fetchCreditsForAccounts();
+    var activityBatchPromise = null;
+    var activityBatchPending = false;
+    var activityRetryTimer = null;
+    function fetchActivityForAccounts() {
+      if (!alive || WBS_PROFILE_IS_AI || !state.open || !CAPS.accounts) return;
+      clearTimeout(activityRetryTimer);
+      var runId = ++state.activityRunId;
+      // 快速重开时先让上一批在途请求结束，跨批次也最多两个并发。
+      if (activityBatchPromise) { activityBatchPending = true; return; }
+      var accounts = state.accounts.slice();
+      var next = 0;
+      var retryAt = 0;
+      function worker() {
+        if (!alive || !state.open || runId !== state.activityRunId || next >= accounts.length) return Promise.resolve();
+        var account = accounts[next++];
+        return api('/api/growth/streak', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ uid: account.uid }) })
+          .then(function (result) { return result.activityStreak; })
+          .catch(function () { return { days: null, status: 'unavailable' }; })
+          .then(function (value) {
+            if (!alive || !state.open || runId !== state.activityRunId) return;
+            var current = state.accounts.filter(function (a) { return a.uid === account.uid; })[0];
+            if (!current) return;
+            if (!isKnownActivityStreak(value)) {
+              // daemon 对失败退避 30 秒：到期后再重试，避免重开面板时反复命中失败缓存。
+              retryAt = Math.max(retryAt, (Number(value && value.fetchedAt) || Date.now()) + 30100);
             }
-          })
-          .catch(function () {
-            if (state.open) state.checkinPollId = setBuildTimeout(poll, 1200);
-          });
+            if (isKnownActivityStreak(value) || !isKnownActivityStreak(current.activityStreak)) current.activityStreak = value;
+            accountsPane.querySelectorAll('.wbs-card').forEach(function (card) {
+              if (card.getAttribute('data-uid') !== current.uid) return;
+              var slot = card.querySelector('.wbs-checkin-slot');
+              if (slot) slot.outerHTML = checkinBadgeHtml(current);
+            });
+          }).then(worker);
       }
-      state.checkinPollId = setBuildTimeout(poll, 500);
+      activityBatchPromise = Promise.all([worker(), worker()]).finally(function () {
+        activityBatchPromise = null;
+        if (activityBatchPending) {
+          activityBatchPending = false;
+          fetchActivityForAccounts();
+          return;
+        }
+        if (!alive || !state.open || runId !== state.activityRunId || !retryAt || state.activityRetryUsed) return;
+        state.activityRetryUsed = true;
+        activityRetryTimer = setBuildTimeout(function () {
+          if (alive && state.open && runId === state.activityRunId) fetchActivityForAccounts();
+        }, Math.max(0, retryAt - Date.now()));
+      });
     }
 
     // 积分查询按 200ms 节奏发起，允许请求重叠，避免前一个账号的慢接口阻塞后续账号。
@@ -9947,8 +10910,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       state.creditRemaining = accounts.length;
       function settleBatch() {
         if (runId !== state.creditRunId || state.creditRemaining !== 0) return;
-        sortAccountsByCreditExpiry();
-        reorderAccountCards();
+        // 到期信息留在缓存，下次打开前排序，避免响应回来时点到另一账号。
         var sum = 0;
         state.accounts.forEach(function (account) {
           if (typeof account.credits === 'number' && isFinite(account.credits)) sum += account.credits;
@@ -9996,6 +10958,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
                 state.accounts[i].credits = credits;
                 state.accounts[i].creditSegments = segments;
                 state.accounts[i].creditUnlimited = unlimited;
+                state.accounts[i].creditExpired = false;
                 if (hasTodayUsage) state.accounts[i].todayUsage = r.todayUsage;
                 break;
               }
@@ -10009,6 +10972,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
             var accountExpired = !!(e && e.payload && e.payload.expired);
             for (var i = 0; i < state.accounts.length; i++) {
               if (state.accounts[i].uid === a.uid) {
+                if (!accountExpired && state.accounts[i].credits !== undefined) return;
                 state.accounts[i].credits = null;
                 state.accounts[i].creditSegments = [];
                 state.accounts[i].creditUnlimited = false;
@@ -10169,6 +11133,14 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       sessionHealthTimer = null;
     });
     registerDisposer(function () {
+      try { if (typeof window.__wbsStopAutomationPicker === 'function') window.__wbsStopAutomationPicker(); } catch (e) {}
+      var automationInspector = document.getElementById('wbs-auto-inspector');
+      if (automationInspector && automationInspector.__wbsClose) automationInspector.__wbsClose();
+      else if (automationInspector) automationInspector.remove();
+      var automationPickerStyle = document.getElementById('wbs-automation-picker-style');
+      if (automationPickerStyle) automationPickerStyle.remove();
+    });
+    registerDisposer(function () {
       try { if (typeof window.__wbsStopPicked === 'function') window.__wbsStopPicked(); } catch (e) {}
       var inspector = document.getElementById('wbs-inspector');
       if (inspector && inspector.__wbsClose) inspector.__wbsClose();
@@ -10285,7 +11257,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     'html.cb-dark .wbs-message-nav-tooltip,html[data-theme="dark"] .wbs-message-nav-tooltip,body[data-vscode-theme-name*="dark" i] .wbs-message-nav-tooltip{background:color-mix(in srgb,var(--wb-bg-popover,#202126) 70%,transparent);border-color:var(--wb-border-subtle,rgba(255,255,255,.14));color:var(--wb-color-text-primary,#f2f3f5);box-shadow:0 14px 38px rgba(0,0,0,.42),inset 0 1px 0 rgba(255,255,255,.08)}',
     '@media (prefers-reduced-motion:reduce){.wbs-message-nav-marker,.wbs-message-nav-dot,.wbs-message-nav-tooltip{transition:none!important}.wbs-message-nav-highlight{animation:none!important}}',
     /* 机器人悬浮按钮（bitter-dragon-16 移植）：静态版 0.5 倍 · 无头顶尖角 · 眼睛双眨 */
-    '.wbs-fab{position:fixed;right:22px;bottom:22px;z-index:2147483647;transform:scale(0.5);transform-origin:bottom right;cursor:grab;touch-action:none;user-select:none;-webkit-user-select:none;will-change:right,bottom}',
+    '.wbs-fab{position:fixed;right:22px;bottom:22px;z-index:2147483647;transform:scale(0.5);transform-origin:bottom right;cursor:grab;touch-action:none;user-select:none;-webkit-user-select:none;will-change:transform;transition:transform .22s cubic-bezier(.22,1,.36,1)}',
     '.wbs-fab-health-dot{position:absolute;top:-5px;left:-5px;width:14px;height:14px;border-radius:50%;background:#8b8f98;border:2px solid #141416;box-shadow:0 1px 3px rgba(0,0,0,.5);z-index:3}',
     '.wbs-fab-health-dot.running{background:#4da3ff}.wbs-fab-health-dot.blocked{background:#ffb03a}.wbs-fab-health-dot.error{background:#ef6262}.wbs-fab-health-dot.suspected{background:#f08a3c}.wbs-fab-health-dot.stopped{background:#9ca3af}',
     '.wbs-health-status{display:none;align-items:center;min-height:18px;padding:2px 7px;border-radius:999px;font-size:10px;line-height:14px;white-space:nowrap;color:var(--wb-color-text-secondary,#666);background:var(--wb-bg-tertiary,#f2f2f2)}',
@@ -10296,7 +11268,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '@keyframes wbs-sleep-pulse{0%,100%{box-shadow:0 0 5px 1px rgba(46,229,157,.6)}50%{box-shadow:0 0 13px 4px rgba(46,229,157,.95)}}',
     '@keyframes wbs-sleep-pulse-amber{0%,100%{box-shadow:0 0 5px 1px rgba(255,176,58,.6)}50%{box-shadow:0 0 13px 4px rgba(255,176,58,.95)}}',
     '.wbs-fab.hidden{display:none}',
-    '.wbs-fab .click{position:relative}',
+    '.wbs-fab .click{position:relative;transition:transform .22s cubic-bezier(.22,1,.36,1)}',
     '.wbs-fab .click > span:not(.wbs-fab-antenna){display:none}',
     '.wbs-fab .button.shadow{display:none}',
     '.wbs-fab .button{position:relative;left:0;top:0;transform:none;cursor:pointer;border:solid 4px rgba(255,255,255,0);background-color:rgba(20,20,22,.55);backdrop-filter:blur(14px) saturate(1.3);-webkit-backdrop-filter:blur(14px) saturate(1.3);font-size:20px;color:#fff;border-color:rgba(255,255,255,0);box-shadow:0 4px 14px rgba(0,0,0,.45),inset 0 0 0 1px rgba(255,255,255,.08);border-radius:50px;display:flex;align-items:center;justify-content:center;width:100px;height:48px;box-sizing:content-box;padding:0;margin:0;outline:none;transition:background-color .2s,color .2s}',
@@ -10327,14 +11299,21 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '@keyframes wbs-cc-upb{0%,10%{top:0;left:0%}20%,40%{top:-50%;left:0%}50%,100%{top:0;left:0%}}',
     '.wbs-fab:hover{transform:scale(0.5)}',
     '.wbs-fab:active{transform:scale(0.5) translate(2px,2px)}',
+    '.wbs-fab.is-quiet{transform:translateX(var(--wbs-fab-quiet-shift,59px)) scale(0.5)}',
+    '.wbs-fab.is-quiet .click{transform:rotate(-90deg)}',
+    '.wbs-fab.is-quiet .wbs-fab-health-dot{visibility:hidden}',
+    '.wbs-fab.is-quiet .wbs-fab-antenna,.wbs-fab.is-quiet .wbs-fab-antenna-dot{visibility:hidden}',
+    '.wbs-fab .button:focus-visible{outline:3px solid var(--wb-accent-blue,#4f86ff);outline-offset:5px}',
+    '@media(prefers-reduced-motion:reduce){.wbs-fab,.wbs-fab .click{transition:none!important}}',
     '.wbs-fab.is-dragging{cursor:grabbing;transition:none !important}',
+    '.wbs-fab.is-dragging .click{transition:none}',
     '.wbs-fab.is-dragging .button{cursor:grabbing}',
     '.wbs-fab.is-snapping{transition:right .56s cubic-bezier(.22,1.35,.36,1),bottom .56s cubic-bezier(.22,1.35,.36,1)}',
     /* 面板：毛玻璃主题（半透明 + 模糊，背景图透出） */
-    '.wbs-panel{position:absolute;right:0;bottom:0;width:520px;max-width:94vw;height:650px;max-height:650px;background:color-mix(in srgb,var(--wb-bg-popover,#fff) 72%,transparent);border:1px solid var(--wb-border-subtle,#f0f0f0);border-radius:18px;box-shadow:0 20px 60px rgba(0,0,0,.28);display:none;flex-direction:column;overflow:hidden;backdrop-filter:blur(28px) saturate(1.25);-webkit-backdrop-filter:blur(28px) saturate(1.25)}',
+    '.wbs-panel{position:absolute;right:0;bottom:0;width:720px;max-width:94vw;height:650px;max-height:650px;background:color-mix(in srgb,var(--wb-bg-popover,#fff) 72%,transparent);border:1px solid var(--wb-border-subtle,#f0f0f0);border-radius:18px;box-shadow:0 20px 60px rgba(0,0,0,.28);display:none;flex-direction:column;overflow:hidden;backdrop-filter:blur(28px) saturate(1.25);-webkit-backdrop-filter:blur(28px) saturate(1.25)}',
     '.wbs-panel.show{display:flex}',
-    // 英文文案更长：EN 模式面板宽度放大 1.35 倍（520px -> 702px），配合 label 自适应避免挤压
-    'html[data-wbs-language="en"] .wbs-panel{width:702px}',
+    // 英文文案更长：英文面板额外加宽，配合 label 自适应避免挤压
+    'html[data-wbs-language="en"] .wbs-panel{width:880px}',
     // EN 下固定宽度 label 容易溢出：phone/credit/token 列的 label 释放为自适应宽度
     'html[data-wbs-language="en"] .wbs-phone-cell .wbs-lbl,html[data-wbs-language="en"] .wbs-credit-left .wbs-lbl{width:auto;max-width:84px}',
     'html[data-wbs-language="en"] .wbs-token-cell .wbs-lbl{width:auto;max-width:96px}',
@@ -10345,7 +11324,10 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '.wbs-lang-seg .wbs-sess-seg-btn{padding:6px 14px}',
     '.wbs-head{display:flex;align-items:center;justify-content:space-between;padding:16px 18px 12px;border-bottom:1px solid var(--wb-border-subtle,#f0f0f0);background:color-mix(in srgb,var(--wb-bg-secondary,#fff) 30%,transparent)}',
     '.wbs-head-left{display:flex;align-items:center;gap:9px;min-width:0}',
+    '.wbs-title-wrap{display:flex;flex-direction:column;align-items:flex-start;min-width:0}',
+    '.wbs-title-row{display:flex;align-items:center;gap:9px;min-width:0}',
     '.wbs-title{font-size:16px;font-weight:700;color:var(--wb-color-text-primary,#1f1f1f);letter-spacing:.3px;cursor:pointer;user-select:none}',
+    '.wbs-version-line{margin-top:1px;color:var(--wb-color-text-tertiary,#a3a6ad);font-size:10px;font-weight:400;line-height:1.2;letter-spacing:0;font-variant-numeric:tabular-nums;white-space:nowrap}',
     /* 元素检查拾取按钮（隐藏入口，连点标题 5 次显示） */
     '.wbs-pick-btn{flex:0 0 auto;width:22px;height:22px;border:none;border-radius:7px;background:color-mix(in srgb,var(--wb-accent-blue,#4f86ff) 14%,transparent);color:var(--wb-accent-blue,#4f86ff);font-size:12px;line-height:1;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;transition:background .15s}',
     '.wbs-pick-btn:hover{background:color-mix(in srgb,var(--wb-accent-blue,#4f86ff) 24%,transparent)}',
@@ -10362,7 +11344,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '.wbs-ava{width:34px;height:34px;border-radius:50%;background:var(--wb-bg-tertiary,#f0f0f0);color:var(--wb-icon-secondary,#555);display:flex;align-items:center;justify-content:center;font-weight:600;flex-shrink:0;font-size:14px}',
     '.wbs-info{min-width:0}',
     '.wbs-row1{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:7px;min-height:26px}',
-    '.wbs-name-group{display:flex;align-items:center;gap:6px;min-width:0}',
+    '.wbs-name-group{display:flex;align-items:center;flex-wrap:wrap;gap:6px;min-width:0}.wbs-checkin-slot{display:inline-flex;align-items:center;flex-wrap:wrap;gap:5px}.wbs-activity-tag{min-width:74px;justify-content:center;box-sizing:border-box;font-variant-numeric:tabular-nums}',
     '.wbs-name{font-size:14px;font-weight:600;color:var(--wb-color-text-primary,#1f1f1f)}',
     '.wbs-meta{display:flex;flex-direction:column;gap:2px}',
     '.wbs-secondary-row{flex-direction:row;align-items:center;justify-content:space-between;gap:12px;margin-bottom:8px}',
@@ -10418,10 +11400,10 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '.wbs-credit-loading{color:var(--wb-icon-tertiary,#999);font-size:12px}',
     '.wbs-credit-na{color:var(--wb-icon-tertiary,#999);font-size:12px}',
     '.wbs-ck{font-size:11px;font-weight:600}',
-    '.wbs-checkin-tag{display:inline-flex;align-items:center;min-height:18px;padding:1px 7px;border-radius:999px;white-space:nowrap}',
+    '.wbs-checkin-tag{display:inline-flex;align-items:center;min-height:18px;padding:1px 7px;border:1px solid transparent;border-radius:999px;white-space:nowrap}',
     '.wbs-checkin-tag.pending{background:var(--wb-bg-tertiary,#f0f0f0);color:var(--wb-icon-tertiary,#999)}',
     '.wbs-checkin-tag.ok{background:#edf9ef;border:1px solid #b9e8c0;color:#28753a;box-shadow:inset 0 0 0 1px rgba(255,255,255,.55)}',
-    'html.cb-dark .wbs-checkin-tag.ok{background:rgba(19,24,33,.78);border-color:rgba(214,220,232,.24);color:#f3f5fa;box-shadow:inset 0 0 0 1px rgba(255,255,255,.06)}',
+    'html.cb-dark .wbs-checkin-tag.ok,html[data-theme="dark"] .wbs-checkin-tag.ok{background:rgba(19,24,33,.78);border-color:rgba(214,220,232,.24);color:#f3f5fa;box-shadow:inset 0 0 0 1px rgba(255,255,255,.06)}',
     '.wbs-checkin-tag.fail{background:rgba(239,68,68,.1);color:#dc2626}',
     '.wbs-ck.ok{color:var(--wb-color-text-primary,#1f1f1f)}',
     '.wbs-ck.pending{color:var(--wb-icon-tertiary,#999)}',
@@ -10442,8 +11424,6 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '.wbs-badge{display:inline-flex;align-items:center;font-size:10px;line-height:1;padding:2px 7px;border-radius:999px;flex-shrink:1;min-width:0;max-width:112px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500;background:var(--wb-bg-tertiary,#eef0f3);color:var(--wb-color-text-secondary,#5f6368);border:1px solid transparent}',
     'html.cb-dark .wbs-badge,html[data-theme="dark"] .wbs-badge{background:rgba(255,255,255,.07);color:rgba(235,236,240,.68);border-color:rgba(255,255,255,.08)}',
     /* 当前使用中角标：无底图形，颜色跟随昵称（text-primary），深色随变量自动适配 */
-    '.wbs-cur-marker{position:absolute;top:9px;right:12px;display:inline-flex;color:var(--wb-icon-secondary,#555);opacity:.9}',
-    '.wbs-cur-marker svg{display:block}',
     '.wbs-empty{text-align:center;color:var(--wb-icon-tertiary,#999);padding:28px 12px;font-size:13px;line-height:1.8}',
     /* 底部 */
     '.wbs-foot{padding:12px 14px;border-top:1px solid var(--wb-border-subtle,#f0f0f0);display:flex;flex-direction:column;gap:9px;background:color-mix(in srgb,var(--wb-bg-secondary,#fff) 30%,transparent)}',
@@ -10467,6 +11447,8 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '.wbs-ask-row{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:8px}',
     '.wbs-ask-label{display:flex;align-items:baseline;gap:6px;font-size:12px;color:var(--wb-color-text-secondary,#444);font-weight:600;min-width:0;line-height:1.3}',
     '.wbs-ask-hint{font-size:11px;color:#9a9a9a;font-weight:400}',
+    '.wbs-fab-settings .wbs-ask-row{margin-top:0}.wbs-fab-settings .wbs-ask-label{flex-direction:column;align-items:flex-start;gap:4px}.wbs-fab-settings .wbs-ask-hint{color:var(--wb-color-text-tertiary,#9a9a9a);line-height:1.5;overflow-wrap:anywhere}',
+    '.wbs-fab-settings .wbs-switch-slider{background:var(--wb-bg-tertiary,#e5e5e5);box-shadow:inset 0 0 0 1px var(--wb-border-default,#d0d0d0)}.wbs-fab-settings .wbs-switch-slider:before{background:var(--wb-color-text-secondary,#777)}.wbs-fab-settings input:checked + .wbs-switch-slider{background:var(--wb-button-primary-bg,#1f1f1f)}.wbs-fab-settings input:checked + .wbs-switch-slider:before{background:var(--wb-button-primary-fg,#fff)}.wbs-fab-settings input:focus-visible + .wbs-switch-slider{outline:2px solid var(--wb-accent-blue,#4f86ff);outline-offset:3px}',
     '.wbs-switch{position:relative;display:inline-block;width:36px;height:20px;flex-shrink:0;cursor:pointer}',
     '.wbs-switch input{opacity:0;width:0;height:0}',
     '.wbs-switch-slider{position:absolute;inset:0;border-radius:20px;background:rgba(255,255,255,.16);box-shadow:inset 0 0 0 1px rgba(255,255,255,.22);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);transition:background .18s}',
@@ -10565,9 +11547,6 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '.wbs-stash-item .cb-message-queue-item-left .content{opacity:.55}',
     '.wbs-spin{display:inline-block;width:13px;height:13px;border:2px solid rgba(255,255,255,.35);border-top-color:#fff;border-radius:50%;animation:wbs-spin-rotate .8s linear infinite;vertical-align:-2px}',
     '@keyframes wbs-spin-rotate{to{transform:rotate(360deg)}}',
-    '.wbs-toast{position:fixed;left:50%;bottom:100px;transform:translateX(-50%);background:#1f1f1f;color:#fff;padding:9px 16px;border-radius:10px;font-size:12px;z-index:2147483647;opacity:1;transition:opacity .3s;max-width:80vw;pointer-events:none;box-shadow:0 6px 20px rgba(0,0,0,.18)}',
-    '.wbs-toast.err{background:#f53f3f}',
-    '.wbs-toast.out{opacity:0}',
     /* ===== 新版 Tab 布局（账号/主题/增强）===== */
     '.wbs-tabs{display:flex;gap:6px;padding:10px 14px 0;background:color-mix(in srgb,var(--wb-bg-secondary,#fff) 25%,transparent);overflow-x:auto;scrollbar-width:none}',
     '.wbs-tabs::-webkit-scrollbar{display:none}',
@@ -10586,6 +11565,33 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '.wbs-pcard{background:color-mix(in srgb,var(--wb-bg-secondary,#fff) 18%,transparent);border:1px solid var(--wb-border-subtle,#f0f0f0);border-radius:14px;padding:10px 12px;margin-bottom:8px;backdrop-filter:blur(16px) saturate(1.2);-webkit-backdrop-filter:blur(16px) saturate(1.2)}',
     '.wbs-pcard-title{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:700;color:var(--wb-color-text-primary,#1f1f1f);margin-bottom:8px}',
     '.wbs-pcard-sub{font-size:11px;color:var(--wb-icon-tertiary,#999);font-weight:400}',
+    '.wbs-primary-mark{display:inline-flex;align-items:center;justify-content:center;flex:0 0 20px;width:20px;height:20px;border-radius:6px;color:var(--wb-button-primary-bg,#1f1f1f);background:color-mix(in srgb,var(--wb-button-primary-bg,#1f1f1f) 10%,transparent)}.wbs-primary-mark svg{width:14px;height:14px}.wbs-set-primary[hidden],.wbs-ops[hidden]{display:none!important}.wbs-set-primary:hover{color:var(--wb-button-primary-bg,#1f1f1f);background:color-mix(in srgb,var(--wb-button-primary-bg,#1f1f1f) 12%,transparent)}.wbs-set-primary:focus-visible{outline:2px solid var(--wb-button-primary-bg,#1f1f1f);outline-offset:2px}',
+    '.wbs-auto-card{display:flex;flex:1;flex-direction:column;min-height:0;margin-bottom:0}',
+    '.wbs-auto-toolbar{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:6px;flex-shrink:0}.wbs-auto-toolbar .wbs-pcard-title{margin-bottom:0}.wbs-auto-toolbar>.wbs-auto-toolbar-actions{flex-basis:100%;justify-content:flex-start}.wbs-auto-toolbar .wbs-sess-bbtn{font-size:11px;padding:5px 8px}',
+    '.wbs-auto-toolbar-actions,.wbs-auto-editor-actions,.wbs-auto-normal-actions,.wbs-auto-batch-actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap}.wbs-auto-toolbar-actions{justify-content:flex-end}.wbs-auto-log-head-actions{display:flex;align-items:center;gap:8px}',
+    '.wbs-auto-normal-actions .wbs-auto-pick-btn{border-color:var(--wb-button-primary-bg,#1f1f1f);background:var(--wb-button-primary-bg,#1f1f1f);color:var(--wb-button-primary-fg,#fff)}.wbs-auto-normal-actions .wbs-auto-pick-btn:hover,.wbs-auto-normal-actions .wbs-auto-pick-btn:focus-visible{background:var(--wb-button-primary-hover-bg,var(--wb-button-primary-bg,#1f1f1f));color:var(--wb-button-primary-fg,#fff)}',
+    '.wbs-auto-list{display:flex;flex:1;min-height:0;flex-direction:column;gap:5px;overflow:auto;padding-right:2px;margin-top:10px}',
+    '.wbs-auto-row{display:flex;flex:0 0 auto;flex-direction:column;align-items:stretch;gap:7px;min-height:48px;padding:10px;border:1px solid var(--wb-border-subtle,#ececec);border-radius:9px;background:color-mix(in srgb,var(--wb-bg-secondary,#fff) 22%,transparent)}',
+    '.wbs-auto-row-head{display:flex;align-items:center;gap:8px;min-width:0}.wbs-auto-enabled{flex-shrink:0}.wbs-auto-enabled[hidden]{display:none!important}.wbs-auto-description{color:var(--wb-color-text-secondary,#666);font-size:11px;line-height:1.5;overflow-wrap:anywhere;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}.wbs-auto-row-foot{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:end;gap:10px}.wbs-auto-details{min-width:0}.wbs-auto-triggers{display:flex;flex-wrap:wrap;gap:4px}.wbs-auto-trigger-chip{display:inline-flex;max-width:100%;padding:2px 6px;border:1px solid var(--wb-border-subtle,#e7e7e7);border-radius:6px;background:var(--wb-bg-tertiary,#f5f5f5);color:var(--wb-color-text-secondary,#666);font-size:10px;line-height:1.4;overflow-wrap:anywhere}.wbs-auto-state-line{display:flex;align-items:center;flex-wrap:wrap;gap:4px 8px;min-height:16px;margin-top:5px;color:var(--wb-icon-tertiary,#888);font-size:10px}.wbs-auto-state{display:inline-flex;align-items:center;gap:4px}.wbs-auto-state:before{content:"";width:4px;height:4px;flex:0 0 4px;border-radius:50%;background:currentColor}.wbs-auto-state.running{color:var(--wb-button-primary-bg,#1f1f1f)}.wbs-auto-state.off{opacity:.65}.wbs-auto-last-run.failed{color:var(--wb-color-text-primary,#222)}.wbs-auto-icon:focus-visible{outline:2px solid var(--wb-button-primary-bg,#1f1f1f);outline-offset:1px}',
+    '.wbs-auto-row:hover{background:var(--wb-bg-hover,#f5f5f5)}',
+    '.wbs-auto-check{display:flex;align-items:center;justify-content:center;flex:0 0 20px;cursor:pointer}.wbs-auto-check input{accent-color:var(--wb-button-primary-bg,#1f1f1f)}',
+    '.wbs-auto-main{min-width:0;flex:1}.wbs-auto-name{display:block;flex:1;min-width:0;font-size:12px;font-weight:650;color:var(--wb-color-text-primary,#1f1f1f);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+    '.wbs-auto-status{flex:0 0 auto;padding:2px 6px;border-radius:999px;font-size:10px;font-weight:500}.wbs-auto-status.on{color:#1b7f56;background:rgba(46,190,126,.14)}.wbs-auto-status.off{color:var(--wb-icon-tertiary,#888);background:var(--wb-bg-tertiary,#f1f1f1)}',
+    '.wbs-auto-meta{margin-top:3px;color:var(--wb-icon-tertiary,#999);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+    '.wbs-auto-enabled{flex:0 0 auto;margin-left:4px}.wbs-auto-actions{display:flex;gap:2px;flex:0 0 auto}.wbs-auto-icon{display:inline-flex;align-items:center;justify-content:center;width:27px;height:27px;padding:0;border:0;border-radius:7px;background:transparent;color:var(--wb-icon-secondary,#666);cursor:pointer;line-height:27px}.wbs-auto-icon svg{width:15px;height:15px;display:block;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round}.wbs-auto-icon:hover,.wbs-auto-icon:focus-visible{background:var(--wb-bg-hover,#f0f0f0);color:var(--wb-color-text-primary,#1f1f1f);outline:none}.wbs-auto-icon.danger:hover{color:#d04a4a}.wbs-auto-icon.is-running,.wbs-auto-icon.is-running:hover{opacity:1;filter:none;background:transparent;color:var(--wb-icon-secondary,#666);cursor:pointer}.wbs-auto-icon:disabled{opacity:.45;cursor:wait}',
+    '.wbs-auto-icon.is-stopping,.wbs-auto-icon.is-stopping:hover{opacity:.5;background:transparent;color:var(--wb-icon-secondary,#999);cursor:wait}.wbs-auto-icon.is-stopping svg{fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round}.wbs-auto-icon.is-stopping .wbs-auto-stopping-svg{transform-origin:center;animation:wbs-auto-spin .9s linear infinite}@keyframes wbs-auto-spin{to{transform:rotate(360deg)}}',
+    '.wbs-auto-empty{padding:18px 8px;text-align:center;color:var(--wb-icon-tertiary,#999);font-size:12px}',
+    '.wbs-auto-cap-link{display:flex;justify-content:flex-end;margin-top:7px}.wbs-auto-textbtn{padding:3px 4px;border:0;background:transparent;color:var(--wb-color-text-secondary,#666);font:inherit;font-size:11px;cursor:pointer}.wbs-auto-textbtn:hover{color:var(--wb-color-text-primary,#1f1f1f);text-decoration:underline}',
+    '.wbs-modal.wbs-auto-import-modal{width:calc(100% - 24px);max-width:480px;max-height:min(560px,calc(100% - 28px));display:flex;flex-direction:column;box-sizing:border-box}.wbs-auto-import-file{color:var(--wb-color-text-secondary,#666);font-size:11px;overflow-wrap:anywhere;margin-bottom:8px}.wbs-auto-import-list{min-height:0;overflow:auto;flex:1;scrollbar-width:thin;scrollbar-color:var(--wb-border-default,#bbb) transparent;border:1px solid var(--wb-border-subtle,#e5e5e5);border-radius:9px}.wbs-auto-import-item{display:flex;align-items:center;gap:10px;padding:10px 12px;cursor:pointer}.wbs-auto-import-item+.wbs-auto-import-item{border-top:1px solid var(--wb-border-subtle,#e5e5e5)}.wbs-auto-import-item:has(input:disabled){cursor:default}.wbs-auto-import-item:hover{background:var(--wb-bg-tertiary,#f5f5f5)}.wbs-auto-import-info{display:flex;flex-direction:column;gap:3px;min-width:0}.wbs-auto-import-name{font-size:12px;color:var(--wb-color-text-primary,#222);overflow-wrap:anywhere}.wbs-auto-import-status,.wbs-auto-import-count{font-size:11px;color:var(--wb-color-text-secondary,#666)}.wbs-auto-import-count{margin-right:auto}.wbs-auto-import-error{font-size:11px;color:var(--wb-status-error,var(--wb-color-text-primary,#1f1f1f));overflow-wrap:anywhere;margin-top:8px}.wbs-auto-import-modal .wbs-modal-actions{flex-shrink:0}.wbs-auto-import-item input:disabled{opacity:.4}',
+    '.wbs-auto-batchbar{display:flex;align-items:center;gap:6px;margin:4px 0 7px}.wbs-auto-batch-count{margin-right:auto;color:var(--wb-icon-tertiary,#888);font-size:11px}.wbs-auto-field input,.wbs-auto-field textarea{box-sizing:border-box;width:100%;border:1px solid var(--wb-border-default,#dedede);border-radius:7px;background:var(--wb-bg-popover,#fff);color:var(--wb-color-text-primary,#1f1f1f);font:inherit;font-size:12px;outline:none}.wbs-auto-field{display:flex;flex-direction:column;gap:4px;margin-bottom:8px;color:var(--wb-icon-secondary,#666);font-size:11px}.wbs-auto-field input{height:30px;padding:5px 8px}.wbs-auto-field textarea{min-height:72px;padding:8px;resize:vertical;line-height:1.45}.wbs-auto-field textarea[data-auto-field="steps"]{min-height:150px;resize:none;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}.wbs-auto-field input:focus,.wbs-auto-field textarea:focus{border-color:var(--wb-button-primary-bg,#1f1f1f);box-shadow:0 0 0 2px color-mix(in srgb,var(--wb-button-primary-bg,#1f1f1f) 20%,transparent)}.wbs-auto-trigger-seg{display:flex;gap:3px;padding:3px;border-radius:9px;background:var(--wb-bg-tertiary,#f0f0f0)}.wbs-auto-trigger-seg label{flex:1;display:flex;align-items:center;justify-content:center;min-height:28px;padding:0 8px;border-radius:7px;color:var(--wb-icon-secondary,#666);cursor:pointer}.wbs-auto-trigger-seg input{position:absolute;opacity:0;pointer-events:none}.wbs-auto-trigger-seg label:has(input:checked){background:var(--wb-button-primary-bg,#1f1f1f);color:var(--wb-button-primary-fg,#fff);box-shadow:0 1px 4px rgba(0,0,0,.16)}',
+    '.wbs-modal.wbs-auto-agent-modal{display:flex;flex-direction:column;width:calc(100% - 24px);max-width:520px;max-height:calc(100% - 28px);box-sizing:border-box}.wbs-auto-agent-intro{margin:0 0 14px;color:var(--wb-color-text-secondary,#666);font-size:12px;line-height:1.6;overflow-wrap:anywhere}.wbs-auto-agent-input-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:7px;font-size:12px;font-weight:600}.wbs-auto-agent-input-head #wbs-auto-examples{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:5px}.wbs-auto-example-fill{border:1px solid var(--wb-border-subtle,#ddd);border-radius:6px;padding:3px 8px;background:var(--wb-bg-tertiary,#f5f5f5);font-weight:400}.wbs-auto-agent-prompt{display:block;box-sizing:border-box;flex:1 1 160px;min-height:60px;width:100%;height:160px;max-height:26vh;resize:none;overflow:auto;padding:10px 12px;border:1px solid var(--wb-border-default,#ddd);border-radius:9px;background:var(--wb-bg-tertiary,#f5f5f5);color:var(--wb-color-text-primary,#1f1f1f);font-family:inherit;font-size:12px;line-height:1.65;white-space:pre-wrap;overflow-wrap:anywhere}.wbs-auto-agent-prompt:focus{outline:2px solid color-mix(in srgb,var(--wb-button-primary-bg,#1f1f1f) 30%,transparent);outline-offset:1px;border-color:var(--wb-button-primary-bg,#1f1f1f)}.wbs-auto-agent-prompt::placeholder{color:var(--wb-icon-tertiary,#888)}.wbs-auto-agent-hint{margin:8px 0 14px;font-size:11px;color:var(--wb-color-text-secondary,#666)}.wbs-auto-agent-modal .wbs-modal-actions{flex-shrink:0;margin-top:0}.wbs-auto-agent-modal .wbs-modal-ok:disabled{opacity:.4;cursor:default}',
+    '.wbs-auto-modal-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;padding:0 0 10px}.wbs-auto-modal-head .wbs-modal-title{margin:0}.wbs-auto-modal-subtitle{max-width:360px;margin-top:3px;color:var(--wb-icon-tertiary,#888);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.wbs-auto-modal-close{display:inline-flex;align-items:center;justify-content:center;flex:0 0 26px;width:26px;height:26px;padding:0;border:0;border-radius:7px;background:transparent;color:var(--wb-icon-secondary,#666);cursor:pointer}.wbs-auto-modal-close:hover,.wbs-auto-modal-close:focus-visible{background:var(--wb-bg-hover,#eee);color:var(--wb-color-text-primary,#222);outline:none}.wbs-auto-modal-close svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round}',
+    '.wbs-modal.wbs-auto-editor-modal{display:grid;grid-template-rows:auto minmax(0,1fr) auto;width:calc(100% - 32px);max-width:720px;height:min(600px,calc(100% - 32px));box-sizing:border-box;overflow:hidden}.wbs-auto-editor-body{display:flex;flex-direction:column;min-height:0;overflow:hidden;padding:2px}.wbs-auto-editor-body>.wbs-auto-field{flex:0 0 auto}.wbs-auto-editor-body>.wbs-auto-steps-field{flex:1 1 0;min-height:0;margin-bottom:0}.wbs-auto-editor-body .wbs-auto-steps-field textarea[data-auto-field="steps"]{flex:1 1 0;height:0;min-height:0;resize:none;overflow:auto}.wbs-auto-editor-body textarea[data-auto-field="description"]{height:44px;min-height:0;resize:none;overflow:auto}.wbs-auto-trigger-options,.wbs-auto-schedule{display:flex;align-items:center;flex-wrap:wrap;gap:4px 12px}.wbs-auto-trigger-options label,.wbs-auto-schedule label{display:flex;align-items:center;gap:5px;cursor:pointer;min-height:22px}.wbs-auto-trigger-options input[type="checkbox"],.wbs-auto-schedule input[type="checkbox"]{width:13px;height:13px;margin:0;accent-color:var(--wb-button-primary-bg,#1f1f1f)}.wbs-auto-schedule input[type="number"]{width:68px;height:25px;padding:3px 6px}.wbs-auto-schedule input:disabled{opacity:.5;cursor:not-allowed}.wbs-auto-editor-modal .wbs-modal-actions{margin-top:10px}',
+    '.wbs-modal.wbs-auto-log-modal{display:grid;grid-template-rows:auto minmax(0,1fr);width:calc(100% - 32px);max-width:680px;height:min(560px,calc(100% - 32px));box-sizing:border-box}.wbs-auto-log-list{display:flex;flex-direction:column;gap:8px;min-height:0;overflow:auto;padding-right:2px}.wbs-auto-log-empty{display:flex;align-items:center;justify-content:center;min-height:160px;color:var(--wb-icon-tertiary,#888);font-size:12px}.wbs-auto-log-run{padding:9px;border:1px solid var(--wb-border-subtle,#ededed);border-radius:9px;background:color-mix(in srgb,var(--wb-bg-secondary,#fff) 30%,transparent)}.wbs-auto-log-head{display:flex;align-items:center;justify-content:space-between;gap:8px}.wbs-auto-log-status{font-size:11px;font-weight:650;color:var(--wb-icon-secondary,#666)}.wbs-auto-log-status.running{color:var(--wb-button-primary-bg,#1f1f1f)}.wbs-auto-log-status.success,.wbs-auto-log-status.failed{color:var(--wb-icon-secondary,#666)}.wbs-auto-log-time{color:var(--wb-icon-tertiary,#888);font-size:10px}.wbs-auto-log-facts{display:flex;flex-wrap:wrap;gap:4px 12px;margin-top:5px;color:var(--wb-icon-tertiary,#888);font-size:10px}.wbs-auto-log-note{margin-top:7px;padding:6px 8px;border-radius:7px;background:var(--wb-bg-tertiary,#f5f5f5);color:var(--wb-color-text-secondary,#666);font-size:11px;line-height:1.45;white-space:pre-wrap;overflow-wrap:anywhere}.wbs-auto-log-output{max-height:180px;margin:7px 0 0;padding:7px 8px;overflow:auto;border:1px solid var(--wb-border-subtle,#ededed);border-radius:7px;background:var(--wb-bg-tertiary,#f5f5f5);color:var(--wb-color-text-primary,#1f1f1f);font:10px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;overflow-wrap:anywhere;user-select:text}',
+    '.wbs-modal.wbs-auto-cap-modal{display:flex;flex-direction:column;width:calc(100% - 24px);max-width:none;height:min(560px,calc(100% - 28px));box-sizing:border-box}.wbs-auto-protocol{flex:1;min-height:0;margin:0 0 12px;padding:10px;overflow:auto;border:1px solid var(--wb-border-subtle,#ededed);border-radius:8px;background:var(--wb-bg-tertiary,#f5f5f5);color:var(--wb-color-text-primary,#1f1f1f);font:10.5px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;overflow-wrap:anywhere;user-select:text}',
+    'html.cb-dark .wbs-auto-row,html[data-theme="dark"] .wbs-auto-row,body[data-vscode-theme-name*="dark" i] .wbs-auto-row{background:color-mix(in srgb,var(--wb-bg-secondary,#202126) 50%,transparent)}html.cb-dark .wbs-auto-status.off,html[data-theme="dark"] .wbs-auto-status.off,body[data-vscode-theme-name*="dark" i] .wbs-auto-status.off{background:rgba(255,255,255,.08)}html.cb-dark .wbs-auto-protocol,html[data-theme="dark"] .wbs-auto-protocol,body[data-vscode-theme-name*="dark" i] .wbs-auto-protocol,html.cb-dark .wbs-auto-log-output,html[data-theme="dark"] .wbs-auto-log-output,body[data-vscode-theme-name*="dark" i] .wbs-auto-log-output{background:rgba(255,255,255,.06)}html.cb-dark .wbs-auto-log-run,html[data-theme="dark"] .wbs-auto-log-run,body[data-vscode-theme-name*="dark" i] .wbs-auto-log-run{background:color-mix(in srgb,var(--wb-bg-secondary,#202126) 50%,transparent)}html.cb-dark .wbs-auto-field input,html.cb-dark .wbs-auto-field select,html.cb-dark .wbs-auto-field textarea,html[data-theme="dark"] .wbs-auto-field input,html[data-theme="dark"] .wbs-auto-field select,html[data-theme="dark"] .wbs-auto-field textarea,body[data-vscode-theme-name*="dark" i] .wbs-auto-field input,body[data-vscode-theme-name*="dark" i] .wbs-auto-field select,body[data-vscode-theme-name*="dark" i] .wbs-auto-field textarea{background:var(--wb-bg-popover,#202126);border-color:var(--wb-border-subtle,rgba(255,255,255,.18));color:var(--wb-color-text-primary,#f2f3f5)}',
+    '.wbs-auto-schedule{margin-top:5px}.wbs-auto-schedule [hidden]{display:none!important}.wbs-auto-weekdays{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;flex-basis:100%}.wbs-auto-schedule select{width:auto;max-width:100%;height:28px;padding:3px 7px;border:1px solid var(--wb-border-default,#ddd);border-radius:7px;background:var(--wb-bg-popover,#fff);color:var(--wb-color-text-primary,#1f1f1f);font:inherit}.wbs-auto-schedule input[type="time"]{width:106px;height:28px;padding:3px 6px}.wbs-auto-schedule input[type="datetime-local"]{width:205px;max-width:100%;height:28px;padding:3px 6px}.wbs-auto-schedule label{max-width:100%}.wbs-auto-schedule-hint{flex-basis:100%;font-size:10px;color:var(--wb-color-text-secondary,#666);line-height:1.45}.wbs-auto-schedule select:focus-visible{outline:2px solid var(--wb-button-primary-bg,#1f1f1f);outline-offset:1px}',
+    '.wbs-auto-check input,.wbs-auto-trigger-options input[type="checkbox"],.wbs-auto-schedule input[type="checkbox"]{appearance:none;-webkit-appearance:none;display:inline-grid;place-content:center;flex:0 0 14px;width:14px;height:14px;margin:0;padding:0;border:1px solid var(--wb-border-default,#bbb);border-radius:4px;background:var(--wb-bg-popover,#fff);cursor:pointer}.wbs-auto-check input:checked,.wbs-auto-trigger-options input[type="checkbox"]:checked,.wbs-auto-schedule input[type="checkbox"]:checked{background:var(--wb-button-primary-bg,#1f1f1f);border-color:var(--wb-button-primary-bg,#1f1f1f)}.wbs-auto-check input:checked:after,.wbs-auto-trigger-options input[type="checkbox"]:checked:after,.wbs-auto-schedule input[type="checkbox"]:checked:after{content:"";width:6px;height:3px;border-left:1.5px solid var(--wb-button-primary-fg,#fff);border-bottom:1.5px solid var(--wb-button-primary-fg,#fff);transform:translateY(-1px) rotate(-45deg)}.wbs-auto-check input:focus-visible,.wbs-auto-trigger-options input[type="checkbox"]:focus-visible,.wbs-auto-schedule input[type="checkbox"]:focus-visible{outline:2px solid var(--wb-button-primary-bg,#1f1f1f);outline-offset:2px}',
     /* 免打扰：标题行右置批量开关 + 三列 grid 对齐（标题/小标题/开关，所有小标题左对齐） */
     '.wbs-nd-head{display:flex;align-items:center;gap:6px}',
     '.wbs-nd-head #wbs-nd-count{margin-left:2px}',

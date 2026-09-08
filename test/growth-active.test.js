@@ -154,3 +154,19 @@ test('独立会话结束时会中止长连接 SSE，不会卡在清理阶段', a
   await activateGrowthAccount('account-token', { apiHost: 'https://api.test', fetchImpl, timeoutMs: 1000 });
   assert.equal(sseAborted, true);
 });
+
+test('completion report preserves full message, uses target token and requests no plugins', async () => {
+  const prompt = '长账号'.repeat(40) + ' 账号于 2026/9/8 18:00:00 完成所有任务';
+  const calls=[];
+  const fetchImpl=async (url, init={})=> {
+    calls.push({url,init});
+    if(url.endsWith('/console/as/conversations/')) return jsonResponse({data:{id:'report',session:{sessionId:'session',link:'https://acp.test/api/v1/acp',token:'runtime-token'}}});
+    if(init.method==='GET') return jsonResponse({}, {headers:{'acp-connection-id':'conn'}});
+    if(init.method==='DELETE') return jsonResponse({});
+    const rpc=JSON.parse(init.body); return jsonResponse({jsonrpc:'2.0',id:rpc.id,result:{stopReason:'end_turn'}});
+  };
+  const r=await activateGrowthAccount('primary-token',{purpose:'completion-report',prompt,fetchImpl});
+  assert.equal(r.conversationId,'report');assert.equal(calls[0].init.headers.authorization,'Bearer primary-token');
+  assert.deepEqual(JSON.parse(calls[0].init.body).plugins,[]);assert.equal(JSON.parse(calls[0].init.body).prompt,prompt);
+  assert.equal(JSON.parse(calls.find(c=>c.init.body?.includes('session/prompt')).init.body).params.prompt[0].text,prompt);
+});
