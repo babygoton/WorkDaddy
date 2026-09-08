@@ -4,11 +4,11 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 const source = fs.readFileSync(require('node:path').join(__dirname, '../scripts/daemon.js'), 'utf8');
-const functions = source.slice(source.indexOf('async function ensureAutomationNewTask()'), source.indexOf('\nfunction currentAccount()'));
+const functions = source.slice(source.indexOf('async function ensureAutomationNewTask('), source.indexOf('\nfunction currentAccount()'));
 function harness(options = {}) {
-  let sessionSent = false;
+  let sessionSent = false; let clock = 0;
   const calls = []; let draft = options.draft === false ? '' : 'existing draft'; let ready = !options.project;
-  const context = { automationAgentSurfaceExpression: () => '({newTaskReady:true})', cdp: { connected: true }, sleep: async () => {}, Date,
+  const context = { automationAgentSurfaceExpression: () => '({newTaskReady:true})', cdp: { connected: true }, sleep: async ms => { clock += ms; }, Date: { now: () => clock },
     readAutomationAgentSurface: async () => ({ ready: true, newTaskReady: ready, hasComposer: true, composerText: draft, button: {x:1,y:1} }),
     cdpMouseClick: async () => { calls.push('navigate'); ready = true; },
     cdpSend: async (method, params) => {

@@ -330,8 +330,8 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 // 1.1.65：自动化会话发送前确保进入新版 WorkBuddy 新建任务页。
 // 1.1.66：新版侧栏 tab 共用 conversation-list-tab-button-box，改用文字确认新建任务。
 // 1.1.67：项目页存在普通 composer 时仍强制定位并点击新建任务 tab。
-const DAEMON_VERSION = '1.2.2';
-const DAEMON_BUILD_ID = 'release-1.2.2-20260908-automation-send-readiness-panel-r2';
+const DAEMON_VERSION = '1.2.3';
+const DAEMON_BUILD_ID = 'release-1.2.3-20260908-automation-new-task-readiness';
 configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const HOST = '127.0.0.1';
 const IS_WIN = process.platform === 'win32'; // Windows 移植：平台分支开关（macOS 行为保持不变）
@@ -2971,7 +2971,9 @@ function startAutomationRun(task, event = null) {
     }
     const accountUid = (currentAccount() || {}).uid;
     if (!accountUid) throw new Error('没有可用账号');
-    if (op === 'session.create') await withInput(() => ensureAutomationNewTask());
+    if (op === 'session.create') await withInput(() => ensureAutomationNewTask({ guard: () => {
+      if (isCancelled() || (currentAccount() || {}).uid !== accountUid) throw new Error('发送前账号或运行状态已变化');
+    } }));
     const before = await readSession();
     if (op === 'session.send') {
       if (!detail.conversationId || !before || before.conversationId !== detail.conversationId) throw new Error('只能发送到已选中的指定会话');
@@ -4962,20 +4964,39 @@ async function readAutomationAgentSurface(focusComposer = false) {
   return response && response.result && response.result.value;
 }
 
-async function ensureAutomationNewTask() {
+async function ensureAutomationNewTask(options = {}) {
   if (!cdp.connected) throw new Error('CDP 未连接');
-  let surface = await readAutomationAgentSurface(false);
-  if (!surface || !surface.newTaskReady) {
-    if (!surface || !surface.button) throw new Error('未找到 WorkBuddy 的新建任务入口');
-    await cdpMouseClick('automation:ensureNewTask', surface.button.x, surface.button.y);
-    const started = Date.now();
-    while (Date.now() - started < 10000) {
-      await sleep(200);
+  let surface = null;
+  let clicked = false;
+  let readySince = null;
+  let settled = false;
+  const started = Date.now();
+  // Injection can finish before WorkBuddy's account route mounts its sidebar.
+  // Wait for both the entry and destination; never send into a project composer.
+  while (Date.now() - started < 15000) {
+    if (options.guard) await options.guard();
+    try {
       surface = await readAutomationAgentSurface(false);
-      if (surface && surface.newTaskReady) break;
+    } catch (error) {
+      if (!/Execution context was destroyed|Cannot find (?:default execution context|context with specified id)/i.test(String(error && error.message || error))) throw error;
+      surface = null;
     }
+    if (surface && surface.newTaskReady && surface.hasComposer) {
+      // Allow route initialization to settle before focusing a newly mounted editor.
+      if (readySince === null) readySince = Date.now();
+      if (Date.now() - readySince >= 400) { settled = true; break; }
+    } else {
+      readySince = null;
+      if (!clicked && surface && surface.button) {
+        await cdpMouseClick('automation:ensureNewTask', surface.button.x, surface.button.y);
+        clicked = true;
+      }
+    }
+    await sleep(200);
   }
-  if (!surface || !surface.newTaskReady || !surface.hasComposer) throw new Error('新建任务页面未准备完成，拒绝发送到当前会话');
+  if (options.guard) await options.guard();
+  if ((!surface || !surface.newTaskReady) && !clicked) throw new Error('未找到 WorkBuddy 的新建任务入口');
+  if (!settled) throw new Error('新建任务页面未准备完成，拒绝发送到当前会话');
   const originalDraftText = surface.composerText;
   // WorkBuddy retains the home draft. Preserve it through the existing local
   // stash before trusted editor commands replace it; never log the contents.
@@ -4985,6 +5006,7 @@ async function ensureAutomationNewTask() {
   });
   const saved = backup && backup.result && backup.result.value;
   if (!saved || !saved.saved) throw new Error('未能安全保存新建任务草稿，请重试');
+  if (options.guard) await options.guard();
   surface = await readAutomationAgentSurface(true);
   if (!surface || !surface.newTaskReady || surface.composerText !== originalDraftText) throw new Error('页面或草稿已变化，已保留草稿并取消发送');
   // The renderer helper already verified the saved draft. These
