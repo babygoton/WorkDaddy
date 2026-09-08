@@ -114,34 +114,39 @@ test('automation still rejects real drafts and attachment-only editors before in
   }
 });
 
-function delayedButtonHarness({ enableAfter = 3, cancelAfter = Infinity } = {}) {
+function delayedButtonHarness({ enableAfter = 3, cancelAfter = Infinity, disabledBy = 'property', probeCost = 0, scoped = false, missing = false, stop = false } = {}) {
   const calls = [];
-  let probes = 0, evaluations = 0, guardChecks = 0;
+  let probes = 0, evaluations = 0, guardChecks = 0, clock = 0;
+  const waits = [], probeTimes = [];
   const button = {
     tagName: 'BUTTON',
-    get disabled() { return probes < enableAfter; },
-    hasAttribute: () => button.disabled,
-    getAttribute: () => button.disabled ? 'true' : null,
+    get disabled() { return disabledBy === 'property' && probes < enableAfter; },
+    hasAttribute: name => name === 'disabled' && disabledBy === 'attribute' && probes < enableAfter,
+    getAttribute: name => name === 'aria-disabled' && disabledBy === 'aria' && probes < enableAfter ? 'true' : null,
+    classList: { contains: name => name === 'cr-send-button--stop' && stop },
+    closest: () => null,
     getBoundingClientRect: () => ({ x: 10, y: 10, width: 32, height: 32, bottom: 42 }),
     scrollIntoView() {},
   };
   button.parentElement = { children: [button] };
-  const context = { cdp: { connected: true }, log() {}, waitAiIdle: async () => true, setTimeout: fn => fn(),
+  const box = { querySelectorAll: () => missing ? [] : [button] };
+  const context = { cdp: { connected: true }, log() {}, waitAiIdle: async () => true, Date: { now: () => clock }, setTimeout: (fn, ms) => { waits.push(ms); clock += ms; fn(); },
     cdpSend: async (method, params) => {
       calls.push(method);
       if (method !== 'Runtime.evaluate') return {};
       evaluations++;
       if (evaluations <= 2) return { result: { value: { ok: true, hasContent: false } } };
-      probes++;
+      probes++; probeTimes.push(clock); clock += probeCost;
+      const foreign = { ...button, disabled: false, hasAttribute: () => false, getAttribute: () => null };
       const dom = {
-        document: { querySelector: () => button, querySelectorAll: () => [] },
+        document: { activeElement: scoped ? { closest: () => box } : null, querySelector: () => button, querySelectorAll: selector => selector === '.cr-input-box' ? [] : scoped ? [foreign] : [button] },
         getComputedStyle: () => ({ display: 'block', visibility: 'visible', borderRadius: '50%' }),
       };
       return { result: { value: vm.runInNewContext(params.expression, dom) } };
     }, cdpMouseClick: async () => calls.push('submit'),
   };
   vm.runInNewContext(source.slice(start, end), context);
-  return { calls, probes: () => probes, send: () => context.sendStashToComposer({ requireEmpty: true, content: { text: '1+1=', items: [] }, guard: async () => { if (++guardChecks >= cancelAfter) throw Error('account changed'); } }) };
+  return { calls, waits, probeTimes, elapsed: () => clock, probes: () => probes, send: () => context.sendStashToComposer({ requireEmpty: true, content: { text: '1+1=', items: [] }, guard: async () => { if (++guardChecks >= cancelAfter) throw Error('account changed'); } }) };
 }
 
 test('after an account switch, delayed official send readiness is awaited without retyping', async () => {
@@ -157,8 +162,10 @@ test('after an account switch, delayed official send readiness is awaited withou
 
 test('a disabled official send button never falls through to an unrelated toolbar control', async () => {
   const h = delayedButtonHarness({ enableAfter: Infinity });
-  await assert.rejects(h.send(), /发送按钮禁用/);
-  assert.ok(h.probes() > 1 && h.probes() <= 51);
+  await assert.rejects(h.send(), /发送按钮.*超时/);
+  assert.equal(h.elapsed(), 5000);
+  assert.ok(h.probes() > 1 && h.probes() <= 26);
+  assert.ok(h.waits.every(ms => ms === 200));
   assert.equal(h.calls.filter(m => m === 'Input.insertText').length, 1);
   assert.ok(!h.calls.includes('submit'));
 });
@@ -168,4 +175,30 @@ test('changing account during readiness polling aborts without submitting or ret
   await assert.rejects(h.send(), /account changed/);
   assert.equal(h.calls.filter(m => m === 'Input.insertText').length, 1);
   assert.ok(!h.calls.includes('submit'));
+});
+
+test('disabled property, disabled attribute and aria-disabled all gate the official send button', async () => {
+  for (const disabledBy of ['property', 'attribute', 'aria']) {
+    const h = delayedButtonHarness({ enableAfter: 3, disabledBy, scoped: true });
+    await h.send();
+    assert.deepEqual(h.probeTimes, [0, 200, 400]);
+    assert.equal(h.calls.filter(m => m === 'submit').length, 1);
+  }
+});
+
+test('a missing or stopped current composer button never uses another composer send button', async () => {
+  for (const options of [{ missing: true }, { stop: true }]) {
+    const h = delayedButtonHarness({ scoped: true, enableAfter: 1, ...options });
+    await assert.rejects(h.send());
+    assert.equal(h.elapsed(), 5000);
+    assert.ok(!h.calls.includes('submit'));
+  }
+});
+
+test('the five-second deadline includes slow CDP probes and rejects a late ready response', async () => {
+  const h = delayedButtonHarness({ enableAfter: 3, probeCost: 1800 });
+  await assert.rejects(h.send());
+  assert.ok(!h.calls.includes('submit'));
+  assert.equal(h.calls.filter(m => m === 'Input.insertText').length, 1);
+  assert.ok(h.probeTimes.every(at => at < 5000));
 });

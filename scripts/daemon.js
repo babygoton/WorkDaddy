@@ -330,8 +330,8 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 // 1.1.65：自动化会话发送前确保进入新版 WorkBuddy 新建任务页。
 // 1.1.66：新版侧栏 tab 共用 conversation-list-tab-button-box，改用文字确认新建任务。
 // 1.1.67：项目页存在普通 composer 时仍强制定位并点击新建任务 tab。
-const DAEMON_VERSION = '1.2.3';
-const DAEMON_BUILD_ID = 'release-1.2.3-20260908-automation-new-task-readiness';
+const DAEMON_VERSION = '1.2.4';
+const DAEMON_BUILD_ID = 'release-1.2.4-20260908-send-button-poll-200ms';
 configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const HOST = '127.0.0.1';
 const IS_WIN = process.platform === 'win32'; // Windows 移植：平台分支开关（macOS 行为保持不变）
@@ -6172,27 +6172,41 @@ async function sendStashToComposer(record) {
   if (blockText) text = text ? text + '\n' + blockText : blockText;
   blocksFailed = blockItems.length;
 
-  // 等 React 重渲染使发送按钮可用
-  await new Promise((r) => setTimeout(r, 250));
-
   const sendExpr = `(function(){
     try {
       // WorkBuddy 新版输入框有稳定的官方发送按钮；优先使用它，避免把增强/语音
       // 等同样是圆形的 toolbar 控件误判为发送。
       var sendLabel = '\\u53d1\\u9001';
-      var official = document.querySelector('button.cr-send-button[aria-label="' + sendLabel + '"],button.cr-send-button:not(.cr-send-button--stop),button[aria-label="' + sendLabel + '"],[role="button"][aria-label="' + sendLabel + '"]');
+      function visible(button) {
+        var r = button.getBoundingClientRect(), s = getComputedStyle(button);
+        return r.width >= 16 && r.height >= 16 && r.bottom > 0 && s.display !== 'none' && s.visibility !== 'hidden';
+      }
+      var active = document.activeElement;
+      var inputBox = active && active.closest ? active.closest('.cr-input-box') : null;
+      if (!inputBox) {
+        var boxes = Array.from(document.querySelectorAll('.cr-input-box')).filter(visible);
+        if (boxes.length > 1) return { ok: false, retryable: true, error: '未找到发送按钮' };
+        inputBox = boxes[0] || null;
+      }
+      var officialButtons = Array.from((inputBox || document).querySelectorAll('button.cr-send-button,button[aria-label="' + sendLabel + '"],[role="button"][aria-label="' + sendLabel + '"],button[aria-label="Send"],[role="button"][aria-label="Send"]'));
+      var official = officialButtons.find(function(button) {
+        return visible(button) && !button.closest('.wbs-root') && !button.classList.contains('cr-send-button--stop');
+      });
       if (official) {
         var or = official.getBoundingClientRect(), os = getComputedStyle(official);
         var od = official.disabled === true || official.hasAttribute('disabled') || official.getAttribute('aria-disabled') === 'true';
         if (or.width >= 16 && or.height >= 16 && or.bottom > 0 && os.display !== 'none' && os.visibility !== 'hidden') {
           // A disabled official button is still the correct target. Account/model
           // startup may enable it later; never fall through to another control.
-          if (od) return { ok: false, retryable: true, error: '发送按钮禁用（输入内容未被识别）' };
+          if (od || os.pointerEvents === 'none') return { ok: false, retryable: true, error: '发送按钮禁用（输入内容未被识别）' };
           official.scrollIntoView({ block: 'center', inline: 'center' });
           or = official.getBoundingClientRect();
           return { ok: true, x: or.x + or.width / 2, y: or.y + or.height / 2, selector: 'official-send-button' };
         }
       }
+      // The modern toolbar may still be mounting. Keep waiting within this
+      // composer instead of guessing a different toolbar's circular control.
+      if (inputBox || officialButtons.length) return { ok: false, retryable: true, error: '未找到发送按钮' };
       var mic = document.querySelector('.voice-mic-wrap');
       var row = mic ? mic.parentElement : null;
       if (!row) {
@@ -6235,14 +6249,16 @@ async function sendStashToComposer(record) {
   })()`;
   // Only retry the readiness probe, never typing or submitting: after a switch
   // React may need more than one frame to enable the official send button.
+  const sendDeadline = Date.now() + 5000;
   let sv;
-  for (let attempt = 0; attempt <= 50; attempt++) {
+  while (Date.now() < sendDeadline) {
     if (record.isCancelled && record.isCancelled()) throw new Error('任务已停止');
     const sr = await guardedSend('Runtime.evaluate', { expression: sendExpr, returnByValue: true });
     sv = sr.result && sr.result.value;
-    if (!sv || sv.ok || !sv.retryable || attempt === 50) break;
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    if (!sv || sv.ok || !sv.retryable || Date.now() >= sendDeadline) break;
+    await new Promise((resolve) => setTimeout(resolve, Math.min(200, sendDeadline - Date.now())));
   }
+  if (Date.now() >= sendDeadline) throw new Error('等待发送按钮可点击超时（5 秒），未发送');
   if (!sv || !sv.ok) throw new Error((sv && sv.error) || '未找到发送按钮');
   if (record.guard) await record.guard();
   await cdpMouseClick('automation:sendPhrase', sv.x, sv.y, { textLen: text.length, button: sv });

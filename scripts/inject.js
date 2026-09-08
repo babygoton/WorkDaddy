@@ -628,6 +628,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
   var WBS_LANGUAGE_KEY = 'workdaddy.ui.language';
   var WBS_ACCOUNT_MASK_KEY = 'workdaddy.account.mask.' + PROFILE_ID;
   var WBS_I18N_EN = {
+    '等待发送按钮可点击超时（5 秒），未发送': 'The send button was not ready within 5 seconds. Nothing was sent.',
     '无法关闭面板，请重试': 'Could not close the panel. Please try again.',
     '正在输入或切换账号，请稍后打开面板': 'Typing or switching accounts. Please open the panel in a moment.',
     "逐账号例行发送固定提示词消息": "Send a fixed prompt with each account",
