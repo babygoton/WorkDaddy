@@ -124,6 +124,22 @@ if /usr/libexec/PlistBuddy -c 'Print :CFBundleIconName' "$PACKAGE_APP/Contents/I
 else
   /usr/libexec/PlistBuddy -c 'Add :CFBundleIconName string AppIcon' "$PACKAGE_APP/Contents/Info.plist"
 fi
+# 壳的 CFBundleExecutable 是 bash 脚本而不是 Mach-O，LaunchServices 判定不了架构时会
+# 自行伪造 LSArchitecturePriority=(x86_64, arm64)，Apple Silicon 上就优先走 Rosetta 启动；
+# 未安装 Rosetta 的机器每次双击都弹「需要安装 Rosetta」的安装窗。产物显式声明 arm64
+# 优先即可原生启动，dmg 卷内的副本（用户直接从 dmg 双击的场景）同样生效。
+LS_ARCH_PRIORITY="arm64"
+if /usr/libexec/PlistBuddy -c 'Print :LSArchitecturePriority' "$PACKAGE_APP/Contents/Info.plist" >/dev/null 2>&1; then
+  /usr/libexec/PlistBuddy -c 'Delete :LSArchitecturePriority' "$PACKAGE_APP/Contents/Info.plist"
+fi
+/usr/libexec/PlistBuddy -c 'Add :LSArchitecturePriority array' "$PACKAGE_APP/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Add :LSArchitecturePriority:0 string ${LS_ARCH_PRIORITY}" "$PACKAGE_APP/Contents/Info.plist"
+BUILT_ARCH_PRIORITY="$(/usr/libexec/PlistBuddy -c 'Print :LSArchitecturePriority:0' "$PACKAGE_APP/Contents/Info.plist" 2>/dev/null || true)"
+if [ "$BUILT_ARCH_PRIORITY" != "$LS_ARCH_PRIORITY" ]; then
+  echo "错误：产物 Info.plist 未声明 ${LS_ARCH_PRIORITY} 架构优先级（实际: ${BUILT_ARCH_PRIORITY:-空}）" >&2
+  exit 3
+fi
+echo "==> 架构优先级已声明: ${BUILT_ARCH_PRIORITY}（避免 Rosetta 安装窗）"
 sed -i.bak "s|^PROFILE=.*|PROFILE=\"${PROFILE}\"|" "$PACKAGE_APP/Contents/MacOS/launcher"
 rm -f "$PACKAGE_APP/Contents/MacOS/launcher.bak"
 # 企业版可能在 /Applications 下使用不同的 .app 名称。把官方路径优先、
