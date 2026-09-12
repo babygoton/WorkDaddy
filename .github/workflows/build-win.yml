@@ -93,16 +93,13 @@ jobs:
             -File .\scripts\build-win-installer.ps1 -IsccPath $iscc -Profile workbuddy-ai -Version ${{ steps.ver.outputs.version }}
           if ($LASTEXITCODE -ne 0) { throw "WorkDaddy AI Setup build failed with exit code $LASTEXITCODE" }
 
-      - name: 确认仅保留 Setup.exe 发行产物
+      - name: 确认 Setup.exe + 便携版产物齐备
         shell: pwsh
         run: |
-          $legacyZip = Get-ChildItem -LiteralPath release\windows -Filter '*-win64.zip' -File -ErrorAction SilentlyContinue
-          if ($legacyZip) {
-            $legacyZip | Remove-Item -Force
-          }
-          if (Get-ChildItem -LiteralPath release\windows -Filter '*-win64.zip' -File -ErrorAction SilentlyContinue) {
-            throw 'Windows 发布目录仍包含旧 ZIP 产物。'
-          }
+          $setup = Get-ChildItem -LiteralPath release\windows -Filter '*-Setup-*.exe' -File -ErrorAction SilentlyContinue
+          $portable = Get-ChildItem -LiteralPath release\windows -Filter '*-Portable-*.zip' -File -ErrorAction SilentlyContinue
+          if (-not $setup -or $setup.Count -lt 2) { throw 'Setup.exe 产物缺失。' }
+          if (-not $portable -or $portable.Count -lt 2) { throw '便携版 ZIP 产物缺失。' }
 
       - name: 列出产物
         shell: bash
@@ -113,13 +110,15 @@ jobs:
         run: |
           call scripts\verify-win.cmd
 
-      - name: 上传产物（仅 Setup.exe）
+      - name: 上传产物（Setup.exe + 便携版 ZIP）
         uses: actions/upload-artifact@v4
         with:
           name: workdaddy-win64
           path: |
             release/windows/WorkDaddy-Setup-*.exe
             release/windows/WorkDaddy-AI-Setup-*.exe
+            release/windows/WorkDaddy-Portable-*.zip
+            release/windows/WorkDaddy-AI-Portable-*.zip
 
       # ---- 只有打 tag 时才顺手挂到 GitHub Release ----
       - name: 发布到 GitHub Release
@@ -129,5 +128,7 @@ jobs:
           files: |
             release/windows/WorkDaddy-Setup-*.exe
             release/windows/WorkDaddy-AI-Setup-*.exe
+            release/windows/WorkDaddy-Portable-*.zip
+            release/windows/WorkDaddy-AI-Portable-*.zip
             release/*.dmg
           generate_release_notes: true

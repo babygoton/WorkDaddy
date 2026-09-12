@@ -91,11 +91,19 @@ try {
     throw "Setup artifact is missing or empty: $setup"
   }
   Write-Host "Created $setup"
+  # 暂存 ZIP 与 Setup.exe 内容同源，且顶层自带 Start/Install/Uninstall 入口，
+  # 直接作为便携版随 Setup.exe 一起发布（zip 解压即见一键启动/安装）。
+  $portable = Join-Path $OutputDirectory ("$packageName-Portable-$version.zip")
+  Move-Item -LiteralPath $zipPath -Destination $portable -Force
+  if (-not (Test-Path -LiteralPath $portable -PathType Leaf) -or (Get-Item -LiteralPath $portable).Length -le 0) {
+    throw "Portable artifact is missing or empty: $portable"
+  }
+  Write-Host "Created $portable"
 } finally {
   if (Test-Path -LiteralPath $stageRoot) {
     Remove-Item -LiteralPath $stageRoot -Recurse -Force -ErrorAction SilentlyContinue
   }
-  # ZIP is only an internal staging input. Windows releases publish Setup.exe only.
+  # 构建失败时暂存 ZIP 不再具有发布意义，清理掉；成功路径中它已被改名为便携版。
   if (Test-Path -LiteralPath $zipPath -PathType Leaf) {
     Remove-Item -LiteralPath $zipPath -Force -ErrorAction SilentlyContinue
   }
