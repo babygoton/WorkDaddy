@@ -81,6 +81,12 @@ function createCreditUsageStore(options = {}) {
         )
       `);
       await db.run(`
+        CREATE TABLE IF NOT EXISTS credit_history_days (
+          profile_id TEXT NOT NULL, uid TEXT NOT NULL, usage_date TEXT NOT NULL,
+          synced_at INTEGER NOT NULL, PRIMARY KEY (profile_id, uid, usage_date)
+        )
+      `);
+      await db.run(`
         CREATE TABLE IF NOT EXISTS daily_checkin_records (
           profile_id TEXT NOT NULL,
           uid TEXT NOT NULL,
@@ -120,12 +126,8 @@ function createCreditUsageStore(options = {}) {
     };
   }
 
-  async function saveSuccessfulSync({ uid, records, anchorRequestId, syncedAt }) {
-    await initialize();
-    const accountUid = validIdentity(uid, 'uid');
+  async function saveRecords(accountUid, records) {
     const list = Array.isArray(records) ? records : [];
-    const timestamp = Number(syncedAt);
-    if (!Number.isSafeInteger(timestamp) || timestamp < 0) throw new Error('同步时间无效');
     for (let offset = 0; offset < list.length; offset += 200) {
       const statements = list.slice(offset, offset + 200).map((record) => ({
         sql: INSERT_USAGE_SQL,
@@ -143,6 +145,33 @@ function createCreditUsageStore(options = {}) {
       }));
       if (statements.length) await db.transaction(statements);
     }
+  }
+
+  async function saveHistoryUsage({ uid, records, from, to, syncedAt }) {
+    await initialize();
+    const accountUid = validIdentity(uid, 'uid');
+    const start = localDayRange(validDate(from)).start;
+    const end = localDayRange(validDate(to)).start;
+    if (start > end || end - start > 90 * 86400000) throw new Error('用量日期范围无效');
+    if (!Number.isSafeInteger(syncedAt) || syncedAt < 0) throw new Error('同步时间无效');
+    await saveRecords(accountUid, records);
+    const days = [];
+    for (const date = new Date(start); date.getTime() <= end; date.setDate(date.getDate() + 1)) {
+      const day = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+      days.push({ sql: `INSERT INTO credit_history_days (profile_id, uid, usage_date, synced_at)
+        VALUES (?, ?, ?, ?) ON CONFLICT(profile_id, uid, usage_date) DO UPDATE SET synced_at = excluded.synced_at`,
+        params: [profileId, accountUid, day, syncedAt] });
+    }
+    await db.transaction(days);
+    try { fs.chmodSync(dbPath, 0o600); } catch (_) {}
+  }
+
+  async function saveSuccessfulSync({ uid, records, anchorRequestId, syncedAt }) {
+    await initialize();
+    const accountUid = validIdentity(uid, 'uid');
+    const timestamp = Number(syncedAt);
+    if (!Number.isSafeInteger(timestamp) || timestamp < 0) throw new Error('同步时间无效');
+    await saveRecords(accountUid, records);
     await db.run(
       `INSERT INTO credit_usage_sync_state
          (profile_id, uid, anchor_request_id, last_success_at)
@@ -194,6 +223,35 @@ function createCreditUsageStore(options = {}) {
     const accountUid = validIdentity(uid, 'uid');
     const summaries = await listDailyUsage([accountUid], date);
     return summaries[accountUid] || null;
+  }
+
+  async function listDailyUsageRange(uids, fromDate, toDate) {
+    await initialize();
+    const accountUids = Array.from(new Set((Array.isArray(uids) ? uids : []).map((uid) => validIdentity(uid, 'uid'))));
+    if (!accountUids.length) return [];
+    const from = validDate(fromDate);
+    const to = validDate(toDate);
+    if (from > to) throw new Error('用量日期范围无效');
+    const placeholders = accountUids.map(() => '?').join(',');
+    const rows = await db.all(
+      `SELECT uid, usage_date AS date, ROUND(SUM(credit), 2) AS used, COUNT(*) AS count
+       FROM credit_usage_records
+       WHERE profile_id = ? AND usage_date >= ? AND usage_date <= ? AND uid IN (${placeholders})
+       GROUP BY uid, usage_date ORDER BY usage_date ASC, uid ASC`,
+      [profileId, from, to, ...accountUids]
+    );
+    const result = new Map(rows.map(row => [row.uid + ':' + row.date,
+      { uid: String(row.uid), date: String(row.date), used: Number(row.used) || 0, count: Number(row.count) || 0, cached: true, complete: false }]));
+    const coverage = await db.all(`SELECT uid, usage_date, synced_at FROM credit_history_days
+      WHERE profile_id = ? AND usage_date >= ? AND usage_date <= ? AND uid IN (${placeholders})`,
+      [profileId, from, to, ...accountUids]);
+    for (const row of coverage) {
+      const key = row.uid + ':' + row.usage_date;
+      const item = result.get(key) || { uid: row.uid, date: row.usage_date, used: 0, count: 0, cached: true };
+      item.complete = true; item.syncedAt = Number(row.synced_at);
+      result.set(key, item);
+    }
+    return Array.from(result.values()).sort((a, b) => a.date.localeCompare(b.date) || a.uid.localeCompare(b.uid));
   }
 
   async function getDailyCheckin(uid, date) {
@@ -270,12 +328,14 @@ function createCreditUsageStore(options = {}) {
 
   return {
     dailyUsageForUid,
+    listDailyUsageRange,
     getDailyCheckin,
     listDailyCheckins,
     getSyncState,
     initialize,
     listDailyUsage,
     saveSuccessfulSync,
+    saveHistoryUsage,
     saveDailyCheckin,
   };
 }

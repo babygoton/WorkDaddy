@@ -34,6 +34,13 @@ module.exports = {
   // 组件作用域级变量：官方在这些组件上定义了局部浅色硬编码，必须同作用域重定向（直接定义 > 继承）
   scoped: [
     {
+      sel: '.cr-tool-head__primary-tooltip-anchor',
+      themeId: 'nebula',
+      darkOnly: false,
+      // tooltip 通用补丁命中了工具标题触发器；只清空此处的背景常量，保留真实弹窗底色。
+      vars: { '--wb-bg-popover': 'transparent !important' },
+    },
+    {
       sel: '.cb-markdown',
       darkOnly: false,
       vars: {

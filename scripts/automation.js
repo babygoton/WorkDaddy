@@ -243,7 +243,7 @@ function taskIsPassiveCleanup(task) {
   const walk = value => {
     if (Array.isArray(value)) value.forEach(walk);
     else if (value && typeof value === 'object') {
-      if (value.op) { if (!allowed.has(value.op)) valid = false; if (value.op === 'dom.click') { clicks++; const locators = value.locators || [value.locator]; if (!locators.every(l=>l && l.visible === true && /close|dismiss|关闭|不再展示/i.test(l.value || ''))) valid = false; } }
+      if (value.op) { if (!allowed.has(value.op)) valid = false; if (value.op === 'dom.click') { clicks++; const locators = value.locators || [value.locator]; if (!locators.every(l=>l && l.visible === true && (l.intent === 'dismiss' || /close|dismiss|关闭|不再展示/i.test(l.value || '')))) valid = false; } }
       Object.values(value).forEach(walk);
     }
   };
@@ -261,18 +261,71 @@ function taskNeedsPanelClosed(task) {
   return walk([task.steps, task.onSuccess, task.onFailure]);
 }
 
+function builtinContentHash(task) {
+  const content = {
+    schemaVersion: task.schemaVersion || SCHEMA_VERSION,
+    id: task.id,
+    name: task.name || '',
+    description: task.description || '',
+    variables: task.variables || {},
+    steps: task.steps || [],
+    onSuccess: task.onSuccess || [],
+    onFailure: task.onFailure || [],
+    requires: task.requires || null,
+  };
+  return crypto.createHash('sha256').update(JSON.stringify(content)).digest('hex');
+}
+
 function installBuiltinTask(dataDir, file) {
   const task = validateTask(JSON.parse(fs.readFileSync(file, 'utf8')));
   const markerFile = path.join(dataDir, 'automation-builtins.json');
   let markers = {};
   try { markers = JSON.parse(fs.readFileSync(markerFile, 'utf8')); } catch (_) {}
-  if (markers[task.id]) return;
+  const previous = markers[task.id];
   const tasks = readAutomations(dataDir);
-  if (!tasks.some((t) => t.id === task.id)) {
-    if (tasks.length >= MAX_TASKS) return;
+  const index = tasks.findIndex((item) => item && item.id === task.id);
+  const revision = Number.isInteger(task.revision) && task.revision > 0 ? task.revision : 0;
+  const writeMarker = (value) => atomicWriteText(markerFile, JSON.stringify({ ...markers, [task.id]: value }) + '\n');
+  const managedMarker = () => ({ managed: true, revision: revision || 1, contentHash: builtinContentHash(task) });
+
+  if (index === -1) {
+    if (previous || tasks.length >= MAX_TASKS) return { status: 'skipped', revision };
     writeAutomations(dataDir, tasks.concat(task));
+    writeMarker(revision ? managedMarker() : true);
+    return { status: 'installed', revision: revision || 1 };
   }
-  atomicWriteText(markerFile, JSON.stringify({ ...markers, [task.id]: true }) + '\n');
+
+  // An existing unmarked ID may be user-owned. Adopt it without ever making it
+  // eligible for a later automatic replacement.
+  if (!previous) {
+    writeMarker({ managed: false });
+    return { status: 'skipped', revision };
+  }
+  if (!revision || previous && typeof previous === 'object' && previous.managed === false) return { status: 'skipped', revision };
+
+  const previousRevision = previous === true ? 1 : Number(previous.revision) || 1;
+  if (revision <= previousRevision) return { status: 'skipped', revision };
+  const installedHash = builtinContentHash(tasks[index]);
+  const knownHistoricalHashes = Array.isArray(task.upgradeFromContentHashes) ? task.upgradeFromContentHashes : [];
+  const expectedHash = previous && typeof previous === 'object' ? String(previous.contentHash || '') : '';
+  const unchanged = expectedHash ? installedHash === expectedHash : knownHistoricalHashes.includes(installedHash);
+  if (!unchanged) {
+    writeMarker({ managed: false });
+    return { status: 'skipped', revision };
+  }
+
+  const upgraded = {
+    ...task,
+    enabled: tasks[index].enabled !== false,
+    trigger: tasks[index].trigger || task.trigger,
+    schedule: tasks[index].schedule || task.schedule,
+    updatedAt: Date.now(),
+  };
+  const next = tasks.slice();
+  next[index] = upgraded;
+  writeAutomations(dataDir, next);
+  writeMarker(managedMarker());
+  return { status: 'upgraded', revision };
 }
 
 function validateLocator(locator) {

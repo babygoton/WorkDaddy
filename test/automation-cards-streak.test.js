@@ -58,6 +58,7 @@ test('task cards render triggers separately, show start only for manual tasks, a
   const rows=[];const list={innerHTML:'',scrollTop:37,appendChild:r=>rows.push(r.innerHTML)};
   const ctx={automationState:{tasks:[
     {id:'manual',name:'Manual',enabled:true,manualRunnable:true,trigger:{type:'manual'}},
+    {id:'daily-account-checkin',name:'循环账号静默签到',enabled:true,manualRunnable:false,trigger:{types:['clientLoaded','panelOpened']}},
     {id:'event',name:'<img onerror=x>',description:'<script>bad</script>',enabled:true,manualRunnable:false,trigger:{types:['clientLoaded','panelOpened']},schedule:{type:'interval',minutes:60}},
     {id:'active',name:'Active',enabled:true,manualRunnable:false,trigger:{type:'pageReady'}},
   ],runs:[{id:'run-active',taskId:'active',status:'running'}],selected:{},stopping:{}},
@@ -67,13 +68,37 @@ test('task cards render triggers separately, show start only for manual tasks, a
   applyI18n(){},AUTO_STOPPING_SVG:'',AUTO_STOP_SVG:'',MODEL_ENABLE_SVG:'',AUTO_LOG_SVG:'',MODEL_EDIT_SVG:'',MODEL_COPY_SVG:'',TRASH_SVG:''};
   ctx.WBS_I18N_EN = {};
   vm.createContext(ctx);
-  vm.runInContext(ui.slice(ui.indexOf('  function wbsBuiltinAutomationText('), ui.indexOf('  // ===== 全局错误钩子')), ctx);
+  vm.runInContext(ui.slice(ui.indexOf('  function wbsIsBuiltinAutomation('), ui.indexOf('  // ===== 全局错误钩子')), ctx);
   vm.runInContext(ui.slice(start,end),ctx);ctx.render();
   assert.match(rows[0],/data-auto-run="manual"/);
-  assert.doesNotMatch(rows[1],/data-auto-run|data-auto-stop|<img|<script>/);
-  for(const label of ['客户端加载','打开面板','每 60 分钟','等待触发'])assert.ok(rows[1].includes(label));
-  assert.match(rows[2],/data-auto-stop="run-active"/);assert.match(rows[2],/执行中/);
+  assert.doesNotMatch(rows[0],/wbs-auto-builtin-badge/);
+  assert.match(rows[1],/wbs-auto-builtin-badge[^<]*>内置<\/span><div class="wbs-auto-name"/);
+  assert.doesNotMatch(rows[2],/data-auto-run|data-auto-stop|<img|<script>|wbs-auto-builtin-badge/);
+  for(const label of ['客户端加载','打开面板','每 60 分钟','等待触发'])assert.ok(rows[2].includes(label));
+  assert.match(rows[3],/data-auto-stop="run-active"/);assert.match(rows[3],/执行中/);
   assert.equal(list.scrollTop,37);
+});
+
+test('only the three bundled automation ids render a built-in badge and omit the editor save action',()=>{
+  const helperStart=ui.indexOf('  function wbsIsBuiltinAutomation(');
+  const helperEnd=ui.indexOf('  function wbsBuiltinAutomationText(',helperStart);
+  assert.ok(helperStart>0&&helperEnd>helperStart);
+  const ctx={};vm.createContext(ctx);vm.runInContext(ui.slice(helperStart,helperEnd),ctx);
+  for(const id of ['buddy-fuel-station-close-on-account-switch','daily-account-checkin','keep-accounts-active-1-plus-1']){
+    assert.equal(ctx.wbsIsBuiltinAutomation({id}),true);
+  }
+  assert.equal(ctx.wbsIsBuiltinAutomation({id:'user-created'}),false);
+  assert.equal(ctx.wbsIsBuiltinAutomation({id:'user-created',name:'循环账号静默签到'}),false);
+
+  const paneStart=ui.indexOf('    function buildAutomationPane()');
+  const paneEnd=ui.indexOf('    // ===== 会话 pane',paneStart);
+  const pane=ui.slice(paneStart,paneEnd);
+  assert.match(pane,/wbs-auto-builtin-badge[^<]*>内置<\/span>/);
+  assert.match(pane,/check \+ builtinBadge \+ '<div class="wbs-auto-name"/);
+  assert.match(pane,/wbsIsBuiltinAutomation\(task\) \? '' : '<button class="wbs-modal-btn wbs-modal-ok" type="button" id="wbs-auto-save">保存<\/button>'/);
+  assert.match(pane,/if \(saveButton\) saveButton\.addEventListener\('click', saveEditor\)/);
+  assert.match(ui,/'内置': 'Built-in'/);
+  assert.match(ui,/\.wbs-auto-builtin-badge\{[^}]*border-radius:999px[^}]*var\(--wb-/);
 });
 
 test('scrollable automation list never shrinks cards and clips their descriptions or footers',()=>{

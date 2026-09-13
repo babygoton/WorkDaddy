@@ -79,6 +79,13 @@ function installationId() {
   return processInstallationId;
 }
 
+function persistentInstallationId() {
+  const id = installationId();
+  try {
+    return fs.readFileSync(INSTALLATION_ID_FILE, 'utf8').trim().toLowerCase() === id ? id : null;
+  } catch (_) { return null; }
+}
+
 function telemetrySettingsPath(env = process.env) {
   const dataDir = String(env.WBSWITCH_DATA_DIR || DATA_DIR);
   return path.join(dataDir, path.basename(TELEMETRY_SETTINGS_FILE));
@@ -363,6 +370,7 @@ async function cli() {
 }
 
 module.exports = {
+  persistentInstallationId,
   captureMessage,
   captureException,
   flushOutbox,

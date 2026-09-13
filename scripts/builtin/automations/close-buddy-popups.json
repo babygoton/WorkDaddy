@@ -1,8 +1,12 @@
 {
   "schemaVersion": 1,
   "id": "buddy-fuel-station-close-on-account-switch",
+  "revision": 2,
+  "upgradeFromContentHashes": [
+    "7409d4d92618b59326e56629f4d9ba804ae30a4e36d7d5ed156042b9a3a744bd"
+  ],
   "name": "页面就绪后自动关闭首页弹窗",
-  "description": "页面就绪后立即检查三类弹窗，每 300 毫秒补查，持续约 30 秒；重新出现的弹窗继续关闭，快速切换账号时重新检测新页面。",
+  "description": "页面就绪后立即检查首页弹窗与运营位，每 300 毫秒补查，持续约 30 秒；重新出现的弹窗继续关闭，快速切换账号时重新检测新页面。",
   "enabled": true,
   "trigger": {
     "type": "pageReady",
@@ -88,19 +92,90 @@
           "steps": [
             {
               "op": "dom.click",
-              "locator": {
-                "kind": "css",
-                "value": "button.activity-bubble__close",
-                "visible": true
-              }
+              "locators": [
+                {
+                  "kind": "css",
+                  "value": "button[data-track-id=\"home_growth_close\"]",
+                  "visible": true
+                },
+                {
+                  "kind": "css",
+                  "value": ".wb-slot--home-growth button.wb-slot--closable-close",
+                  "visible": true
+                }
+              ]
             },
             {
               "op": "dom.wait",
-              "locator": {
-                "kind": "css",
-                "value": "button.activity-bubble__close",
-                "visible": true
+              "locators": [
+                {
+                  "kind": "css",
+                  "value": "button[data-track-id=\"home_growth_close\"]",
+                  "visible": true
+                },
+                {
+                  "kind": "css",
+                  "value": ".wb-slot--home-growth button.wb-slot--closable-close",
+                  "visible": true
+                }
+              ],
+              "until": {
+                "state": "hidden"
               },
+              "timeoutMs": 750
+            },
+            {
+              "op": "notify.toast",
+              "level": "success",
+              "message": "已关闭「做任务赢积分好礼」入口"
+            }
+          ],
+          "onError": []
+        },
+        {
+          "op": "logic.catch",
+          "steps": [
+            {
+              "op": "dom.click",
+              "locators": [
+                {
+                  "kind": "css",
+                  "value": "button.activity-bubble__close",
+                  "visible": true
+                },
+                {
+                  "kind": "css",
+                  "value": "button.claw-welcome-activity-card__close",
+                  "visible": true
+                },
+                {
+                  "kind": "css",
+                  "value": "div[style*=\"width: 213px\"][style*=\"pointer-events: auto\"] > div[style*=\"height: 124px\"] > div[style*=\"height: 40px\"] > button[type=\"button\"][style*=\"width: 16px\"][style*=\"height: 16px\"]",
+                  "visible": true,
+                  "intent": "dismiss"
+                }
+              ]
+            },
+            {
+              "op": "dom.wait",
+              "locators": [
+                {
+                  "kind": "css",
+                  "value": "button.activity-bubble__close",
+                  "visible": true
+                },
+                {
+                  "kind": "css",
+                  "value": "button.claw-welcome-activity-card__close",
+                  "visible": true
+                },
+                {
+                  "kind": "css",
+                  "value": "div[style*=\"width: 213px\"][style*=\"pointer-events: auto\"] > div[style*=\"height: 124px\"] > div[style*=\"height: 40px\"] > button[type=\"button\"][style*=\"width: 16px\"][style*=\"height: 16px\"]",
+                  "visible": true,
+                  "intent": "dismiss"
+                }
+              ],
               "until": {
                 "state": "hidden"
               },

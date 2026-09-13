@@ -781,8 +781,9 @@ test('account cards keep the compact three-row layout', () => {
   // 账号页暂不展示“发起独立会话保持活跃”入口；daemon 接口保留供内部/后续流程使用。
   assert.doesNotMatch(script, /wbs-growth-activate/);
   assert.doesNotMatch(script, /api\('\/api\/growth\/activate'/);
-  assert.match(script, /expired \? '' : '<button class="wbs-icon-btn wbs-acc-switch"/);
-  assert.match(script, /switchBtn\.style\.display = hidden \|\| account\.creditExpired \? 'none' : ''/);
+  assert.match(script, /expired \|\| a\.authValid === false \? '' : '<button class="wbs-icon-btn wbs-acc-switch"/);
+  assert.match(script, /var invalidAuthBadge = a\.authValid === false/);
+  assert.match(script, /switchBtn\.style\.display = hidden \|\| account\.creditExpired \|\| account\.authValid === false \? 'none' : ''/);
   assert.match(script, /height:5px;min-height:5px/);
   assert.match(script, /\.wbs-credit-segment:first-child\{border-radius:3px 0 0 3px\}/);
   assert.match(script, /\.wbs-credit-segment:last-child\{border-radius:0 3px 3px 0\}/);
@@ -826,7 +827,7 @@ test('account cards sort by credit expiry without pinning the current account', 
   assert.match(script, /state\.current = data\.current;\s*state\.accounts = mergeAccountSnapshot\(previous, data\.accounts \|\| \[\]\);/);
   // render()：不再把当前账号置顶，统一按积分到期时间升序
   assert.doesNotMatch(script, /state\.accounts\.sort\(function \(left, right\) \{[\s\S]*left\.uid === state\.current\.uid[\s\S]*right\.uid === state\.current\.uid[\s\S]*return leftIsCurrent \? -1 : 1;[\s\S]*\}\);/);
-  assert.match(script, /function render\(data\) \{[\s\S]*if \(!previous\.length \|\| !state\.open\) sortAccountsByCreditExpiry\(\);/);
+  assert.match(script, /function render\(data\) \{[\s\S]*if \(!previous\.length \|\| !state\.open \|\| currentChanged\) sortAccountsByCreditExpiry\(\);/);
   // sortAccountsByCreditExpiry：去掉当前账号置顶，仅按到期时间 + 稳定序
   assert.match(script, /function sortAccountsByCreditExpiry\(\) \{[\s\S]*isCurrent:[\s\S]*a\.expiresAt !== b\.expiresAt[\s\S]*a\.expiresAt - b\.expiresAt[\s\S]*a\.index - b\.index/);
   assert.doesNotMatch(script, /function sortAccountsByCreditExpiry\(\) \{[\s\S]*if \(a\.isCurrent !== b\.isCurrent\) return a\.isCurrent \? -1 : 1;/);
@@ -857,9 +858,8 @@ test('robot button decorations remain visible alongside the eye states', () => {
   const script = read('inject.js');
   assert.match(script, /wbs-fab-antenna/);
   assert.doesNotMatch(script, /wbs-fab-ear/); // 用户 08-30 00:37 要求去掉双耳
-  assert.match(script, /\.wbs-fab-antenna\{[^}]*background:rgba\(20,20,22,\.55\)[^}]*mask-image:url\("data:image\/svg\+xml/);
-  assert.match(script, /\.wbs-fab-antenna-dot\{[^}]*background:transparent/);
-  assert.match(script, /viewBox=\\'0 0 14 24\\'>/);
+  assert.match(script, /\.wbs-fab-antenna\{[^}]*background:var\(--wbs-robot-shell\)/);
+  assert.match(script, /\.wbs-fab-antenna-dot\{[^}]*background:var\(--wbs-robot-shell\)/);
   assert.match(script, /#wbs-fab-sleep-light\.sleep-on\{background:rgba\(46,229,157,\.85\)/);
   assert.match(script, /\.wbs-fab \.click > span:not\(\.wbs-fab-antenna\)\{display:none\}/);
   assert.doesNotMatch(script, /\.wbs-fab \.click span\{display:none\}/);
@@ -1087,6 +1087,8 @@ test('account export asks for a non-empty password and import supports an option
   assert.match(secureTransfer, /randomBytes\(16\)/);
   assert.match(daemon, /version:\s*2/);
   assert.match(daemon, /EXPORT_PASSPHRASE/);
+  assert.match(daemon, /const authRecord = parseAuthJson\(j\)/);
+  assert.match(daemon, /if \(!authRecord \|\| authRecord\.uid !== uid\) continue/);
   assert.match(inject, /title:\s*'导出账号'[\s\S]*requirePassword:\s*true/);
   assert.match(inject, /旧版导出文件可留空/);
   assert.match(inject, /type="password"/);

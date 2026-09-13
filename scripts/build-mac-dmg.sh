@@ -56,12 +56,19 @@ chmod 644 "$APP/Contents/Resources/AppIcon.icns"
 echo "==> 应用图标已同步（背景 #e1e1e1）"
 
 # 2) 只覆盖前端代码（保留壳的其余一切：launcher/Info.plist/builtin/node_modules/theme-audit.js）
-for f in daemon.js toast-runtime.js toast-options.js primary-account.js completion-report.js automation-runtime.js automation-packages.js automation-compatibility.js automation-transfer.js automation-zip.js automation.js automation-picker.js token-refresh.js session-db.js secure-transfer.js windows-process-boundary.js workbuddy-compat.js inject.js theme-patches.js credit-segments.js credit-resource-queries.js credit-request-usage.js credit-usage-store.js growth-active.js atomic-file-write.js ui-port.js checkin-result.js lib.js profiles.js workbuddy-target.js cdp-targets.js sentry-report.js install.sh relaunch-with-cdp.sh uninstall.sh apply-update.sh; do
+for f in daemon.js toast-runtime.js toast-options.js primary-account.js completion-report.js automation-runtime.js automation-packages.js automation-compatibility.js automation-transfer.js automation-zip.js automation.js automation-picker.js token-refresh.js session-db.js third-party-models.js secure-transfer.js windows-process-boundary.js workbuddy-compat.js inject.js theme-patches.js theme-text-shadow.js theme-vars.js credit-segments.js credit-resource-queries.js credit-request-usage.js credit-history-sync.js credit-usage-store.js credit-rotation.js token-stats.js growth-active.js atomic-file-write.js ui-port.js checkin-result.js lib.js profiles.js workbuddy-target.js cdp-targets.js sentry-report.js usage-report.js install.sh relaunch-with-cdp.sh uninstall.sh apply-update.sh; do
   [ -f "scripts/$f" ] && cp "scripts/$f" "$APP/Contents/Resources/scripts/$f"
 done
+# Injection reads the wordmark at runtime; keep brand assets in both profiles.
+mkdir -p "$APP/Contents/Resources/scripts/assets"
+cp scripts/assets/workdaddy-logo.svg scripts/assets/workdaddy-app-icon.svg "$APP/Contents/Resources/scripts/assets/"
 # Presets are runtime source, independent of the reusable wallpaper/theme shell.
 mkdir -p "$APP/Contents/Resources/scripts/builtin/automations"
 cp scripts/builtin/automations/*.json "$APP/Contents/Resources/scripts/builtin/automations/"
+if [ "$(find "$APP/Contents/Resources/scripts/builtin/automations" -type f -name '*.json' | wc -l | tr -d '[:space:]')" -lt 1 ]; then
+  echo "错误：缺少内置自动化任务定义或未写入应用包" >&2
+  exit 1
+fi
 if [ -f "scripts/picker-internal.js" ]; then
   cp "scripts/picker-internal.js" "$APP/Contents/Resources/scripts/picker-internal.js"
   chmod 644 "$APP/Contents/Resources/scripts/picker-internal.js"
@@ -90,7 +97,10 @@ chmod 644 "$APP/Contents/Resources/scripts/session-db.js" \
   "$APP/Contents/Resources/scripts/secure-transfer.js" \
   "$APP/Contents/Resources/scripts/windows-process-boundary.js" \
   "$APP/Contents/Resources/scripts/credit-request-usage.js" \
+  "$APP/Contents/Resources/scripts/credit-history-sync.js" \
   "$APP/Contents/Resources/scripts/credit-usage-store.js" \
+  "$APP/Contents/Resources/scripts/credit-rotation.js" \
+  "$APP/Contents/Resources/scripts/token-stats.js" \
   "$APP/Contents/Resources/scripts/atomic-file-write.js" \
   "$APP/Contents/Resources/scripts/ui-port.js" \
   "$APP/Contents/Resources/scripts/checkin-result.js" \
@@ -124,6 +134,14 @@ if /usr/libexec/PlistBuddy -c 'Print :CFBundleIconName' "$PACKAGE_APP/Contents/I
 else
   /usr/libexec/PlistBuddy -c 'Add :CFBundleIconName string AppIcon' "$PACKAGE_APP/Contents/Info.plist"
 fi
+LS_ARCH_PRIORITY="arm64"
+if /usr/libexec/PlistBuddy -c 'Print :LSArchitecturePriority' "$PACKAGE_APP/Contents/Info.plist" >/dev/null 2>&1; then
+  /usr/libexec/PlistBuddy -c 'Delete :LSArchitecturePriority' "$PACKAGE_APP/Contents/Info.plist"
+fi
+/usr/libexec/PlistBuddy -c 'Add :LSArchitecturePriority array' "$PACKAGE_APP/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Add :LSArchitecturePriority:0 string ${LS_ARCH_PRIORITY}" "$PACKAGE_APP/Contents/Info.plist"
+BUILT_ARCH_PRIORITY="$(/usr/libexec/PlistBuddy -c 'Print :LSArchitecturePriority:0' "$PACKAGE_APP/Contents/Info.plist" 2>/dev/null || true)"
+if [ "$BUILT_ARCH_PRIORITY" != "$LS_ARCH_PRIORITY" ]; then exit 3; fi
 sed -i.bak "s|^PROFILE=.*|PROFILE=\"${PROFILE}\"|" "$PACKAGE_APP/Contents/MacOS/launcher"
 rm -f "$PACKAGE_APP/Contents/MacOS/launcher.bak"
 # 企业版可能在 /Applications 下使用不同的 .app 名称。把官方路径优先、
@@ -280,6 +298,26 @@ if [ "$PROFILE" = "workbuddy-ai" ]; then
   perl -0pi -e 's/<string>WorkDaddy<\/string>/<string>WorkDaddy AI<\/string>/g' "$PACKAGE_APP/Contents/Info.plist"
   perl -0pi -e 's/<string>com\.workdaddy\.launcher<\/string>/<string>com.workdaddy.ai.launcher<\/string>/g' "$PACKAGE_APP/Contents/Info.plist"
 fi
+# LaunchServices must own the target app identity, rather than inheriting the shell launcher.
+python3 - "$PACKAGE_APP/Contents/MacOS/launcher" <<'PY'
+import sys
+from pathlib import Path
+p = Path(sys.argv[1])
+s = p.read_text()
+old = 'nohup "$APP_BIN" --remote-debugging-port="$PORT" >/dev/null 2>&1 &\ndisown 2>/dev/null || true'
+new = '''TARGET_APP_BUNDLE="${APP_BIN%/Contents/MacOS/*}"
+if [ "$TARGET_APP_BUNDLE" = "$APP_BIN" ] || [ ! -d "$TARGET_APP_BUNDLE" ]; then
+  notify "WorkDaddy" "WorkBuddy 应用路径无效，启动失败"
+  exit 1
+fi
+if ! /usr/bin/open -a "$TARGET_APP_BUNDLE" --args "--remote-debugging-port=$PORT"; then
+  notify "WorkDaddy" "无法启动 WorkBuddy，请重试"
+  exit 1
+fi'''
+if old not in s and new not in s:
+    raise SystemExit('macOS launcher 缺少应用启动锚点')
+p.write_text(s.replace(old, new))
+PY
 # 注入完成后把目标 WorkBuddy 置前台，避免复用已有 CDP 时 Dock 仍停留在启动器上。
 python3 - "$PACKAGE_APP/Contents/MacOS/launcher" <<'PY'
 import re

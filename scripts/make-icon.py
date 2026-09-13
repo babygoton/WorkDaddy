@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
-"""Build the macOS and Windows application icons from one foreground PNG."""
+"""Build both application icons from the website's rounded SVG logo."""
 
 import os
 import shutil
 import subprocess
 import tempfile
+import xml.etree.ElementTree as ET
 
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-SOURCE = os.path.join(ROOT, 'scripts', 'assets', 'workdaddy-icon-foreground.png')
+SOURCE = os.path.join(ROOT, 'scripts', 'assets', 'workdaddy-logo.svg')
+PNG_OUT = os.path.join(ROOT, 'scripts', 'assets', 'workdaddy-icon-foreground.png')
 MAC_OUT = os.path.join(ROOT, 'scripts', 'assets', 'WorkDaddy.icns')
 WIN_OUT = os.path.join(ROOT, 'release', 'WorkDaddy.ico')
-BACKGROUND = '#e1e1e1'
-WINDOWS_CORNER_RADIUS_RATIO = 0.20
-ICON_SIZES = [16, 32, 64, 128, 256, 512, 1024]
+ICON_SIZES = [16, 24, 32, 48, 64, 128, 256]
 
 
 def run(*args):
@@ -27,26 +27,21 @@ def require_tool(name):
     return path
 
 
-def render_base(magick, output, rounded, with_background=True):
-    canvas = f'xc:{BACKGROUND}' if with_background else 'xc:none'
-    args = [
-        magick,
-        '-size', '1024x1024', canvas,
-        SOURCE,
-        '-compose', 'over', '-composite',
-    ]
-    if rounded:
-        radius = round(1024 * WINDOWS_CORNER_RADIUS_RATIO)
-        args += [
-            '(', '-size', '1024x1024', 'xc:none', '-fill', 'white',
-            '-draw', f'roundrectangle 0,0 1023,1023 {radius},{radius}', ')',
-            '-alpha', 'off', '-compose', 'CopyOpacity', '-composite',
-        ]
-    # iconutil expects full RGBA PNGs; grayscale-alpha inputs can collapse to a
-    # single low-resolution icns layer and make macOS show its generic wrapper.
-    args += ['-alpha', 'on', '-colorspace', 'sRGB', '-type', 'TrueColorAlpha']
-    args.append(output)
-    run(*args)
+def render_base(magick, rsvg, output):
+    # The panel keeps the website SVG unchanged. Application icons need a larger,
+    # optically centered robot so its dark surround does not read as extra padding.
+    namespace = 'http://www.w3.org/2000/svg'
+    tree = ET.parse(SOURCE)
+    robot = tree.getroot().find('.//{' + namespace + '}g[@filter="url(#robot-shadow)"]')
+    if robot is None:
+        raise SystemExit('website logo is missing its robot artwork group')
+    robot.set('transform', 'translate(512 512) scale(1.14) translate(-490 -545) ' + robot.get('transform', ''))
+    ET.register_namespace('', namespace)
+    app_source = os.path.join(os.path.dirname(output), 'application-logo.svg')
+    tree.write(app_source, encoding='unicode')
+    # librsvg preserves the website's gradients, shadows and rounded alpha mask.
+    run(rsvg, '--width', '1024', '--height', '1024', '--output', output, app_source)
+    run(magick, output, '-alpha', 'on', '-colorspace', 'sRGB', '-type', 'TrueColorAlpha', output)
 
 
 def render_size(magick, source, size, output):
@@ -60,13 +55,10 @@ def render_size(magick, source, size, output):
     )
 
 
-def build_mac_icon(magick, iconutil, temp_dir):
-    base = os.path.join(temp_dir, 'mac-base.png')
+def build_mac_icon(magick, iconutil, temp_dir, base):
     iconset = os.path.join(temp_dir, 'AppIcon.iconset')
     os.makedirs(iconset)
-    # macOS supplies the standard rounded app background. Supplying another
-    # background here creates a visible nested square in Finder/Get Info.
-    render_base(magick, base, rounded=False, with_background=False)
+    # The SVG already owns its silhouette; do not add another background or mask.
     iconset_entries = [
         ('icon_16x16.png', 16),
         ('icon_16x16@2x.png', 32),
@@ -85,26 +77,28 @@ def build_mac_icon(magick, iconutil, temp_dir):
     run(iconutil, '-c', 'icns', iconset, '-o', MAC_OUT)
 
 
-def build_windows_icon(magick, temp_dir):
-    base = os.path.join(temp_dir, 'windows-base.png')
-    render_base(magick, base, rounded=True)
+def build_windows_icon(magick, temp_dir, base):
     pngs = []
     for size in ICON_SIZES:
         output = os.path.join(temp_dir, f'windows-{size}.png')
         render_size(magick, base, size, output)
         pngs.append(output)
     os.makedirs(os.path.dirname(WIN_OUT), exist_ok=True)
-    run(magick, *pngs, '-colors', '256', WIN_OUT)
+    run(magick, *pngs, WIN_OUT)
 
 
 def main():
     if not os.path.isfile(SOURCE):
-        raise SystemExit(f'missing icon foreground: {SOURCE}')
+        raise SystemExit(f'missing website logo: {SOURCE}')
     magick = require_tool('magick')
     iconutil = require_tool('iconutil')
+    rsvg = require_tool('rsvg-convert')
     with tempfile.TemporaryDirectory(prefix='workdaddy-icon-') as temp_dir:
-        build_mac_icon(magick, iconutil, temp_dir)
-        build_windows_icon(magick, temp_dir)
+        base = os.path.join(temp_dir, 'website-logo.png')
+        render_base(magick, rsvg, base)
+        build_mac_icon(magick, iconutil, temp_dir, base)
+        build_windows_icon(magick, temp_dir, base)
+        shutil.copyfile(base, PNG_OUT)
     print(f'macOS icon: {MAC_OUT}')
     print(f'Windows icon: {WIN_OUT}')
 

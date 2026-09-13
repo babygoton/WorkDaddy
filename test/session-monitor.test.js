@@ -138,7 +138,8 @@ test('session resource subscription delivers non-active completion without contr
 
 test('monitor log card stays hidden until the five-click logo unlock', () => {
   assert.match(injectSource, /id="wbs-monitor-log-card"' \+ \(hiddenToolsUnlocked \? '' : ' style="display:none"'\)/);
-  assert.match(injectSource, /if \(piClickCount >= 5\)[\s\S]*hiddenToolsUnlocked = true;[\s\S]*monitorLogCard\.style\.display = '';/);
+  assert.match(injectSource, /if \(count === 5\) options\.unlockDebug\(\)/);
+  assert.match(injectSource, /unlockDebug: function \(\) \{[\s\S]*hiddenToolsUnlocked = true;[\s\S]*monitorLogCard\.style\.display = '';/);
 });
 
 test('compat discovers multiple capability-shaped controllers and de-duplicates fibers', () => {

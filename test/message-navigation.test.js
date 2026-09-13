@@ -4,8 +4,36 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
+const vm = require('node:vm');
 
 const compat = require('../scripts/workbuddy-compat.js');
+
+test('scroll events keep the last node selected when the last turn cannot align with the viewport top', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../scripts/inject.js'), 'utf8');
+  const frames = [{ index: 1, top: 28, bottom: 350 }, { index: 2, top: 350, bottom: 410 }, { index: 3, top: 410, bottom: 600 }];
+  const scroll = { scrollTop: 1200, scrollHeight: 1800, clientHeight: 600 };
+  let selected;
+  const context = {
+    turns: [{ id: 'first', messageIndex: 0 }, { id: 'last', messageIndex: 2 }],
+    surface: { scrollElement: scroll, viewportElement: { getBoundingClientRect: () => ({ top: 0, bottom: 600 }) },
+      conversationElement: { querySelectorAll: () => frames.map(f => ({ getBoundingClientRect: () => f, getAttribute: () => String(f.index) })) } },
+    setActive: id => { selected = id; },
+  };
+  const start = source.indexOf('      function updateActive()');
+  vm.runInNewContext(source.slice(start, source.indexOf('\n      function scheduleActive()', start)), context);
+  selected = 'last'; // navigateToTurn sets this before the official scroll event arrives.
+  context.updateActive();
+  assert.equal(selected, 'last');
+  scroll.scrollTop = 1199.5;
+  context.updateActive();
+  assert.equal(selected, 'last', 'fractional scroll coordinates still count as the bottom');
+  scroll.scrollTop = 900;
+  context.updateActive();
+  assert.equal(selected, 'first', 'scrolling up must release the last-node highlight');
+  scroll.scrollTop = 0; scroll.scrollHeight = scroll.clientHeight;
+  context.updateActive();
+  assert.equal(selected, 'first', 'a non-scrollable conversation does not force the last node');
+});
 
 test('message navigation uses cr-message-list as the single stable surface seam', () => {
   const viewport = { name: 'viewport' };
@@ -150,9 +178,13 @@ test('injected navigation rail is theme-aware, glassy, accessible, and profile a
   assert.match(inject, /悬停预览，点击或拖动快速定位消息。/);
 });
 
-test('robot pupils use the antenna glass treatment instead of opaque black', () => {
+test('floating robot keeps the website shell and upright eyes', () => {
   const root = path.join(__dirname, '..');
   const inject = fs.readFileSync(path.join(root, 'scripts', 'inject.js'), 'utf8');
-  assert.match(inject, /\.wbs-fab \.eye:before\{[^\n]*background:rgba\(20,20,22,\.55\)[^\n]*backdrop-filter:blur\(14px\) saturate\(1\.3\)/);
-  assert.doesNotMatch(inject, /\.wbs-fab \.eye:before\{[^\n]*background:rgba\(20,20,22,\.92\)/);
+  assert.match(inject, /--wbs-robot-shell:#fff;--wbs-robot-eye:#111/);
+  assert.match(inject, /\.wbs-fab \.eye\{[^\n]*width:12px;height:18px[^\n]*background:var\(--wbs-robot-eye\)/);
+  assert.match(inject, /\.wbs-fab:hover \.eye\{scale:1\.18\}/);
+  assert.match(inject, /wbs-robot-blink 7s/);
+  assert.match(inject, /\.wbs-fab \.button\{[^\n]*width:82px;height:64px/);
+  assert.doesNotMatch(inject, /\.wbs-fab \.eye:before/);
 });

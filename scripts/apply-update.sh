@@ -109,6 +109,24 @@ mkdir -p "$(dirname "$APP_PATH")"
 cp -R "$SRC_APP" "$APP_PATH" || rollback 22
 chmod -R u+rwX "$APP_PATH" || rollback 23
 xattr -cr "$APP_PATH" 2>&1 || log "清除隔离属性失败（继续，可能已无隔离属性）"
+
+# 覆盖 bundle 之后必须让 LaunchServices 重新注册。壳的 CFBundleExecutable 是 bash 脚本、
+# bundle 也未签名，旧注册里可能带着 macOS 伪造的 LSArchitecturePriority=(x86_64, arm64)
+# 缓存；只替换文件不会刷新该缓存，下一次启动仍按 Rosetta 拉起并弹「需要安装 Rosetta」。
+# 必须先注销再注册才会真正重读 Info.plist 的 arm64 声明，并顺带清掉已挂载 dmg 卷里
+# 同名副本的旧注册（用户可能曾直接从 dmg 双击启动过）。
+LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
+if [ -x "$LSREGISTER" ]; then
+  for stale in /Volumes/*/WorkDaddy*.app; do
+    [ -d "$stale" ] || continue
+    "$LSREGISTER" -u "$stale" >/dev/null 2>&1 || log "注销挂载卷残留注册失败: $stale"
+  done
+  "$LSREGISTER" -u "$APP_PATH" >/dev/null 2>&1 || log "注销旧注册失败（继续）"
+  "$LSREGISTER" -f "$APP_PATH" >/dev/null 2>&1 || log "重新注册失败（继续）"
+  log "LaunchServices 注册已刷新: $APP_PATH"
+else
+  log "未找到 lsregister，跳过注册刷新"
+fi
 TARGET_DAEMON_VERSION="$(grep -o "const DAEMON_VERSION = '[^']*'" "$APP_PATH/Contents/Resources/scripts/daemon.js" | head -1 || true)"
 log "target daemon version=$TARGET_DAEMON_VERSION"
 

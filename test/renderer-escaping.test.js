@@ -49,7 +49,7 @@ test('session and account selectors escape every text and attribute sink', () =>
   assert.doesNotMatch(accountSelect, /'<option value="' \+ a\.uid/);
   assert.doesNotMatch(accountSelect, /\+ \(a\.nickname \|\|/);
 
-  const copyModal = sourceBetween('function openCopyModal(ids)', 'function openDeleteModal(ids)');
+  const copyModal = sourceBetween('function openCopyModal(ids)', 'function openDeleteModal(ids, allAccounts)');
   assert.match(copyModal, /'<option value="' \+ escAttr\(a\.uid\) \+ '">' \+ esc\(a\.nickname \|\| a\.uid\)/);
   assert.match(copyModal, /a\.phone \? '[^']*' \+ esc\(a\.phone\)/);
   assert.doesNotMatch(copyModal, /'<option value="' \+ a\.uid/);

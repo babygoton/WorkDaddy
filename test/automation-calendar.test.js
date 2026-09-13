@@ -44,3 +44,32 @@ test('existing builtin IDs are adopted without replacing definitions when marker
  a.writeAutomations(dir,[]);a.installBuiltinTask(dir,file);assert.deepEqual(a.readAutomations(dir),[]);
  }finally{fs.rmSync(dir,{recursive:true,force:true});}
 });
+
+test('a revisioned builtin upgrades only an unchanged historical definition',()=>{
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'wd-builtin-upgrade-'));try{
+ const oldFile=path.join(dir,'old.json'),newFile=path.join(dir,'new.json');
+ const oldTask={schemaVersion:1,id:'builtin',name:'Built in',description:'old',enabled:true,trigger:{type:'pageReady'},schedule:{type:'manual'},variables:{},steps:[{op:'logic.delay',ms:100}],onSuccess:[],onFailure:[]};
+ fs.writeFileSync(oldFile,JSON.stringify(oldTask));
+ a.installBuiltinTask(dir,oldFile);
+ const installed=a.readAutomations(dir);installed[0].enabled=false;installed[0].schedule={type:'daily',time:'09:00'};installed[0].trigger={type:'panelOpened',oncePerNavigation:true};a.writeAutomations(dir,installed);
+ const next={...oldTask,revision:2,upgradeFromContentHashes:['6fde9da397c1295d89f44c3f816919fb05e5b5fcb1ce7e140640d54f58119f7f'],description:'new',steps:[{op:'logic.delay',ms:200}]};
+ fs.writeFileSync(newFile,JSON.stringify(next));
+ const result=a.installBuiltinTask(dir,newFile);
+ const upgraded=a.readAutomations(dir)[0];
+ assert.equal(result.status,'upgraded');assert.equal(upgraded.revision,2);assert.equal(upgraded.steps[0].ms,200);
+ assert.equal(upgraded.enabled,false);assert.deepEqual(upgraded.schedule,{type:'daily',time:'09:00'});assert.equal(upgraded.trigger.type,'panelOpened');
+ }finally{fs.rmSync(dir,{recursive:true,force:true});}
+});
+
+test('a revisioned builtin never overwrites customized content or an unmarked matching ID',()=>{
+ const makeDir=()=>fs.mkdtempSync(path.join(os.tmpdir(),'wd-builtin-custom-'));
+ for(const marked of [true,false]){const dir=makeDir();try{
+ const oldTask={schemaVersion:1,id:'builtin',name:'Built in',description:'old',enabled:true,trigger:{type:'manual'},schedule:{type:'manual'},variables:{},steps:[{op:'logic.delay',ms:999}],onSuccess:[],onFailure:[]};
+ const file=path.join(dir,'new.json');
+ a.writeAutomations(dir,[a.validateTask(oldTask)]);
+ if(marked)fs.writeFileSync(path.join(dir,'automation-builtins.json'),JSON.stringify({builtin:true}));
+ fs.writeFileSync(file,JSON.stringify({...oldTask,revision:2,upgradeFromContentHashes:['6fde9da397c1295d89f44c3f816919fb05e5b5fcb1ce7e140640d54f58119f7f'],steps:[{op:'logic.delay',ms:200}]}));
+ const result=a.installBuiltinTask(dir,file);
+ assert.equal(result.status,'skipped');assert.equal(a.readAutomations(dir)[0].steps[0].ms,999);
+ }finally{fs.rmSync(dir,{recursive:true,force:true});}}
+});

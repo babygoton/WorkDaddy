@@ -157,6 +157,10 @@ async function fetchUsageSinceAnchor(options = {}) {
     });
     if (expectedTotal === null) expectedTotal = page.total;
     else if (page.total !== expectedTotal) throw new Error('官方用量接口分页总数发生变化');
+    if (typeof options.onProgress === 'function') options.onProgress({
+      page: pageNum, pages: Math.max(pageNum, Math.ceil(expectedTotal / pageSize)),
+      records: fetchedRows + page.rows.length, total: expectedTotal,
+    });
     if (!page.rows.length) {
       if (fetchedRows >= expectedTotal) {
         return { records, newestRequestId, total: expectedTotal, pages: pageNum, reachedAnchor };

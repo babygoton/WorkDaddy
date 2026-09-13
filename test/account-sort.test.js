@@ -21,6 +21,6 @@ test('account list sorts by credit expiry without pinning the current account', 
   const renderStart = inject.indexOf('function render(data)');
   const renderBody = inject.slice(renderStart, inject.indexOf('state.creditRemaining', renderStart));
   assert.ok(renderBody.indexOf('leftIsCurrent ? -1 : 1') === -1, 'render must not pin current account');
-  assert.match(renderBody, /if \(!previous\.length \|\| !state\.open\) sortAccountsByCreditExpiry\(\)/,
+  assert.match(renderBody, /if \(!previous\.length \|\| !state\.open \|\| currentChanged\) sortAccountsByCreditExpiry\(\)/,
     'initial or hidden render sorts by expiry; visible cached rows retain their order');
 });

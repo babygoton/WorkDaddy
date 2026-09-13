@@ -12,6 +12,11 @@ function runPopupTask(appearAt, failedConfirmations = 0) {
   const probes = [];
   const notices = [];
   const closed = new Map();
+  const popupKey = (selector) => {
+    if (/home_growth|wb-slot--home-growth/.test(selector)) return 'growth';
+    if (/activity-bubble|claw-welcome-activity|pointer-events: auto/.test(selector)) return 'activity';
+    return selector;
+  };
   const context = {
     require: require('node:module').createRequire(path.join(__dirname, '../scripts/automation.js')), module: { exports: {} },
     setTimeout: (callback, ms) => { now += ms; callback(); },
@@ -20,47 +25,65 @@ function runPopupTask(appearAt, failedConfirmations = 0) {
   const task = JSON.parse(fs.readFileSync(path.join(__dirname, '../scripts/builtin/automations/close-buddy-popups.json'), 'utf8'));
   const execution = context.module.exports.executeTask(task, {
     domAction: async (op, locator) => {
+      const candidates = Array.isArray(locator) ? locator : [locator];
       if (op === 'dom.wait') {
         if (failedConfirmations > 0) { failedConfirmations--; throw new Error('等待页面元素超时'); }
-        closed.set(locator.value, (closed.get(locator.value) || 0) + 1);
+        const key = popupKey(candidates[0].value);
+        closed.set(key, (closed.get(key) || 0) + 1);
         return { visible: false };
       }
       assert.equal(op, 'dom.click');
-      probes.push({ selector: locator.value, at: now });
-      const appearances = appearAt(locator.value);
-      const availableAt = (Array.isArray(appearances) ? appearances : [appearances])[closed.get(locator.value) || 0];
-      if (availableAt == null || now < availableAt) throw new Error('未找到页面元素');
-      clicks.push({ selector: locator.value, at: now });
-      // A click alone is not confirmation; dom.wait must confirm disappearance.
-      return { visible: true };
+      for (const candidate of candidates) {
+        probes.push({ selector: candidate.value, at: now });
+        const appearances = appearAt(candidate.value);
+        const availableAt = (Array.isArray(appearances) ? appearances : [appearances])[closed.get(popupKey(candidate.value)) || 0];
+        if (availableAt == null || now < availableAt) continue;
+        clicks.push({ selector: candidate.value, at: now });
+        // A click alone is not confirmation; dom.wait must confirm disappearance.
+        return { visible: true };
+      }
+      throw new Error('未找到页面元素');
     },
     notifyToast: (_, message) => notices.push(message),
   });
   return execution.then(() => ({ clicks, probes, notices, elapsed: now }));
 }
 
-test('all three popup buttons are clicked immediately and only once', async () => {
+test('all four popup groups are clicked immediately and only once', async () => {
   const result = await runPopupTask(() => 0);
-  assert.equal(result.clicks.length, 3);
+  assert.equal(result.clicks.length, 4);
   assert.ok(result.clicks.every(click => click.at === 0));
   assert.ok(result.clicks.some(click => click.selector.includes('#fuel-compact-close')));
   assert.ok(result.clicks.some(click => click.selector.includes('wb-related-playbooks__dismiss-today')));
+  assert.ok(result.clicks.some(click => click.selector.includes('home_growth_close')));
   assert.ok(result.clicks.some(click => click.selector.includes('activity-bubble__close')));
-  assert.equal(result.probes.length, 300);
-  assert.equal(result.notices.length, 3);
+  assert.equal(result.notices.length, 4);
   assert.equal(result.elapsed, 30000, 'continue observing for re-created popups');
 });
 
+test('activity fallbacks do not depend on localized text and broad popup selectors are rejected', () => {
+  const task = JSON.parse(fs.readFileSync(path.join(__dirname, '../scripts/builtin/automations/close-buddy-popups.json'), 'utf8'));
+  const clicks = task.steps[0].steps.filter(step => step.op === 'logic.catch').map(step => step.steps[0]);
+  const values = clicks.flatMap(step => (step.locators || [step.locator]).map(locator => locator.value));
+  assert.ok(values.includes('button[data-track-id="home_growth_close"]'));
+  assert.ok(values.includes('.wb-slot--home-growth button.wb-slot--closable-close'));
+  assert.ok(values.includes('button.claw-welcome-activity-card__close'));
+  assert.ok(values.some(value => value.includes('pointer-events: auto') && value.includes('width: 213px')));
+  assert.ok(values.every(value => !/关闭活动通知|activity notification/i.test(value)));
+  assert.ok(values.every(value => value !== '.wb-slot--closable-close'));
+  assert.ok(values.every(value => !value.startsWith('//*[')));
+});
+
 test('absent fuel popup does not delay other popups, including one rendered later', async () => {
-  const result = await runPopupTask(selector => selector.includes('fuel-compact') ? null : selector.includes('activity-bubble') ? 1100 : 0);
-  assert.deepEqual(result.clicks.map(click => click.at), [0, 1200]);
-  assert.equal(result.notices.length, 2);
+  const result = await runPopupTask(selector => selector.includes('fuel-compact') ? null : /activity-bubble|claw-welcome-activity|pointer-events: auto/.test(selector) ? 1100 : 0);
+  assert.deepEqual(result.clicks.map(click => click.at), [0, 0, 1200]);
+  assert.equal(result.notices.length, 3);
   assert.equal(result.elapsed, 30000);
 });
 
 test('missing popup buttons finish quietly after the bounded detection window', async () => {
   const result = await runPopupTask(() => null);
-  assert.equal(result.probes.length, 300);
+  assert.ok(result.probes.length >= 400);
   assert.equal(result.elapsed, 30000);
   assert.equal(result.clicks.length, 0);
   assert.equal(result.notices.length, 0);
@@ -68,10 +91,10 @@ test('missing popup buttons finish quietly after the bounded detection window', 
 
 test('an ineffective click is retried and only confirmed closes are announced', async () => {
   const result = await runPopupTask(() => 0, 1);
-  assert.equal(result.clicks.length, 4);
+  assert.equal(result.clicks.length, 5);
   assert.equal(result.clicks.at(-1).at, 300);
   assert.equal(result.clicks.at(-1).selector, '#fuel-compact-close');
-  assert.equal(result.notices.length, 3);
+  assert.equal(result.notices.length, 4);
 });
 
 test('a popup recreated after a successful close is detected and closed again', async () => {
@@ -91,7 +114,7 @@ test('a newer navigation supersedes a running opt-in task instead of dropping it
   const running = { taskId: 'popup', status: 'running', navigationSerial: 1 };
   const context = {
     taskMatchesEvent: require('../scripts/automation').taskMatchesEvent,
-    automationEventKeys: new Set(), mainFrameNavigationSerial: 2,
+    automationEventKeys: new Set(), mainFrameNavigationSerial: 2, cdpPageSessionId: 'renderer-a',
     automationRuns: new Map([['run', running]]), DATA_DIR: '/test',
     readAutomations: () => [{ id: 'popup', enabled: true, trigger: { type: 'pageReady', restartOnNavigation: true } }],
     currentAccount: () => null, log() {},
@@ -104,22 +127,43 @@ test('a newer navigation supersedes a running opt-in task instead of dropping it
   assert.equal(running.pendingEvent.navigationSerial, 3, 'retain only the latest navigation');
 });
 
+test('pageReady is deduplicated per renderer page rather than per CDP connection', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../scripts/daemon.js'), 'utf8');
+  const start = source.indexOf('function dispatchAutomationEvent(');
+  const end = source.indexOf('\nfunction onCdpEvent(', start);
+  const launched = [];
+  const context = {
+    taskMatchesEvent: () => true,
+    automationEventKeys: new Set(), mainFrameNavigationSerial: 7, cdpPageSessionId: 'renderer-a',
+    automationRuns: new Map(), DATA_DIR: '/test',
+    readAutomations: () => [{ id: 'popup', enabled: true, trigger: { type: 'pageReady' } }],
+    currentAccount: () => null, log() {}, startAutomationRun: (_, event) => launched.push(event),
+  };
+  vm.runInNewContext(source.slice(start, end), context);
+  context.dispatchAutomationEvent('pageReady', { navigationSerial: 7, source: 'connect' });
+  context.dispatchAutomationEvent('pageReady', { navigationSerial: 7, source: 'connect' });
+  assert.equal(launched.length, 1, 'a transient reconnect to the same renderer stays deduplicated');
+  context.cdpPageSessionId = 'renderer-b';
+  context.dispatchAutomationEvent('pageReady', { navigationSerial: 7, source: 'connect' });
+  assert.equal(launched.length, 2, 'a restarted renderer gets its own pageReady event');
+});
+
 test('queued detection resumes only for the latest page and an enabled task', () => {
   const source = fs.readFileSync(path.join(__dirname, '../scripts/daemon.js'), 'utf8');
   const start = source.indexOf('function resumeAutomationAfterNavigation(');
   const end = source.indexOf('\nfunction todayStr(', start);
   const launched = [];
   const task = { id: 'popup', enabled: true, trigger: { restartOnNavigation: true } };
-  const context = { mainFrameNavigationSerial: 3, DATA_DIR: '/test', readAutomations: () => [task], startAutomationRun: (...args) => launched.push(args) };
+  const context = { mainFrameNavigationSerial: 3, cdpPageSessionId: 'renderer-a', DATA_DIR: '/test', readAutomations: () => [task], startAutomationRun: (...args) => launched.push(args) };
   vm.runInNewContext(source.slice(start, end), context);
-  context.resumeAutomationAfterNavigation({ taskId: 'popup', pendingEvent: { navigationSerial: 2 } });
+  context.resumeAutomationAfterNavigation({ taskId: 'popup', pendingEvent: { navigationSerial: 2, pageSessionId: 'renderer-a' } });
   assert.equal(launched.length, 0);
-  const run = { taskId: 'popup', pendingEvent: { navigationSerial: 3 } };
+  const run = { taskId: 'popup', pendingEvent: { navigationSerial: 3, pageSessionId: 'renderer-a' } };
   context.resumeAutomationAfterNavigation(run);
   assert.equal(launched.length, 1);
   assert.equal(run.pendingEvent, null);
   task.enabled = false;
-  context.resumeAutomationAfterNavigation({ taskId: 'popup', pendingEvent: { navigationSerial: 3 } });
+  context.resumeAutomationAfterNavigation({ taskId: 'popup', pendingEvent: { navigationSerial: 3, pageSessionId: 'renderer-a' } });
   assert.equal(launched.length, 1);
 });
 
@@ -136,7 +180,7 @@ test('a running cleanup stops before the next navigation begins its own cleanup'
     acquireAutomationInput: require('../scripts/automation-runtime').createRendererGate(),
     acquireAutomationRenderer: require('../scripts/automation-runtime').createRendererGate(), primaryAccountStore:{get:()=>null},
     crypto: require('node:crypto'), automationRuns: new Map(), automationEventKeys: new Set(),
-    mainFrameNavigationSerial: 1, DATA_DIR: '/test', cdp: {}, log: noop,
+    mainFrameNavigationSerial: 1, cdpPageSessionId: 'renderer-a', DATA_DIR: '/test', cdp: {}, log: noop,
     readAutomations: () => [task], readAutomationState: () => ({}), writeAutomationState: noop,
     automationPanelIsOpen: async () => false, automationPanelSetOpen: open => restored.push(open),
     listAccounts: () => [], currentAccount: () => null, automationSwitchAccount: noop,
@@ -195,11 +239,13 @@ test('automation DOM click dispatches the located button without undefined reque
   assert.equal(clicks.length, 1);
   assert.deepEqual(clicks[0].slice(0, 3), ['dom.click:button.activity-bubble__close', 20, 35]);
   assert.equal(clicks[0][4].skipMove, true);
+  await context.automationDomAction('dom.click', [{ kind: 'css', value: '.old-close', visible: true }, { kind: 'css', value: '.new-close', visible: true }], {});
+  assert.equal(clicks[1][4].skipMove, true, 'candidate popup locators keep the no-hover click path');
   found.blocked = true;
   await assert.rejects(context.automationDomAction('dom.click', { kind: 'css', value: '.close', visible: true }, {}), /遮挡/);
-  assert.equal(clicks.length, 1, 'do not click whatever is covering the close button');
+  assert.equal(clicks.length, 2, 'do not click whatever is covering the close button');
   await assert.rejects(context.automationDomAction('dom.click', { kind: 'css', value: '.close' }, { isCancelled: () => true }), /已停止/);
-  assert.equal(clicks.length, 1);
+  assert.equal(clicks.length, 2);
 });
 
 test('popup clicks bypass mouse-move acknowledgement while normal clicks retain hover', async () => {

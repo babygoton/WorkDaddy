@@ -1,4 +1,4 @@
-# WorkDaddy
+<h1><img src="docs/images/workdaddy-app-icon-rounded.svg" alt="" width="40" height="40" align="absmiddle">&nbsp; WorkDaddy</h1>
 
 **Language:** [简体中文](README.md) · [English](README_en.md)
 
@@ -31,6 +31,8 @@ It injects UI components into the running WorkBuddy renderer without patching or
 - **Add an account without quitting:** authorize through OAuth in your browser while WorkBuddy stays open. The new account joins the list automatically. A traditional soft logout flow is also available.
 - **Encrypted account import/export:** move account backups between computers using a password-protected file.
 - **Daily credits:** automation tasks manage daily check-ins across accounts and cache completed results without interrupting your work.
+- **Token and credit usage pages:** review daily token and credit consumption, filter by account, and view usage rankings by model and account.
+- **Credit-aware account suggestions:** when an account is running low on credits, WorkDaddy suggests another account you can use.
 - **Automation tasks:** describe what you need and let WorkBuddy create a task, or edit the steps yourself. Supports manual, event, and scheduled triggers, run logs, stopping tasks, and JSON / ZIP import/export.
 - **Quiet approval mode:** automatically handle supported permission prompts while you are away.
 - **Stash prompts:** send drafts to WorkBuddy's pending message queue while preserving images, files, and quotes for later use.

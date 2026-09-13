@@ -477,6 +477,19 @@ module.exports = [
     desc: 'WorkBuddy 主题会话 widget 卡片(.cr-widget-card)使用主题毛玻璃，标题(.cr-widget-header)改为半透明以透出卡片层次',
     css: 'body[data-vscode-theme-name] .cr-widget-card{background:color-mix(in srgb,var(--wb-bg-primary) 42%,transparent) !important;background-color:color-mix(in srgb,var(--wb-bg-primary) 42%,transparent) !important;backdrop-filter:blur(18px) saturate(1.15) !important;-webkit-backdrop-filter:blur(18px) saturate(1.15) !important;border-color:var(--wb-border-subtle) !important;}body[data-vscode-theme-name] .cr-widget-header{background:color-mix(in srgb,var(--wb-bg-primary) 30%,transparent) !important;background-color:color-mix(in srgb,var(--wb-bg-primary) 30%,transparent) !important;backdrop-filter:none !important;-webkit-backdrop-filter:none !important;border-color:var(--wb-border-subtle) !important;}',
   },
+  {
+    id: 'patch-100',
+    themeId: 'nebula',
+    desc: '毛玻璃主题：顶栏、会话外壳、侧栏去背景，透出已有壁纸与全局模糊层',
+    css: ':is(html.cb-dark,html[data-theme="dark"]) body[data-vscode-theme-name] .teams-container :is(.workbuddy-topbar--mac,.conversation-shell,.conversation-sidebar),body[data-vscode-theme-name="IDE Night"] .teams-container :is(.workbuddy-topbar--mac,.conversation-shell,.conversation-sidebar){background:transparent !important;background-color:transparent !important;}',
+  },
+  {
+    id: 'patch-101',
+    themeId: 'nebula',
+    setting: 'textShadow',
+    desc: '毛玻璃消息正文文字阴影（默认开启，可在主题面板关闭），不影响输入框或侧栏',
+    css: 'body[data-vscode-theme-name] .conversation-timeline .cr-document,body[data-vscode-theme-name] .conversation-timeline .cr-document *{text-shadow:0 1px 2px rgba(0,0,0,.65),0 0 6px rgba(0,0,0,.3) !important;}',
+  },
   /* 原 patch-82（AI 端快捷短语弹层 z-index 抬升）已移入 inject.js 常驻样式：
      theme-patches 仅在非默认主题时注入，默认浅色主题下会失效；层级修复不依赖主题，随注入脚本常驻更可靠。 */
 ];

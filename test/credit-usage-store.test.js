@@ -107,3 +107,17 @@ test('persists verified daily check-in marks by profile, uid and date', async (t
   });
   assert.equal(await tmp.store.getDailyCheckin('u1', '2026-08-27'), null);
 });
+
+test('history backfill preserves the today anchor, deduplicates, and distinguishes verified zero from missing days', async t => {
+  const tmp=tempStore();t.after(()=>fs.rmSync(tmp.dir,{recursive:true,force:true}));
+  await tmp.store.saveSuccessfulSync({uid:'u1',records:[],anchorRequestId:'today',syncedAt:9000});
+  const input={uid:'u1',from:'2026-08-27',to:'2026-08-28',syncedAt:10000,records:[record('r1','2026-08-28',2.5,1000)]};
+  await tmp.store.saveHistoryUsage(input);await tmp.store.saveHistoryUsage(input);
+  assert.deepEqual(await tmp.store.getSyncState('u1'),{anchorRequestId:'today',lastSuccessAt:9000});
+  const rows=await tmp.store.listDailyUsageRange(['u1','missing'],'2026-08-26','2026-08-28');
+  assert.equal(rows.length,2);
+  assert.equal(rows.find(r=>r.date==='2026-08-27').used,0);
+  assert.equal(rows.find(r=>r.date==='2026-08-27').complete,true);
+  assert.equal(rows.find(r=>r.date==='2026-08-28').used,2.5);
+  assert.equal(rows.find(r=>r.date==='2026-08-28').count,1);
+});

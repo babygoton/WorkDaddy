@@ -63,6 +63,25 @@ test('default WorkBuddy profiles scan valid info files regardless of filename', 
   }
 });
 
+test('account listing marks backups that cannot be used for a dynamic switch', () => {
+  const f = fixture();
+  try {
+    fs.mkdirSync(path.join(f.dataDir, 'accounts'), { recursive: true });
+    fs.writeFileSync(path.join(f.dataDir, 'accounts', 'valid.info'), JSON.stringify(auth('valid', 'https://www.workbuddy.cn/auth/realms/copilot')));
+    fs.writeFileSync(path.join(f.dataDir, 'accounts', 'invalid.info'), JSON.stringify({
+      account: { uid: 'invalid', nickname: 'invalid' },
+      auth: { accessToken: 'opaque-token', domain: 'https://untrusted.example' },
+    }));
+    const accounts = run(f.root, f.dataDir, 'process.stdout.write(JSON.stringify(lib.listAccounts(process.env.WBSWITCH_DATA_DIR).map(a=>({uid:a.uid,authValid:a.authValid}))))');
+    assert.deepEqual(accounts, [
+      { uid: 'valid', authValid: true },
+      { uid: 'invalid', authValid: false },
+    ]);
+  } finally {
+    fs.rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
 test('multiple valid files without one lastLogin marker are ambiguous and backup all', () => {
   const f = fixture();
   try {

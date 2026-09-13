@@ -172,6 +172,41 @@ test('delete expansion dedupes repeated members and survives dirty indices', () 
   assert.equal(members[0].uid, '');
 });
 
+test('delete expansion follows recorded copies even when member/index records are incomplete', () => {
+  const dataDir = tempDataDir();
+  const lineageId = ensureAutoCopySession(dataDir, 'source', 'session-a');
+  setAutoCopyMapping(dataDir, lineageId, 'target', { targetId: 'copy-a' });
+  ensureAutoCopySession(dataDir, 'unrelated', 'same-title-but-unrelated');
+  for (const selected of ['session-a', 'copy-a']) {
+    assert.deepEqual(collectLineageMembersForDelete(dataDir, [selected]).map(m => m.id).sort(),
+      ['copy-a', 'session-a']);
+  }
+});
+
+test('delete expansion crosses a split lineage connected by an existing copy mapping', () => {
+  const dataDir = tempDataDir();
+  const original = ensureAutoCopySession(dataDir, 'source', 'session-a');
+  setAutoCopyMapping(dataDir, original, 'target', { targetId: 'copy-a' });
+  const split = ensureAutoCopySession(dataDir, 'target', 'copy-a');
+  addAutoCopySessionMember(dataDir, split, 'third', 'copy-third');
+  for (const selected of ['session-a', 'copy-a', 'copy-third']) {
+    assert.deepEqual(collectLineageMembersForDelete(dataDir, [selected]).map(m => m.id).sort(),
+      ['copy-a', 'copy-third', 'session-a']);
+  }
+});
+
+test('normalizing duplicate sessions preserves the complete family for deletion', () => {
+  const dataDir = tempDataDir();
+  const lineageId = ensureAutoCopySession(dataDir, 'source', 'session-a');
+  addAutoCopySessionMember(dataDir, lineageId, 'target', 'copy-old');
+  addAutoCopySessionMember(dataDir, lineageId, 'target', 'copy-new');
+  normalizeAutoCopyLineages(dataDir);
+  for (const selected of ['session-a', 'copy-old', 'copy-new']) {
+    assert.deepEqual(collectLineageMembersForDelete(dataDir, [selected]).map(m => m.id).sort(),
+      ['copy-new', 'copy-old', 'session-a']);
+  }
+});
+
 test('lineage member lookup is deduplicated and one member can be removed without deleting the lineage', () => {
   const dataDir = tempDataDir();
   setAutoCopyRule(dataDir, { uid: 'source', kind: 'session', key: 'source-session', enabled: true });

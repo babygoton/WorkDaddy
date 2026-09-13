@@ -55,6 +55,35 @@ test('metadata refresh retains cached credits, sorted order and the actual butto
   assert.equal(h.cards()[0], before[0]);
 });
 
+test('first credit batch after renderer reload sorts cards without reopening the panel', async () => {
+  const h = harness();
+  h.ctx.render({ current: { uid: 'later' }, accounts: [{ uid: 'later' }, { uid: 'soon' }] });
+  const before = h.cards();
+  h.ctx.fetchCreditsForAccounts(); await tick();
+  h.requests[1].resolve({ credits: 10, segments: [{ remaining: 10, expiresAt: 100 }] }); await tick();
+  assert.deepEqual(h.order(), ['later', 'soon'], 'wait for the complete batch before moving rows');
+  h.requests[0].resolve({ credits: 10, segments: [{ remaining: 10, expiresAt: 200 }] }); await tick();
+  assert.deepEqual(h.order(), ['soon', 'later']);
+  assert.equal(h.cards()[0], before[1], 'move existing cards instead of rebuilding controls');
+  assert.equal(h.ctx.state.open, true);
+  h.ctx.fetchCreditsForAccounts(); await tick();
+  h.requests[2].resolve({ credits: 10, segments: [{ remaining: 10, expiresAt: 300 }] });
+  h.requests[3].resolve({ credits: 10, segments: [{ remaining: 10, expiresAt: 50 }] }); await tick();
+  assert.deepEqual(h.order(), ['soon', 'later'], 'later background batches preserve the visible order');
+});
+
+test('switching the current account reapplies expiry order after its credit batch', async () => {
+  const h = harness();
+  h.ctx.render({ current: { uid: 'a' }, accounts: [account('a', 100), account('b', 200)] });
+  h.ctx.render({ current: { uid: 'b' }, accounts: [account('a', 300), account('b', 200)] });
+  assert.deepEqual(h.order(), ['b', 'a']);
+  h.ctx.fetchCreditsForAccounts(); await tick();
+  h.requests.find(r => JSON.parse(r.options.body).uid === 'a').resolve({ credits: 10, segments: [{ remaining: 10, expiresAt: 50 }] });
+  h.requests.find(r => JSON.parse(r.options.body).uid === 'b').resolve({ credits: 10, segments: [{ remaining: 10, expiresAt: 200 }] }); await tick();
+  assert.deepEqual(h.order(), ['a', 'b'], 'current account must not be pinned');
+  assert.deepEqual(h.cards().map(c => c.getAttribute('data-uid')), ['a', 'b']);
+});
+
 test('credit responses never move a visible account; next opening applies expiry order', async () => {
   const h = harness();
   h.ctx.render({ accounts: [account('a', 100), account('b', 200)] });

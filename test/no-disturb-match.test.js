@@ -1,7 +1,8 @@
 /**
- * 免打扰「弹窗自动点允许」匹配逻辑回归测试（1.0.16）。
- * 覆盖 WorkBuddy AI 拦截卡（选项按钮带序号前缀）+ 防御性校验（积分弹窗不误点、
- * 中性按钮不误点、禁用按钮跳过、once 禁用时回退 always）。
+ * 免打扰「弹窗自动点允许」匹配逻辑回归测试（1.0.16 + WorkBuddy 5.5.4）。
+ * 覆盖 WorkBuddy AI 拦截卡（选项按钮带序号前缀）+ 敏感凭证保护卡（allow 文案为
+ * 「允许访问」/「允许加密访问（推荐）」）+ 防御性校验（积分弹窗、凭证外发、批量删除放行、
+ * 完全访问提权确认不误点、禁用按钮跳过、once 禁用时回退 always）。
  * 实现方式：从 scripts/inject.js 原样抽取扫描函数，用极简 DOM 桩驱动，
  * 保证测试对象与交付物完全同源（inject.js 是浏览器脚本，无 require/export）。
  * 运行：node test/no-disturb-match.test.js
@@ -12,10 +13,15 @@ const fs = require('fs');
 const path = require('path');
 
 const injectSrc = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'inject.js'), 'utf8');
+// 文案表（ND_ALLOW_ONCE_LABELS 等）位于扫描代码段之外，属于同一份事实来源，需一并注入桩环境。
+const constStart = injectSrc.indexOf('var ND_ALLOW_ONCE_LABELS');
+const constEnd = injectSrc.indexOf('function classifyNoDisturbApprovalCandidate');
+assert.ok(constStart > 0 && constEnd > constStart, 'inject.js 未找到免打扰文案表常量');
+const labelConsts = injectSrc.slice(constStart, constEnd);
 const startM = injectSrc.indexOf('function ndVisible(el)');
 const endM = injectSrc.indexOf('function toNdAudit');
 assert.ok(startM > 0 && endM > startM, 'inject.js 未找到免打扰扫描代码段');
-const scanCode = injectSrc
+const scanCode = labelConsts + injectSrc
   .slice(startM, endM)
   .replace('var doc = (window && window.document) || document;', 'var doc = __ND_DOC__;');
 
@@ -143,6 +149,66 @@ function runCase(desc, labels, opts) {
   assert.strictEqual(r.acted, '2本次会话内始终允许');
   assert.deepStrictEqual(r.audit, ['session:本次会话内始终允许']);
   console.log('✓ once 禁用：回退自动点「2本次会话内始终允许」');
+}
+
+// 8) WorkBuddy 5.5.4「敏感凭证保护」卡：ingress 的允许选项是「允许访问」（不是「允许」）
+{
+  const r = runCase('是否允许模型访问敏感凭证？', ['允许访问', '允许加密访问（推荐）', '禁止访问']);
+  assert.strictEqual(r.acted, '1允许访问', '敏感凭证卡的「允许访问」应被识别为 once 允许');
+  assert.strictEqual(r.clicked, true);
+  console.log('✓ 敏感凭证卡-ingress：自动点「1允许访问」');
+}
+// 9) ingress-protect-only：没有「允许访问」，只有加密访问——过去完全点不到，任务会卡死
+{
+  const r = runCase('是否允许模型访问敏感凭证？', ['允许加密访问（推荐）', '禁止访问']);
+  assert.strictEqual(r.acted, '1允许加密访问（推荐）');
+  assert.strictEqual(r.clicked, true);
+  console.log('✓ 敏感凭证卡-protect-only：自动点「1允许加密访问（推荐）」');
+}
+// 10) 凭证外发（egress）：绝不自动点，必须人工判断目标是否可信
+{
+  const r = runCase('是否允许将敏感凭证发送到外部？', ['允许发送', '禁止发送']);
+  assert.strictEqual(r.acted, null, '凭证外发弹窗不得自动放行');
+  assert.deepStrictEqual(r.audit, []);
+  console.log('✓ 敏感凭证卡-egress：不自动点（防凭证外泄）');
+}
+// 11) 批量删除放行：交给「大批量删除免确认」开关，不由本开关代劳
+{
+  const r = runCase('检测到批量删除操作，删除数量达到阈值', ['允许本次删除', '取消删除']);
+  assert.strictEqual(r.acted, null);
+  console.log('✓ 批量删除放行：不自动点（由专用开关控制）');
+}
+// 12) 开启「允许完全访问」的授权确认：属提权，必须人工
+{
+  const r = runCase('确认允许完全访问？', ['确认开启', '取消']);
+  assert.strictEqual(r.acted, null);
+  console.log('✓ 完全访问授权确认：不自动点（提权需人工）');
+}
+
+// 13) 祖先容器含扣费词不得污染弹窗判定。
+// 历史故障：扣费词守卫会向上 8 层扫祖先文本，而弹窗外层就是整段会话/BODY，
+// 只要那里出现「积分/费用」等词，所有层级都会被判成扣费弹窗 → 弹窗一个都点不动。
+{
+  const card = mkCard('检测到受保护文件修改', ['允许', '本次会话内始终允许', '拒绝']);
+  const outer = mkNode('div', [mkText('本次会话共消耗 12 积分，剩余余额 380 点'), card]);
+  const doc = { body: outer, querySelectorAll: (sel) => allButtons(outer) };
+  const audit = [];
+  makeScan(doc, audit)();
+  const acted = allButtons(card).find((b) => b.getAttribute('data-nd-auto') === '1') || null;
+  assert.ok(acted, '外层容器含「积分」时仍应命中弹窗');
+  assert.strictEqual(acted._clicked, true);
+  console.log('✓ 祖先含扣费词：弹窗仍被自动点（不被误判为扣费弹窗）');
+}
+// 14) 敏感凭证卡同样不得被外层扣费词污染
+{
+  const card = mkCard('是否允许模型访问敏感凭证？', ['允许访问', '允许加密访问（推荐）', '禁止访问']);
+  const outer = mkNode('div', [mkText('本会话已消耗费用 0.41，余额充足'), card]);
+  const doc = { body: outer, querySelectorAll: (sel) => allButtons(outer) };
+  const audit = [];
+  makeScan(doc, audit)();
+  const acted = allButtons(card).find((b) => b.getAttribute('data-nd-auto') === '1') || null;
+  assert.ok(acted, '外层含「费用」时敏感凭证卡仍应命中');
+  console.log('✓ 祖先含费用词：敏感凭证卡仍被自动点');
 }
 
 console.log('\n免打扰弹窗匹配逻辑回归测试全部通过 ✅');
