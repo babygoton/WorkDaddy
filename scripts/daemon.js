@@ -120,6 +120,7 @@ const { fetchUsageSinceAnchor, startOfLocalDay } = require('./credit-request-usa
 const { createCreditHistorySync, historyRange } = require('./credit-history-sync.js');
 const { createCreditUsageStore } = require('./credit-usage-store.js');
 const { scanTokenStatsCached, tokenStatsCacheReady } = require('./token-stats.js');
+const { initializeCheckinConsent, readCheckinConsent, decideCheckinConsent } = require('./checkin-consent.js');
 const { classifyCheckinResult, checkinEndpointsForToken } = require('./checkin-result.js');
 const {
   DAY_MS: TOKEN_REFRESH_DAY_MS,
@@ -346,8 +347,8 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 // 1.2.24：账号轮换恢复真实积分段消耗检测，仅推荐缓存中到期时间最近的可用账号。
 // 1.2.25：首页弹窗任务补齐成长/活动入口，并按 renderer 页面身份修复重连后的 pageReady 触发。
 // 1.2.26：无效账号备份不再显示可点击的切换按钮，导入路径拒绝写入无效认证数据。
-const DAEMON_VERSION = '1.2.36';
-const DAEMON_BUILD_ID = 'release-1.2.36-20260913-credit-rotation-always-check';
+const DAEMON_VERSION = '1.2.37';
+const DAEMON_BUILD_ID = 'release-1.2.37-20260914-checkin-risk-consent';
 const usageReporter = createUsageReporter({ profile: PROFILE.id, version: DAEMON_VERSION });
 configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const HOST = '127.0.0.1';
@@ -6826,6 +6827,21 @@ function handleApi(req, res) {
     });
   }
 
+  if (['GET', 'POST'].includes(req.method) && p === '/api/automations/checkin-consent') {
+    if (!PROFILE.capabilities.accounts || PROFILE.capabilities.checkin === false) {
+      return json(res, 200, { ok: true, shouldPrompt: false, enabled: false });
+    }
+    if (req.method === 'GET') {
+      try { return json(res, 200, readCheckinConsent(DATA_DIR)); }
+      catch (_) { return json(res, 500, { ok: false, error: 'Unable to read check-in choice' }); }
+    }
+    return readBody(req).then((body) => {
+      if (!body || typeof body.enabled !== 'boolean') return json(res, 400, { ok: false, error: 'Invalid check-in choice' });
+      try { return json(res, 200, decideCheckinConsent(DATA_DIR, body.enabled)); }
+      catch (_) { return json(res, 500, { ok: false, error: 'Unable to save check-in choice' }); }
+    });
+  }
+
   if (req.method === 'GET' && p === '/api/automations') {
     const imported = importAgentInbox(DATA_DIR, { profileId: PROFILE.id });
     imported.forEach((item) => log(`[automation-agent] request=${item.requestId} ${item.ok ? 'imported=' + item.taskId : 'rejected=' + item.error}`));
@@ -9180,6 +9196,7 @@ for (const preset of ['close-buddy-popups.json', ...(PROFILE.capabilities.accoun
 if (PROFILE.capabilities.accounts && PROFILE.capabilities.checkin !== false) {
   try { installBuiltinTask(DATA_DIR, path.join(__dirname, 'builtin/automations/daily-account-checkin.json')); }
   catch (_) { log('[automation] 初始化签到任务失败'); }
+  initializeCheckinConsent(DATA_DIR);
 }
 restoreSleepMode();
 startServer();

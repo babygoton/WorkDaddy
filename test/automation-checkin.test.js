@@ -135,7 +135,7 @@ test('fresh CN and AI profiles receive all three presets without reinstalling de
   for (const id of ['workbuddy-cn', 'workbuddy-ai']) {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wd-presets-'));
     try {
-      const context = { PROFILE: PROFILES[id], DATA_DIR: dir, path, __dirname: path.join(__dirname, '../scripts'), installBuiltinTask: automation.installBuiltinTask, log() {} };
+      const context = { initializeCheckinConsent: require('../scripts/checkin-consent').initializeCheckinConsent, PROFILE: PROFILES[id], DATA_DIR: dir, path, __dirname: path.join(__dirname, '../scripts'), installBuiltinTask: automation.installBuiltinTask, log() {} };
       vm.runInNewContext(init, context);
       assert.deepEqual(automation.readAutomations(dir).map(t => t.id).sort(), ['buddy-fuel-station-close-on-account-switch', 'daily-account-checkin', 'keep-accounts-active-1-plus-1']);
       automation.writeAutomations(dir, []);

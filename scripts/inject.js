@@ -736,6 +736,13 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
   var WBS_LANGUAGE_KEY = 'workdaddy.ui.language';
   var WBS_ACCOUNT_MASK_KEY = 'workdaddy.account.mask.' + PROFILE_ID;
   var WBS_I18N_EN = {
+    '自动签到提醒': 'Automatic check-in',
+    '默认关闭。开启后，会每天为已保存的账号签到。': 'Off by default. Enable to check in daily for your saved accounts.',
+    '自动签到可能违反官方规则，有封号风险。': 'Automatic check-in may break the official rules and get your accounts banned.',
+    '选择后不再提醒，可在「自动化」中修改。': 'This notice will not appear again after your choice. You can change it under Automations.',
+    '开启自动签到': 'Enable automatic check-in',
+    '保存失败，请重试。': 'Could not save. Please try again.',
+
     '查询失败，请重新选择时间或账号重试': 'Query failed. Select a time range or account to retry.',
     '查询已中断，请重新选择时间或账号重试': 'Query interrupted. Select a time range or account to retry.',
     '无法读取查询进度，请重新选择时间或账号重试': 'Could not read progress. Select a time range or account to retry.',
@@ -7838,6 +7845,96 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       });
     }
 
+    var checkinRiskLoading = false;
+    var checkinRiskDone = false;
+    var checkinRiskClose = null;
+    registerDisposer(function () { if (checkinRiskClose) checkinRiskClose(); });
+
+    function showCheckinRiskOnOpen() {
+      if (!CAPS.accounts || CAPS.checkin === false || checkinRiskDone || checkinRiskLoading || checkinRiskClose) return;
+      checkinRiskLoading = true;
+      api('/api/automations/checkin-consent').then(function (result) {
+        if (!alive) return;
+        if (!result.shouldPrompt) { checkinRiskDone = true; return; }
+        if (!state.open) return;
+        var previousFocus = document.activeElement;
+        var mask = document.createElement('div');
+        mask.className = 'wbs-modal-mask wbs-modal-mask-panel wbs-checkin-risk-mask';
+        mask.innerHTML = '<div class="wbs-modal wbs-checkin-risk-modal" role="dialog" aria-modal="true" aria-labelledby="wbs-checkin-risk-title" aria-describedby="wbs-checkin-risk-copy">' +
+          '<div class="wbs-modal-title" id="wbs-checkin-risk-title">自动签到提醒</div>' +
+          '<div class="wbs-modal-body" id="wbs-checkin-risk-copy"><p>默认关闭。开启后，会每天为已保存的账号签到。</p>' +
+          '<p><strong>自动签到可能违反官方规则，有封号风险。</strong></p>' +
+          '<p>选择后不再提醒，可在「自动化」中修改。</p></div>' +
+          '<div class="wbs-checkin-risk-error" role="alert" hidden></div>' +
+          '<div class="wbs-modal-actions"><button class="wbs-modal-btn" type="button" data-checkin-choice="cancel">取消</button>' +
+          '<button class="wbs-modal-btn wbs-modal-ok" type="button" data-checkin-choice="enable">开启自动签到</button></div></div>';
+        var cancel = mask.querySelector('[data-checkin-choice="cancel"]');
+        var enable = mask.querySelector('[data-checkin-choice="enable"]');
+        var error = mask.querySelector('[role="alert"]');
+        var busy = false;
+        var closed = false;
+        function blockOutside(event) {
+          if (!mask.contains(event.target)) { event.preventDefault(); event.stopImmediatePropagation(); }
+        }
+        function keepFocus(event) {
+          if (!mask.contains(event.target)) { event.stopImmediatePropagation(); cancel.focus(); }
+        }
+        function keydown(event) {
+          if (event.key === 'Escape') {
+            event.preventDefault(); event.stopImmediatePropagation(); choose(false);
+          } else if (event.key === 'Tab') {
+            event.preventDefault(); event.stopImmediatePropagation();
+            if (busy) mask.querySelector('[role="dialog"]').focus();
+            else if (document.activeElement === cancel) enable.focus();
+            else if (document.activeElement === enable) cancel.focus();
+            else (event.shiftKey ? enable : cancel).focus();
+          } else blockOutside(event);
+        }
+        function close() {
+          if (closed) return;
+          closed = true;
+          ['pointerdown', 'pointerup', 'mousedown', 'mouseup', 'click', 'dblclick', 'contextmenu', 'wheel', 'touchstart', 'touchmove'].forEach(function (type) {
+            document.removeEventListener(type, blockOutside, true);
+          });
+          document.removeEventListener('keydown', keydown, true);
+          document.removeEventListener('focusin', keepFocus, true);
+          mask.remove();
+          checkinRiskClose = null;
+          if (alive && state.open && previousFocus && previousFocus.isConnected) previousFocus.focus();
+        }
+        function choose(enabled) {
+          if (busy || closed) return;
+          busy = true; cancel.disabled = true; enable.disabled = true; error.hidden = true;
+          mask.querySelector('[role="dialog"]').focus();
+          api('/api/automations/checkin-consent', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ enabled: enabled }) }).then(function () {
+            checkinRiskDone = true;
+            close();
+          }).catch(function () {
+            if (closed || !alive) return;
+            busy = false; cancel.disabled = false; enable.disabled = false;
+            error.textContent = '保存失败，请重试。'; error.hidden = false;
+            cancel.focus();
+          });
+        }
+        mask.querySelector('[role="dialog"]').tabIndex = -1;
+        cancel.addEventListener('click', function () { choose(false); });
+        enable.addEventListener('click', function () { choose(true); });
+        ['click', 'dblclick', 'pointerdown', 'pointerup', 'mousedown', 'mouseup', 'keydown', 'keyup', 'keypress', 'wheel', 'touchstart', 'touchmove', 'contextmenu'].forEach(function (type) {
+          mask.addEventListener(type, function (event) { event.stopPropagation(); });
+        });
+        checkinRiskClose = close;
+        panel.appendChild(mask);
+        ['pointerdown', 'pointerup', 'mousedown', 'mouseup', 'click', 'dblclick', 'contextmenu', 'wheel', 'touchstart', 'touchmove'].forEach(function (type) {
+          document.addEventListener(type, blockOutside, { capture: true, passive: false });
+        });
+        document.addEventListener('keydown', keydown, true);
+        document.addEventListener('focusin', keepFocus, true);
+        cancel.focus();
+      }).catch(function () {
+        // No acknowledgement on a failed read; retry at the next user opening.
+      }).finally(function () { checkinRiskLoading = false; });
+    }
+
     function setOpen(open, options) {
       if (open && typeof closeRotationNotice === 'function') closeRotationNotice();
       if (open && window.__wbsAutomationInputActive) {
@@ -7856,12 +7953,14 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       fab.classList.toggle('hidden', open); // 打开时隐藏按钮
       fabQuietMode.wake();
       if (open) {
+        if (newlyOpened && CAPS.accounts && !(options && options.automation)) showCheckinRiskOnOpen();
         if (newlyOpened && !(options && options.automation)) api('/api/automations/events', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ type: 'panelOpened' }) }).catch(function () {});
         refresh();
         checkForUpdate(); // 打开面板即检测更新（每次打开都强制查一次新版本）
         try { acCheckPromptOnOpen(); } catch (e) {} // 每次打开面板：指令块丢失则请求 daemon 补写（无 toast）
         try { syncSessionModule(); } catch (e) {} // 每次打开面板刷新会话模块（开关+快捷短语，含外部修改）
       } else {
+        if (typeof checkinRiskClose === 'function') checkinRiskClose();
         state.accountRefreshId = (state.accountRefreshId || 0) + 1;
         state.activityRunId++;
         state.creditRunId++;
@@ -12767,6 +12866,17 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     'html.cb-dark .wbs-modal-btn.wbs-modal-danger,html[data-theme="dark"] .wbs-modal-btn.wbs-modal-danger{color:#fff;background:#e03d3d;border-color:#e03d3d}',
     'html.cb-dark .wbs-modal-btn.wbs-modal-danger:hover,html[data-theme="dark"] .wbs-modal-btn.wbs-modal-danger:hover{background:#f04a4a}',
     'html.cb-dark .wbs-modal-mask,html[data-theme="dark"] .wbs-modal-mask{background:rgba(0,0,0,.55)}',
+    '.wbs-checkin-risk-mask{padding:12px;box-sizing:border-box;pointer-events:auto}',
+    '.wbs-modal.wbs-checkin-risk-modal{box-sizing:border-box;width:360px;max-width:100%;max-height:100%;display:flex;flex-direction:column;min-height:0}',
+    '.wbs-checkin-risk-modal .wbs-modal-title,.wbs-checkin-risk-modal .wbs-modal-actions{flex-shrink:0}',
+    '.wbs-checkin-risk-modal .wbs-modal-body{min-height:0;max-height:none;line-height:1.65;font-size:12px;overflow-wrap:anywhere;overscroll-behavior:contain}',
+    '.wbs-checkin-risk-modal p{margin:0}.wbs-checkin-risk-modal .wbs-modal-actions{flex-wrap:wrap}',
+    '.wbs-checkin-risk-modal .wbs-modal-btn{line-height:1.4;white-space:normal;transition:background .15s,color .15s,border-color .15s}',
+    '.wbs-checkin-risk-modal .wbs-modal-btn.wbs-modal-ok{background:var(--wb-button-primary-bg,#141416);color:var(--wb-button-primary-fg,#fff);border-color:var(--wb-button-primary-bg,#141416)}',
+    '.wbs-checkin-risk-modal .wbs-modal-btn.wbs-modal-ok:hover{background:var(--wb-button-primary-hover-bg,var(--wb-button-primary-bg,#2a2a2e))}',
+    '.wbs-checkin-risk-modal .wbs-modal-btn:focus-visible{outline:2px solid var(--wb-color-text-primary,#1f1f1f);outline-offset:2px}',
+    '.wbs-checkin-risk-modal .wbs-modal-btn:disabled{opacity:.55;cursor:wait}',
+    '.wbs-checkin-risk-error{font-size:12px;line-height:1.5;overflow-wrap:anywhere;margin-bottom:10px;color:var(--wb-color-text-primary,#1f1f1f)}',
     '.wbs-modal-title{font-size:13px;font-weight:700;color:var(--wb-color-text-primary,#1f1f1f);margin-bottom:10px}',
     '.wbs-modal-body{display:flex;flex-direction:column;gap:6px;max-height:280px;overflow-y:auto;margin-bottom:12px}',
     '.wbs-modal-action{display:block;width:100%;text-align:left;padding:8px 10px;border:1px solid var(--wb-border-default,#e5e5e5);border-radius:9px;background:var(--wb-bg-popover,#fff);color:var(--wb-color-text-primary,#1f1f1f);font-size:12px;cursor:pointer;line-height:1;transition:all .15s}',

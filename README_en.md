@@ -30,7 +30,7 @@ It injects UI components into the running WorkBuddy renderer without patching or
 - **Fast account switching:** each WorkBuddy account has a separate backup, so you can switch without scanning a QR code every time.
 - **Add an account without quitting:** authorize through OAuth in your browser while WorkBuddy stays open. The new account joins the list automatically. A traditional soft logout flow is also available.
 - **Encrypted account import/export:** move account backups between computers using a password-protected file.
-- **Daily credits:** automation tasks manage daily check-ins across accounts and cache completed results without interrupting your work.
+- **Daily credits:** daily check-in automation is disabled by default. On the first panel opening, a risk notice lets you enable the task or cancel. Either choice is saved locally and dismisses future notices; you can later enable or disable the task under Automations.
 - **Token and credit usage pages:** review daily token and credit consumption, filter by account, and view usage rankings by model and account.
 - **Credit-aware account suggestions:** when an account is running low on credits, WorkDaddy suggests another account you can use.
 - **Automation tasks:** describe what you need and let WorkBuddy create a task, or edit the steps yourself. Supports manual, event, and scheduled triggers, run logs, stopping tasks, and JSON / ZIP import/export.
