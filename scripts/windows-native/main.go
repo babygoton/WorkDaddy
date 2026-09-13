@@ -561,6 +561,20 @@ func inspectExactProcess(pid int, expectedPath string, label string) (bool, int,
 				return false, 0, nil
 			}
 			if errors.Is(err, syscall.ERROR_ACCESS_DENIED) {
+				records, snapshotErr := enumerateProcesses()
+				if snapshotErr != nil {
+					return false, exitFailure, fmt.Errorf("PID %d process snapshot failed: %w", pid, snapshotErr)
+				}
+				present := false
+				for _, record := range records {
+					if record.PID == uint32(pid) {
+						present = true
+						break
+					}
+				}
+				if !present {
+					return false, 0, nil
+				}
 				return false, exitAccessDenied, fmt.Errorf("PID %d cannot be inspected at standard privilege", pid)
 			}
 			return false, exitFailure, err

@@ -207,6 +207,22 @@ test('native lifecycle cleanup accepts a PID that exits during exact inspection'
   assert.match(source.slice(exitedCheck, mismatch), /waitResult == waitObject0[\s\S]*return false, 0, nil/);
 });
 
+test('native lifecycle cleanup clears an access-denied PID that is absent from the process snapshot', () => {
+  const source = read('scripts/windows-native/main.go');
+  const inspectStart = source.indexOf('func inspectExactProcess(');
+  const inspectEnd = source.indexOf('\nfunc terminateExactProcess(', inspectStart);
+  assert.ok(inspectStart >= 0 && inspectEnd > inspectStart);
+  const inspect = source.slice(inspectStart, inspectEnd);
+  const denied = inspect.indexOf('errors.Is(err, syscall.ERROR_ACCESS_DENIED)');
+  const snapshot = inspect.indexOf('enumerateProcesses()', denied);
+  const absent = inspect.indexOf('if !present', snapshot);
+  const deniedResult = inspect.indexOf('return false, exitAccessDenied', absent);
+  assert.ok(denied >= 0, 'access-denied inspection must stay fail-closed');
+  assert.ok(snapshot > denied, 'access-denied inspection must refresh the process snapshot');
+  assert.ok(absent > snapshot && deniedResult > absent, 'only a PID absent from the snapshot may be treated as stale');
+  assert.match(inspect.slice(snapshot, deniedResult), /record\.PID == uint32\(pid\)[\s\S]*if !present[\s\S]*return false, 0, nil/);
+});
+
 test('elevated lifecycle cleanup inspects exact state before refusing active termination', () => {
   const source = read('scripts/windows-native/main.go');
   const stopStart = source.indexOf('func stopLifecycle(');
