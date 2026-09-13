@@ -810,6 +810,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     "已关闭相关玩法推荐，今日不再展示": "Related playbook recommendations dismissed for today.",
     "已关闭「做任务赢积分好礼」入口": "Tasks-for-credits promotion closed.",
     "已关闭首页活动弹窗": "Home activity popup closed.",
+    "Token 用量仅统计本机记录，在不同电脑上查看的数据可能不一致。": "Token usage only includes records on this computer. Figures may differ between computers.",
     "会话输入框非空，未覆盖草稿、未发送": "The composer contains a draft. Nothing was overwritten or sent.",
     '页面就绪': 'Page ready', '删除选中的': 'Delete selected', '删除该自动化任务？': 'Delete this automation task?', '删除选中的自动化任务？': 'Delete selected automation tasks?', '删除后无法恢复。': 'This cannot be undone.', '清除': 'Clear', '清除日志': 'Clear logs', '清除运行日志？': 'Clear run logs?', '仅清除已结束的运行记录。': 'Only completed run records will be cleared.', '清除日志失败': 'Failed to clear logs', '任务已启用': 'Task enabled', '任务已停用': 'Task disabled', '发送中': 'Sending',
     '账号': 'Accounts', '主题': 'Theme', '会话': 'Sessions', '模型': 'Models', '增强': 'Enhance', '自动化': 'Automation', '电脑': 'Computer', '关于': 'About', '设置': 'Settings',
@@ -4891,6 +4892,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         '<div class="wbs-usage-header"><div class="wbs-token-stats-head"><div class="wbs-modal-title" id="wbs-token-stats-title">用量统计</div></div>' +
         '<div class="wbs-usage-tabs"><button type="button" class="active" data-usage-tab="token">Token</button><button type="button" data-usage-tab="credit">积分</button></div></div><div class="wbs-usage-scroll">' +
         '<div data-usage-pane="token"><div class="wbs-token-stats-filters"><label>时间<select data-token-days><option value="1">今天</option><option value="7" selected>近 7 天</option><option value="30">近 30 天</option><option value="90">近 90 天</option></select></label><label>账号<select data-token-account><option value="">全部账号</option></select></label><label>模型<select data-token-model><option value="">全部模型</option></select></label></div>' +
+        '<div class="wbs-token-source-note">Token 用量仅统计本机记录，在不同电脑上查看的数据可能不一致。</div>' +
         '<div class="wbs-token-stats-content"><div class="wbs-token-stats-body"></div><div class="wbs-token-stats-overlay" role="status" aria-label="正在读取统计…"><div class="wbs-token-stats-spinner"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle></svg><span hidden>首次加载时间较长，请等候</span></div></div></div></div>' +
         '<div data-usage-pane="credit" hidden><div class="wbs-token-stats-filters wbs-credit-filters"><label>时间<select data-credit-days><option value="1">今天</option><option value="7" selected>近 7 天</option><option value="30">近 30 天</option><option value="90">近 90 天</option></select></label><label>账号<select data-credit-account><option value="">全部账号</option></select></label></div>' +
         '<div data-credit-result role="status" class="wbs-credit-stats-note" hidden></div>' +
@@ -12940,6 +12942,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '.wbs-token-stats-modal{width:min(760px,calc(100% - 24px));max-height:min(86vh,760px);display:flex;flex-direction:column;overflow:hidden;border:1px solid var(--wb-border-default,rgba(20,24,32,.14))}',
     '.wbs-usage-header{flex-shrink:0}.wbs-usage-scroll{min-height:0;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;flex:1;padding-right:3px}.wbs-token-stats-modal>.wbs-modal-actions{flex-shrink:0}.wbs-token-stats-modal .wbs-token-model-scroll{max-height:none;overflow:visible}.wbs-token-stats-modal .wbs-token-model-scroll:after{display:none}.wbs-credit-query-content{position:relative;min-height:330px}.wbs-token-stats-filters.wbs-credit-filters{grid-template-columns:repeat(2,minmax(0,1fr))}',
     '.wbs-token-stats-head{display:flex;align-items:center;justify-content:space-between;gap:10px}',
+    '.wbs-token-source-note{margin:0 0 12px;font-size:11px;line-height:1.6;color:var(--wb-icon-secondary,#667085);overflow-wrap:anywhere}',
     '.wbs-usage-tabs{display:flex;gap:4px;margin:10px 0 2px;border-bottom:1px solid var(--wb-border-subtle,#eee)}.wbs-usage-tabs button{border:0;border-bottom:2px solid transparent;background:transparent;color:var(--wb-icon-secondary,#667085);padding:6px 12px;font:inherit;font-size:12px;cursor:pointer}.wbs-usage-tabs button.active{border-bottom-color:var(--wb-button-primary-bg,#1f1f1f);color:var(--wb-color-text-primary,#1f1f1f);font-weight:650}.wbs-credit-stats-note{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:10px 0;color:var(--wb-icon-secondary,#667085);font-size:11px;line-height:1.5}.wbs-credit-sync{height:26px;padding:0 9px;border:1px solid var(--wb-border-default,#e2e4e8);border-radius:7px;background:var(--wb-bg-tertiary,#f5f6f8);color:var(--wb-color-text-primary,#1f1f1f);font:inherit;font-size:11px;cursor:pointer}.wbs-credit-sync:disabled{opacity:.6;cursor:wait}.wbs-credit-stats-body{min-height:180px}',
     '.wbs-token-stats-filters{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:12px 0}',
     '.wbs-token-stats-filters label{display:flex;align-items:center;gap:6px;min-width:0;font-size:11px;color:var(--wb-icon-secondary,#667085)}',
@@ -12997,6 +13000,8 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '.wbs-empty{text-align:center;color:var(--wb-icon-tertiary,#999);padding:28px 10px;font-size:12px}',
     /* body 高度：无底部功能区后最大化 */
     '.wbs-body{max-height:calc(min(78vh,660px) - 118px)}',
+    // 账号页填满面板剩余空间：少量账号时登录按钮靠底部，长列表仍在列表内滚动。
+    '.wbs-body:has(>[data-pane="account"].active){max-height:none;overflow:hidden}',
   ].join('');
   (document.head || document.documentElement).appendChild(css);
   start();
