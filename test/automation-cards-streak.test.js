@@ -79,7 +79,7 @@ test('task cards render triggers separately, show start only for manual tasks, a
   assert.equal(list.scrollTop,37);
 });
 
-test('only the three bundled automation ids render a built-in badge and omit the editor save action',()=>{
+test('only the three bundled automation ids render a built-in badge and the editor always shows the save action',()=>{
   const helperStart=ui.indexOf('  function wbsIsBuiltinAutomation(');
   const helperEnd=ui.indexOf('  function wbsBuiltinAutomationText(',helperStart);
   assert.ok(helperStart>0&&helperEnd>helperStart);
@@ -95,7 +95,7 @@ test('only the three bundled automation ids render a built-in badge and omit the
   const pane=ui.slice(paneStart,paneEnd);
   assert.match(pane,/wbs-auto-builtin-badge[^<]*>内置<\/span>/);
   assert.match(pane,/check \+ builtinBadge \+ '<div class="wbs-auto-name"/);
-  assert.match(pane,/wbsIsBuiltinAutomation\(task\) \? '' : '<button class="wbs-modal-btn wbs-modal-ok" type="button" id="wbs-auto-save">保存<\/button>'/);
+  assert.match(pane,/<button class="wbs-modal-btn" type="button" id="wbs-auto-cancel">取消<\/button><button class="wbs-modal-btn wbs-modal-ok" type="button" id="wbs-auto-save">保存<\/button>/);
   assert.match(pane,/if \(saveButton\) saveButton\.addEventListener\('click', saveEditor\)/);
   assert.match(ui,/'内置': 'Built-in'/);
   assert.match(ui,/\.wbs-auto-builtin-badge\{[^}]*border-radius:999px[^}]*var\(--wb-/);
