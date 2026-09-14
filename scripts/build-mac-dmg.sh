@@ -61,7 +61,7 @@ for f in daemon.js toast-runtime.js toast-options.js primary-account.js completi
 done
 # Injection reads the wordmark at runtime; keep brand assets in both profiles.
 mkdir -p "$APP/Contents/Resources/scripts/assets"
-cp scripts/assets/workdaddy-logo.svg scripts/assets/workdaddy-app-icon.svg "$APP/Contents/Resources/scripts/assets/"
+cp scripts/assets/workdaddy-logo.svg scripts/assets/workdaddy-app-icon.svg scripts/assets/workdaddy-app-icon-source.svg "$APP/Contents/Resources/scripts/assets/"
 # Presets are runtime source, independent of the reusable wallpaper/theme shell.
 mkdir -p "$APP/Contents/Resources/scripts/builtin/automations"
 cp scripts/builtin/automations/*.json "$APP/Contents/Resources/scripts/builtin/automations/"

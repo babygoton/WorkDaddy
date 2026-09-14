@@ -64,3 +64,11 @@ test('macOS launcher keeps official WorkBuddy targets out of enterprise mode', (
   assert.match(buildSource, /<key>WBSWITCH_PROFILE<\/key>/);
   assert.match(buildSource, /PLIST_STALE/);
 });
+
+test('macOS packages include every SVG loaded by the injected UI builder', () => {
+  const daemon = fs.readFileSync(path.join(repoRoot, 'scripts/daemon.js'), 'utf8');
+  const builder = daemon.slice(daemon.indexOf('function buildInjectScript()'), daemon.indexOf('function buildInjectScript()') + 5000);
+  const assets = Array.from(builder.matchAll(/path\.join\(__dirname, 'assets', '([^']+\.svg)'\)/g), m => m[1]);
+  assert.ok(assets.includes('workdaddy-app-icon-source.svg'));
+  for (const asset of assets) assert.ok(buildSource.includes('scripts/assets/' + asset), 'missing packaged injection asset: ' + asset);
+});
