@@ -125,6 +125,7 @@ const { fetchUsageSinceAnchor, startOfLocalDay } = require('./credit-request-usa
 const { createCreditHistorySync, historyRange } = require('./credit-history-sync.js');
 const { createCreditUsageStore } = require('./credit-usage-store.js');
 const { scanTokenStatsCached, tokenStatsCacheReady } = require('./token-stats.js');
+const { initializeCheckinConsent, readCheckinConsent, decideCheckinConsent } = require('./checkin-consent.js');
 const { classifyCheckinResult, checkinEndpointsForToken } = require('./checkin-result.js');
 const {
   DAY_MS: TOKEN_REFRESH_DAY_MS,
@@ -6885,6 +6886,21 @@ function handleApi(req, res) {
     });
   }
 
+  if (['GET', 'POST'].includes(req.method) && p === '/api/automations/checkin-consent') {
+    if (!PROFILE.capabilities.accounts || PROFILE.capabilities.checkin === false) {
+      return json(res, 200, { ok: true, shouldPrompt: false, enabled: false });
+    }
+    if (req.method === 'GET') {
+      try { return json(res, 200, readCheckinConsent(DATA_DIR)); }
+      catch (_) { return json(res, 500, { ok: false, error: 'Unable to read check-in choice' }); }
+    }
+    return readBody(req).then((body) => {
+      if (!body || typeof body.enabled !== 'boolean') return json(res, 400, { ok: false, error: 'Invalid check-in choice' });
+      try { return json(res, 200, decideCheckinConsent(DATA_DIR, body.enabled)); }
+      catch (_) { return json(res, 500, { ok: false, error: 'Unable to save check-in choice' }); }
+    });
+  }
+
   if (req.method === 'GET' && p === '/api/automations') {
     const imported = importAgentInbox(DATA_DIR, { profileId: PROFILE.id });
     imported.forEach((item) => log(`[automation-agent] request=${item.requestId} ${item.ok ? 'imported=' + item.taskId : 'rejected=' + item.error}`));
@@ -9246,6 +9262,7 @@ for (const preset of ['close-buddy-popups.json', ...(PROFILE.capabilities.accoun
 if (PROFILE.capabilities.accounts && PROFILE.capabilities.checkin !== false) {
   try { installBuiltinTask(DATA_DIR, path.join(__dirname, 'builtin/automations/daily-account-checkin.json')); }
   catch (_) { log('[automation] 初始化签到任务失败'); }
+  initializeCheckinConsent(DATA_DIR);
 }
 restoreSleepMode();
 startServer();

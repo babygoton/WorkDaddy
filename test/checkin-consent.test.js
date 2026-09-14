@@ -1,0 +1,70 @@
+'use strict';
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const automation = require('../scripts/automation');
+const consent = require('../scripts/checkin-consent');
+const preset = path.join(__dirname, '../scripts/builtin/automations/daily-account-checkin.json');
+function fixture(t) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wd-consent-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  automation.installBuiltinTask(dir, preset);
+  return dir;
+}
+test('fresh installs stay disabled through panel events and scheduled ticks until opt-in', t => {
+  const dir = fixture(t);
+  assert.equal(automation.readAutomations(dir)[0].enabled, false);
+  consent.initializeCheckinConsent(dir);
+  const task = automation.readAutomations(dir)[0];
+  for (const event of ['pageReady', 'panelOpened']) assert.equal(automation.taskMatchesEvent(task, event), false);
+  const tick = automation.createScheduleTicker();
+  tick([task], () => assert.fail('disabled check-in ran'), () => false, 0);
+  tick([task], () => assert.fail('disabled check-in ran'), () => false, 7200000);
+  assert.equal(consent.readCheckinConsent(dir).shouldPrompt, true);
+});
+test('migration disables legacy check-in once, preserving customized steps and other tasks', t => {
+  const dir = fixture(t);
+  const tasks = automation.readAutomations(dir);
+  tasks[0].enabled = true;
+  tasks[0].name = 'My check-in';
+  tasks[0].schedule.minutes = 120;
+  tasks.push(automation.normalizeTask({ id: 'other', enabled: true, steps: [] }));
+  automation.writeAutomations(dir, tasks);
+  consent.initializeCheckinConsent(dir);
+  const migrated = automation.readAutomations(dir);
+  assert.deepEqual(migrated[0], { ...tasks[0], enabled: false });
+  assert.deepEqual(migrated[1], tasks[1]);
+  migrated[0].enabled = true;
+  automation.writeAutomations(dir, migrated);
+  consent.initializeCheckinConsent(dir);
+  assert.equal(automation.readAutomations(dir)[0].enabled, true);
+});
+for (const enabled of [true, false]) test(`choice ${enabled} persists across restart and duplicate submissions`, t => {
+  const dir = fixture(t);
+  consent.initializeCheckinConsent(dir);
+  const result = consent.decideCheckinConsent(dir, enabled);
+  assert.equal(result.shouldPrompt, false);
+  assert.equal(automation.readAutomations(dir)[0].enabled, enabled);
+  consent.initializeCheckinConsent(dir);
+  assert.equal(consent.readCheckinConsent(dir).shouldPrompt, false);
+  const tasks = automation.readAutomations(dir);
+  tasks[0].enabled = !enabled;
+  automation.writeAutomations(dir, tasks);
+  consent.decideCheckinConsent(dir, enabled);
+  assert.equal(automation.readAutomations(dir)[0].enabled, !enabled, 'late response must not overwrite a later manual edit');
+});
+test('deleted tasks are not recreated, invalid choices do not dismiss the notice, profiles are isolated', t => {
+  const dir = fixture(t), other = fixture(t);
+  consent.initializeCheckinConsent(dir);
+  assert.throws(() => consent.decideCheckinConsent(dir, 'true'));
+  assert.equal(consent.readCheckinConsent(dir).shouldPrompt, true);
+  consent.decideCheckinConsent(dir, false);
+  consent.initializeCheckinConsent(other);
+  assert.equal(consent.readCheckinConsent(other).shouldPrompt, true);
+  automation.writeAutomations(other, []);
+  assert.equal(consent.readCheckinConsent(other).shouldPrompt, false);
+  assert.throws(() => consent.decideCheckinConsent(other, true));
+  assert.deepEqual(automation.readAutomations(other), []);
+});
