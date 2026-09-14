@@ -656,7 +656,7 @@ test('Windows Setup waits for WorkBuddy and stops only a native-verified profile
   assert.match(installer, /if IsAdmin and not ConfirmElevatedInstall/);
   assert.match(installer, /MB_YESNO/);
   assert.match(installer, /IDYES/);
-  assert.match(installer, /if IsAdmin then\s+exit;/);
+  assert.match(installer, /if IsAdmin and not ElevatedSessionConfirmed then\s+exit;/);
   assert.doesNotMatch(installer, /if IsAdminInstallMode then/);
   assert.match(installer, /当前安装程序是以管理员权限运行的/);
   assert.match(installer, /仍然继续安装/);

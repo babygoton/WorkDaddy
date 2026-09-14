@@ -77,6 +77,7 @@ Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: 
 
 [Run]
 Filename: "{app}\WorkDaddyLauncher.exe"; Description: "{#StartDescription}"; WorkingDir: "{app}"; Flags: nowait postinstall skipifsilent runasoriginaluser; Check: ShouldAutoLaunch
+Filename: "{app}\WorkDaddyLauncher.exe"; Description: "{#StartDescription}"; WorkingDir: "{app}"; Flags: nowait postinstall skipifsilent runascurrentuser; Check: ShouldLaunchElevatedSession
 
 [UninstallRun]
 Filename: "{app}\WorkDaddyLauncher.exe"; Parameters: "--stop-lifecycle --profile ""{#ProfileId}"" --app-dir ""{app}"""; WorkingDir: "{app}"; Flags: runhidden waituntilterminated; RunOnceId: "StopWorkDaddyLifecycle"
@@ -88,6 +89,7 @@ Type: filesandordirs; Name: "{app}"
 var
   PreserveExistingLifecycle: Boolean;
   ElevatedInstallConfirmed: Boolean;
+  ElevatedSessionConfirmed: Boolean;
   ClientPage: TInputFileWizardPage;
   ClientSourceLabel: TNewStaticText;
   ClientVersionLabel: TNewStaticText;
@@ -109,12 +111,33 @@ begin
   Result := not IsAdmin;
 end;
 
+function ShouldLaunchElevatedSession(): Boolean;
+begin
+  Result := ElevatedSessionConfirmed;
+end;
+
+// Detection and consent run under the installer's actual token. No UAC request
+// or Explorer redispatch: this also works when no original standard user exists.
+function RunDesktopSessionHelper(const Mode: String; var ResultCode: Integer): Boolean;
+begin
+  ExtractTemporaryFile('WorkDaddyLauncher.exe');
+  Result := Exec(ExpandConstant('{tmp}\WorkDaddyLauncher.exe'),
+    Mode + ' --profile "{#ProfileId}"', ExpandConstant('{tmp}'),
+    SW_HIDE, ewWaitUntilTerminated, ResultCode);
+end;
+
 function RunNativeHelper(const Mode: String; var ResultCode: Integer): Boolean;
 var
   Parameters: String;
 begin
   ExtractTemporaryFile('WorkDaddyLauncher.exe');
   Parameters := Mode + ' --profile "{#ProfileId}"';
+  if ElevatedSessionConfirmed then
+  begin
+    Result := Exec(ExpandConstant('{tmp}\WorkDaddyLauncher.exe'), Parameters,
+      ExpandConstant('{tmp}'), SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    exit;
+  end;
   Result := ExecAsOriginalUser(
     ExpandConstant('{tmp}\WorkDaddyLauncher.exe'),
     Parameters,
@@ -533,7 +556,13 @@ begin
   Parameters := '"' + ScriptPath + '" --configure --profile "{#ProfileId}"' +
     ' --binary "' + SelectedWorkBuddyPath + '" --version "' + SelectedWorkBuddyVersion + '"' +
     ' --data-dir "' + DataDir + '"';
-  if not ExecAsOriginalUser(NodePath, Parameters, ExpandConstant('{app}\scripts'), SW_HIDE,
+  if ElevatedSessionConfirmed then
+  begin
+    if not Exec(NodePath, Parameters, ExpandConstant('{app}\scripts'), SW_HIDE,
+      ewWaitUntilTerminated, ResultCode) then
+      exit;
+  end
+  else if not ExecAsOriginalUser(NodePath, Parameters, ExpandConstant('{app}\scripts'), SW_HIDE,
     ewWaitUntilTerminated, ResultCode) then
     exit;
   Result := ResultCode = 0;
@@ -725,7 +754,7 @@ begin
       exit;
     if Choice = mrYes then
     begin
-      if not RunNativeHelper('--terminate-workbuddy --binary "' + SelectedWorkBuddyPath + '"', ResultCode) then
+      if not RunNativeHelper('--terminate-workbuddy --binary "' + SelectedWorkBuddyPath + '" --app-dir "' + ExpandConstant('{app}') + '"', ResultCode) then
       begin
         MsgBox('无法启动 WorkBuddy 结束进程操作。请检查安全软件是否拦截安装程序。', mbError, MB_OK);
         exit;
@@ -743,14 +772,105 @@ begin
   end;
 end;
 
-function ConfirmElevatedInstall(): Boolean;
+function ShowElevatedSessionConsent(): Boolean;
+var
+  Dialog: TSetupForm;
+  Description: TNewStaticText;
+  ContinueButton, CancelButton: TNewButton;
 begin
-  if ElevatedInstallConfirmed then
+  Dialog := CreateCustomForm();
+  try
+    Dialog.Caption := '管理员会话兼容安装';
+    Dialog.ClientWidth := ScaleX(500);
+    Dialog.ClientHeight := ScaleY(265);
+    Dialog.Position := poScreenCenter;
+    Description := TNewStaticText.Create(Dialog);
+    Description.Parent := Dialog;
+    Description.Left := ScaleX(20);
+    Description.Top := ScaleY(18);
+    Description.Width := ScaleX(460);
+    Description.Height := ScaleY(190);
+    Description.AutoSize := False;
+    Description.WordWrap := True;
+    Description.Caption :=
+      '这台电脑的 Windows 桌面本身使用管理员权限，无法通过桌面切换到普通权限。常见于内建 Administrator 账户或关闭 UAC 的电脑。' + #13#10 + #13#10 +
+      '继续后，WorkDaddy 和由它启动的 WorkBuddy 将以管理员权限运行。WorkBuddy 中的命令、插件和自动操作也会拥有更高权限，误操作可能影响系统文件和设置。' + #13#10 + #13#10 +
+      '更稳妥的做法是使用普通权限桌面后重新安装。若仍要继续，此选择仅保存到当前用户、当前客户端和安装目录，之后双击快捷方式也会沿用。恢复普通权限桌面后会自动按普通权限启动。';
+    Description.AdjustHeight();
+    ContinueButton := TNewButton.Create(Dialog);
+    ContinueButton.Parent := Dialog;
+    ContinueButton.Caption := '我已了解风险，继续安装';
+    ContinueButton.Left := ScaleX(20);
+    ContinueButton.Top := Description.Top + Description.Height + ScaleY(18);
+    ContinueButton.Width := ScaleX(260);
+    ContinueButton.Height := ScaleY(28);
+    ContinueButton.Default := False;
+    ContinueButton.ModalResult := mrYes;
+    CancelButton := TNewButton.Create(Dialog);
+    CancelButton.Parent := Dialog;
+    CancelButton.Caption := '取消安装';
+    CancelButton.Left := ScaleX(360);
+    CancelButton.Top := ContinueButton.Top;
+    CancelButton.Width := ScaleX(120);
+    CancelButton.Height := ScaleY(28);
+    CancelButton.Default := True;
+    CancelButton.Cancel := True;
+    CancelButton.ModalResult := mrCancel;
+    Dialog.ClientHeight := ContinueButton.Top + ContinueButton.Height + ScaleY(18);
+    Dialog.ActiveControl := CancelButton;
+    Result := Dialog.ShowModal() = mrYes;
+  finally
+    Dialog.Free();
+  end;
+end;
+
+function ConfirmElevatedInstall(): Boolean;
+var
+  ResultCode: Integer;
+begin
+  if ElevatedInstallConfirmed or ElevatedSessionConfirmed then
   begin
     Result := True;
     exit;
   end;
 
+  Result := False;
+  if not RunDesktopSessionHelper('--desktop-token-status', ResultCode) then
+  begin
+    if not WizardSilent then
+      MsgBox('无法检测 Windows 桌面权限，安装已停止。请检查安全软件是否阻止安装程序。', mbError, MB_OK);
+    exit;
+  end;
+  if ResultCode = 5 then
+  begin
+    // Silent updates can reuse prior consent, but cannot create it.
+    if WizardSilent then
+    begin
+      ElevatedSessionConfirmed := RunDesktopSessionHelper(
+        '--check-elevated-session --app-dir "' + ExpandConstant('{app}') + '"', ResultCode);
+      ElevatedSessionConfirmed := ElevatedSessionConfirmed and (ResultCode = 0);
+    end
+    else
+    begin
+      if not ShowElevatedSessionConsent() then
+        exit;
+      ElevatedSessionConfirmed := RunDesktopSessionHelper(
+        '--accept-elevated-session --app-dir "' + ExpandConstant('{app}') + '"', ResultCode);
+      ElevatedSessionConfirmed := ElevatedSessionConfirmed and (ResultCode = 0);
+      if not ElevatedSessionConfirmed then
+        MsgBox('无法保存兼容安装选择，或桌面权限已经变化。安装已停止，请重新打开安装程序。', mbError, MB_OK);
+    end;
+    Result := ElevatedSessionConfirmed;
+    exit;
+  end;
+  if ResultCode <> 0 then
+  begin
+    if not WizardSilent then
+      MsgBox('无法确认桌面适用管理员兼容模式，安装已停止。请使用普通权限桌面后重新安装。', mbError, MB_OK);
+    exit;
+  end;
+  if WizardSilent then
+    exit;
   Result := MsgBox(
     '当前安装程序是以管理员权限运行的。' + #13#10 + #13#10 +
     '仍可继续安装，但安装器不会自动启动或结束 WorkDaddy/WorkBuddy。请先手动退出它们，安装完成后再双击桌面快捷方式。' + #13#10 + #13#10 +
@@ -777,7 +897,7 @@ begin
     Result := '你已选择不继续管理员安装。可以取消安装，或返回后重新选择继续。';
     exit;
   end;
-  if IsAdmin then
+  if IsAdmin and not ElevatedSessionConfirmed then
     exit;
   if not EnsureWorkBuddyClosed() then
   begin

@@ -32,6 +32,7 @@ const { spawn, spawnSync } = require('child_process');
 const {
   assertSameProcessIdentity,
   detectWindowsPrivilege,
+  detectNativeWindowsPrivilege,
   buildNativeProcessQuery,
   filterVerifiedWindowsProcesses,
   filterVerifiedNodeProcesses,
@@ -42,7 +43,9 @@ const {
   selectPreferredDiscoveredBinary,
 } = require('./windows-process-boundary.js');
 const DAEMON_PRIVILEGE = process.platform === 'win32'
-  ? (process.env.WBSWITCH_NATIVE_LAUNCHER === '1' ? 'standard' : detectWindowsPrivilege())
+  ? (process.env.WBSWITCH_NATIVE_LAUNCHER === '1'
+    ? detectNativeWindowsPrivilege(path.resolve(__dirname, '..'), process.env.WBSWITCH_PROFILE || 'workbuddy-cn')
+    : detectWindowsPrivilege())
   : 'standard';
 // ws（WebSocketServer）用于 DevTools 代理：Electron 的 CDP server 拒绝带 Origin 的 WS 连接
 // （浏览器必带 Origin → DevTools 前端 "websocket disconnected"），daemon 代理中转去掉 Origin
@@ -346,8 +349,8 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 // 1.2.24：账号轮换恢复真实积分段消耗检测，仅推荐缓存中到期时间最近的可用账号。
 // 1.2.25：首页弹窗任务补齐成长/活动入口，并按 renderer 页面身份修复重连后的 pageReady 触发。
 // 1.2.26：无效账号备份不再显示可点击的切换按钮，导入路径拒绝写入无效认证数据。
-const DAEMON_VERSION = '1.2.36';
-const DAEMON_BUILD_ID = 'release-1.2.36-20260913-credit-rotation-always-check';
+const DAEMON_VERSION = '1.2.37';
+const DAEMON_BUILD_ID = 'release-1.2.37-20260914-windows-elevated-consent';
 const usageReporter = createUsageReporter({ profile: PROFILE.id, version: DAEMON_VERSION });
 configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const HOST = '127.0.0.1';
