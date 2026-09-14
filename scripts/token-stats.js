@@ -2,6 +2,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { createHash } = require('node:crypto');
 
 const TOKEN_FIELDS = {
   input: ['input_tokens', 'prompt_tokens', 'inputTokens', 'promptTokens'],
@@ -86,7 +87,7 @@ function timestampValue(value, fallback) {
   return fallback;
 }
 
-const CACHE_VERSION = 7;
+const CACHE_VERSION = 8;
 const MAX_CACHE_DAYS = 90;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -111,7 +112,6 @@ function parseRecords(root, options = {}) {
   const lowerBound = Number.isFinite(options.lowerBound) ? options.lowerBound : now - MAX_CACHE_DAYS * DAY_MS;
   const upperBound = Number.isFinite(options.upperBound) ? options.upperBound : now + 60 * 1000;
   const files = Array.isArray(options.files) ? options.files : walkJsonl(root, options.maxFiles || 5000);
-  const accountIds = new Set((options.accountOptions || []).map((item) => String(item && (item.uid || item.account) || '').trim()).filter(Boolean));
   const records = [];
   let parseErrors = 0;
   let parsedLines = 0;
@@ -127,21 +127,21 @@ function parseRecords(root, options = {}) {
     }
     let text;
     try { text = fs.readFileSync(file, 'utf8'); } catch (_) { continue; }
-    let lineIndex = 0;
+    const occurrences = new Map();
     for (const line of text.split(/\r?\n/)) {
-      lineIndex++;
       if (!line.trim()) continue;
       let record;
       try { record = JSON.parse(line); } catch (_) {
         // Only object-like lines are likely structured records. WorkBuddy may
         // place plain text, stack traces, or array annotations in the same file.
-        if (/^\s*\{/.test(line) && /"(?:usage|input_tokens|output_tokens|model)"/i.test(line)) {
+        if (options.legacyParseErrors ? /^\s*[\[{]/.test(line) :
+          /^\s*\{/.test(line) && /"(?:usage|input_tokens|output_tokens|model)"/i.test(line)) {
           parseErrors++;
           parseErrorFiles.add(relative);
         }
         continue;
       }
-      if (record.isSnapshotUpdate) continue;
+      if (!record || typeof record !== 'object' || record.isSnapshotUpdate) continue;
       const usage = findUsage(record.message && record.message.usage) || findUsage(record.providerData && record.providerData.usage) || findUsage(record);
       if (!usage) continue;
       const timestamp = timestampValue(record.timestamp || record.created_at || record.createdAt || usage.timestamp, now);
@@ -152,19 +152,19 @@ function parseRecords(root, options = {}) {
       const cacheWrite = numberField(usage, TOKEN_FIELDS.cacheWrite);
       if (!(input || output || cacheRead || cacheWrite)) continue;
       const model = findText(record, ['model', 'modelName', 'model_id', 'modelId']) || findText(usage, ['model', 'modelName', 'model_id', 'modelId']);
-      let account = findText(record, ['accountUid', 'accountId', 'uid', 'userId']) || findText(usage, ['accountUid', 'accountId', 'uid', 'userId']);
-      if (!account && options.sessionAccounts) {
-        const sessionId = path.basename(file, '.jsonl');
-        account = options.sessionAccounts instanceof Map
-          ? String(options.sessionAccounts.get(sessionId) || '')
-          : String(options.sessionAccounts[sessionId] || '');
-      }
-      if (!account && accountIds.size) {
-        const pathPart = relative.split('/').find((part) => accountIds.has(part.replace(/\.jsonl$/i, '')));
-        if (pathPart) account = pathPart.replace(/\.jsonl$/i, '');
-      }
+      const account = findText(record, ['accountUid', 'accountId', 'uid', 'userId']) || findText(usage, ['accountUid', 'accountId', 'uid', 'userId']);
+      // Imports/copies preserve the entire JSONL row. Hash the whole record,
+      // not just requestId or token totals: a request can have multiple usage
+      // rows, and different calls can have identical token counts. Only the
+      // digest and usage metadata enter the cache; never persist message text.
+      const digest = createHash('sha256').update(JSON.stringify(record)).digest('hex');
+      const occurrence = (occurrences.get(digest) || 0) + 1;
+      occurrences.set(digest, occurrence);
       records.push({
-        key: relative + ':' + lineIndex,
+        key: digest + ':' + occurrence,
+        file: relative,
+        sourceSession: (['sessionId', 'conversationId', 'session_id', 'conversation_id']
+          .map(field => record[field]).find(value => typeof value === 'string' && value.trim()) || '').trim(),
         timestamp,
         model: model || '',
         account: account || '',
@@ -180,6 +180,44 @@ function parseRecords(root, options = {}) {
   return { records, files: files.length, parsedLines, parseErrors, parseErrorFiles: Array.from(parseErrorFiles) };
 }
 
+function sessionAccount(options, id) {
+  const accounts = options.sessionAccounts;
+  return String((accounts instanceof Map ? accounts.get(id) : accounts && accounts[id]) || '').trim();
+}
+
+function distinctRecords(records, options = {}) {
+  const accountIds = new Set((options.accountOptions || [])
+    .map(item => String(item && (item.uid || item.account) || '').trim()).filter(Boolean));
+  const distinct = new Map();
+  for (const record of records) {
+    // Resolve owners on every scan, including cache hits. An imported row's
+    // session ID still refers to its source, whereas newly appended rows refer
+    // to the destination. Missing/ambiguous provenance must not invent usage
+    // for whichever account happens to own the first copy in directory order.
+    let account = record.account;
+    if (!account && record.sourceSession) account = sessionAccount(options, record.sourceSession);
+    if (!account && !record.sourceSession) {
+      account = sessionAccount(options, path.posix.basename(record.file, '.jsonl'));
+      if (!account) account = record.file.split('/').map(part => part.replace(/\.jsonl$/i, ''))
+        .find(part => accountIds.has(part)) || '';
+    }
+    let item = distinct.get(record.key);
+    if (!item) {
+      item = { record, accounts: new Set() };
+      distinct.set(record.key, item);
+    }
+    // Undated legacy rows use scan time as a fallback. Prefer the earliest
+    // cached observation so importing them later does not move usage to today.
+    if (record.timestamp < item.record.timestamp) item.record = record;
+    if (account) item.accounts.add(account);
+  }
+  // Occurrence indices preserve multiple equal rows in one original file;
+  // matching occurrences in other files are copies, not extra model calls.
+  return Array.from(distinct.values(), ({ record, accounts }) => ({
+    ...record, account: accounts.size === 1 ? accounts.values().next().value : '',
+  }));
+}
+
 function cacheFile(root, options = {}) {
   return options.cacheFile || path.join(root, '.workdaddy-token-stats-cache.json');
 }
@@ -188,6 +226,7 @@ function readCache(file) {
   try {
     const value = JSON.parse(fs.readFileSync(file, 'utf8'));
     if (!value || value.version !== CACHE_VERSION || !Array.isArray(value.historicalBuckets) || !value.todayFiles || typeof value.todayFiles !== 'object') return null;
+    if (Object.values(value.todayFiles).some(item => !item || !Array.isArray(item.entries))) return null;
     return value;
   } catch (_) { return null; }
 }
@@ -338,8 +377,8 @@ function aggregateCachedBuckets(buckets, options = {}) {
 function scanTokenStatsCached(root, options = {}) {
   const now = Number(options.now) || Date.now();
   // Always cache the complete retained range, independent of the UI filter.
-  // Each file owns its buckets: replacing a changed file cannot drop another
-  // file's usage on the same date or count immutable/live history twice.
+  // Keep per-file usage metadata until cross-file deduplication. Daily buckets
+  // alone discard identity and cannot distinguish imported historical copies.
   const cutoff = dateBounds(now, { days: MAX_CACHE_DAYS }).from;
   const file = cacheFile(root, options);
   const cache = readCache(file);
@@ -359,16 +398,17 @@ function scanTokenStatsCached(root, options = {}) {
     } else {
       const parsed = parseRecords(root, { ...options, now, lowerBound: cutoff, upperBound: now,
         files: [currentFile] });
-      item = { mtimeMs: stat.mtimeMs, size: stat.size, buckets: aggregateBuckets(parsed.records),
+      item = { mtimeMs: stat.mtimeMs, size: stat.size, entries: parsed.records,
         parsedLines: parsed.parsedLines, parseErrors: parsed.parseErrors, parseErrorFiles: parsed.parseErrorFiles };
     }
-    item.buckets = item.buckets.filter(bucket => bucket.day >= localDayString(cutoff));
+    item.entries = item.entries.filter(entry => entry.timestamp >= cutoff);
     todayFiles[relative] = item;
     parsedLines += item.parsedLines || 0;
     parseErrors += item.parseErrors || 0;
     for (const errorFile of item.parseErrorFiles || []) parseErrorFiles.add(errorFile);
   }
-  const buckets = Object.values(todayFiles).flatMap(item => item.buckets);
+  const records = Object.values(todayFiles).flatMap(item => item.entries);
+  const buckets = aggregateBuckets(distinctRecords(records, options));
   const cacheReady = writeCache(file, { version: CACHE_VERSION, generatedAt: now, cutoff,
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     historicalBuckets: [], todayFiles });
@@ -380,84 +420,11 @@ function scanTokenStatsCached(root, options = {}) {
 
 function scanTokenStats(root, options = {}) {
   const now = Number(options.now) || Date.now();
-  const days = Math.max(1, Math.min(90, Number(options.days) || 7));
-  const localStart = new Date(now); localStart.setHours(0, 0, 0, 0);
-  const since = dateBounds(now, { days }).from;
-  const from = options.from ? Date.parse(options.from) : since;
-  const until = options.until ? Date.parse(options.until) + 24 * 60 * 60 * 1000 - 1 : now;
-  const accountFilter = String(options.account || '').trim();
-  const modelFilter = String(options.model || '').trim();
-  const files = walkJsonl(root, options.maxFiles || 5000);
-  const totals = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, calls: 0 };
-  const byDay = new Map();
-  const byModel = new Map();
-  const byAccount = new Map();
-  let parsedLines = 0;
-  let parseErrors = 0;
-  for (const file of files) {
-    let text;
-    try { text = fs.readFileSync(file, 'utf8'); } catch (_) { continue; }
-    const relative = path.relative(root, file).split(path.sep);
-    const project = relative.length > 1 ? relative[0] : '';
-    const session = path.basename(file, '.jsonl');
-    for (const line of text.split(/\r?\n/)) {
-      if (!line.trim()) continue;
-      let record;
-      try { record = JSON.parse(line); } catch (_) {
-        // Some WorkBuddy files contain non-JSON annotations between records; only
-        // count malformed object/array lines as parse errors worth surfacing.
-        if (/^\s*[\[{]/.test(line)) parseErrors++;
-        continue;
-      }
-      if (record.isSnapshotUpdate) continue;
-      const usage = findUsage(record.message && record.message.usage) || findUsage(record.providerData && record.providerData.usage) || findUsage(record);
-      if (!usage) continue;
-      const timestamp = timestampValue(record.timestamp || record.created_at || record.createdAt || usage.timestamp, now);
-      if (!Number.isFinite(timestamp) || timestamp < since || timestamp > now + 60 * 1000) continue;
-      const input = numberField(usage, TOKEN_FIELDS.input);
-      const output = numberField(usage, TOKEN_FIELDS.output);
-      const cacheRead = numberField(usage, TOKEN_FIELDS.cacheRead);
-      const cacheWrite = numberField(usage, TOKEN_FIELDS.cacheWrite);
-      if (!(input || output || cacheRead || cacheWrite)) continue;
-      const model = findText(record, ['model', 'modelName', 'model_id', 'modelId']) || findText(usage, ['model', 'modelName', 'model_id', 'modelId']);
-      const account = findText(record, ['accountUid', 'accountId', 'uid', 'userId']) || findText(usage, ['accountUid', 'accountId', 'uid', 'userId']);
-      if (Number.isFinite(from) && timestamp < from) continue;
-      if (Number.isFinite(until) && timestamp > until) continue;
-      if (accountFilter && account !== accountFilter) continue;
-      if (modelFilter && model !== modelFilter) continue;
-      const values = { input, output, cacheRead, cacheWrite, calls: 1 };
-      for (const key of Object.keys(totals)) totals[key] += values[key];
-      const day = localDayString(timestamp);
-      if (day) {
-        const current = byDay.get(day) || { day, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, calls: 0 };
-        for (const key of Object.keys(values)) current[key] += values[key];
-        byDay.set(day, current);
-      }
-      if (model) {
-        const modelRow = byModel.get(model) || { model, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, calls: 0 };
-        for (const key of Object.keys(values)) modelRow[key] += values[key];
-        byModel.set(model, modelRow);
-      }
-      if (account) {
-        const accountRow = byAccount.get(account) || { account, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, calls: 0 };
-        for (const key of Object.keys(values)) accountRow[key] += values[key];
-        byAccount.set(account, accountRow);
-      }
-      parsedLines++;
-    }
-  }
-  return {
-    source: 'local-workbuddy-jsonl',
-    since,
-    until: now,
-    files: files.length,
-    parsedLines,
-    parseErrors,
-    totals,
-    daily: Array.from(byDay.values()).sort((a, b) => a.day.localeCompare(b.day)),
-    models: Array.from(byModel.values()).sort((a, b) => (b.input + b.output) - (a.input + a.output)),
-    accounts: Array.from(byAccount.values()).sort((a, b) => (b.input + b.output) - (a.input + a.output)),
-  };
+  const bounds = dateBounds(now, options);
+  const parsed = parseRecords(root, { ...options, now, lowerBound: bounds.from,
+    upperBound: bounds.until, legacyParseErrors: true });
+  const stats = aggregateRecords(distinctRecords(parsed.records, options), { ...options, now });
+  return { ...stats, files: parsed.files, parsedLines: parsed.parsedLines, parseErrors: parsed.parseErrors };
 }
 
 module.exports = { tokenStatsCacheReady, scanTokenStats, scanTokenStatsCached, findUsage, walkJsonl, dateBounds };
