@@ -112,6 +112,8 @@ const {
   enableModelBackup,
   importModels,
   checkinDisplayValue,
+  getAccountOrder,
+  setAccountOrder,
 } = require('./lib.js');
 const { createThirdPartyImport } = require('./third-party-models.js');
 const { extractCreditSegments, sortCreditSegments, mergeCreditSegments, parseEnterpriseUsage, ENTERPRISE_EDITIONS } = require('./credit-segments.js');
@@ -346,8 +348,8 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 // 1.2.24：账号轮换恢复真实积分段消耗检测，仅推荐缓存中到期时间最近的可用账号。
 // 1.2.25：首页弹窗任务补齐成长/活动入口，并按 renderer 页面身份修复重连后的 pageReady 触发。
 // 1.2.26：无效账号备份不再显示可点击的切换按钮，导入路径拒绝写入无效认证数据。
-const DAEMON_VERSION = '1.2.36';
-const DAEMON_BUILD_ID = 'release-1.2.36-20260913-credit-rotation-always-check';
+const DAEMON_VERSION = '1.2.39';
+const DAEMON_BUILD_ID = 'release-1.2.39-20260914-avatar-library-credit-opacity';
 const usageReporter = createUsageReporter({ profile: PROFILE.id, version: DAEMON_VERSION });
 configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const HOST = '127.0.0.1';
@@ -3412,6 +3414,7 @@ function buildInjectScript() {
     .replace(/__WBS_DIAGNOSTICS_ENABLED__/g, diagnosticsEnabled() ? 'true' : 'false')
     .replace(/__WBS_PROFILE__/g, PROFILE.id)
     .replace(/__WBS_CAPS__/g, JSON.stringify(PROFILE.capabilities))
+    .replace(/__WBS_AVATAR_LOGO__/g, 'data:image/svg+xml;base64,' + fs.readFileSync(path.join(__dirname, 'assets', 'workdaddy-app-icon-source.svg')).toString('base64'))
     .replace(/__WBS_LOGO__/g, 'data:image/svg+xml;base64,' + fs.readFileSync(path.join(__dirname, 'assets', 'workdaddy-logo.svg')).toString('base64'))
     .replace(/__WBS_PLATFORM__/g, JSON.stringify(process.platform));
 }
@@ -3638,7 +3641,7 @@ function sessionRangeMs(range) {
 // tasks/<id>/、file-history/<id>/、artifact-index/<id>.json（全部以新 id 命名复制）
 // 异步实现：切号复制大批会话时，同步 cpSync 会阻塞主线程几十秒，把注入定时器、
 // 面板响应全部饿死（切号后 FAB 迟迟不出现的根因之一）。
-async function copySessionFiles(wbHome, oldId, newId) {
+async function copySessionFiles(wbHome, oldId, newId, lineageIds = []) {
   const fsMod = fs;
   const result = { copied: 0, failed: 0 };
   const copyOne = async (from, to) => {
@@ -3646,6 +3649,7 @@ async function copySessionFiles(wbHome, oldId, newId) {
       if (!fsMod.existsSync(from)) return;
       const fromResolved = path.resolve(from);
       const toResolved = path.resolve(to);
+      if (fromResolved === toResolved) return;
       const relative = path.relative(fromResolved, toResolved);
       const targetInsideSource = relative && relative !== '..' && !relative.startsWith('..' + path.sep) && !path.isAbsolute(relative);
       if (targetInsideSource) {
@@ -3653,7 +3657,7 @@ async function copySessionFiles(wbHome, oldId, newId) {
         return;
       }
       fsMod.mkdirSync(path.dirname(to), { recursive: true });
-      await fsMod.promises.cp(from, to, { recursive: true, force: true });
+      await fsMod.promises.cp(from, to, { recursive: true, force: true, preserveTimestamps: true });
       result.copied++;
     } catch (e) {
       result.failed++;
@@ -3680,7 +3684,49 @@ async function copySessionFiles(wbHome, oldId, newId) {
   // 4) file-history/<id>/
   await copyOne(path.join(wbHome, 'file-history', oldId), path.join(wbHome, 'file-history', newId));
   // 5) artifact-index/<id>.json
-  await copyOne(path.join(wbHome, 'artifact-index', oldId + '.json'), path.join(wbHome, 'artifact-index', newId + '.json'));
+  // 官方按 _meta.ownerConversationId 校验跨工作目录交付文件。仅重映射确属源会话的 owner，
+  // 保留 requestId/URI/其他会话归属；原样 cp 会让目标会话过滤掉这些产物。
+  const fromIndex = path.join(wbHome, 'artifact-index', oldId + '.json');
+  const toIndex = path.join(wbHome, 'artifact-index', newId + '.json');
+  if (fsMod.existsSync(fromIndex)) {
+    let temporary;
+    try {
+      const stat = await fsMod.promises.stat(fromIndex);
+      if (stat.size > 16 * 1024 * 1024) throw new Error('产物索引超过 16MB，未覆盖目标索引');
+      const original = await fsMod.promises.readFile(fromIndex, 'utf8');
+      let index;
+      try { index = JSON.parse(original); }
+      catch (_) { throw new Error('产物索引格式不受支持'); }
+      const artifacts = Array.isArray(index) ? index : index && index.artifacts;
+      if (!Array.isArray(artifacts)) throw new Error('产物索引格式不受支持');
+      const owners = new Set([oldId, ...lineageIds]);
+      let changed = false;
+      for (const artifact of artifacts) {
+        if (artifact && artifact._meta && owners.has(artifact._meta.ownerConversationId) && artifact._meta.ownerConversationId !== newId) {
+          changed = true;
+          artifact._meta.ownerConversationId = newId;
+        }
+      }
+      if (oldId === newId && !changed) return result;
+      await fsMod.promises.mkdir(path.dirname(toIndex), { recursive: true });
+      temporary = await fsMod.promises.mkdtemp(path.join(path.dirname(toIndex), '.wbs-artifact-'));
+      const staged = path.join(temporary, 'index.json');
+      await fsMod.promises.writeFile(staged, JSON.stringify(index), { mode: stat.mode & 0o777, flag: 'wx' });
+      // 复制时间不能伪装成新内容，否则下一次切号会错选较旧的副本为同步来源。
+      await fsMod.promises.utimes(staged, stat.atime, stat.mtime);
+      // 就地修复旧来源时，官方进程若已落盘新产物，保留它的新内容供下次同步。
+      if (oldId === newId && await fsMod.promises.readFile(fromIndex, 'utf8') !== original) {
+        throw new Error('产物索引已变化，请重试同步');
+      }
+      await fsMod.promises.rename(staged, toIndex);
+      result.copied++;
+    } catch (error) {
+      result.failed++;
+      log('[sessions-copy] 产物索引复制失败: ' + error.message);
+    } finally {
+      if (temporary) await fsMod.promises.rm(temporary, { recursive: true, force: true });
+    }
+  }
   log('[sessions-copy] 已复制消息文件 ' + oldId + ' -> ' + newId);
   return result;
 }
@@ -3755,11 +3801,14 @@ async function syncAutoCopyLineage(lineageId, targetUid) {
   if (!latest) return { members: live.length, synced: 0, failedFiles: 0, targetIds, targetPresent };
   const sourceRow = latest.row;
   let synced = 0;
-  let failedFiles = 0;
+  const ownerIds = records.map((member) => member.id);
+  // 旧版副本可能仍挂着最初源会话的 owner；也修复作为最新来源的副本自身。
+  const repairedSource = await copySessionFiles(PROFILE.dataRoot, latest.id, latest.id, ownerIds);
+  let failedFiles = repairedSource.failed;
   for (const target of live) {
     if (target.id === latest.id) continue;
     await yieldAutoCopyToRenderer();
-    const files = await copySessionFiles(PROFILE.dataRoot, latest.id, target.id);
+    const files = await copySessionFiles(PROFILE.dataRoot, latest.id, target.id, ownerIds);
     synced++;
     failedFiles += files.failed;
     try {
@@ -4002,6 +4051,7 @@ async function copySessionRecord(src, targetUid, options = {}) {
   if (!lineageId && sourceLineage.enabled) lineageId = sourceLineage.lineageId;
   if (auto && sourceUid && !lineageId) lineageId = ensureAutoCopySession(DATA_DIR, sourceUid, src.id);
   const perform = async () => {
+  const ownerIds = lineageId ? getAutoCopySessionMemberRecords(DATA_DIR, lineageId).map((member) => member.id) : [];
   if (sourceUid && lineageId) {
     const mapping = getAutoCopyMapping(DATA_DIR, lineageId, targetUid);
     if (mapping && mapping.targetId) {
@@ -4010,7 +4060,7 @@ async function copySessionRecord(src, targetUid, options = {}) {
         [mapping.targetId]
       );
       if (existing.length && String(existing[0].user_id || '') === String(targetUid)) {
-        const files = await copySessionFiles(wbHome, src.id, mapping.targetId);
+        const files = await copySessionFiles(wbHome, src.id, mapping.targetId, ownerIds);
         addAutoCopySessionMember(DATA_DIR, lineageId, targetUid, mapping.targetId);
         setAutoCopyMapping(DATA_DIR, lineageId, targetUid, {
           targetId: mapping.targetId,
@@ -4049,7 +4099,7 @@ async function copySessionRecord(src, targetUid, options = {}) {
       });
       if (candidates.length) {
         const canonicalId = candidates[0].id;
-        const files = await copySessionFiles(wbHome, src.id, canonicalId);
+        const files = await copySessionFiles(wbHome, src.id, canonicalId, ownerIds);
         addAutoCopySessionMember(DATA_DIR, lineageId, targetUid, canonicalId);
         setAutoCopyMapping(DATA_DIR, lineageId, targetUid, {
           targetId: canonicalId,
@@ -4063,7 +4113,7 @@ async function copySessionRecord(src, targetUid, options = {}) {
 
   const newId = crypto.randomUUID();
   await insertCopiedSession(src, targetUid, newId);
-  const files = await copySessionFiles(wbHome, src.id, newId);
+  const files = await copySessionFiles(wbHome, src.id, newId, ownerIds);
   if (lineageId) {
     addAutoCopySessionMember(DATA_DIR, lineageId, targetUid, newId);
     setAutoCopyMapping(DATA_DIR, lineageId, targetUid, {
@@ -4355,6 +4405,9 @@ function removeSessionAppCache(wbHome, id) {
 // tasks/<id>/、file-history/<id>/、artifact-index/<id>.json（全部按会话 id 精确删除，不可恢复）
 function deleteSessionFiles(wbHome, id) {
   if (!isValidSessionId(id)) throw new Error('无效的会话 ID');
+  // 配置的数据根允许是 Windows junction；仅解析这一层，内部 managed parent 仍逐级拒绝链接。
+  try { wbHome = fs.realpathSync(wbHome); }
+  catch (error) { if (error.code === 'ENOENT') return 0; throw error; }
   let removed = removeSessionAppCache(wbHome, id) ? 1 : 0;
   const delOne = (parent, leaf) => {
     let target;
@@ -5417,7 +5470,8 @@ function initBuiltinAssets() {
 
 /** 内置主题（默认 + 3 套示例） */
 const BUILTIN_THEMES = {
-  default: { id: 'default', name: '默认（浅色）', author: 'WorkBuddy', dark: false, colors: {} },
+  default: { id: 'default', name: '浅色', author: 'WorkBuddy', dark: false, colors: {} },
+  dark: { id: 'dark', name: '深色', author: 'WorkBuddy', dark: true, colors: {} },
   'oled-dark': {
     id: 'oled-dark', name: 'OLED 纯黑', author: 'wbs', dark: true,
     colors: {
@@ -5595,7 +5649,7 @@ function listThemes() {
           if (!fs.statSync(flatPath).isDirectory() || !fs.existsSync(subPath)) continue;
           try { t = JSON.parse(fs.readFileSync(subPath, 'utf8')); } catch (_) { continue; }
         }
-        if (!t || !t.id || !t.colors) continue;
+        if (!t || !t.id || !t.colors || t.id === 'default' || t.id === 'dark') continue;
         const existing = themes.findIndex((x) => x.id === t.id);
         const item = { id: t.id, name: t.name || t.id, author: t.author || 'unknown', dark: !!t.dark, builtin: false };
         if (existing >= 0) themes[existing] = item; // 覆盖内置
@@ -5608,6 +5662,8 @@ function listThemes() {
 
 /** 取主题完整定义（含 colors）。优先读 themes/ 目录的自定义文件（可覆盖内置同名主题），否则回退内置 */
 function getTheme(id) {
+  // 浅色/深色始终对应官方外观，不允许同名自定义文件改变其语义。
+  if (id === 'default' || id === 'dark') return BUILTIN_THEMES[id];
   // 先查文件（用户自定义或覆盖内置的完整版）——支持 themes/<id>.json 与 themes/<id>/theme.json 两种布局
   try {
     const safeId = id.replace(/[^A-Za-z0-9_-]/g, '_');
@@ -5841,7 +5897,7 @@ async function applyThemeByCdp(id) {
     var WBS_UID = ${JSON.stringify(uid || null)};
     // WorkDaddy 自定义主题已应用标记：theme-patches 里部分规则用 html[data-wbs-theme] 限定
     // 只在 WorkDaddy 内置自定义主题下生效（官方默认主题不激活）。
-    try { h.setAttribute('data-wbs-theme', ${id === 'default' ? "'0'" : "'1'"}); } catch (e) {}
+    try { h.setAttribute('data-wbs-theme', ${id === 'default' || id === 'dark' ? "'0'" : "'1'"}); } catch (e) {}
     try { h.setAttribute('data-wbs-theme-id', ${JSON.stringify(id)}); } catch (e) {}
     // 联动 WorkBuddy 原生主题（源码 theme.ts ThemeManager + legacy-appearance-mode-storage）：
     // 1) 写 localStorage 'agent-ui-theme'（ThemeManager.saveTheme 同款结构），reload/重启后 WorkBuddy 自己恢复该主题；
@@ -5884,12 +5940,12 @@ async function applyThemeByCdp(id) {
       h.setAttribute('data-theme', mode);
     }
     var s = document.getElementById('wbs-theme-style');
-    if (${id === 'default' ? 'true' : 'false'}) {
+    if (${id === 'default' || id === 'dark' ? 'true' : 'false'}) {
       if (s) s.remove();
-      // 默认主题：完全恢复官方浅色（移除 dark 标记，body 恢复官方浅色主题名）
-      h.removeAttribute('data-theme'); h.classList.remove('cb-dark');
-      b.setAttribute('data-vscode-theme-name', 'IDE Light'); b.classList.remove('vscode-dark');
-      wbsSyncNativeTheme('light');
+      // 原生浅色/深色只同步官方外观，不注入 WorkDaddy 色板和壁纸。
+      h.classList.toggle('cb-dark', ${isDark ? 'true' : 'false'});
+      b.classList.toggle('vscode-dark', ${isDark ? 'true' : 'false'});
+      wbsSyncNativeTheme(${JSON.stringify(isDark ? 'dark' : 'light')});
     } else {
       if (${isDark ? 'true' : 'false'}) {
         // 深色主题：切官方深色模式（局部硬编码变量随之变深）
@@ -7296,6 +7352,13 @@ function handleApi(req, res) {
     });
   }
 
+  if (req.method === 'POST' && p === '/api/accounts/order') {
+    return readBody(req).then((body) => {
+      try { return json(res, 200, { ok: true, accountOrder: setAccountOrder(DATA_DIR, body) }); }
+      catch (error) { return json(res, 400, { ok: false, error: error.message }); }
+    });
+  }
+
   if (req.method === 'GET' && p === '/api/accounts') {
     const accounts = listAccounts(DATA_DIR);
     const cache = loadCheckinCache();
@@ -7321,11 +7384,11 @@ function handleApi(req, res) {
             const withUsage = enriched.map((account) => summaries[account.uid]
               ? Object.assign({}, account, { todayUsage: summaries[account.uid] })
               : account);
-            return json(res, 200, { ok: true, current: currentAccount(), primaryUid: primaryAccountStore.get(), accounts: withUsage });
+            return json(res, 200, { ok: true, current: currentAccount(), primaryUid: primaryAccountStore.get(), accountOrder: getAccountOrder(DATA_DIR), accounts: withUsage });
           })
           .catch((error) => {
             log('[credits-usage] 读取本地今日用量失败: ' + error.message);
-            return json(res, 200, { ok: true, current: currentAccount(), primaryUid: primaryAccountStore.get(), accounts: enriched });
+            return json(res, 200, { ok: true, current: currentAccount(), primaryUid: primaryAccountStore.get(), accountOrder: getAccountOrder(DATA_DIR), accounts: enriched });
           });
       });
   }

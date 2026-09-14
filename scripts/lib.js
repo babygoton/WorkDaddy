@@ -1215,6 +1215,7 @@ function updateMeta(dataDir, info, { preserveBinding = false } = {}) {
     authFileName,
     authDomain: info.authDomain || prev.authDomain || '',
     authIssuer: info.authIssuer || prev.authIssuer || '',
+    sort: Number.isSafeInteger(prev.sort) && prev.sort > 0 ? prev.sort : 0,
     firstSeen: prev.firstSeen || now,
     lastSeen: now,
   };
@@ -1298,6 +1299,30 @@ function resolveAuthTarget(dataDir, uid, authJson) {
   throw new Error('账号缺少已确认的登录文件名，拒绝猜测写入目标');
 }
 
+/** 账号展示顺序保存在 profile 元数据中，不改写登录备份格式。0 表示未排序，排在末尾。 */
+function getAccountOrder(dataDir) {
+  return { mode: readMeta(dataDir).accountOrderMode === 'fixed' ? 'fixed' : 'expiry' };
+}
+
+function setAccountOrder(dataDir, value) {
+  if (!value || !['expiry', 'fixed'].includes(value.mode) || !Array.isArray(value.uids) ||
+      value.uids.length > 10000 || value.uids.some(uid => typeof uid !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(uid)) ||
+      new Set(value.uids).size !== value.uids.length) throw new Error('无效的账号排序设置');
+  const current = new Set(listAccounts(dataDir).map(account => account.uid));
+  const meta = readMeta(dataDir);
+  for (const account of Object.values(meta.accounts)) {
+    if (account && typeof account === 'object') delete account.sort;
+  }
+  let sort = 0;
+  for (const uid of value.uids) {
+    if (!current.has(uid)) continue; // 弹窗打开后删除的账号不能复活。
+    meta.accounts[uid] = Object.assign({}, meta.accounts[uid], { sort: ++sort });
+  }
+  meta.accountOrderMode = value.mode;
+  writeMeta(dataDir, meta);
+  return getAccountOrder(dataDir);
+}
+
 /** 列出所有已备份账号（直接读备份文件提取展示字段，按最近刷新时间倒序） */
 function listAccounts(dataDir) {
   if (!ACTIVE_PROFILE.capabilities.accounts) return [];
@@ -1311,10 +1336,13 @@ function listAccounts(dataDir) {
   } catch (_) {
     /* 目录不存在 */
   }
+  const orderMeta = readMeta(dataDir);
   const list = names.map((n) => {
     const uid = n.replace(/\.info$/, '');
+    const savedSort = orderMeta.accounts[uid] && orderMeta.accounts[uid].sort;
     const item = {
       uid,
+      sort: Number.isSafeInteger(savedSort) && savedSort > 0 ? savedSort : 0,
       nickname: '',
       phone: '',
       uin: '',
@@ -1494,6 +1522,8 @@ function switchTo(dataDir, uid, log = () => {}) {
 }
 
 module.exports = {
+  getAccountOrder,
+  setAccountOrder,
   readModelsFile,
   writeModelsFile,
   writeModelBackup,

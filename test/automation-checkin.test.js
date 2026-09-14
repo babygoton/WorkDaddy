@@ -90,8 +90,8 @@ test('legacy implicit triggers and pending UI are removed; panel event is explic
   assert.match(ui,/\/api\/automations\/events/);
   const html=ui.slice(ui.indexOf('function checkinHtml'),ui.indexOf('function el(tag'));
   const ctx={WBS_PROFILE_IS_AI:false};vm.createContext(ctx);vm.runInContext(html,ctx);
-  assert.match(ctx.checkinHtml({}),/pending.*今日签到/);
-  assert.match(ctx.checkinHtml({checkin:{ok:true}}),/tag ok.*今日签到/);
+  assert.match(ctx.checkinHtml({}),/pending.*今日未签到/);
+  assert.match(ctx.checkinHtml({checkin:{ok:true}}),/tag ok.*今日已签到/);
   assert.doesNotMatch(ctx.checkinHtml({checkin:{ok:false,message:'bad'}}),/bad/);
 });
 

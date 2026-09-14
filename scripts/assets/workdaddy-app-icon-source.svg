@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" fill="none">
+  <!-- Square master, based on the website's original floating robot. -->
+  <defs>
+    <linearGradient id="background" x1="160" y1="0" x2="890" y2="1100" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#34363d"/><stop offset=".5" stop-color="#17181d"/><stop offset="1" stop-color="#050506"/>
+    </linearGradient>
+    <linearGradient id="shell-side" x1="490" y1="315" x2="885" y2="910" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#e3e6da"/><stop offset=".48" stop-color="#b5bdae"/><stop offset="1" stop-color="#8b9785"/>
+    </linearGradient>
+    <radialGradient id="shell" cx="0" cy="0" r="1" gradientTransform="translate(301 391) rotate(48) scale(762 909)" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#fffef7"/><stop offset=".48" stop-color="#eeeee9"/><stop offset=".83" stop-color="#dce0d4"/><stop offset="1" stop-color="#b7c0ac"/>
+    </radialGradient>
+    <linearGradient id="antenna" x1="461" y1="157" x2="506" y2="312" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#fffef7"/><stop offset=".6" stop-color="#eeeee9"/><stop offset="1" stop-color="#bac3b0"/>
+    </linearGradient>
+    <linearGradient id="eyes" x1="280" y1="420" x2="558" y2="610" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#465443"/><stop offset="1" stop-color="#687267"/>
+    </linearGradient>
+    <linearGradient id="rim" x1="311" y1="295" x2="796" y2="878" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#fff" stop-opacity=".85"/><stop offset="1" stop-color="#fff" stop-opacity=".04"/>
+    </linearGradient>
+    <filter id="robot-shadow" x="-30%" y="-30%" width="170%" height="180%">
+      <feDropShadow dx="8" dy="27" stdDeviation="22" flood-color="#24331f" flood-opacity=".25"/>
+    </filter>
+  </defs>
+  <rect width="1024" height="1024" fill="url(#background)"/>
+  <!-- Keep the compact rounded-square shell, single antenna, and two upright eyes. -->
+  <g transform="rotate(8 512 540)" filter="url(#robot-shadow)">
+    <rect x="448" y="201" width="47" height="124" rx="23.5" fill="url(#antenna)"/>
+    <circle cx="471.5" cy="188" r="42" fill="url(#antenna)"/>
+    <rect x="155" y="314" width="725" height="604" rx="155" fill="url(#shell-side)"/>
+    <rect x="116" y="292" width="720" height="604" rx="154" fill="url(#shell)"/>
+    <rect x="120" y="296" width="712" height="596" rx="150" stroke="url(#rim)" stroke-width="8"/>
+    <!-- Shift the original eyes up and left instead of changing the character. -->
+    <rect x="259" y="430" width="99" height="158" rx="49.5" fill="#fff" fill-opacity=".6"/>
+    <rect x="259" y="425" width="99" height="158" rx="49.5" fill="url(#eyes)"/>
+    <rect x="469" y="430" width="108" height="162" rx="54" fill="#fff" fill-opacity=".6"/>
+    <rect x="469" y="425" width="108" height="162" rx="54" fill="url(#eyes)"/>
+  </g>
+</svg>

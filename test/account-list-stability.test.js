@@ -173,3 +173,13 @@ test('account metadata refresh retains valid activity days while the server cach
   h.ctx.render({ accounts: [{ uid: 'a', nickname: 'a', activityStreak: { days: 0, status: 'ready' } }] });
   assert.equal(h.ctx.state.accounts[0].activityStreak.days, 0);
 });
+
+test('fixed sort remains stable through credit refresh and appends new accounts without a sort', () => {
+  const h = harness();
+  const a = { ...account('a', 10), sort: 2 }, b = { ...account('b', 20), sort: 1 };
+  h.ctx.render({ accountOrder: { mode: 'fixed' }, accounts: [a,b,account('c', 1)] });
+  assert.deepEqual(h.order(), ['b','a','c']);
+  h.ctx.render({ accountOrder: { mode: 'fixed' }, accounts: [a,b,account('c', 1),account('d', 0)] });
+  h.ctx.sortAccountsByCreditExpiry();
+  assert.deepEqual(h.order(), ['b','a','c','d']);
+});

@@ -24,15 +24,7 @@ test('primary selection is unique, persistent, validated and cleared on deletion
     assert.equal(store.get(), '', 'deleted selection cannot revive');
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
-test('primary account uses a theme-aware vector mark and a separate setting action', () => {
+test('account page no longer exposes primary selection or badges', () => {
   const source = fs.readFileSync(path.join(__dirname, '../scripts/inject.js'), 'utf8');
-  assert.ok(!source.includes('wbs-auto-examples-card'));
-  assert.ok(!source.includes('wbs-auto-protocol-copy'));
-  assert.ok(source.includes('id="wbs-auto-create"'));
-  assert.ok(source.includes('var PRIMARY_ACCOUNT_SVG ='));
-  assert.ok(source.includes('wbs-primary-mark'));
-  assert.ok(source.includes('var ops = primaryAction + (isCur'));
-  assert.ok(source.includes('item.hidden = selected'));
-  assert.match(source, /wbs-primary-mark\{[^}]*color:var\(--wb-button-primary-bg/);
-  assert.ok(!source.includes('wbs-primary-account'));
+  assert.doesNotMatch(source, /PRIMARY_ACCOUNT_SVG|data-primary-uid|wbs-primary-mark|primaryAction/);
 });

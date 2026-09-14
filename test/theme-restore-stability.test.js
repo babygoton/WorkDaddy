@@ -96,3 +96,27 @@ test('manually changing theme replaces the prior guard and repeating a theme reu
   flush();
   assert.equal(document.documentElement.getAttribute('data-theme'), 'light');
 });
+
+test('native dark removes custom styles and persists official dark appearance', async () => {
+  const { context, document, observers } = renderer();
+  vm.runInNewContext(await themeExpression('nebula'), context);
+  vm.runInNewContext(await themeExpression('dark'), context);
+  assert.equal(document.getElementById('wbs-theme-style'), null);
+  assert.equal(document.documentElement.getAttribute('data-wbs-theme'), '0');
+  assert.equal(document.documentElement.getAttribute('data-theme'), 'dark');
+  assert.equal(document.body.getAttribute('data-vscode-theme-name'), 'IDE Night');
+  assert.equal(JSON.parse(context.localStorage.getItem('agent-ui-theme')).theme, 'dark');
+  assert.equal(observers.filter(o => o.active).length, 1);
+});
+
+test('native theme choices cannot be shadowed by a custom theme file with the same id', () => {
+  const ctx = {
+    BUILTIN_THEMES: { default: { dark: false, colors: {} }, dark: { dark: true, colors: {} } },
+    THEMES_DIR: '/themes', path,
+    fs: { existsSync: () => true, readFileSync: () => '{"dark":false,"colors":{"--wb-bg-primary":"red"}}' },
+  };
+  const start = source.indexOf('function getTheme(id)');
+  vm.runInNewContext(source.slice(start, source.indexOf('\n/**', start)), ctx);
+  assert.equal(ctx.getTheme('dark'), ctx.BUILTIN_THEMES.dark);
+  assert.equal(ctx.getTheme('default'), ctx.BUILTIN_THEMES.default);
+});

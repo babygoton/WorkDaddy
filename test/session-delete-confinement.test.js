@@ -297,3 +297,19 @@ test('delete route removes recorded copies across accounts from both DB and file
   assert.deepEqual(fs.readdirSync(path.join(root, 'tasks')), ['unrelated']);
   assert.equal(lib.getAutoCopySession(root, 'target', 'unrelated').enabled, true);
 });
+
+test('configured data root may be a directory junction while child links still fail closed', (t) => {
+  const parent = tempDir(t), real = tempDir(t), outside = tempDir(t);
+  const root = path.join(parent, 'workbuddy');
+  try { fs.symlinkSync(real, root, process.platform === 'win32' ? 'junction' : 'dir'); }
+  catch (error) { if (['EPERM', 'EACCES'].includes(error.code)) return t.skip('symlinks unavailable'); throw error; }
+  fs.mkdirSync(path.join(real, 'tasks', 'remove'), { recursive: true });
+  fs.mkdirSync(path.join(real, 'tasks', 'keep'));
+  assert.equal(loadSessionDeleteHelpers().deleteSessionFiles(root, 'remove'), 1);
+  assert.ok(fs.lstatSync(root).isSymbolicLink());
+  assert.ok(fs.existsSync(path.join(real, 'tasks', 'keep')));
+  fs.mkdirSync(path.join(outside, 'remove'));
+  fs.symlinkSync(outside, path.join(real, 'workspace'), process.platform === 'win32' ? 'junction' : 'dir');
+  assert.throws(() => loadSessionDeleteHelpers().deleteSessionFiles(root, 'remove'), /managed/);
+  assert.ok(fs.existsSync(path.join(outside, 'remove')));
+});

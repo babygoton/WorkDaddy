@@ -36,9 +36,9 @@ test('failed draft backup prevents clearing and sending', async () => {
 test('a project composer cannot bypass navigation to New Task', async () => {
   const h=harness({project:true,draft:false});await h.run();assert.equal(h.calls[0],'navigate');assert.equal(h.calls.at(-1),'send');
 });
-test('current-account corner mark is removed and selecting primary explains its automation use',()=>{
+test('account corner and primary controls are absent',()=>{
  const ui=fs.readFileSync(require('node:path').join(__dirname,'../scripts/inject.js'),'utf8');
- assert.ok(!ui.includes('wbs-cur-marker'));assert.ok(ui.includes("toast('已设为主账号，自动化任务可据此识别主账号'"));
+ assert.ok(!ui.includes('wbs-cur-marker'));assert.ok(!ui.includes('data-primary-uid'));
 });
 
 test('typing during draft backup cancels without clearing the new text', async () => {
