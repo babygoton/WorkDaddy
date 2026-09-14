@@ -210,7 +210,7 @@ test('WorkDaddy-triggered reload injects on the new main execution context befor
   assert.match(yieldHelper, /await reloadPriority/);
   assert.match(yieldHelper, /pendingReloadInjection/);
   assert.match(yieldHelper, /await pending\.ready/);
-  const syncEnd = script.indexOf('\nconst MAX_SESSION_EXPORT_BYTES', syncStart);
+  const syncEnd = script.indexOf('\nconst MAX_SESSION_EXPORT_FILES', syncStart);
   const syncLineage = script.slice(syncStart, syncEnd);
   assert.ok((syncLineage.match(/await yieldAutoCopyToRenderer\(\)/g) || []).length >= 2, 'lineage scans and copies must pause for renderer reloads');
   assert.match(switchRoute, /const releaseRendererReload = body\.reload \? beginRendererReloadPriority\(\) : null/);

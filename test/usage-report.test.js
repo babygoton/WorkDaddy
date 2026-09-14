@@ -31,10 +31,10 @@ test('usage uses Beijing day and survives restart without duplicate reports', as
   assert.deepEqual(Object.keys(f.calls[0]).sort(), ['arch', 'installationId', 'osRelease', 'platform', 'profile', 'version']);
 });
 
-test('disabled telemetry and missing persistent identity never send', async t => {
+test('usage still sends with diagnostics disabled but requires persistent identity', async t => {
   const f = fixture(t); f.disable();
   await f.reporter.report();
-  assert.equal(f.calls.length, 0);
+  assert.equal(f.calls.length, 1);
   const missing = fixture(t, { installationId: () => null });
   await missing.reporter.report();
   assert.equal(missing.calls.length, 0);
@@ -82,7 +82,7 @@ test('separate profile reporters share the daily lock and a crashed lock recover
   assert.equal(fs.existsSync(lock), false);
 });
 
-test('disabling telemetry can abort the pending request and release its lock', async t => {
+test('explicit reporter cancellation can release its pending request lock', async t => {
   let aborted = false;
   const f = fixture(t, { send: (_body, signal) => new Promise(resolve => {
     signal.addEventListener('abort', () => { aborted = true; resolve({ status: 0 }); });

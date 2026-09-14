@@ -18,7 +18,7 @@ function createUsageActivity(options) {
   var doc = options.document, win = options.window;
   var alive = true, last = null, lastDay = '';
   function notify(event) {
-    if (!alive || !options.enabled() || doc.visibilityState !== 'visible' || !doc.hasFocus()) return;
+    if (!alive || doc.visibilityState !== 'visible' || !doc.hasFocus()) return;
     if (event && event.isTrusted !== true) return;
     var time = options.now();
     var day = new Date(time + 8 * 3600000).toISOString().slice(0, 10);
@@ -738,9 +738,9 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
   var WBS_ACCOUNT_MASK_KEY = 'workdaddy.account.mask.' + PROFILE_ID;
   var WBS_I18N_EN = {
     '自动签到提醒': 'Automatic check-in',
-    '默认关闭。开启后，会每天为已保存的账号签到。': 'Off by default. Enable to check in daily for your saved accounts.',
-    '自动签到可能违反官方规则，有封号风险。': 'Automatic check-in may break the official rules and get your accounts banned.',
-    '选择后不再提醒，可在「自动化」中修改。': 'This notice will not appear again after your choice. You can change it under Automations.',
+    '开启后自动为已保存账号签到。': 'Enable automatic check-in for your saved accounts.',
+    '请留意官方规则，自动操作可能影响账号使用。': 'Please follow the official rules; automated actions may affect your account access.',
+    '可随时在「自动化」中关闭。': 'You can turn this off at any time under Automations.',
     '开启自动签到': 'Enable automatic check-in',
     '保存失败，请重试。': 'Could not save. Please try again.',
 
@@ -869,7 +869,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '发现新版本': 'New version available', '立即更新': 'Update now', '有新版本可用，点击更新。': 'A new version is available. Click Update.', '下载中…': 'Downloading…', '正在打开…': 'Opening…', '安装程序已打开': 'Installer opened', '打开安装程序': 'Open installer', '安装中…': 'Installing…', '重启中…': 'Restarting…', '已完成': 'Completed', '重试更新': 'Retry update',
     '安全传输': 'Secure transfer', '选择内容': 'Select content', '选择账号': 'Select accounts', '选择目标账号': 'Select target account', '选择目标账号…': 'Select a target account…', '密码': 'Password', '请输入密码': 'Enter password', '密码不能为空': 'Password cannot be empty', '请至少选择一项': 'Select at least one item', '处理中…': 'Processing…', '新版文件请输入密码': 'Enter the password for the new file', '新版文件必须输入密码；旧版导出文件可留空。': 'New files require a password; older exports may be left blank.', '新版文件请输入密码；已有的相同短语会自动跳过。': 'Enter the password for the new file; duplicate phrases are skipped.',
     '电脑休眠': 'Computer sleep', '允许电脑休眠': 'Allow computer sleep', '持续禁止休眠': 'Keep awake', '所有会话结束允许休眠': 'Allow sleep when all sessions end', '系统默认，空闲后正常休眠': 'System default; sleep normally when idle', '保持唤醒，防黑屏锁屏': 'Stay awake to prevent screen lock', '任一会话运行中都保持唤醒': 'Stay awake while any session is running', '允许显示器休眠': 'Allow display sleep', '禁止休眠时，是否允许显示器单独黑屏': 'When sleep is blocked, allow the display to turn off',
-    '发送错误诊断': 'Send error diagnostics', '推荐开启': 'Recommended', '由环境变量控制': 'Controlled by environment variable', '默认开启 · 设置读取失败': 'Enabled by default · failed to read setting', '保存中…': 'Saving…', '发送脱敏错误诊断，并统计匿名安装数和日活（随机安装标识、系统、架构、版本、客户端类型及出口国家）。不包含账号、会话内容、Token 或 API Key；关闭后停止上报。': 'Sends redacted error diagnostics and anonymous installation and daily active counts (random installation ID, system, architecture, version, client type, and network country). No accounts, session content, tokens, or API keys. Turning this off stops reporting.', '查看错误诊断说明': 'View diagnostics details', '问题反馈': 'Report an issue', '会话监听日志': 'Session monitor log', '仅保存在当前页面内存': 'Stored only in this page memory',
+    '发送错误诊断': 'Send error diagnostics', '推荐开启': 'Recommended', '由环境变量控制': 'Controlled by environment variable', '默认开启 · 设置读取失败': 'Enabled by default · failed to read setting', '保存中…': 'Saving…', '此开关控制脱敏错误诊断。匿名安装数和日活独立统计（随机安装标识、系统、架构、版本、客户端类型及出口国家），不受此开关影响。不包含账号、会话内容、Token 或 API Key。': 'This switch controls redacted error diagnostics. Anonymous installation and daily active counts are collected independently (random installation ID, system, architecture, version, client type, and network country). No accounts, session content, tokens, or API keys.', '查看错误诊断说明': 'View diagnostics details', '问题反馈': 'Report an issue', '会话监听日志': 'Session monitor log', '仅保存在当前页面内存': 'Stored only in this page memory',
     '权限免打扰': 'Permission quiet mode', '异常中断会话': 'Continue interrupted sessions', '决策弹窗': 'Decision prompts', '用弹窗提问': 'Ask with a dialog', '确认弹窗自动允许': 'Auto-allow confirmation dialogs', '自动复制所有会话': 'Auto-copy all sessions', '会话消息索引': 'Message index', '引用消息文本': 'Quote message text', '选择登录方式': 'Choose a login method', '假退出': 'Soft logout', '无感登录': 'Seamless login',
     '未设置': 'Not set', '当前使用中': 'Currently active', '停止生成': 'Stop generating', '正常重启': 'Restart normally', '清空日志': 'Clear log', '开发者工具': 'Developer tools', '隐藏功能': 'Hidden feature', '卡死': 'Stuck', '任务': 'Task', '空间': 'Workspace', '全部': 'All', '今天': 'Today', '近 7 天': 'Last 7 days', '近 30 天': 'Last 30 days', '企业配额': 'Enterprise quota', '积分到期分布': 'Credit expiry distribution',
     '连接新服务…': 'Connecting to service…', '等待中': 'Waiting', '运行中': 'Running', '空闲': 'Idle', '已中断': 'Interrupted', '已停止': 'Stopped', '未确认': 'Unconfirmed', '等待确认': 'Waiting for confirmation', '等待新回复': 'Waiting for a new reply', '等待会话': 'Waiting for session', '等待允许': 'Waiting for approval', '整理中': 'Organizing', '恢复中': 'Restoring', '即将完成…': 'Finishing…', '已继续': 'Continued', '检测到会话异常中断，即将自动发送「': 'An interrupted session was detected. Sending “', '自动发送失败，请手动点击发送': 'Automatic send failed. Please click Send manually', '底层发送失败，请手动发送': 'Underlying send failed. Please send manually',
@@ -1114,10 +1114,15 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     'CodeBuddy 会话库读取失败:': 'CodeBuddy session DB read failed:',
     '拒绝在文件系统根目录创建会话空间': 'Refusing to create a session workspace at the filesystem root',
     '无效的会话 ID': 'Invalid session ID', '无效的会话文件目标': 'Invalid session file target',
-    '会话附件文件过多，无法导出': 'Too many session attachment files; cannot export', '会话附件超过 256 MB，无法导出': 'Session attachments exceed 256 MB; cannot export',
+    '会话附件发生变化，请重新导出': 'Session attachments changed; please export again',
+    '会话归档元数据过大': 'Session archive metadata is too large', '会话归档元数据无效': 'Invalid session archive metadata',
+    '会话归档不完整或已损坏': 'Session archive is incomplete or corrupted', '不是有效的 WorkDaddy 会话归档': 'Not a valid WorkDaddy session archive',
+    '会话归档包含多余数据': 'Session archive contains unexpected trailing data', '单次最多导出 100 个会话': 'Export at most 100 sessions at a time',
+    '无效的账号归属': 'Invalid account ownership',
+    '会话附件文件过多，无法导出': 'Too many session attachment files; cannot export',
     '会话归档包含无效 ID': 'Session archive contains an invalid ID', '会话归档包含无效附件': 'Session archive contains an invalid attachment',
     '会话归档附件文件过多': 'Session archive has too many attachment files', '会话归档包含重复附件路径': 'Session archive contains duplicate attachment paths',
-    '会话归档附件超过 256 MB': 'Session archive attachments exceed 256 MB', '会话归档缺少有效的账号归属': 'Session archive is missing a valid account owner',
+    '会话归档缺少有效的账号归属': 'Session archive is missing a valid account owner',
     '首次会话播种持久化失败': 'Initial session seeding failed to persist',
     '导入文件中没有快捷短语': 'No quick phrases found in the import file', '单次最多导入 {n} 条快捷短语': 'Import at most {n} quick phrases at a time',
     '没有可导入的快捷短语': 'No quick phrases to import', '暂存记录不存在:': 'Stashed record not found:', '暂存内容为空': 'Stash content is empty',
@@ -1602,7 +1607,11 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     }
     headers['X-WorkDaddy-Token'] = WBS_API_TOKEN;
     request.headers = headers;
+    delete request.responseType;
     return fetch(API + path, request).then(function (r) {
+      if (r.ok && opts.responseType === 'blob') return r.blob().then(function (blob) {
+        return { content: blob, mimeType: 'application/octet-stream', count: Number(r.headers.get('X-WorkDaddy-Count') || 0) };
+      });
       return r.json().then(function (j) {
         if (!r.ok || j.ok === false) {
           var error = new Error(j.error || '请求失败');
@@ -1786,7 +1795,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     var lifecycle = createBuildLifecycle();
     var registerDisposer = lifecycle.registerDisposer;
     var usageActivity = createUsageActivity({ document: document, window: window,
-      now: Date.now, enabled: function () { return WBS_DIAGNOSTICS_ENABLED; },
+      now: Date.now,
       send: function () { return api('/api/usage', { method: 'POST' }); } });
     registerDisposer(function () { usageActivity.destroy(); });
     var alive = true;
@@ -5931,7 +5940,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         '<button class="wbs-sess-bbtn wbs-sess-done" type="button" id="wbs-sess-done">取消</button>' +
         '</div>' +
         '</div>' +
-        '<input type="file" id="wbs-sess-import-file" accept=".json,application/json" style="display:none">' +
+        '<input type="file" id="wbs-sess-import-file" accept=".wds,.json,application/json,application/octet-stream" style="display:none">' +
         '<div class="wbs-sess-list" id="wbs-sess-list"></div>' +
         '</div>' +
         '<div class="wbs-modal-mask" id="wbs-sess-modal" style="display:none">' +
@@ -6377,11 +6386,12 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
           confirmText: '导出',
           hint: '将加密导出 ' + ids.length + ' 个会话及其本地消息附件。',
           onConfirm: function (password) { return api('/api/sessions/export', {
+            responseType: 'blob',
             method: 'POST',
             headers: { 'content-type': 'application/json' },
             body: JSON.stringify({ ids: ids, password: password }),
           }).then(function (result) {
-            downloadTransfer(result, 'WorkDaddy-sessions.json');
+            downloadTransfer(result, 'WorkDaddy-sessions-' + new Date().toISOString().slice(0, 10) + '.wds');
             toast('已导出 ' + result.count + ' 个会话（已加密）', false, root);
           }); },
         });
@@ -6394,7 +6404,9 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
           var file = event.target && event.target.files && event.target.files[0];
           event.target.value = '';
           if (!file) return;
-          readTransferFile(file).then(function (content) {
+          file.slice(0, 8).text().then(function (magic) {
+            return magic === 'WDS4\r\n\x1a\n' ? file : readTransferFile(file);
+          }).then(function (content) {
             var targetUid = sessionsState.uid === '' ? '' : (sessionsState.uid || sessionsState.currentUid || '');
             var target = sessionsState.accounts.find(function (account) { return account.uid === targetUid; });
             openSecureTransferModal({
@@ -6403,11 +6415,20 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
               confirmText: '导入',
               keepOpenOnSuccess: true,
               hint: targetUid ? '会话将导入到「' + ((target && target.nickname) || '当前账号') + '」。' : '会话将保留导出时的账号归属。',
-              onConfirm: function (password) { return api('/api/sessions/import', {
-                method: 'POST',
-                headers: { 'content-type': 'application/json' },
-                body: JSON.stringify({ content: content, password: password, targetUid: targetUid }),
-              }).then(function (result) {
+              onConfirm: function (password) {
+                var binary = content === file;
+                var body;
+                if (binary) {
+                  var metadata = new TextEncoder().encode(JSON.stringify({ password: password, targetUid: targetUid }));
+                  var prefix = new Uint8Array(4);
+                  new DataView(prefix.buffer).setUint32(0, metadata.length);
+                  body = new Blob([prefix, metadata, file], { type: 'application/octet-stream' });
+                } else body = JSON.stringify({ content: content, password: password, targetUid: targetUid });
+                return api('/api/sessions/import', {
+                  method: 'POST',
+                  headers: { 'content-type': binary ? 'application/octet-stream' : 'application/json' },
+                  body: body,
+                }).then(function (result) {
                 var count = Number(result.count || (result.imported && result.imported.length) || 0);
                 var lines = ['导入完成：成功 ' + count + ' 个会话'];
                 if (result.failed) lines.push('失败：' + result.failed + ' 个');
@@ -7360,7 +7381,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         '</div>' +
         '<div class="wbs-pcard wbs-telemetry-card" id="wbs-telemetry-card">' +
           '<div class="wbs-telemetry-head">' +
-            '<div class="wbs-telemetry-label"><span class="wbs-pcard-title">发送错误诊断</span><span class="wbs-telemetry-help" tabindex="0" aria-label="查看错误诊断说明"><svg viewBox="0 0 20 20" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="10" cy="10" r="8"/><path d="M8.4 7.6a1.8 1.8 0 1 1 2.8 1.45c-.75.48-1.2.85-1.2 1.75M10 13.7v.1"/></svg><span class="wbs-telemetry-tooltip" role="tooltip">发送脱敏错误诊断，并统计匿名安装数和日活（随机安装标识、系统、架构、版本、客户端类型及出口国家）。不包含账号、会话内容、Token 或 API Key；关闭后停止上报。</span></span></div>' +
+            '<div class="wbs-telemetry-label"><span class="wbs-pcard-title">发送错误诊断</span><span class="wbs-telemetry-help" tabindex="0" aria-label="查看错误诊断说明"><svg viewBox="0 0 20 20" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="10" cy="10" r="8"/><path d="M8.4 7.6a1.8 1.8 0 1 1 2.8 1.45c-.75.48-1.2.85-1.2 1.75M10 13.7v.1"/></svg><span class="wbs-telemetry-tooltip" role="tooltip">此开关控制脱敏错误诊断。匿名安装数和日活独立统计（随机安装标识、系统、架构、版本、客户端类型及出口国家），不受此开关影响。不包含账号、会话内容、Token 或 API Key。</span></span></div>' +
             '<div class="wbs-telemetry-ctrl"><span class="wbs-telemetry-reco">推荐开启</span>' +
             '<label class="wbs-switch wbs-telemetry-switch" title="发送经过脱敏的错误诊断"><input type="checkbox" id="wbs-telemetry-switch" aria-label="发送错误诊断"><span class="wbs-switch-slider"></span></label>' +
             '</div>' +
@@ -8121,9 +8142,9 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         mask.className = 'wbs-modal-mask wbs-modal-mask-panel wbs-checkin-risk-mask';
         mask.innerHTML = '<div class="wbs-modal wbs-checkin-risk-modal" role="dialog" aria-modal="true" aria-labelledby="wbs-checkin-risk-title" aria-describedby="wbs-checkin-risk-copy">' +
           '<div class="wbs-modal-title" id="wbs-checkin-risk-title">自动签到提醒</div>' +
-          '<div class="wbs-modal-body" id="wbs-checkin-risk-copy"><p>默认关闭。开启后，会每天为已保存的账号签到。</p>' +
-          '<p><strong>自动签到可能违反官方规则，有封号风险。</strong></p>' +
-          '<p>选择后不再提醒，可在「自动化」中修改。</p></div>' +
+          '<div class="wbs-modal-body" id="wbs-checkin-risk-copy"><p>开启后自动为已保存账号签到。</p>' +
+          '<p>请留意官方规则，自动操作可能影响账号使用。</p>' +
+          '<p>可随时在「自动化」中关闭。</p></div>' +
           '<div class="wbs-checkin-risk-error" role="alert" hidden></div>' +
           '<div class="wbs-modal-actions"><button class="wbs-modal-btn" type="button" data-checkin-choice="cancel">取消</button>' +
           '<button class="wbs-modal-btn wbs-modal-ok" type="button" data-checkin-choice="enable">开启自动签到</button></div></div>';
@@ -8165,9 +8186,11 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
           if (busy || closed) return;
           busy = true; cancel.disabled = true; enable.disabled = true; error.hidden = true;
           mask.querySelector('[role="dialog"]').focus();
-          api('/api/automations/checkin-consent', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ enabled: enabled }) }).then(function () {
+          api('/api/automations/checkin-consent', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ enabled: enabled }) }).then(function (result) {
+            if (!alive) return;
             checkinRiskDone = true;
             close();
+            if (result.enabled) window.dispatchEvent(new CustomEvent('workdaddy:accounts-updated'));
           }).catch(function () {
             if (closed || !alive) return;
             busy = false; cancel.disabled = false; enable.disabled = false;
@@ -12139,12 +12162,12 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     // Completion events update existing rows without replacing the account list or scroll position.
     var accountRefreshPending = false;
     listen(window, 'workdaddy:accounts-updated', function () {
-      if (!state.open || accountRefreshPending) return;
+      if (!alive || !state.open || accountRefreshPending) return;
       accountRefreshPending = true;
       setBuildTimeout(function () {
         accountRefreshPending = false;
         if (!state.open) return;
-        api('/api/accounts').then(function (data) { if (state.open) updateCheckinCells(data.accounts || []); }).catch(function () {});
+        api('/api/accounts').then(function (data) { if (alive && state.open) updateCheckinCells(data.accounts || []); }).catch(function () {});
       }, 150);
     });
 

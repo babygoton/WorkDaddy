@@ -153,6 +153,8 @@ const {
   requiredPassword,
   resolveArchiveTarget,
 } = require('./secure-transfer.js');
+const { writeSessionTransfer, readSessionTransfer, receiveSessionUpload } = require('./session-transfer.js');
+const { pipeline: transferPipeline } = require('node:stream/promises');
 const { replaceFileWithRetry } = require('./atomic-file-write.js');
 const { parseUiPortState, profileUiPortCandidates } = require('./ui-port.js');
 const {
@@ -352,8 +354,8 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 // 1.2.24：账号轮换恢复真实积分段消耗检测，仅推荐缓存中到期时间最近的可用账号。
 // 1.2.25：首页弹窗任务补齐成长/活动入口，并按 renderer 页面身份修复重连后的 pageReady 触发。
 // 1.2.26：无效账号备份不再显示可点击的切换按钮，导入路径拒绝写入无效认证数据。
-const DAEMON_VERSION = '1.2.40';
-const DAEMON_BUILD_ID = 'release-1.2.40-20260914-integrated-consents-import-credits';
+const DAEMON_VERSION = '1.2.42';
+const DAEMON_BUILD_ID = 'release-1.2.42-20260914-streaming-session-transfer';
 const usageReporter = createUsageReporter({ profile: PROFILE.id, version: DAEMON_VERSION });
 configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const HOST = '127.0.0.1';
@@ -3092,7 +3094,7 @@ function startAutomationRun(task, event = null) {
     if (!account || !account.uid) throw new Error('没有可用账号');
     const result = await claimDailyForUid(account.uid);
     appendRunLog('account:checkin:' + (result.skipped ? 'skipped' : result.ok ? 'success' : 'failed'));
-    if (result.ok && !result.skipped && cdp.connected) cdpSend('Runtime.evaluate', { expression: "window.dispatchEvent(new CustomEvent('workdaddy:accounts-updated'))" }).catch(() => {});
+    if (cdp.connected) cdpSend('Runtime.evaluate', { expression: "window.dispatchEvent(new CustomEvent('workdaddy:accounts-updated'))" }).catch(() => {});
     return result;
   }, httpRequest: automationHttpRequest, domAction: (op, locator, detail) => ['dom.click','dom.type','dom.clear','dom.press'].includes(op) ? withInput(() => automationDomAction(op, locator, { ...detail, isCancelled })) : automationDomAction(op, locator, { ...detail, isCancelled }), sessionSendCurrent, sessionWaitReply, getState: runScopedState, setState: setRunState, isCancelled, notifyToast: async (level, message, detail) => { const result = await runNotifier.show(level, message, detail); appendRunLog('notify:toast:' + level); return result; }, notifySession: async () => { throw new Error('主账号会话通知尚未启用，请先验证 WorkBuddy 会话 API'); }, log: appendRunLog };
   // 等「收起面板」完成后才开始执行任务（executeTask 内部第一步就点新建任务/聚焦 composer，
@@ -3101,7 +3103,14 @@ function startAutomationRun(task, event = null) {
     .then(() => executeTask(task, runDeps))
     .then(async (result) => { if (isCancelled()) throw new Error('任务已停止'); if (run.wasPanelOpen) await automationPanelSetOpen(true); if (run.status === 'running') { run.status = 'success'; run.result = result; run.finishedAt = Date.now(); } log('[automation-focus-diagnostics] automation:finish ' + JSON.stringify({ runId: id, status: run.status, error: run.error })); })
     .catch(async (error) => { if (run.wasPanelOpen && !run.superseded && (!task.trigger.restartOnNavigation || !event || event.navigationSerial === mainFrameNavigationSerial && event.pageSessionId === cdpPageSessionId)) await automationPanelSetOpen(true); run.status = isCancelled() ? 'cancelled' : 'failed'; run.error = run.superseded ? '页面已切换，重新检测新页面' : String(error && error.message || error); run.finishedAt = Date.now(); appendRunLog(run.error); log('[automation-focus-diagnostics] automation:finish ' + JSON.stringify({ runId: id, status: run.status, error: run.error })); })
-    .finally(async () => { try { await runNotifier.cleanup(); } finally { releaseRenderer(); resumeAutomationAfterNavigation(run); } });
+    .finally(async () => {
+      // Include cached/skipped results and refresh once after the whole run so an
+      // earlier account snapshot cannot leave the open panel with stale badges.
+      if (task.id === 'daily-account-checkin' && cdp.connected) {
+        cdpSend('Runtime.evaluate', { expression: "window.dispatchEvent(new CustomEvent('workdaddy:accounts-updated'))" }).catch(() => {});
+      }
+      try { await runNotifier.cleanup(); } finally { releaseRenderer(); resumeAutomationAfterNavigation(run); }
+    });
   return run;
 }
 
@@ -3829,7 +3838,6 @@ async function syncAutoCopyLineage(lineageId, targetUid) {
   return { members: live.length, synced, failedFiles, sourceId: latest.id, targetIds, targetPresent };
 }
 
-const MAX_SESSION_EXPORT_BYTES = 256 * 1024 * 1024;
 const MAX_SESSION_EXPORT_FILES = 20000;
 const MAX_SESSION_IMPORT_ERRORS = 20;
 const MAX_SESSION_IMPORT_ERROR_LENGTH = 240;
@@ -3851,7 +3859,6 @@ function archiveRelativePath(wbHome, target) {
 function collectSessionArchiveFiles(wbHome, sessionId) {
   if (!isValidSessionId(sessionId)) throw new Error('无效的会话 ID');
   const files = [];
-  let totalBytes = 0;
   const collect = (target) => {
     let stat;
     try { stat = fs.lstatSync(target); }
@@ -3867,14 +3874,10 @@ function collectSessionArchiveFiles(wbHome, sessionId) {
     }
     if (!stat.isFile()) return;
     if (files.length >= MAX_SESSION_EXPORT_FILES) throw new Error('会话附件文件过多，无法导出');
-    if (totalBytes + stat.size > MAX_SESSION_EXPORT_BYTES) throw new Error('会话附件超过 256 MB，无法导出');
     const relative = archiveRelativePath(wbHome, target);
     // Validate every exported path with the same mapper used during import.
     remapSessionArchivePath(relative, sessionId, sessionId);
-    const content = fs.readFileSync(target);
-    totalBytes += content.length;
-    if (totalBytes > MAX_SESSION_EXPORT_BYTES) throw new Error('会话附件超过 256 MB，无法导出');
-    files.push({ path: relative, data: content.toString('base64') });
+    files.push({ path: relative, source: target, size: stat.size });
   };
 
   const projects = path.join(wbHome, 'projects');
@@ -3920,7 +3923,6 @@ function restoreSessionArchiveFiles(wbHome, sessionArchive, newId) {
   if (!isValidSessionId(oldId) || !isValidSessionId(newId)) throw new Error('会话归档包含无效 ID');
   const sourceFiles = Array.isArray(sessionArchive.files) ? sessionArchive.files : [];
   if (sourceFiles.length > MAX_SESSION_EXPORT_FILES) throw new Error('会话归档附件文件过多');
-  let totalBytes = 0;
   const targets = new Set();
   for (const entry of sourceFiles) {
     if (!entry || typeof entry.path !== 'string' || typeof entry.data !== 'string' || entry.data.length % 4 === 1 || !/^[A-Za-z0-9+/]*={0,2}$/.test(entry.data)) {
@@ -3931,12 +3933,26 @@ function restoreSessionArchiveFiles(wbHome, sessionArchive, newId) {
     if (targets.has(target)) throw new Error('会话归档包含重复附件路径');
     targets.add(target);
     const content = Buffer.from(entry.data, 'base64');
-    totalBytes += content.length;
-    if (totalBytes > MAX_SESSION_EXPORT_BYTES) throw new Error('会话归档附件超过 256 MB');
     ensureArchiveParentNoFollow(wbHome, target);
     fs.writeFileSync(target, content, { flag: 'wx', mode: 0o600 });
   }
   return sourceFiles.length;
+}
+
+// Only readSessionTransfer creates these private staging paths. Never accept them
+// from a JSON API payload or an unverified archive entry.
+async function restoreStagedSessionArchiveFiles(wbHome, archive, newId) {
+  const oldId = String(archive.record.id);
+  const targets = new Set();
+  for (const entry of archive.files) {
+    const relative = remapSessionArchivePath(entry.path, oldId, newId);
+    const target = resolveArchiveTarget(wbHome, relative);
+    if (targets.has(target)) throw new Error('会话归档包含重复附件路径');
+    targets.add(target);
+    ensureArchiveParentNoFollow(wbHome, target);
+    await fs.promises.copyFile(entry.source, target, fs.constants.COPYFILE_EXCL);
+    await fs.promises.chmod(target, 0o600);
+  }
 }
 
 const SESSION_COPY_COLUMNS = [
@@ -4001,13 +4017,15 @@ async function exportSessions(ids, password) {
     return { record, files: collectSessionArchiveFiles(wbHome, id) };
   });
   if (!sessions.length) throw new Error('没有可导出的会话');
-  const payload = { exportType: 'WorkDaddy-sessions', version: 1, sessions };
-  const content = createEncryptedExport('sessions', payload, password);
-  return {
-    filename: 'WorkDaddy-会话导出-' + new Date().toISOString().slice(0, 10) + '.json',
-    content,
-    count: sessions.length,
-  };
+  const directory = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'workdaddy-session-export-'));
+  const file = path.join(directory, 'sessions.wds');
+  try {
+    await writeSessionTransfer(file, sessions, password);
+    return { file, directory, count: sessions.length };
+  } catch (error) {
+    await fs.promises.rm(directory, { recursive: true, force: true });
+    throw error;
+  }
 }
 
 function validImportedSessionUid(value) {
@@ -4017,7 +4035,10 @@ function validImportedSessionUid(value) {
 }
 
 async function importSessions(content, password, targetUid) {
-  const payload = openEncryptedExport(content, 'sessions', password);
+  return importSessionArchives(openEncryptedExport(content, 'sessions', password), targetUid);
+}
+
+async function importSessionArchives(payload, targetUid, staged = false) {
   const archives = Array.isArray(payload.sessions) ? payload.sessions : [];
   if (!archives.length) throw new Error('导入文件中没有会话数据');
   if (archives.length > 100) throw new Error('单次最多导入 100 个会话');
@@ -4034,7 +4055,8 @@ async function importSessions(content, password, targetUid) {
     catch (error) { errors.push(error.message); continue; }
     const newId = crypto.randomUUID();
     try {
-      restoreSessionArchiveFiles(PROFILE.dataRoot, archive, newId);
+      if (staged) await restoreStagedSessionArchiveFiles(PROFILE.dataRoot, archive, newId);
+      else restoreSessionArchiveFiles(PROFILE.dataRoot, archive, newId);
       await insertCopiedSession(record, ownerUid, newId);
       imported.push({ sourceId: oldId, id: newId, uid: ownerUid });
     } catch (error) {
@@ -6766,6 +6788,17 @@ function decryptLegacyExport(b64, password) {
   return Buffer.concat([decipher.update(data), decipher.final()]).toString('utf8');
 }
 
+function applyCheckinConsent(enabled) {
+  const pending = readCheckinConsent(DATA_DIR).shouldPrompt;
+  const choice = decideCheckinConsent(DATA_DIR, enabled);
+  if (!pending || !enabled || !choice.enabled) return choice;
+  const task = readAutomations(DATA_DIR).find((item) => item.id === 'daily-account-checkin' && item.enabled);
+  if (!task) return choice;
+  const running = Array.from(automationRuns.values()).find((run) => run.taskId === task.id && run.status === 'running');
+  const run = running || startAutomationRun(task);
+  return { ...choice, run: automationPublicRun(run) };
+}
+
 function handleApi(req, res) {
   const url = new URL(req.url, `http://${req.headers.host || HOST}`);
   const p = url.pathname;
@@ -6896,7 +6929,7 @@ function handleApi(req, res) {
     }
     return readBody(req).then((body) => {
       if (!body || typeof body.enabled !== 'boolean') return json(res, 400, { ok: false, error: 'Invalid check-in choice' });
-      try { return json(res, 200, decideCheckinConsent(DATA_DIR, body.enabled)); }
+      try { return json(res, 200, applyCheckinConsent(body.enabled)); }
       catch (_) { return json(res, 500, { ok: false, error: 'Unable to save check-in choice' }); }
     });
   }
@@ -7347,7 +7380,6 @@ function handleApi(req, res) {
       }
       try {
         const enabled = setTelemetryEnabled(body.enabled);
-        if (!enabled) usageReporter.cancel();
         diagnosticsState = { value: enabled, checkedAt: Date.now() };
         return json(res, 200, { ok: true, enabled, managed: true });
       } catch (e) {
@@ -8220,23 +8252,49 @@ function handleApi(req, res) {
     const job = autoCopyJobs.get(url.searchParams.get('id') || '');
     return job ? json(res, 200, { ok: true, job: publicAutoCopyJob(job) }) : json(res, 404, { ok: false, error: '自动复制任务不存在' });
   }
-  // 加密导出会话及其受管消息附件：POST /api/sessions/export { ids, password }
+  // Stream the completed encrypted archive; clean up even if the download disconnects.
   if (req.method === 'POST' && p === '/api/sessions/export') {
     return readBody(req).then(async (body) => {
+      let result;
       try {
-        const result = await exportSessions(body && body.ids, body && body.password);
+        result = await exportSessions(body && body.ids, body && body.password);
+        if (res.destroyed) return;
+        const headers = {
+          'Content-Type': 'application/octet-stream',
+          'Content-Length': fs.statSync(result.file).size,
+          'Content-Disposition': 'attachment; filename="WorkDaddy-sessions.wds"',
+          'X-WorkDaddy-Count': String(result.count),
+          'Access-Control-Expose-Headers': 'X-WorkDaddy-Count',
+          'Cache-Control': 'no-store',
+        };
+        if (res.__wbsCorsOrigin) { headers['Access-Control-Allow-Origin'] = res.__wbsCorsOrigin; headers.Vary = 'Origin'; }
+        res.writeHead(200, headers);
+        await transferPipeline(fs.createReadStream(result.file), res);
         log(`[sessions-export] 已导出 ${result.count} 个会话`);
-        return json(res, 200, { ok: true, ...result });
       } catch (error) {
-        return json(res, 400, { ok: false, error: error.message });
+        if (!res.headersSent && !res.destroyed) json(res, 400, { ok: false, error: error.message });
+        else res.destroy();
+      } finally {
+        if (result) await fs.promises.rm(result.directory, { recursive: true, force: true });
       }
     });
   }
-  // 加密导入会话；targetUid 缺省时保留归档中的账号归属。
+  // Binary uploads carry a small length-prefixed JSON request followed by the
+  // archive. Legacy v2/v3 JSON imports keep their existing authenticated API.
   if (req.method === 'POST' && p === '/api/sessions/import') {
-    return readBody(req).then(async (body) => {
+    return (async () => {
+      let directory;
       try {
-        const result = await importSessions(body && body.content, body && body.password, body && body.targetUid);
+        let result;
+        if (String(req.headers['content-type'] || '').split(';')[0] === 'application/octet-stream') {
+          directory = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'workdaddy-session-import-'));
+          const body = await receiveSessionUpload(req, directory);
+          const payload = await readSessionTransfer(body.file, body.password, path.join(directory, 'staged'));
+          result = await importSessionArchives(payload, body.targetUid, true);
+        } else {
+          const body = await readBody(req);
+          result = await importSessions(body && body.content, body && body.password, body && body.targetUid);
+        }
         log(`[sessions-import] 已导入 ${result.imported.length} 个会话，失败 ${result.failed} 个`);
         return json(res, 200, {
           ok: true,
@@ -8247,8 +8305,10 @@ function handleApi(req, res) {
         });
       } catch (error) {
         return json(res, 400, { ok: false, error: error.message });
+      } finally {
+        if (directory) await fs.promises.rm(directory, { recursive: true, force: true });
       }
-    });
+    })();
   }
   // 复制会话：POST /api/sessions/copy { ids, targetUid }（保留原会话，复制记录+消息文件到目标账号）
   if (req.method === 'POST' && p === '/api/sessions/copy') {

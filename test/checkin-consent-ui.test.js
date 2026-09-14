@@ -10,6 +10,7 @@ const flush = () => new Promise(resolve => setImmediate(resolve));
 function harness() {
   const documentListeners = new Map(), disposers = [], calls = [];
   let children = [], pending = true, fail = false;
+  const events = [];
   function element() {
     return { listeners: {}, disabled: false, hidden: true, isConnected: true,
       addEventListener(type, fn) { this.listeners[type] = fn; },
@@ -29,17 +30,17 @@ function harness() {
     addEventListener(type, fn) { documentListeners.set(type, fn); },
     removeEventListener(type) { documentListeners.delete(type); },
   };
-  const context = { document, alive: true, CAPS: { accounts: true, checkin: true }, state: { open: true },
+  const context = { window: { dispatchEvent: e => events.push(e.type) }, CustomEvent: function (type) { this.type = type; }, document, alive: true, CAPS: { accounts: true, checkin: true }, state: { open: true },
     panel: { appendChild(mask) { children.push(mask); } }, registerDisposer: fn => disposers.push(fn),
     api: async (route, options) => {
       calls.push({ route, options });
       if (fail) throw new Error('offline');
       if (options) pending = false;
-      return { shouldPrompt: pending };
+      return { shouldPrompt: pending, enabled: options ? JSON.parse(options.body).enabled : false };
     },
   };
   vm.createContext(context); vm.runInContext(block, context);
-  return { context, calls, documentListeners, disposers, masks: () => children, fail: value => { fail = value; } };
+  return { context, calls, events, documentListeners, disposers, masks: () => children, fail: value => { fail = value; } };
 }
 for (const choice of ['cancel', 'enable']) test(`${choice} saves once; reopening and double clicks do not repeat`, async () => {
   const h = harness();
@@ -48,6 +49,7 @@ for (const choice of ['cancel', 'enable']) test(`${choice} saves once; reopening
   const button = h.masks()[0].querySelector(`[data-checkin-choice="${choice}"]`);
   button.listeners.click(); button.listeners.click(); await flush();
   assert.equal(JSON.parse(h.calls[1].options.body).enabled, choice === 'enable');
+  assert.deepEqual(h.events, choice === 'enable' ? ['workdaddy:accounts-updated'] : []);
   assert.equal(h.calls.length, 2); assert.equal(h.masks().length, 0); assert.equal(h.documentListeners.size, 0);
   h.context.showCheckinRiskOnOpen(); await flush(); assert.equal(h.calls.length, 2);
 });

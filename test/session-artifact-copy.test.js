@@ -121,7 +121,7 @@ test('switch lineage synchronization repairs every legacy copy using the newest 
     sqliteQuery: async (_, params) => [{ id: params[0], user_id: params[1], updated_at: 1 }],
     sqliteRun: async () => {},
   });
-  vm.runInNewContext(source.slice(source.indexOf('async function syncAutoCopyLineage('), source.indexOf('const MAX_SESSION_EXPORT_BYTES')), h);
+  vm.runInNewContext(source.slice(source.indexOf('async function syncAutoCopyLineage('), source.indexOf('const MAX_SESSION_EXPORT_FILES')), h);
   const result = await h.syncAutoCopyLineage('known-lineage', 'account-c');
   assert.equal(result.sourceId, 'copy');
   assert.equal(result.failedFiles, 0);

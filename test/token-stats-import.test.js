@@ -44,7 +44,7 @@ function transferHelpers(root, sessionAccounts) {
     vm.runInNewContext(source.slice(a, b) + suffix, context);
   }
   load('function isValidSessionId(', '\n}\n', '\n}');
-  load('const MAX_SESSION_EXPORT_BYTES', '\nfunction collectSessionArchiveFiles(');
+  load('const MAX_SESSION_EXPORT_FILES', '\nfunction collectSessionArchiveFiles(');
   load('function ensureArchiveParentNoFollow(', '\nasync function copySessionRecord(');
   load('async function copySessionFiles(', '\nfunction sessionContentMtime(');
   return context;

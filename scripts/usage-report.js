@@ -1,11 +1,12 @@
 'use strict';
 
-// Anonymous installation / daily-active counts only. No account or renderer data.
+// Anonymous installation / daily-active counts only. Independent of error diagnostics.
+// No account or renderer data.
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const https = require('https');
-const { telemetryEnabled, persistentInstallationId } = require('./sentry-report.js');
+const { persistentInstallationId } = require('./sentry-report.js');
 const { sharedDataDir } = require('./profiles.js');
 const ENDPOINT = 'https://workdaddy.dev/api/track';
 const RETRY_MS = 6 * 3600000;
@@ -36,13 +37,11 @@ function createUsageReporter(options) {
   const file = path.join(dir, 'usage-state.json');
   const lock = path.join(dir, '.usage-report.lock');
   const now = options.now || Date.now;
-  const enabled = options.enabled || telemetryEnabled;
   const getId = options.installationId || persistentInstallationId;
   const send = options.send || sendUsage;
   let pending = null, controller = null;
 
   async function attempt() {
-    if (!enabled()) return;
     const id = getId();
     if (!id) return; // An ephemeral ID would inflate the installation count.
     let locked = false, temp = '';
@@ -75,7 +74,6 @@ function createUsageReporter(options) {
       };
       state.attempts++; state.lastAttempt = time;
       save(); // Persist the attempt BEFORE sending, including across restarts.
-      if (!enabled()) return;
       controller = new AbortController();
       const result = await send({ installationId: id, profile: options.profile,
         version: options.version, platform: process.platform, arch: process.arch,

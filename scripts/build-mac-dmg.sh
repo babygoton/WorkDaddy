@@ -56,7 +56,7 @@ chmod 644 "$APP/Contents/Resources/AppIcon.icns"
 echo "==> 应用图标已同步（背景 #e1e1e1）"
 
 # 2) 只覆盖前端代码（保留壳的其余一切：launcher/Info.plist/builtin/node_modules/theme-audit.js）
-for f in daemon.js toast-runtime.js toast-options.js primary-account.js completion-report.js automation-runtime.js automation-packages.js automation-compatibility.js automation-transfer.js automation-zip.js automation.js automation-picker.js token-refresh.js session-db.js third-party-models.js secure-transfer.js windows-process-boundary.js workbuddy-compat.js inject.js theme-patches.js theme-text-shadow.js theme-vars.js credit-segments.js credit-resource-queries.js credit-request-usage.js credit-history-sync.js credit-usage-store.js credit-rotation.js token-stats.js growth-active.js atomic-file-write.js ui-port.js checkin-result.js checkin-consent.js lib.js profiles.js workbuddy-target.js cdp-targets.js sentry-report.js usage-report.js install.sh relaunch-with-cdp.sh uninstall.sh apply-update.sh; do
+for f in daemon.js toast-runtime.js toast-options.js primary-account.js completion-report.js automation-runtime.js automation-packages.js automation-compatibility.js automation-transfer.js automation-zip.js automation.js automation-picker.js token-refresh.js session-db.js third-party-models.js secure-transfer.js session-transfer.js windows-process-boundary.js workbuddy-compat.js inject.js theme-patches.js theme-text-shadow.js theme-vars.js credit-segments.js credit-resource-queries.js credit-request-usage.js credit-history-sync.js credit-usage-store.js credit-rotation.js token-stats.js growth-active.js atomic-file-write.js ui-port.js checkin-result.js checkin-consent.js lib.js profiles.js workbuddy-target.js cdp-targets.js sentry-report.js usage-report.js install.sh relaunch-with-cdp.sh uninstall.sh apply-update.sh; do
   [ -f "scripts/$f" ] && cp "scripts/$f" "$APP/Contents/Resources/scripts/$f"
 done
 # Injection reads the wordmark at runtime; keep brand assets in both profiles.
@@ -95,6 +95,7 @@ chmod 644 "$APP/Contents/Resources/scripts/session-db.js" \
   "$APP/Contents/Resources/scripts/token-refresh.js" \
   "$APP/Contents/Resources/scripts/workbuddy-target.js" \
   "$APP/Contents/Resources/scripts/secure-transfer.js" \
+  "$APP/Contents/Resources/scripts/session-transfer.js" \
   "$APP/Contents/Resources/scripts/windows-process-boundary.js" \
   "$APP/Contents/Resources/scripts/credit-request-usage.js" \
   "$APP/Contents/Resources/scripts/credit-history-sync.js" \

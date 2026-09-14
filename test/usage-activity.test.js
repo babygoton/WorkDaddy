@@ -25,7 +25,7 @@ test('foreground activity is throttled, rolls over at Beijing midnight and clean
   doc.visibilityState = 'hidden'; activity.notify();
   doc.visibilityState = 'visible'; doc.hasFocus = () => false; activity.notify();
   doc.hasFocus = () => true; enabled = false; activity.notify();
-  assert.equal(calls, 2);
+  assert.equal(calls, 3);
   enabled = true; activity.notify();
   assert.equal(calls, 3);
   activity.destroy();
@@ -42,4 +42,12 @@ test('usage route retains local authorization and About describes anonymous coun
   assert.doesNotMatch(publicPaths[1], /\/api\/usage/);
   assert.match(inject, /registerDisposer\(function \(\) \{ usageActivity.destroy\(\); \}\)/);
   assert.match(inject, /匿名安装数和日活/);
+});
+
+test('diagnostic settings do not gate activity signals or cancel usage requests', () => {
+  const daemon = fs.readFileSync(path.join(__dirname, '../scripts/daemon.js'), 'utf8');
+  const inject = fs.readFileSync(path.join(__dirname, '../scripts/inject.js'), 'utf8');
+  const setup = inject.slice(inject.indexOf('var usageActivity ='), inject.indexOf('var alive = true;', inject.indexOf('var usageActivity =')));
+  assert.doesNotMatch(setup, /WBS_DIAGNOSTICS_ENABLED/);
+  assert.doesNotMatch(daemon, /usageReporter\.cancel\(/);
 });
