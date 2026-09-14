@@ -143,6 +143,7 @@ const {
 } = require('./sentry-report.js');
 const { createUsageReporter } = require('./usage-report.js');
 const { getProfile, profileDataDir, listInstalledModelSources } = require('./profiles.js');
+const plat = require('./platform.js');
 const { readWorkBuddyTarget } = require('./workbuddy-target.js');
 const { classifyTarget, looksLikeWbFamilyTarget, isTargetForProfile } = require('./cdp-targets.js');
 const { createSessionDb, normalizeSessionIdBatch, parameterCount } = require('./session-db.js');
@@ -359,7 +360,11 @@ const DAEMON_BUILD_ID = 'release-1.2.42-20260914-streaming-session-transfer';
 const usageReporter = createUsageReporter({ profile: PROFILE.id, version: DAEMON_VERSION });
 configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const HOST = '127.0.0.1';
-const IS_WIN = process.platform === 'win32'; // Windows 移植：平台分支开关（macOS 行为保持不变）
+// 平台分支开关。上游历史代码把「非 Windows」一律当 macOS，Linux 适配时拆成
+// IS_MAC / IS_LINUX 两个显式常量，避免 Linux 走进 /Applications、osascript 等分支。
+const IS_WIN = process.platform === 'win32';
+const IS_MAC = process.platform === 'darwin';
+const IS_LINUX = process.platform === 'linux';
 // Windows 安装目录（install.ps1 铺、launcher 用、更新替换目标），对应 macOS 的 /Applications/WorkDaddy.app
 const WORKDADDY_INSTALL_NAME = PROFILE.id === 'workbuddy-ai' ? 'WorkDaddy AI' : 'WorkDaddy';
 const WORKDADDY_DIR_WIN = process.env.WBSWITCH_APP_DIR || path.resolve(__dirname, '..');
@@ -702,6 +707,16 @@ function expectedUpdateSha256() {
 
 // 检查更新：请求 Releases API，比对版本，结果写缓存（内存 + 文件）
 function checkUpdate(force) {
+  // Linux 暂无官方发布包（上游只有 .dmg / .exe）。直接返回「无更新」，
+  // 避免面板持续弹红点、也避免误下载 macOS 的 dmg 覆盖本机安装。
+  if (IS_LINUX) {
+    updateState.status = 'idle';
+    updateState.hasUpdate = false;
+    updateState.latest = DAEMON_VERSION;
+    updateState.message = '当前平台（Linux）暂不支持自动更新，请用 git pull 手动更新';
+    updateState.checkedAt = Date.now();
+    return Promise.resolve(updateState);
+  }
   if (!force && updateTimer) {
     // 有缓存且未过期且非强制 → 直接返回缓存（面板高频打开不重复请求）
     if (Date.now() - updateState.checkedAt < UPDATE_CHECK_INTERVAL && updateState.latest) {
@@ -868,7 +883,7 @@ function downloadUpdateInternal() {
         return;
       }
       const contentType = String(res.headers['content-type'] || '').toLowerCase();
-      if (!IS_WIN && /text\/html|application\/json/.test(contentType)) {
+      if (IS_MAC && /text\/html|application\/json/.test(contentType)) {
         res.resume();
         return failDownload(new Error(`下载响应不是 DMG (content-type=${contentType})`));
       }
@@ -977,7 +992,7 @@ function validateUpdateArtifact(file, expectSha = null) {
   if (updateState.dmgSize > 0 && stat.size !== updateState.dmgSize) {
     return { ok: false, reason: `安装包大小不匹配 (${stat.size} != ${updateState.dmgSize})` };
   }
-  if (!IS_WIN) {
+  if (IS_MAC) {
     let probe;
     try {
       probe = spawnSync('hdiutil', ['imageinfo', file], {
@@ -1683,7 +1698,13 @@ function runPendingReloadInjection(reason, executionContextId) {
 async function findCdpEndpoint() {
   // profile 已由启动器绑定时不能扫描其他产品的端口；CodeBuddy Agents/Editor
   // 共用 Browser 标识，跨 profile 扫描会把注入发到另一端。
-  const ports = process.env.WBSWITCH_PROFILE
+  //
+  // Linux 例外：端口常被其他服务占用（本机 9222 就被别的进程占着），
+  // 启动脚本会把 App 改派到 9223/9224…，此时若只盯 profile 默认端口就会
+  // 连到兄弟实例的页面上。因此 Linux 允许扫描候选端口，但归属判定仍是严格
+  // profile 匹配（页面 URL 必须命中本 profile 的安装目录/登录域名），
+  // 不会退化成「只看标题」的猜测，也就不会误连兄弟端。
+  const ports = (process.env.WBSWITCH_PROFILE && !IS_LINUX)
     ? [CDP_PORT_HINT, readCdpPortFile()].filter((p, i, a) => validCdpPort(p) && a.indexOf(p) === i)
     : cdpPortCandidates();
   for (const p of ports) {
@@ -1696,7 +1717,7 @@ async function findCdpEndpoint() {
       const list = await listRes.json();
       const targets = Array.isArray(list) ? list : [];
       const browserInfo = [version.Browser, version['User-Agent']].filter(Boolean).join(' ');
-      const belongsToWorkBuddy = /workbuddy|codebuddy/i.test(browserInfo);
+      const belongsToWorkBuddy = /workbuddy|codebuddy/i.test(browserInfo) || (IS_LINUX && targetsBelongToProfile(targets));
       if (belongsToWorkBuddy && targets.some(isWorkBuddyCdpTarget)) {
         if (readCdpPortFile() !== p) writeCdpPortFile(p);
         return p;
@@ -1709,6 +1730,33 @@ async function findCdpEndpoint() {
     }
   }
   return null;
+}
+
+/**
+ * Linux 兜底：Electron 的 /json/version 里 Browser 字段固定是 "Chrome/xxx"，
+ * 应用名只出现在 User-Agent（且部分打包方式会省略）。因此额外接受
+ * 「页面 URL 命中当前 profile 的强信号」作为归属证据 —— classifyTarget 只认
+ * 应用安装路径（/opt/WorkBuddy/、workbuddy-ai/）与登录域名，不会退化成裸标题猜测，
+ * 所以不会误连其他 Chromium 应用。
+ */
+function targetsBelongToProfile(targets) {
+  const installRoot = WORKBUDDY_APP ? path.resolve(WORKBUDDY_APP) : '';
+  const prefix = installRoot && (installRoot.endsWith('/') ? installRoot : installRoot + '/');
+  return targets.some((target) => {
+    if (!target || target.type !== 'page') return false;
+    if (classifyTarget(target.url, target.title, target.description) === PROFILE.id) return true;
+    // 安装目录包裹：企业版/自定义安装路径下，页面 URL 里可能不含 workbuddy 字样，
+    // 只要 file:// 页面确实来自当前 profile 可执行文件所在目录，即认定归属。
+    if (!prefix) return false;
+    const url = String(target.url || '');
+    if (!/^file:/i.test(url)) return false;
+    try {
+      const pagePath = decodeURIComponent(new URL(url).pathname);
+      return pagePath === installRoot || pagePath.startsWith(prefix);
+    } catch (_) {
+      return false;
+    }
+  });
 }
 
 function isWorkBuddyCdpTarget(target) {
@@ -2199,11 +2247,26 @@ function autoFocusSessionByTitle(sourceTitle, logFn) {
 }
 
 const WORKBUDDY_TARGET = IS_WIN ? null : readWorkBuddyTarget({ dataDir: DATA_DIR, profileId: PROFILE.id });
-const WORKBUDDY_APP = IS_WIN ? '' : (WORKBUDDY_TARGET.binary
-  ? path.resolve(WORKBUDDY_TARGET.binary, '../../..')
-  : PROFILE.appPath);
-const WORKBUDDY_BINARY = IS_WIN ? '' : `${WORKBUDDY_APP}/Contents/MacOS/Electron`;
-const WORKBUDDY_APP_NAME = path.basename(WORKBUDDY_APP).replace(/\.app$/i, '');
+// 三平台的应用标识（WORKBUDDY_BINARY 用于 pgrep/pkill 精确匹配与直接启动）：
+//   macOS  : 二进制在 <X.app>/Contents/MacOS/Electron，WORKBUDDY_APP 是 .app 包路径
+//   Linux  : 没有 .app 包，二进制就是安装目录里的 Electron 主程序（实测 /opt/WorkBuddy/workbuddy），
+//            WORKBUDDY_APP 取所在目录
+//   Windows: 由 resolveWorkBuddyBinary() 动态解析（安装盘可自定义），此处保持空串
+const WORKBUDDY_APP = IS_WIN
+  ? ''
+  : IS_LINUX
+    ? path.dirname(WORKBUDDY_TARGET.binary || PROFILE.appPath)
+    : (WORKBUDDY_TARGET.binary ? path.resolve(WORKBUDDY_TARGET.binary, '../../..') : PROFILE.appPath);
+const WORKBUDDY_BINARY = IS_WIN
+  ? ''
+  : IS_LINUX
+    ? (WORKBUDDY_TARGET.binary || PROFILE.appPath)
+    : `${WORKBUDDY_APP}/Contents/MacOS/Electron`;
+const WORKBUDDY_APP_NAME = IS_WIN
+  ? ''
+  : IS_LINUX
+    ? path.basename(WORKBUDDY_BINARY)
+    : path.basename(WORKBUDDY_APP).replace(/\.app$/i, '');
 
 // Windows：解析 WorkBuddy 可执行文件真实路径（安装盘可自定义，必须动态查）
 // 优先级：WBSWITCH_WORKBUDDY_BIN > 运行进程 Path > 注册表卸载项 > 常见路径
@@ -2412,10 +2475,43 @@ function revalidateWindowsWorkBuddyProcess(original, binary) {
   return assertSameProcessIdentity(original, current);
 }
 
+/**
+ * Linux：枚举 WorkBuddy 进程 PID。
+ * 直接扫描 /proc/<pid>/cmdline 比较 argv[0]（含 realpath 归一），
+ * 不用 pgrep -f —— 后者把路径当扩展正则，路径里的 `.` 会变成通配符，
+ * 容易把无关进程（如 xlocal/share/...）误判成 WorkBuddy。
+ */
+function linuxWorkBuddyPids(binary = WORKBUDDY_BINARY) {
+  const target = String(binary || '').trim();
+  if (!target) return [];
+  let canonical = target;
+  try { canonical = fs.realpathSync(target); } catch (_) {}
+  let entries = [];
+  try { entries = fs.readdirSync('/proc'); } catch (_) { return []; }
+  const pids = [];
+  for (const entry of entries) {
+    if (!/^\d+$/.test(entry)) continue;
+    let raw = '';
+    try { raw = fs.readFileSync(`/proc/${entry}/cmdline`, 'utf8'); } catch (_) { continue; }
+    const argv0 = raw.split('\0')[0];
+    if (!argv0) continue;
+    if (argv0 === target) { pids.push(Number(entry)); continue; }
+    try {
+      if (fs.realpathSync(argv0) === canonical) pids.push(Number(entry));
+    } catch (_) {
+      /* 进程已退出或权限不足：忽略 */
+    }
+  }
+  return pids;
+}
+
 function workBuddyRunning(binary = null) {
   try {
     if (IS_WIN) {
       return verifiedWindowsWorkBuddyProcesses(binary || resolveWorkBuddyBinary()).length > 0;
+    }
+    if (IS_LINUX) {
+      return linuxWorkBuddyPids(binary || WORKBUDDY_BINARY).length > 0;
     }
     const r = spawnSync('pgrep', ['-f', WORKBUDDY_APP], { stdio: 'ignore', timeout: 5000 });
     return r.status === 0;
@@ -2467,6 +2563,20 @@ async function quitWorkBuddy() {
 
   if (!workBuddyRunning()) return true;
 
+  // Linux：无 osascript，直接向精确匹配到的 PID 发信号。
+  // 先 SIGTERM 让 Electron 走正常关闭流程（保存会话、落盘），超时再 SIGKILL。
+  if (IS_LINUX) {
+    for (const pid of linuxWorkBuddyPids()) {
+      try { process.kill(pid, 'SIGTERM'); } catch (_) {}
+    }
+    if (await waitForWorkBuddyExit(4000)) return true;
+    for (const pid of linuxWorkBuddyPids()) {
+      try { process.kill(pid, 'SIGKILL'); } catch (_) {}
+    }
+    if (await waitForWorkBuddyExit(3000)) return true;
+    throw new Error('无法确认 WorkBuddy 已退出');
+  }
+
   // 先尝试正常退出（给 Electron 一次处理机会），再强制 kill 并验证。
   await runCommand('osascript', ['-e', `tell application "${WORKBUDDY_APP_NAME}" to quit`]);
   if (await waitForWorkBuddyExit(2500)) return true;
@@ -2479,7 +2589,7 @@ async function quitWorkBuddy() {
 
 /** 探测 WorkDaddy.app 位置（macOS 专用：退出登录后打开它，由其 launcher 以 CDP 模式重启 WorkBuddy 并注入组件） */
 function findWorkDaddyApp() {
-  if (IS_WIN) return null;
+  if (!IS_MAC) return null;
   const appPackageName = WORKDADDY_INSTALL_NAME + '.app';
   const cands = [
     path.join('/Applications', appPackageName),
@@ -2497,24 +2607,77 @@ function findWorkDaddyApp() {
   return null;
 }
 
+/**
+ * 登录用户的「真实家目录」。
+ * 隔离 HOME 场景（海外版）下 os.homedir() 是隔离 HOME，不是真实家目录，
+ * 而启动器是用 $HOME 反推真实家目录的 —— 传错会让它把隔离 HOME 当真实家目录，
+ * 进而把 $ISOHOME/.config/mimeapps.list 覆盖成自指死链，
+ * 最终 xdg-open 把 https 交给 ChatGPT 之类的错误应用（真实踩过）。
+ */
+function resolveLauncherHome(launcherPath) {
+  return plat.launcherHomeFor(launcherPath, process.env.WBSWITCH_LAUNCH_HOME);
+}
+
+/**
+ * Linux：决定用什么重启 WorkBuddy。
+ * 优先用用户自己的启动器（WBSWITCH_WORKBUDDY_LAUNCHER）——它负责设置隔离 HOME、
+ * --user-data-dir、免代理环境等。直接 exec 应用二进制会丢掉这些配置，
+ * 导致应用以错误的 userData 目录启动、甚至要求重新登录。
+ */
+function resolveLinuxLaunchTarget() {
+  const launcher = String(process.env.WBSWITCH_WORKBUDDY_LAUNCHER || '').trim();
+  if (launcher) {
+    try {
+      fs.accessSync(launcher, fs.constants.X_OK);
+      return { command: launcher, viaLauncher: true };
+    } catch (_) {
+      log(`[logout] 启动器不可用，回退直接启动应用: ${launcher}`);
+    }
+  }
+  const bin = resolveWorkBuddyBinary();
+  return bin ? { command: bin, viaLauncher: false } : null;
+}
+
 /** 重新启动 WorkBuddy：macOS 优先走 WorkDaddy.app launcher；Windows 直接带 CDP 参数重启 exe */
 function relaunchWorkBuddy() {
   return (async () => {
     const port = await selectCdpPort(log);
-    if (IS_WIN) {
-      const bin = resolveWorkBuddyBinary();
-      if (!bin) throw new Error('未找到 WorkBuddy.exe（可用环境变量 WBSWITCH_WORKBUDDY_BIN 指定）');
+    // Linux 与 Windows 都支持「直接带 --remote-debugging-port 启动主程序」；
+    // 只有 macOS 因为 .app 包与登录自启的限制才需要绕道 WorkDaddy.app launcher。
+    if (IS_WIN || IS_LINUX) {
       const environmentMode = !!(PROFILE.cdp && PROFILE.cdp.mode === 'environment');
-      log(`[logout] 以 ${environmentMode ? '环境变量' : '命令行参数'} CDP=${port} 重启 WorkBuddy: ${bin}`);
-      const child = spawn(bin, environmentMode ? [] : [`--remote-debugging-port=${port}`], {
-        detached: true, stdio: 'ignore', windowsHide: true,
-        env: environmentMode ? { ...process.env, WORKBUDDY_REMOTE_DEBUGGING_PORT: String(port) } : process.env,
+      let command = '';
+      let viaLauncher = false;
+      if (IS_LINUX) {
+        const target = resolveLinuxLaunchTarget();
+        if (!target) throw new Error('未找到 WorkBuddy 可执行文件（可用环境变量 WBSWITCH_WORKBUDDY_BIN 指定）');
+        command = target.command;
+        viaLauncher = target.viaLauncher;
+      } else {
+        command = resolveWorkBuddyBinary();
+        if (!command) throw new Error('未找到 WorkBuddy 可执行文件（WorkBuddy.exe）（可用环境变量 WBSWITCH_WORKBUDDY_BIN 指定）');
+      }
+      // 日志用 ASCII 标记（非用户可见文案，无需进 i18n 词典）
+      log(`[logout] 以 ${environmentMode ? '环境变量' : '命令行参数'} CDP=${port} 重启 WorkBuddy: ${command}${viaLauncher ? ' [via launcher]' : ''}`);
+      const childEnv = { ...process.env };
+      if (environmentMode) childEnv.WORKBUDDY_REMOTE_DEBUGGING_PORT = String(port);
+      if (viaLauncher) {
+        // 关键：启动器要用它自己环境的 $HOME 反推真实家目录，必须还原真实 HOME
+        const launcherHome = resolveLauncherHome(command);
+        if (launcherHome) childEnv.HOME = launcherHome;
+      }
+      const child = spawn(command, environmentMode ? [] : [`--remote-debugging-port=${port}`], {
+        detached: true,
+        stdio: 'ignore',
+        windowsHide: true,
+        env: childEnv,
       });
       await new Promise((resolve, reject) => {
         child.once('error', reject);
         child.once('spawn', resolve);
       });
       child.unref();
+      if (!IS_WIN) return;
       // 窗口创建可能晚于 CDP/进程就绪，重复几次恢复，仍不影响重启流程本身。
       for (let attempt = 0; attempt < 5; attempt++) {
         await sleep(1000);
@@ -2633,14 +2796,18 @@ async function findByText(text, { tag = null, exact = false } = {}) {
 const CLAIM_TEXTS = (process.env.WBSWITCH_CLAIM_TEXT || '立即领取,今日可领').split(',').map((s) => s.trim()).filter(Boolean);
 // 每次切换后轮询总时长（毫秒）。默认 1 秒：100ms 轮询一次，找到"立即领取"即结束。
 const CLAIM_MAX_MS = parseInt(process.env.WBSWITCH_CLAIM_MAX_MS || '1000', 10);
-const CLAIM_INTERVAL_MS = parseInt(process.env.WBSWITCH_CLAIM_INTERVAL_MS || '100', 10);
+// 领取轮询间隔: 默认从 100ms 放宽到 250ms —— 账号切换场景对 150ms 的额外延迟
+// 无感知, 但 CPU 唤醒频率降为原来的 40%; 需要极致速度时用旧值或 WBSWITCH_CLAIM_INTERVAL_MS 覆盖
+const CLAIM_INTERVAL_MS = parseInt(process.env.WBSWITCH_CLAIM_INTERVAL_MS || '250', 10);
 
-// 临时调试日志：把领取查找过程写到 /tmp，方便排查"明明有按钮却识别不到"
+// 调试日志默认关闭: 领取循环高频调用 claimLog, 同步写 /tmp 属纯 IO 开销;
+// 排查"明明有按钮却识别不到"时设 WBSWITCH_CLAIM_DEBUG=1 重新打开。
 function claimDebugFile() {
   return path.join(os.tmpdir(), `wbswitch-claim-${Date.now()}-${process.pid}.log`);
 }
 function claimLog(file, line) {
   try {
+    if (process.env.WBSWITCH_CLAIM_DEBUG !== '1') return;
     fs.appendFileSync(file, `[${new Date().toISOString()}] ${line}\n`);
   } catch (_) {}
 }
@@ -8670,7 +8837,7 @@ function handleApi(req, res) {
       license: 'AGPL-3.0',
       repository: 'https://github.com/babygoton/WorkDaddy',
       principle: '本机回环 CDP 注入 · 不改官方安装包',
-      platform: IS_WIN ? 'Windows 10+（x64）' : 'macOS 11+',
+      platform: IS_WIN ? 'Windows 10+（x64）' : IS_MAC ? 'macOS 11+' : 'Linux',
       author: WORKDADDY_INSTALL_NAME,
       nodeVersion: process.version,
       ...platform,
@@ -8724,6 +8891,7 @@ function handleApi(req, res) {
     return json(res, 200, status);
   }
   if (req.method === 'POST' && p === '/api/update-download') {
+    if (IS_LINUX) return json(res, 200, { ok: false, started: false, error: '当前平台（Linux）暂不支持自动更新' });
     updateState.error = null;
     downloadUpdate().then(() => {
       log('[update] 后台下载任务完成');
@@ -8741,6 +8909,7 @@ function handleApi(req, res) {
     });
   }
   if (req.method === 'POST' && p === '/api/update-apply') {
+    if (IS_LINUX) return json(res, 200, { ok: false, error: '当前平台（Linux）暂不支持自动更新' });
     return applyUpdate()
       .then((r) => json(res, 200, { ...r, attemptId: updateState.attemptId, applyLog: path.join(UPDATE_DIR, 'apply.log'), debugLog: UPDATE_DEBUG_LOG }))
       .catch((e) => json(res, 200, {

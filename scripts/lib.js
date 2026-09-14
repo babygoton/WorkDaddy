@@ -18,44 +18,39 @@ const path = require('path');
 const crypto = require('crypto');
 const { getProfile, profileDataDir, sharedDataDir } = require('./profiles.js');
 
-const IS_WIN = process.platform === 'win32';
+const plat = require('./platform.js');
 
-const PLATFORM_DATA_DIR = IS_WIN
-  ? path.join(
-      process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'),
-      'WorkDaddy'
-    )
-  : path.join(os.homedir(), 'Library', 'Application Support', 'WorkDaddy');
-const LEGACY_DATA_DIR = IS_WIN
-  ? null
-  : path.join(os.homedir(), 'Library', 'Application Support', 'HelloBuddy');
+const IS_WIN = plat.IS_WIN;
+const IS_MAC = plat.IS_MAC;
+const IS_LINUX = plat.IS_LINUX;
+
+// 备份数据目录：macOS ~/Library/Application Support/WorkDaddy
+//             Linux $XDG_CONFIG_HOME/WorkDaddy (~/.config/WorkDaddy)
+//             Windows %APPDATA%\WorkDaddy
+const PLATFORM_DATA_DIR = path.join(plat.appSupport, 'WorkDaddy');
+// 旧版 HelloBuddy 目录只存在于 macOS 历史版本，仅 macOS 需要做隐式迁移
+const LEGACY_DATA_DIR = IS_MAC
+  ? path.join(os.homedir(), 'Library', 'Application Support', 'HelloBuddy')
+  : null;
 
 function samePath(a, b) {
   return !!a && !!b && path.resolve(a) === path.resolve(b);
 }
 
 function isLegacyDataDir(dataDir) {
-  return !IS_WIN && samePath(dataDir, LEGACY_DATA_DIR);
+  return !!LEGACY_DATA_DIR && samePath(dataDir, LEGACY_DATA_DIR);
 }
 
-// macOS: ~/Library/Application Support/CodeBuddyExtension/Data/Public/auth/workbuddy-desktop.info
-// Windows: %LOCALAPPDATA%\CodeBuddyExtension\Data\Public\auth\workbuddy-desktop.info（真机已确认）
+// 登录凭据文件：<扩展数据根>/CodeBuddyExtension/Data/Public/auth/workbuddy-desktop.info
+//   macOS: ~/Library/Application Support/...   Windows: %LOCALAPPDATA%\...   Linux: ~/.local/share/...
+// 正常路径已由 profile 给出；此处的兜底仅在 profile 未提供 authFile 时使用。
 const ACTIVE_PROFILE = getProfile();
 const AUTH_FILE = process.env.WBSWITCH_AUTH_FILE !== undefined
   ? process.env.WBSWITCH_AUTH_FILE
-  : (ACTIVE_PROFILE.authFile === null ? null : (ACTIVE_PROFILE.authFile || (IS_WIN
-    ? path.join(
-        process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'),
-        'CodeBuddyExtension',
-        'Data',
-        'Public',
-        'auth',
-        'workbuddy-desktop.info'
-      )
-    : path.join(
-        os.homedir(),
-        'Library/Application Support/CodeBuddyExtension/Data/Public/auth/workbuddy-desktop.info'
-      ))));
+  : (ACTIVE_PROFILE.authFile === null ? null : (ACTIVE_PROFILE.authFile || path.join(
+      plat.extensionAuth,
+      'workbuddy-desktop.info'
+    )));
 
 const LOGOUT_MARKER = `${AUTH_FILE}.logged-out`;
 const EXPLICIT_AUTH_FILE = process.env.WBSWITCH_AUTH_FILE !== undefined;
@@ -1106,7 +1101,9 @@ function retireLogoutMarker(log = () => {}, file = AUTH_FILE) {
     log('[switch] 已清理 WorkBuddy 登录退出标记');
     return true;
   } catch (e) {
-    if (IS_WIN) {
+    // 只有 macOS 能用 osascript 委托 GUI 会话清理；Windows 目录本就可写，
+    // Linux 无 osascript，两者都如实报错而不是走注定失败的回退。
+    if (!IS_MAC) {
       throw new Error(`清理登录退出标记失败(${e.code || ''}): ${(e.message || e).toString().slice(0, 200)}`);
     }
     // WorkBuddy may launch the daemon in a sandbox that cannot unlink auth files.
@@ -1132,7 +1129,8 @@ function retireLogoutMarker(log = () => {}, file = AUTH_FILE) {
  * 源目录和文件均保留，重复调用幂等。
  */
 function migrateLegacyDataDir(dataDir, log = () => {}) {
-  if (IS_WIN || !samePath(dataDir, PLATFORM_DATA_DIR)) {
+  // 旧版 HelloBuddy 目录仅存在于 macOS；其他平台直接跳过（LEGACY_DATA_DIR 为 null）
+  if (!LEGACY_DATA_DIR || !samePath(dataDir, PLATFORM_DATA_DIR)) {
     return { migrated: 0, skipped: 0, source: null, target: dataDir };
   }
 
@@ -1432,7 +1430,7 @@ function deleteAccount(dataDir, uid, log = () => {}) {
   const files = [backupPath(dataDir, uid)];
   // 旧版 HelloBuddy 目录仍会在每次启动时迁移缺失的账号备份。删除新目录
   // 的文件后若留下旧源文件，下一次 daemon 启动就会把账号重新复制回来。
-  if (!IS_WIN && samePath(dataDir, PLATFORM_DATA_DIR)) {
+  if (LEGACY_DATA_DIR && samePath(dataDir, PLATFORM_DATA_DIR)) {
     files.push(backupPath(LEGACY_DATA_DIR, uid));
   }
   let deletedFile = false;
@@ -1482,8 +1480,9 @@ function switchTo(dataDir, uid, log = () => {}) {
   } catch (e) {
     // 沙箱环境（如从 WorkBuddy 托管后台运行）直接写系统目录会 EPERM。
     // macOS 回退：osascript 委托 GUI 会话复制（不涉及内容转义，只传路径）。
-    // Windows：目录在 %LOCALAPPDATA% 用户可写区，直写失败即如实报错。
-    if (IS_WIN) {
+    // Windows：目录在 %LOCALAPPDATA% 用户可写区；Linux：目录在 ~/.local/share 用户可写区。
+    // 后两者直写失败即如实报错，不走 osascript（该命令在 Linux 上不存在）。
+    if (!IS_MAC) {
       throw new Error(
         `写入登录文件失败(${e.code || ''}): ${(e.message || e).toString().slice(0, 200)}`
       );

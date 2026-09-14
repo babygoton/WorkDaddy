@@ -9,8 +9,13 @@
 零侵入、零重签名——只把界面组件注入到正在运行的 WorkBuddy 渲染进程里。
 
 ![License](https://img.shields.io/badge/license-AGPL--3.0-blueviolet)
-![Platform](https://img.shields.io/badge/platform-macOS%2011%2B%20%7C%20Windows%2010%2F11-lightgrey)
+![Platform](https://img.shields.io/badge/platform-macOS%2011%2B%20%7C%20Windows%2010%2F11%20%7C%20Linux-lightgrey)
 ![Node](https://img.shields.io/badge/node-%E2%89%A518-green)
+
+> **Linux 支持**：本仓库已补齐 Linux 适配（XDG 路径、`/opt/WorkBuddy/workbuddy`、
+> `/proc` 精确进程管理、关闭 `launchctl`/`osascript` 依赖、CDP 识别兜底、systemd 可选自启）。
+> 安装方式见 **[LINUX.md](LINUX.md)**：`bash scripts/install-linux.sh` 后执行
+> `bash scripts/relaunch-with-cdp-linux.sh`。macOS / Windows 行为保持不变。
 
 ---
 
