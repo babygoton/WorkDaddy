@@ -81,7 +81,7 @@ test('WorkBuddy GUI startup stays visible while the watchdog stays hidden', () =
   assert.match(watchdog, /spawn\(process\.execPath, args, \{ stdio: 'ignore', windowsHide: true/);
 });
 
-test('installer confirms elevated setup but keeps lifecycle work and auto-launch standard-only', () => {
+test('installer keeps default lifecycle standard-only and gates the elevated session exception', () => {
   const installer = read('scripts/win/workdaddy.iss');
 
   assert.match(installer, /function EnsureWorkBuddyClosed/);
@@ -95,7 +95,7 @@ test('installer confirms elevated setup but keeps lifecycle work and auto-launch
   assert.match(installer, /if IsAdmin and not ConfirmElevatedInstall/);
   assert.match(installer, /MB_YESNO/);
   assert.match(installer, /IDYES/);
-  assert.match(installer, /if IsAdmin then\s+exit;/);
+  assert.match(installer, /if IsAdmin and not ElevatedSessionConfirmed then\s+exit;/);
   assert.doesNotMatch(installer, /if IsAdminInstallMode then/);
   assert.match(installer, /当前安装程序是以管理员权限运行的/);
   assert.match(installer, /ExecAsOriginalUser\(/);

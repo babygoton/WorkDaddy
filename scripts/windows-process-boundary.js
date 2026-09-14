@@ -33,6 +33,26 @@ function detectWindowsPrivilege(run = spawnSync) {
   throw new Error('无法确认 Windows 进程是否为普通用户权限');
 }
 
+// Native children inherit the real Windows token. Ask the installed helper to
+// verify it (including saved consent for elevated sessions), never an env flag.
+function detectNativeWindowsPrivilege(appDir, profile, run = spawnSync) {
+  const result = run(path.join(appDir, 'WorkDaddyLauncher.exe'), [
+    '--launch-context', '--profile', profile, '--app-dir', appDir,
+  ], { encoding: 'utf8', windowsHide: true, timeout: 10000 });
+  if (!result || result.error || result.status !== 0) {
+    throw new Error('无法验证 Windows 启动权限或兼容安装授权，请重新运行安装程序');
+  }
+  let context;
+  try { context = JSON.parse(result.stdout); } catch (_) {
+    throw new Error('Windows 启动权限检测返回无效数据');
+  }
+  if (!context || context.profile !== profile ||
+      !['standard', 'elevated'].includes(context.privilege)) {
+    throw new Error('Windows 启动权限或客户端身份不匹配');
+  }
+  return context.privilege;
+}
+
 function assertStandardWindowsPrivilege(run = spawnSync) {
   const privilege = detectWindowsPrivilege(run);
   if (privilege !== 'standard') throw new Error('拒绝以管理员或 elevated 权限运行 WorkDaddy');
@@ -375,6 +395,7 @@ module.exports = {
   assertDaemonTerminationIdentity,
   assertSameProcessIdentity,
   detectWindowsPrivilege,
+  detectNativeWindowsPrivilege,
   assertStandardWindowsPrivilege,
   assertVerifiedNodeProcess,
   buildNativeProcessQuery,

@@ -38,6 +38,8 @@ const (
 	tokenDuplicate                 = 0x0002
 	tokenQuery                     = 0x0008
 	tokenElevation                 = 20 // TokenElevation
+	tokenElevationType             = 18 // TokenElevationType
+	tokenSessionID                 = 12 // TokenSessionId
 	logonWithProfile               = 0x00000001
 	createUnicodeEnvironment       = 0x00000400
 	th32csSnapProcess              = 0x00000002
@@ -206,31 +208,39 @@ func isElevated() (bool, error) {
 	return tokenIsElevated(token)
 }
 
-func relaunchWithDesktopToken(appDir string) error {
+func openDesktopToken(access uint32) (syscall.Handle, error) {
 	shellWindow, _, callErr := procGetShellWindow.Call()
 	if shellWindow == 0 {
-		return fmt.Errorf("cannot find desktop Explorer window: %w", callErr)
+		return 0, fmt.Errorf("cannot find desktop Explorer window: %w", callErr)
 	}
 	var shellPID uint32
 	procGetWindowThreadProcessID.Call(shellWindow, uintptr(unsafe.Pointer(&shellPID)))
 	if shellPID == 0 {
-		return errors.New("cannot identify desktop Explorer process")
+		return 0, errors.New("cannot identify desktop Explorer process")
 	}
 	expectedExplorer := filepath.Join(os.Getenv("SystemRoot"), "explorer.exe")
 	if os.Getenv("SystemRoot") == "" || !strings.EqualFold(filepath.Clean(queryProcessPath(shellPID)), filepath.Clean(expectedExplorer)) {
-		return errors.New("desktop shell process is not the expected explorer.exe")
+		return 0, errors.New("desktop shell process is not the expected explorer.exe")
 	}
 	shellProcess, err := openProcess(shellPID, processQueryLimitedInformation)
 	if err != nil {
-		return fmt.Errorf("cannot open desktop Explorer process: %w", err)
+		return 0, fmt.Errorf("cannot open desktop Explorer process: %w", err)
 	}
 	defer syscall.CloseHandle(shellProcess)
 	var shellToken syscall.Handle
 	result, _, callErr := procOpenProcessToken.Call(
-		uintptr(shellProcess), tokenAssignPrimary|tokenDuplicate|tokenQuery, uintptr(unsafe.Pointer(&shellToken)),
+		uintptr(shellProcess), uintptr(access), uintptr(unsafe.Pointer(&shellToken)),
 	)
 	if result == 0 {
-		return fmt.Errorf("cannot open desktop Explorer token: %w", callErr)
+		return 0, fmt.Errorf("cannot open desktop Explorer token: %w", callErr)
+	}
+	return shellToken, nil
+}
+
+func relaunchWithDesktopToken(appDir string) error {
+	shellToken, err := openDesktopToken(tokenAssignPrimary | tokenDuplicate | tokenQuery)
+	if err != nil {
+		return err
 	}
 	defer syscall.CloseHandle(shellToken)
 	elevated, err := tokenIsElevated(shellToken)
@@ -238,7 +248,7 @@ func relaunchWithDesktopToken(appDir string) error {
 		return fmt.Errorf("cannot inspect desktop Explorer token: %w", err)
 	}
 	if elevated {
-		return errors.New("desktop Explorer token is elevated")
+		return errDesktopTokenElevated
 	}
 	executable, err := os.Executable()
 	if err != nil {
@@ -248,7 +258,7 @@ func relaunchWithDesktopToken(appDir string) error {
 		return errors.New("native launcher path contains invalid characters")
 	}
 	var environment uintptr
-	result, _, callErr = procCreateEnvironmentBlock.Call(
+	result, _, callErr := procCreateEnvironmentBlock.Call(
 		uintptr(unsafe.Pointer(&environment)), uintptr(shellToken), 0,
 	)
 	if result == 0 {
@@ -268,6 +278,170 @@ func relaunchWithDesktopToken(appDir string) error {
 	syscall.CloseHandle(processInfo.Thread)
 	syscall.CloseHandle(processInfo.Process)
 	return nil
+}
+
+// Consent is a per-user preference, not a privilege grant. It never creates a
+// token: every use rechecks the real desktop and process token before proceeding.
+var errDesktopTokenElevated = errors.New("desktop Explorer token is elevated")
+
+type elevatedConsent struct {
+	Version int    `json:"version"`
+	Profile string `json:"profile"`
+	AppDir  string `json:"appDir"`
+	UserSID string `json:"userSid"`
+}
+
+func tokenDword(token syscall.Handle, kind uint32) (uint32, error) {
+	var value, returned uint32
+	ok, _, err := procGetTokenInformation.Call(uintptr(token), uintptr(kind),
+		uintptr(unsafe.Pointer(&value)), unsafe.Sizeof(value), uintptr(unsafe.Pointer(&returned)))
+	if ok == 0 {
+		return 0, err
+	}
+	return value, nil
+}
+
+func currentUserSID() (string, error) {
+	token, err := syscall.OpenCurrentProcessToken()
+	if err != nil {
+		return "", err
+	}
+	defer token.Close()
+	user, err := token.GetTokenUser()
+	if err != nil {
+		return "", err
+	}
+	return user.User.Sid.String()
+}
+
+func verifySameProcessSecurity(handle syscall.Handle) error {
+	var target syscall.Token
+	if err := syscall.OpenProcessToken(handle, tokenQuery, &target); err != nil {
+		return err
+	}
+	defer target.Close()
+	current, err := syscall.OpenCurrentProcessToken()
+	if err != nil {
+		return err
+	}
+	defer current.Close()
+	targetUser, err := target.GetTokenUser()
+	if err != nil {
+		return err
+	}
+	currentUser, err := current.GetTokenUser()
+	if err != nil {
+		return err
+	}
+	targetSID, err := targetUser.User.Sid.String()
+	if err != nil {
+		return err
+	}
+	currentSID, err := currentUser.User.Sid.String()
+	if err != nil {
+		return err
+	}
+	if targetSID != currentSID {
+		return errors.New("process belongs to another user")
+	}
+	for _, kind := range []uint32{tokenElevation, tokenSessionID} {
+		left, err := tokenDword(syscall.Handle(target), kind)
+		if err != nil {
+			return err
+		}
+		right, err := tokenDword(syscall.Handle(current), kind)
+		if err != nil {
+			return err
+		}
+		if left != right {
+			return errors.New("process privilege or session differs from launcher")
+		}
+	}
+	return nil
+}
+
+func desktopSessionSupportsElevated() bool {
+	current, err := isElevated()
+	if err != nil || !current {
+		return false
+	}
+	token, err := openDesktopToken(tokenQuery)
+	if err != nil {
+		return false
+	}
+	defer syscall.CloseHandle(token)
+	elevated, err := tokenIsElevated(token)
+	if err != nil || !elevated {
+		return false
+	}
+	// A manually elevated Explorer with a linked standard token is NOT the
+	// built-in Administrator/UAC-disabled case. TokenElevationTypeDefault = 1.
+	elevationType, err := tokenDword(token, tokenElevationType)
+	if err != nil || elevationType != 1 {
+		return false
+	}
+	shellUser, err := syscall.Token(token).GetTokenUser()
+	if err != nil {
+		return false
+	}
+	shellSID, err := shellUser.User.Sid.String()
+	if err != nil {
+		return false
+	}
+	currentSID, err := currentUserSID()
+	return err == nil && shellSID == currentSID
+}
+
+func elevatedSessionAllowed(profile, appDir string) bool {
+	if !desktopSessionSupportsElevated() {
+		return false
+	}
+	dir, err := dataDir(profile)
+	if err != nil {
+		return false
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "windows-elevated-consent.json"))
+	if err != nil {
+		return false
+	}
+	var consent elevatedConsent
+	if json.Unmarshal(data, &consent) != nil {
+		return false
+	}
+	sid, err := currentUserSID()
+	return err == nil && consent.Version == 1 && consent.Profile == profile &&
+		filepath.IsAbs(appDir) && samePath(consent.AppDir, appDir) && consent.UserSID == sid
+}
+
+func saveElevatedConsent(profile, appDir string) error {
+	if !filepath.IsAbs(appDir) || !desktopSessionSupportsElevated() {
+		return errors.New("desktop session is not eligible for elevated compatibility")
+	}
+	dir, err := dataDir(profile)
+	if err != nil {
+		return err
+	}
+	sid, err := currentUserSID()
+	if err != nil {
+		return err
+	}
+	data, err := json.Marshal(elevatedConsent{1, profile, filepath.Clean(appDir), sid})
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return err
+	}
+	// A partial write cannot grant consent: readers require complete valid JSON.
+	return os.WriteFile(filepath.Join(dir, "windows-elevated-consent.json"), data, 0600)
+}
+
+func helperAppDir() string {
+	if dir := argumentValue("--app-dir"); dir != "" {
+		return dir
+	}
+	dir, _ := executableDir()
+	return dir
 }
 
 func acquireMutex(profile string) (syscall.Handle, bool, error) {
@@ -608,6 +782,9 @@ func terminateExactProcess(pid int, expectedPath string, label string) (bool, in
 		return false, exitFailure, err
 	}
 	defer syscall.CloseHandle(handle)
+	if err := verifySameProcessSecurity(handle); err != nil {
+		return false, exitAccessDenied, err
+	}
 	result, _, callErr := procTerminateProcess.Call(uintptr(handle), 0)
 	if result == 0 {
 		if errors.Is(callErr, syscall.ERROR_ACCESS_DENIED) {
@@ -626,7 +803,7 @@ func terminateExactNode(pid int, expectedNode string) (bool, int, error) {
 	return terminateExactProcess(pid, expectedNode, "node")
 }
 
-func stopInstalledLauncher(appDir string, elevated bool) int {
+func stopInstalledLauncher(profile, appDir string, elevated bool) int {
 	expectedLauncher := filepath.Join(appDir, "WorkDaddyLauncher.exe")
 	records, err := enumerateProcesses()
 	if err != nil {
@@ -652,7 +829,7 @@ func stopInstalledLauncher(appDir string, elevated bool) int {
 	if len(matches) == 0 {
 		return 0
 	}
-	if elevated {
+	if elevated && !elevatedSessionAllowed(profile, appDir) {
 		fmt.Fprintln(os.Stderr, "installed WorkDaddy launcher is still running; lifecycle stop requires standard user privilege")
 		return exitAccessDenied
 	}
@@ -693,7 +870,7 @@ func terminateWorkBuddyTarget(profile string, target workBuddyTarget) int {
 		fmt.Fprintln(os.Stderr, "cannot determine helper privilege:", err)
 		return exitFailure
 	}
-	if elevated {
+	if elevated && !elevatedSessionAllowed(profile, helperAppDir()) {
 		fmt.Fprintln(os.Stderr, "WorkBuddy termination requires standard user privilege")
 		return exitAccessDenied
 	}
@@ -823,8 +1000,8 @@ func stopLifecycle(profile, appDir string, elevated bool) int {
 			continue
 		}
 		seen[candidate.pid] = true
-		// An elevated helper may clear a stale PID, but must refuse any active
-		// lifecycle so it never becomes a cross-privilege process terminator.
+		// An elevated helper may clear a stale PID. Active lifecycle work
+		// additionally requires saved consent and same-token-security checks.
 		active, code, inspectErr := inspectExactProcess(candidate.pid, expectedNode, "node")
 		if inspectErr != nil {
 			fmt.Fprintln(os.Stderr, inspectErr)
@@ -833,7 +1010,7 @@ func stopLifecycle(profile, appDir string, elevated bool) int {
 		if !active {
 			continue
 		}
-		if elevated {
+		if elevated && !elevatedSessionAllowed(profile, appDir) {
 			fmt.Fprintln(os.Stderr, "running WorkDaddy lifecycle requires standard user privilege")
 			return exitAccessDenied
 		}
@@ -848,7 +1025,7 @@ func stopLifecycle(profile, appDir string, elevated bool) int {
 			_ = os.Remove(candidate.path)
 		}
 	}
-	if code := stopInstalledLauncher(appDir, elevated); code != 0 {
+	if code := stopInstalledLauncher(profile, appDir, elevated); code != 0 {
 		return code
 	}
 	return 0
@@ -1064,6 +1241,53 @@ func runNodeLauncher(appDir, profile string) int {
 }
 
 func helperMain(appDir, profile string) (bool, int) {
+	if hasArgument("--desktop-token-status") {
+		token, err := openDesktopToken(tokenQuery)
+		if err != nil {
+			return true, exitFailure
+		}
+		defer syscall.CloseHandle(token)
+		elevated, err := tokenIsElevated(token)
+		if err != nil {
+			return true, exitFailure
+		}
+		if !elevated {
+			return true, 0
+		}
+		if desktopSessionSupportsElevated() {
+			return true, exitElevated
+		}
+		return true, exitAccessDenied
+	}
+	if hasArgument("--accept-elevated-session") {
+		if err := saveElevatedConsent(profile, helperAppDir()); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return true, exitAccessDenied
+		}
+		return true, 0
+	}
+	if hasArgument("--check-elevated-session") {
+		if elevatedSessionAllowed(profile, helperAppDir()) {
+			return true, 0
+		}
+		return true, exitAccessDenied
+	}
+	if hasArgument("--launch-context") {
+		elevated, err := isElevated()
+		if err != nil {
+			return true, exitFailure
+		}
+		if elevated && !elevatedSessionAllowed(profile, helperAppDir()) {
+			return true, exitElevated
+		}
+		privilege := "standard"
+		if elevated {
+			privilege = "elevated"
+		}
+		_ = json.NewEncoder(os.Stdout).Encode(map[string]any{"profile": profile, "privilege": privilege})
+		return true, 0
+	}
+
 	if hasArgument("--target-info") {
 		target := configuredTarget(profile)
 		output := argumentValue("--output")
@@ -1185,13 +1409,25 @@ func main() {
 		os.Exit(exitFailure)
 	}
 	if elevated {
+		var relaunchErr error
 		if !hasArgument("--desktop-shell-relaunch") {
-			if err := relaunchWithDesktopToken(appDir); err == nil {
+			relaunchErr = relaunchWithDesktopToken(appDir)
+			if relaunchErr == nil {
 				os.Exit(0)
 			}
+		} else {
+			relaunchErr = errDesktopTokenElevated
 		}
-		messageBox(productName(profile), "无法自动切换到普通用户权限。\n\n请确认 UAC 已开启，然后直接双击 WorkDaddy 快捷方式重试。", mbOK|mbIconWarning)
-		os.Exit(exitElevated)
+		allowed := errors.Is(relaunchErr, errDesktopTokenElevated) && elevatedSessionAllowed(profile, appDir)
+		if dir, dirErr := dataDir(profile); dirErr == nil {
+			if file := appendLog(dir, "desktop relaunch:", relaunchErr, "elevatedConsent="+strconv.FormatBool(allowed)); file != nil {
+				file.Close()
+			}
+		}
+		if !allowed {
+			messageBox(productName(profile), "无法自动切换到普通用户权限。\n\n请重新运行新版安装程序；若检测到桌面无法降权，可阅读风险提示并选择兼容安装。普通电脑请确认 UAC 已开启，然后直接双击快捷方式。", mbOK|mbIconWarning)
+			os.Exit(exitElevated)
+		}
 	}
 
 	mutex, alreadyRunning, err := acquireMutex(profile)

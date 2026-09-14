@@ -9,7 +9,7 @@
  *
  * 由 launcher.cmd 调用（cmd 负责兜底找 node），也可 node win-launcher.js 直接运行。
  * 默认按普通用户运行；用户明确以管理员身份启动时，先通过桌面 Shell
- * 重启为标准权限。若无法确认已降权，则 fail closed 并提示用户。
+ * 重启为标准权限。仅无标准桌面令牌且安装时明确同意的会话可用管理员兼容模式。
  */
 'use strict';
 
@@ -25,6 +25,7 @@ const {
   assertDaemonTerminationIdentity,
   assertSameProcessIdentity,
   detectWindowsPrivilege,
+  detectNativeWindowsPrivilege,
   assertVerifiedNodeProcess,
   buildNativeProcessQuery,
   filterVerifiedNodeProcesses,
@@ -36,9 +37,11 @@ const {
   selectPreferredDiscoveredBinary,
 } = require('./windows-process-boundary.js');
 let WINDOWS_PRIVILEGE = 'standard';
-if (process.platform === 'win32' && process.env.WBSWITCH_NATIVE_LAUNCHER !== '1') {
+if (process.platform === 'win32') {
   try {
-    WINDOWS_PRIVILEGE = detectWindowsPrivilege();
+    WINDOWS_PRIVILEGE = process.env.WBSWITCH_NATIVE_LAUNCHER === '1'
+      ? detectNativeWindowsPrivilege(path.resolve(__dirname, '..'), process.env.WBSWITCH_PROFILE || 'workbuddy-cn')
+      : detectWindowsPrivilege();
   } catch (error) {
     console.error(error.message);
     process.exit(5);
@@ -1248,6 +1251,14 @@ async function injectNowOrPending() {
   return true;
 }
 
+function hasElevatedSessionConsent() {
+  try {
+    return runNativeHelper([
+      '--check-elevated-session', '--profile', PROFILE.id, '--app-dir', WORKDADDY_APP_DIR,
+    ]).status === 0;
+  } catch (_) { return false; }
+}
+
 function nativeHelperPath() {
   return path.join(WORKDADDY_APP_DIR, 'WorkDaddyLauncher.exe');
 }
@@ -1486,7 +1497,7 @@ function nativeDaemonStatusMatches(status) {
     status.dataDir && sameWindowsPath(status.dataDir, DATA_DIR) &&
     status.version === identity.version &&
     status.buildId === identity.buildId &&
-    status.privilege === 'standard'
+    status.privilege === WINDOWS_PRIVILEGE
   );
 }
 
@@ -1513,7 +1524,7 @@ async function ensureDaemonNative(nodeBin) {
   fs.mkdirSync(path.join(DATA_DIR, 'accounts'), { recursive: true });
   let status = await readStatus();
   if (status && nativeDaemonStatusMatches(status)) {
-    log('daemon profile、版本、构建和标准权限均已验证，跳过启动');
+    log('daemon profile、版本、构建和实际权限均已验证，跳过启动 privilege=' + WINDOWS_PRIVILEGE);
     return true;
   }
   if (status) {
@@ -1696,13 +1707,18 @@ if (require.main === module && process.env.WBSWITCH_NATIVE_LAUNCHER === '1') {
     return;
   }
   if (process.platform === 'win32' && WINDOWS_PRIVILEGE === 'elevated') {
+    if (hasElevatedSessionConsent()) {
+      log('已验证管理员会话兼容安装选择，使用原生启动与精确进程管理');
+      process.env.WBSWITCH_NATIVE_LAUNCHER = '1';
+      process.exit(await nativeStartupMain());
+    }
     if (!process.argv.includes(DESKTOP_RELAUNCH_ARG)) {
       relaunchWithDesktopShell(nodeBin);
       log('管理员入口已通过桌面 Shell 重新派发；当前 elevated launcher 退出');
       process.exit(0);
     }
     log('桌面 Shell 仍返回 elevated token（可能已关闭 UAC），拒绝继续启动管理员权限 WorkDaddy');
-    showWindowsMessageBox(WBS_BRAND, '无法自动降回普通用户权限，已拒绝启动管理员权限 WorkDaddy。请开启 UAC 后双击快捷方式重试。');
+    showWindowsMessageBox(WBS_BRAND, '无法自动降回普通用户权限，已拒绝启动管理员权限 WorkDaddy。请重新运行新版安装程序确认兼容安装；普通电脑请开启 UAC 后双击快捷方式重试。');
     process.exit(5);
   }
   await configureCdpPort();
