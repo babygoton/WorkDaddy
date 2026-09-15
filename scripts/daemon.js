@@ -547,7 +547,13 @@ async function selectCdpPort(logFn = log) {
  * 写 apply-update.sh 由独立脚本接管替换（运行中的 app 无法自删，必须由外部脚本完成）→ relaunch。
  */
 const UPDATE_REPO = process.env.WBSWITCH_UPDATE_REPO || 'babygoton/WorkDaddy';
-const UPDATE_API = `https://api.github.com/repos/${UPDATE_REPO}/releases/latest`;
+// 更新源降级链：GitHub 优先，请求失败（超时/非 200/解析失败）自动降级 Gitee 国内镜像。
+// 检测与下载始终使用同一个源；下载 URL 只允许从这两个白名单 origin 派生，不信任响应里的任意 URL。
+const UPDATE_SOURCES = [
+  { id: 'github', api: `https://api.github.com/repos/${UPDATE_REPO}/releases/latest`, downloadRoot: `https://github.com/${UPDATE_REPO}/releases/download` },
+  { id: 'gitee', api: `https://gitee.com/api/v5/repos/${UPDATE_REPO}/releases/latest`, downloadRoot: `https://gitee.com/${UPDATE_REPO}/releases/download` },
+];
+const UPDATE_API = UPDATE_SOURCES[0].api; // 首选源（日志/调试兼容保留）
 const UPDATE_CHECK_INTERVAL = 6 * 3600 * 1000; // 每 6 小时检查一次（GitHub 未认证限流 60 次/h）
 const UPDATE_REQ_TIMEOUT = 10000; // 网络超时，超时静默失败不阻塞面板
 const UPDATE_DIR = path.join(DATA_DIR, 'update'); // 下载/解包目录
@@ -571,9 +577,22 @@ const updateState = {
   error: null,
   checkedAt: 0,
   attemptId: null,
+  source: null, // 本次/上次检查成功的更新源（github | gitee），用于粘性优先与面板展示
 };
 let updateTimer = null;
 let updateDownloadPromise = null;
+
+// 启动时读取上次成功的更新源（粘性源）：下次检查优先用它，避免 GitHub 不通时每次都白等一次超时。
+try {
+  const c = JSON.parse(fs.readFileSync(UPDATE_CHECK_CACHE, 'utf8'));
+  if (c && UPDATE_SOURCES.some((s) => s.id === c.source)) updateState.source = c.source;
+} catch (_) {}
+
+// 源尝试顺序：粘性源优先，其余按 UPDATE_SOURCES 定义顺序补齐
+function updateSourceOrder() {
+  const head = UPDATE_SOURCES.find((s) => s.id === updateState.source);
+  return head ? [head, ...UPDATE_SOURCES.filter((s) => s !== head)] : UPDATE_SOURCES;
+}
 
 function updateDebug(stage, details) {
   const scrub = (value, key = '') => {
@@ -691,6 +710,18 @@ function parseSha256(body) {
   return m ? m[1].toLowerCase() : null;
 }
 
+// 从 Release body 解析逐文件 SHA-256（sha256sum 格式行：`<hex64>  <文件名>`）。
+// Gitee 镜像没有 asset.digest 字段，多资产发布必须在 notes 里逐文件给哈希。
+function parseSha256Map(body) {
+  const map = {};
+  if (!body) return map;
+  for (const line of String(body).split('\n')) {
+    const m = line.match(/^\s*([a-fA-F0-9]{64})\s+\*?(\S+)\s*$/);
+    if (m) map[m[2]] = m[1].toLowerCase();
+  }
+  return map;
+}
+
 function normalizeAssetSha256(value) {
   const text = String(value || '').trim().replace(/^sha256:/i, '');
   return /^[a-fA-F0-9]{64}$/.test(text) ? text.toLowerCase() : null;
@@ -700,7 +731,7 @@ function expectedUpdateSha256() {
   return updateState.dmgSha256 || parseSha256(updateState.notes);
 }
 
-// 检查更新：请求 Releases API，比对版本，结果写缓存（内存 + 文件）
+// 检查更新：按源降级链请求 Releases API（GitHub 失败自动降级 Gitee），比对版本，结果写缓存（内存 + 文件）
 function checkUpdate(force) {
   if (!force && updateTimer) {
     // 有缓存且未过期且非强制 → 直接返回缓存（面板高频打开不重复请求）
@@ -710,21 +741,40 @@ function checkUpdate(force) {
   }
   updateState.status = 'checking';
   updateState.message = '正在检查更新…';
-  updateDebug('check-start', { force: !!force, current: DAEMON_VERSION, updateApi: UPDATE_API });
-  return httpsGet(UPDATE_API)
-    .then(({ status, body }) => {
-      if (status !== 200) {
-        throw new Error('Releases API ' + status + (status === 404 ? '（仓库暂无 Release）' : ''));
-      }
-      const rel = JSON.parse(body);
+  const order = updateSourceOrder();
+  updateDebug('check-start', { force: !!force, current: DAEMON_VERSION, sources: order.map((s) => s.id) });
+  // 依次尝试各更新源，第一个可用的源即采用（检测与下载同源）
+  let attempt = Promise.reject(new Error('尚未尝试任何更新源'));
+  for (const source of order) {
+    attempt = attempt.catch(() =>
+      httpsGet(source.api).then(({ status, body }) => {
+        if (status !== 200) {
+          throw new Error('Releases API ' + status + (status === 404 ? '（仓库暂无 Release）' : ''));
+        }
+        return { source, rel: JSON.parse(body) };
+      }).catch((err) => {
+        log(`[update] ${source.id} 源检查失败: ${err.message}`);
+        updateDebug('check-source-failed', { source: source.id, api: source.api, error: err.message });
+        throw err;
+      })
+    );
+  }
+  return attempt
+    .then(({ source, rel }) => {
       const latest = String(rel.tag_name || '').replace(/^v/, '');
       updateState.latest = latest;
       updateState.hasUpdate = semverCompare(latest, DAEMON_VERSION) > 0;
-      updateState.releaseUrl = rel.html_url || null;
+      updateState.source = source.id;
+      updateState.releaseUrl = rel.html_url || (source.id === 'gitee' ? `https://gitee.com/${UPDATE_REPO}/releases` : null);
       updateState.notes = (rel.body || '').slice(0, 2000);
       // 资产按平台选取：macOS 找 .dmg；Windows 新版本优先同 profile 的 Setup.exe，
       // 旧版本仍只识别 ZIP，因此没有 EXE 时回退到对应的 -win64.zip。
-      const assets = rel.assets || [];
+      // Gitee 会把源码包（/archive/ 路径）混进 assets，且下载 URL 只信白名单 origin
+      // 的 /releases/download/ 路径，防止响应里的任意地址被当作安装包来源。
+      const assets = (rel.assets || []).filter((a) =>
+        a && typeof a.name === 'string' &&
+        typeof a.browser_download_url === 'string' &&
+        a.browser_download_url.startsWith(source.downloadRoot + '/'));
       const profileAsset = PROFILE.id === 'workbuddy-ai'
         ? /^(?:WorkDaddy-AI-Setup-|WorkDaddy-AI-).*\.(?:exe|zip|dmg)$/i
         : /^WorkDaddy-(?!AI-)(?:Setup-|).*\.(?:exe|zip|dmg)$/i;
@@ -741,17 +791,22 @@ function checkUpdate(force) {
            assets.find((a) => profileAsset.test(a.name || '') && /\.(?:exe|zip)$/i.test(a.name || '')) || null)
         : (assets.find((a) => profileAsset.test(a.name || '') && /\.dmg$/i.test(a.name || '')) ||
            assets.find((a) => /\.dmg$/i.test(a.name || '') && (PROFILE.id !== 'workbuddy-ai' || !/WorkDaddy-AI-/i.test(a.name || ''))) || null);
-      updateState.dmgUrl = asset ? asset.browser_download_url : null;
-      updateState.dmgSize = asset ? asset.size : 0;
-      updateState.dmgSha256 = asset ? normalizeAssetSha256(asset.digest) : parseSha256(updateState.notes);
+      // 下载 URL 从白名单 origin 派生（tag + 文件名），不直接采用响应里的 browser_download_url
+      updateState.dmgUrl = asset ? `${source.downloadRoot}/${rel.tag_name}/${asset.name}` : null;
+      // Gitee 不返回资产大小（null）→ 0，下载进度以响应 content-length 为准
+      updateState.dmgSize = asset ? (Number(asset.size) || 0) : 0;
+      // 完整性校验优先级：asset.digest（GitHub）→ notes 逐文件哈希（sha256sum 格式行）→ notes 单一哈希
+      updateState.dmgSha256 = asset
+        ? (normalizeAssetSha256(asset.digest) || parseSha256Map(updateState.notes)[asset.name] || parseSha256(updateState.notes))
+        : null;
       updateState.assetName = asset ? asset.name : null;
       updateState.checkedAt = Date.now();
       updateState.status = 'idle';
       updateState.message = updateState.hasUpdate ? '发现新版本 v' + latest : '已是最新版本';
-      // 缓存发布信息，不缓存依赖当前运行版本的判断结果。
-      try { fs.writeFileSync(UPDATE_CHECK_CACHE, JSON.stringify({ latest, dmgUrl: updateState.dmgUrl, dmgSize: updateState.dmgSize, dmgSha256: updateState.dmgSha256, assetName: updateState.assetName, notes: updateState.notes, checkedAt: updateState.checkedAt })); } catch (_) {}
-      log(`[update] 检查完成: latest=${latest} hasUpdate=${updateState.hasUpdate} (current=${DAEMON_VERSION})`);
-      updateDebug('check-result', { current: DAEMON_VERSION, latest, hasUpdate: updateState.hasUpdate, assetName: updateState.assetName, assetSize: updateState.dmgSize, assetSha256: updateState.dmgSha256 });
+      // 缓存发布信息（含成功的更新源），不缓存依赖当前运行版本的判断结果。
+      try { fs.writeFileSync(UPDATE_CHECK_CACHE, JSON.stringify({ latest, source: source.id, dmgUrl: updateState.dmgUrl, dmgSize: updateState.dmgSize, dmgSha256: updateState.dmgSha256, assetName: updateState.assetName, notes: updateState.notes, checkedAt: updateState.checkedAt })); } catch (_) {}
+      log(`[update] 检查完成: source=${source.id} latest=${latest} hasUpdate=${updateState.hasUpdate} (current=${DAEMON_VERSION})`);
+      updateDebug('check-result', { source: source.id, current: DAEMON_VERSION, latest, hasUpdate: updateState.hasUpdate, assetName: updateState.assetName, assetSize: updateState.dmgSize, assetSha256: updateState.dmgSha256 });
       return updateState;
     })
     .catch((e) => {
@@ -769,9 +824,10 @@ function checkUpdate(force) {
         updateState.dmgUrl = c.dmgUrl;
         updateState.dmgSize = Number(c.dmgSize) || 0;
         updateState.assetName = c.assetName || null;
-        updateState.dmgSha256 = normalizeAssetSha256(c.dmgSha256) || parseSha256(c.notes);
+        updateState.dmgSha256 = normalizeAssetSha256(c.dmgSha256) || parseSha256Map(c.notes)[c.assetName] || parseSha256(c.notes);
         updateState.notes = c.notes;
         updateState.checkedAt = c.checkedAt || Date.now();
+        if (UPDATE_SOURCES.some((s) => s.id === c.source)) updateState.source = c.source;
         updateState.message = updateState.hasUpdate ? '发现新版本 v' + cachedLatest : '已是最新版本';
       } catch (_) {}
       return updateState;
@@ -813,13 +869,19 @@ function downloadUpdateInternal() {
     expectedSha256: expectSha,
     expectedSize: updateState.dmgSize,
   });
-  if (!expectSha) {
+  if (!expectSha && updateState.source !== 'gitee') {
     const error = new Error('发布未提供可信的 SHA-256，已停止更新');
     updateState.status = 'error';
     updateState.error = error.message;
     updateState.message = '安装包缺少完整性校验，已停止更新';
     updateDebug('download-error', { stage: 'preflight', error: error.message, target: path.basename(target) });
     return Promise.reject(error);
+  }
+  if (!expectSha) {
+    // Gitee 镜像无 digest、notes 也不强制维护哈希：来源已被白名单限定为
+    // gitee.com/babygoton/WorkDaddy，跳过完整性校验（notes 里有哈希时仍会校验）。
+    log('[update] Gitee 镜像未提供 SHA-256，跳过完整性校验（下载源已限定白名单）');
+    updateDebug('download-skip-sha256', { source: updateState.source, latest: updateState.latest, target: path.basename(target) });
   }
   if (fs.existsSync(target)) {
     const checked = validateUpdateArtifact(target, expectSha);
@@ -8694,6 +8756,7 @@ function handleApi(req, res) {
         message: st.message,
         error: st.error || null,
         checkedAt: st.checkedAt,
+        source: st.source || null,
       })
     );
   }

@@ -7505,7 +7505,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
           var noteLines = (d.notes || '').split('\n').map(function (l) {
             return l.trim().replace(/^[-*+]\s*/, '').replace(/^#+\s*/, '');
           }).filter(function (l) {
-            return l && !/^SHA-?256[:：]/i.test(l) && !/^https?:\/\//i.test(l) && !/full changelog/i.test(l);
+            return l && !/^SHA-?256[:：]/i.test(l) && !/^[a-f0-9]{64}\s/i.test(l) && !/^https?:\/\//i.test(l) && !/full changelog/i.test(l);
           });
           notes.textContent = noteLines.join('\n') || '有新版本可用，点击更新。';
         }

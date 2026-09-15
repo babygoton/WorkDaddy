@@ -1,4 +1,4 @@
-<h1><img src="docs/images/workdaddy-app-icon-rounded.svg" alt="" width="40" height="40" align="absmiddle">&nbsp; WorkDaddy</h1>
+<h1><img src="docs/images/workdaddy-app-icon-rounded.svg" alt="" width="40" height="40" align="absmiddle">  WorkDaddy</h1>
 
 **语言：** [简体中文](README.md) · [English](README_en.md)
 
@@ -57,7 +57,7 @@
 2. 打开 dmg，把 `WorkDaddy.app` 拖进 **应用程序** 文件夹
 
 3. 第一次打开如果遇到「无法打开，因为 Apple 无法检查恶意软件」：
-
+   
    1. 打开「系统设置 → 隐私与安全性」
    2. 在「WorkDaddy 已被阻止」处点 **仍要打开**
    3. 输入开机密码确认
@@ -208,6 +208,18 @@ WorkBuddy 右下角的机器人按钮 → 弹出面板 → 选你要的操作：
 - 本项目仅面向本机运行的 WorkBuddy 桌面端做界面与体验增强，**与 WorkBuddy 官方无隶属关系**。
 - WorkBuddy、其商标、官方资源归其权利人所有；本项目未获得其官方授权或认可。
 - 第三方主题、壁纸、背景图等素材仅作演示，商用前请自行确认权利。
+
+---
+
+## Star History
+
+<a href="https://www.star-history.com/?repos=babygoton%2Fworkdaddy&type=date&legend=top-left">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=babygoton/workdaddy&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=babygoton/workdaddy&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=babygoton/workdaddy&type=date&legend=top-left" />
+ </picture>
+</a>
 
 ---
 
