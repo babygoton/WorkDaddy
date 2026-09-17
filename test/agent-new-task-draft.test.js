@@ -22,7 +22,7 @@ function harness(options = {}) {
   };
   vm.createContext(context);vm.runInContext(functions,context);
   const callback = source.slice(source.indexOf('  let lastReceipt = null;'), source.indexOf('  const completionReport =', source.indexOf('  let lastReceipt = null;')));
-  Object.assign(context,require('../scripts/automation-runtime'),{withInput:async fn=>fn(),isCancelled:()=>false,currentAccount:()=>({uid:'a'})});
+  Object.assign(context,require('../scripts/automation-runtime'),require('../scripts/automation-model'),{withInput:async fn=>fn(),isCancelled:()=>false,currentAccount:()=>({uid:'a'})});
   context.acSendPhrase = async () => { calls.push('session-send'); sessionSent=true; return {sent:true}; };
   vm.runInContext(callback + '\nthis.sessionSend = sessionSendCurrent; this.sessionAction = sessionAction;', context);
   return { run: () => context.openNewAutomationAgentTask('Agent requirement'), session: () => context.sessionSend('1+1='), calls };
