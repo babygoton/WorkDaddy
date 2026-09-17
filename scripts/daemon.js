@@ -166,6 +166,7 @@ const {
   resolveArchiveTarget,
 } = require('./secure-transfer.js');
 const { writeSessionTransfer, readSessionTransfer, receiveSessionUpload } = require('./session-transfer.js');
+const { forkedTitle, planForkAtMessage } = require('./session-fork.js');
 const { pipeline: transferPipeline } = require('node:stream/promises');
 const { replaceFileWithRetry } = require('./atomic-file-write.js');
 const { parseUiPortState, profileUiPortCandidates } = require('./ui-port.js');
@@ -380,8 +381,8 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 // 1.2.52：成长任务支持在悬浮层内直接接取，并在完成后同步最新任务状态。
 // 1.2.55：成长弹窗支持开启盲盒与抽奖并提示奖励，收敛成长/用量统计 primary 色使用。
 // 1.2.56：成长任务补齐说明与标签、已领取折叠、Buddy 派出，并把用量柱状图改为面积折线图。
-const DAEMON_VERSION = '1.2.62';
-const DAEMON_BUILD_ID = 'release-1.2.62-20260917-credit-rotation-trends';
+const DAEMON_VERSION = '1.2.63';
+const DAEMON_BUILD_ID = 'release-1.2.63-20260917-session-fork';
 const usageReporter = createUsageReporter({ profile: PROFILE.id, version: DAEMON_VERSION });
 configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const automationDiscovery = createAutomationDiscovery({
@@ -4099,6 +4100,39 @@ async function insertCopiedSession(src, targetUid, newId) {
     'INSERT INTO sessions (' + SESSION_COPY_COLUMNS.join(',') + ') VALUES (' + sqlPlaceholders(vals) + ');',
     vals
   );
+}
+
+async function createForkSession(src, selection) {
+  const root = PROFILE.dataRoot;
+  const sourceFiles = collectSessionArchiveFiles(root, src.id).filter((entry) => {
+    const parts = entry.path.split('/');
+    return parts.length === 3 && parts[0] === 'projects' && parts[2] === src.id + '.jsonl';
+  });
+  if (sourceFiles.length !== 1) throw new Error('无法唯一定位源会话记录');
+  const source = sourceFiles[0].source;
+  const stat = await fs.promises.lstat(source);
+  if (!stat.isFile() || stat.size > 64 * 1024 * 1024) throw new Error('源会话记录不可读取');
+  const contents = await fs.promises.readFile(source, 'utf8');
+  if (Buffer.byteLength(contents) !== stat.size) throw new Error('源会话记录已变化，请重试');
+  const plan = planForkAtMessage(contents, selection);
+  if (!plan.ok) throw new Error(plan.reason);
+
+  const id = crypto.randomUUID();
+  const target = path.join(path.dirname(source), id + '.jsonl');
+  ensureArchiveParentNoFollow(root, target);
+  await fs.promises.writeFile(target, plan.text, { flag: 'wx', mode: 0o600 });
+  try {
+    const now = Date.now();
+    const title = forkedTitle(src.custom_title || src.title);
+    await insertCopiedSession(Object.assign({}, src, {
+      title, custom_title: title, status: 'Pending', is_background_automation: 0,
+      created_at: now, updated_at: now, last_activity_at: now,
+    }), src.user_id, id);
+  } catch (error) {
+    await fs.promises.unlink(target).catch(() => {});
+    throw error;
+  }
+  return { id, sourceId: src.id, keptMessages: plan.keep, droppedMessages: plan.drop };
 }
 
 async function exportSessions(ids, password) {
@@ -8778,6 +8812,28 @@ function handleApi(req, res) {
         if (directory) await fs.promises.rm(directory, { recursive: true, force: true });
       }
     })();
+  }
+  // 从当前账号的消息位置创建同工作区会话，不修改原会话。
+  if (req.method === 'POST' && p === '/api/sessions/fork') {
+    return readBody(req).then(async (body) => {
+      const id = body && body.id;
+      const uid = String((currentAccount() || {}).uid || '').trim();
+      if (PROFILE.kind !== 'workbuddy' || !uid || !isValidSessionId(id)) {
+        return json(res, 400, { ok: false, error: '无法分支当前会话' });
+      }
+      try {
+        const rows = await sqliteQuery(
+          'SELECT ' + SESSION_COPY_COLUMNS.join(',') +
+            ' FROM sessions WHERE id = ? AND user_id = ? AND deleted_at IS NULL LIMIT 1;',
+          [id, uid]
+        );
+        if (!rows.length) return json(res, 404, { ok: false, error: '当前账号下没有该会话' });
+        const result = await createForkSession(rows[0], body);
+        return json(res, 200, Object.assign({ ok: true }, result));
+      } catch (error) {
+        return json(res, 400, { ok: false, error: error.message });
+      }
+    });
   }
   // 复制会话：POST /api/sessions/copy { ids, targetUid }（保留原会话，复制记录+消息文件到目标账号）
   if (req.method === 'POST' && p === '/api/sessions/copy') {

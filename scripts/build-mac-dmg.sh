@@ -96,6 +96,7 @@ chmod 644 "$APP/Contents/Resources/scripts/session-db.js" \
   "$APP/Contents/Resources/scripts/workbuddy-target.js" \
   "$APP/Contents/Resources/scripts/secure-transfer.js" \
   "$APP/Contents/Resources/scripts/session-transfer.js" \
+  "$APP/Contents/Resources/scripts/session-fork.js" \
   "$APP/Contents/Resources/scripts/windows-process-boundary.js" \
   "$APP/Contents/Resources/scripts/credit-request-usage.js" \
   "$APP/Contents/Resources/scripts/credit-history-sync.js" \

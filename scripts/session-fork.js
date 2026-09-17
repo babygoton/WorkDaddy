@@ -6,8 +6,7 @@
  * 产出新会话所需的记录文本：**只保留到所选消息为止，之后的不纳入；源会话不被修改**。
  *
  * 本模块只做纯计算（解析 / 锚点 / 切片 / 生成新标题），不写数据库、不改任何文件。
- * 落库与产物复制沿用 daemon.js 里已有的会话复制链路（复制 `projects/<slug>/<id>.jsonl`
- * 与各产物目录、插入一行 sessions 记录），因此这里产出的文本可以直接喂给那条链路。
+ * 落库由 daemon.js 完成：写入新的 `projects/<slug>/<id>.jsonl` 并插入 sessions 记录。
  *
  * 用法:
  *   node scripts/session-fork.js --id <会话ID> --points
@@ -184,6 +183,39 @@ function planFork(text, spec, options = {}) {
   };
 }
 
+// Renderer message IDs are not the JSONL record IDs. Cross-check the ordered
+// roles and the selected assistant's completion time before using its position.
+function planForkAtMessage(text, selection) {
+  const invalid = (reason) => ({ ok: false, reason });
+  const roles = selection && selection.roles;
+  const index = selection && selection.messageIndex;
+  const finishedAt = selection && selection.finishedAt;
+  if (typeof roles !== 'string' || !/^[ua]{1,10000}$/.test(roles) ||
+      !Number.isInteger(index) || index < 0 || index >= roles.length ||
+      !Number.isSafeInteger(finishedAt) || finishedAt <= 0) {
+    return invalid('分支消息参数无效');
+  }
+  const parsed = parseRecords(text);
+  if (parsed.skipped) return invalid('会话记录正在写入或包含损坏的行，请稍后重试');
+  const messages = parsed.records.map((entry, recordIndex) => ({
+    recordIndex, value: entry.value,
+  })).filter((entry) => entry.value && entry.value.type === 'message' &&
+    ANCHOR_ROLES.has(entry.value.role));
+  if (messages.map((entry) => entry.value.role === 'user' ? 'u' : 'a').join('') !== roles) {
+    return invalid('会话消息已变化，请重新打开后再试');
+  }
+  const selected = messages[index];
+  const recordedAt = selected && selected.value.timestamp;
+  if (!selected || selected.value.role !== 'assistant' ||
+      !Number.isSafeInteger(recordedAt) || recordedAt <= 0 ||
+      Math.abs(recordedAt - finishedAt) > 30000) {
+    return invalid('无法确认所选消息的分支位置');
+  }
+  const anchor = buildAnchors(parsed.records).find((item) => item.index === selected.recordIndex);
+  if (!anchor) return invalid('所选消息没有可分支的正文');
+  return planFork(text, anchor.n);
+}
+
 /** 锚点清单的一行文本（CLI 与面板共用同一份格式） */
 function describeAnchor(anchor) {
   const text = anchor.text.replace(/\s+/g, ' ').trim();
@@ -341,6 +373,7 @@ module.exports = {
   messageText,
   parseRecords,
   planFork,
+  planForkAtMessage,
   resolveAnchor,
   userQueryText,
 };
