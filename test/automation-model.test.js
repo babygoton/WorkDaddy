@@ -239,8 +239,8 @@ test('session.send switches the conversation model through the composer model me
 
 test('model selection ships with the daemon build and the macOS staging list', () => {
   // 改动 daemon 行为必须递增版本，启动器才不会复用旧内存代码
-  assert.match(daemon, /const DAEMON_VERSION = '1\.2\.44'/);
-  assert.match(daemon, /const DAEMON_BUILD_ID = 'release-1\.2\.44-20260917-automation-session-model-switch/);
+  assert.match(daemon, /const DAEMON_VERSION = '1\.2\.45'/);
+  assert.match(daemon, /const DAEMON_BUILD_ID = 'release-1\.2\.45-20260917-automation-buddy-travel'/);
   const staging = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'build-mac-dmg.sh'), 'utf8');
   assert.ok(staging.includes('automation-model.js'), 'macOS 打包清单必须包含 automation-model.js');
 });

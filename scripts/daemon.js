@@ -126,7 +126,7 @@ const { createCreditHistorySync, historyRange } = require('./credit-history-sync
 const { createCreditUsageStore } = require('./credit-usage-store.js');
 const { scanTokenStatsCached, tokenStatsCacheReady } = require('./token-stats.js');
 const { initializeCheckinConsent, readCheckinConsent, decideCheckinConsent } = require('./checkin-consent.js');
-const { classifyCheckinResult, checkinEndpointsForToken } = require('./checkin-result.js');
+const { classifyCheckinResult, checkinEndpointsForToken, tokenIssuerOrigin, ISSUER_HOST_MAP } = require('./checkin-result.js');
 const {
   DAY_MS: TOKEN_REFRESH_DAY_MS,
   refreshAuthToken,
@@ -134,6 +134,19 @@ const {
   normalizeTimestamp: normalizeTokenTimestamp,
 } = require('./token-refresh.js');
 const { fetchGrowthTodayActive, activateGrowthAccount, fetchGrowthStreak, createGrowthStreakCache } = require('./growth-active.js');
+const {
+  fetchTravelConfig,
+  fetchTravelStatus,
+  claimTravel,
+  departTravelWithLocations,
+  planTravelStep,
+  rollTravelCacheToToday,
+  mergeTravelRecord,
+  travelCacheCompleted,
+  summarizeTravelRecord,
+  travelRecordDate,
+  truncateTravelMessage,
+} = require('./growth-travel.js');
 const {
   captureException,
   captureMessage,
@@ -364,8 +377,9 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 // 1.2.24：账号轮换恢复真实积分段消耗检测，仅推荐缓存中到期时间最近的可用账号。
 // 1.2.25：首页弹窗任务补齐成长/活动入口，并按 renderer 页面身份修复重连后的 pageReady 触发。
 // 1.2.26：无效账号备份不再显示可点击的切换按钮，导入路径拒绝写入无效认证数据。
-const DAEMON_VERSION = '1.2.44';
-const DAEMON_BUILD_ID = 'release-1.2.44-20260917-automation-session-model-switch-r2';
+// 1.2.45：自动化新增「派猫猫旅行」能力（account.travel）：按官方状态自动派发、到点领取奖励，带每日缓存与派发重试节流。
+const DAEMON_VERSION = '1.2.45';
+const DAEMON_BUILD_ID = 'release-1.2.45-20260917-automation-buddy-travel';
 const usageReporter = createUsageReporter({ profile: PROFILE.id, version: DAEMON_VERSION });
 configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const HOST = '127.0.0.1';
@@ -2686,6 +2700,8 @@ async function waitPageLoaded(timeoutMs = 6000) {
 
 const CHECKIN_CACHE_FILE = path.join(DATA_DIR, 'checkin-cache.json');
 const CHECKIN_REQUEST_TIMEOUT_MS = 12000;
+const TRAVEL_CACHE_FILE = path.join(DATA_DIR, 'travel-cache.json');
+const TRAVEL_REQUEST_TIMEOUT_MS = 12000;
 // 声明式自动化任务：任务 JSON 只保存步骤，不保存账号 Token；运行时按账号上下文
 // 读取受管备份并把凭据限制在一次 HTTP 请求内。第三方代码执行不在此模块范围内。
 const growthStreakCache = createGrowthStreakCache(async (uid) => {
@@ -3140,7 +3156,13 @@ function startAutomationRun(task, event = null) {
   run.cleanupNotifications = runNotifier.cleanup;
   const publicAccounts = () => listAccounts(DATA_DIR).map(a => ({uid:a.uid,nickname:a.nickname,isPrimary:primaryAccountStore.get()===a.uid}));
   const publicCurrent = () => { const a = currentAccount(); return a ? {uid:a.uid,nickname:a.nickname,isPrimary:primaryAccountStore.get()===a.uid} : null; };
-  const runDeps = { sessionAction, primaryAccount: async () => publicAccounts().find(a=>a.isPrimary) || null, dismissToast: runNotifier.dismiss, completionReport, event, listAccounts: async () => publicAccounts(), currentAccount: publicCurrent, accountSwitch: (account, detail) => withInput(() => automationSwitchAccount(account), !!(detail && detail.restore)), accountStatus: automationAccountStatus, accountCheckin: async (account) => {
+  const runDeps = { sessionAction, primaryAccount: async () => publicAccounts().find(a=>a.isPrimary) || null, dismissToast: runNotifier.dismiss, completionReport, event, listAccounts: async () => publicAccounts(), currentAccount: publicCurrent, accountSwitch: (account, detail) => withInput(() => automationSwitchAccount(account), !!(detail && detail.restore)), accountStatus: automationAccountStatus, accountTravel: async (account, detail) => {
+    if (!account || !account.uid) throw new Error('没有可用账号');
+    const mode = detail && detail.mode ? String(detail.mode) : 'auto';
+    const result = await claimTravelForUid(account.uid, mode);
+    appendRunLog('account:travel:' + mode + ':' + (result.ok ? (result.claimed ? 'claimed' : result.state || 'ok') : 'failed') + ' ' + summarizeTravelRecord(result));
+    return travelPublicRecord(result);
+  }, accountCheckin: async (account) => {
     if (!account || !account.uid) throw new Error('没有可用账号');
     const result = await claimDailyForUid(account.uid);
     appendRunLog('account:checkin:' + (result.skipped ? 'skipped' : result.ok ? 'success' : 'failed'));
@@ -3334,6 +3356,209 @@ async function performAccountCheckin(uid) {
     }
   }
   return { uid, ...(refreshError ? { refreshError } : {}), ...rec };
+}
+
+/* ================= 派猫猫旅行（account.travel：自动派发 + 到点领取） ================= */
+
+const travelClaims = new Map();
+
+function loadTravelCache() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(TRAVEL_CACHE_FILE, 'utf8')) || {};
+    // 跨日只丢掉收尾记录，仍在旅行中的未领行程要留着，否则今天就领不到了。
+    return rollTravelCacheToToday(raw, todayStr());
+  } catch (_) {
+    return { date: todayStr(), completed: false, results: {} };
+  }
+}
+
+function saveTravelCache(cache) {
+  try {
+    fs.writeFileSync(TRAVEL_CACHE_FILE, JSON.stringify(cache, null, 2));
+  } catch (e) {
+    log('[travel] 写入缓存失败: ' + e.message);
+  }
+}
+
+/** 旅行接口必须打账号自己签发的域名（同签到：JWT 的 iss 决定 host，其次看备份里的 domain）。 */
+function travelApiHost(accessToken, auth) {
+  const issuer = tokenIssuerOrigin(accessToken);
+  const mapped = issuer ? ISSUER_HOST_MAP.get(issuer) : null;
+  if (mapped) return mapped;
+  const domain = String(auth && auth.domain || '').trim();
+  if (domain) return domain.startsWith('http') ? domain : 'https://' + domain;
+  return String(PROFILE.apiHost || 'https://www.workbuddy.cn').replace(/\/+$/, '');
+}
+
+function travelBaseRecord(prior, patch) {
+  return Object.assign({
+    date: todayStr(), mode: 'auto', ok: false, state: null, location: '', locationId: null,
+    recordId: 0, departAt: 0, arriveAt: 0, rewardCredit: null, claimed: false, claimedAt: 0,
+    skip: null, message: '', at: Date.now(), departAttemptAt: 0,
+  }, prior || {}, patch || {});
+}
+
+/** 写回缓存：与旧记录合并后落盘，再按「是否还有可重试项」更新当日完成标记。 */
+function persistTravelRecord(uid, record) {
+  const today = todayStr();
+  const cache = loadTravelCache();
+  const prior = travelRecordDate(cache.results[uid], today) ? cache.results[uid] : null;
+  const merged = prior ? mergeTravelRecord(prior, record) : record;
+  merged.date = today;
+  cache.results[uid] = merged;
+  cache.date = today;
+  cache.completed = travelCacheCompleted(cache.results);
+  saveTravelCache(cache);
+  return merged;
+}
+
+/**
+ * 对单个账号跑一轮旅行对账（auto：到达就领、未出发就派；也可只 depart / 只 claim）。
+ * 全程只用该账号备份里的 token，不切换当前登录账号。
+ */
+async function performAccountTravel(uid, mode) {
+  const normalizedMode = mode === 'depart' || mode === 'claim' ? mode : 'auto';
+  const today = todayStr();
+  const cache = loadTravelCache();
+  const prior = travelRecordDate(cache.results[uid], today) ? (cache.results[uid] || {}) : {};
+  const base = { mode: normalizedMode, at: Date.now(), skip: null, message: '' };
+
+  const refreshed = await refreshAccountBackupToken(uid);
+  const root = refreshed.root;
+  if (!root) {
+    return persistTravelRecord(uid, travelBaseRecord(prior, Object.assign({}, base, {
+      ok: false, skip: 'no-backup', message: refreshed.error || '读取账号备份失败',
+    })));
+  }
+  const auth = root.auth && typeof root.auth === 'object' ? root.auth : {};
+  const accessToken = auth.accessToken || auth.access_token || auth.token;
+  if (!accessToken) {
+    return persistTravelRecord(uid, travelBaseRecord(prior, Object.assign({}, base, {
+      ok: false, skip: 'no-accessToken', message: '账号缺少 accessToken',
+    })));
+  }
+  const options = { accessToken, apiHost: travelApiHost(accessToken, auth), timeoutMs: TRAVEL_REQUEST_TIMEOUT_MS };
+  const status = await fetchTravelStatus(options);
+  const plan = planTravelStep({ mode: normalizedMode, status, prior, now: Date.now() });
+  base.message = plan.reason;
+
+  if (!status.ok || plan.action === 'error') {
+    return persistTravelRecord(uid, travelBaseRecord(prior, Object.assign({}, base, {
+      ok: false, skip: plan.skip || 'status-error', state: prior.state || null,
+      message: plan.reason || truncateTravelMessage(status.message),
+    })));
+  }
+
+  // 官方状态里能拿到多少就先合并多少（地点、到达时间、预计奖励）。
+  const fromStatus = {
+    state: status.state,
+    location: status.location || prior.location || '',
+    locationId: status.locationId === null || status.locationId === undefined ? prior.locationId : status.locationId,
+    buddyId: status.buddyId,
+    recordId: status.recordId || prior.recordId || 0,
+    departAt: status.departAt || prior.departAt || 0,
+    arriveAt: status.arriveAt || prior.arriveAt || 0,
+    rewardCredit: status.rewardCredit === null || status.rewardCredit === undefined ? prior.rewardCredit : status.rewardCredit,
+  };
+
+  if (plan.action === 'wait') {
+    return persistTravelRecord(uid, travelBaseRecord(prior, Object.assign({}, fromStatus, base, {
+      ok: plan.skip !== 'retry-wait',
+      state: status.state === 'idle' ? (prior.state || 'idle') : status.state,
+      claimed: status.state === 'idle' ? prior.claimed === true : false,
+    })));
+  }
+
+  if (plan.action === 'skip') {
+    // idle + daily_limit_reached：今天的行程已经派出，保留地点/积分只改成完结。
+    return persistTravelRecord(uid, travelBaseRecord(prior, Object.assign({}, fromStatus, base, {
+      ok: true, already: true, claimed: true, state: 'idle', skip: 'daily-limit',
+      claimedAt: Number(prior.claimedAt) || Date.now(),
+    })));
+  }
+
+  if (plan.action === 'claim') {
+    const claim = await claimTravel(status.recordId, options);
+    if (claim.ok) {
+      return persistTravelRecord(uid, travelBaseRecord(prior, Object.assign({}, fromStatus, base, {
+        ok: true, claimed: true, state: 'idle', claimedAt: Date.now(), skip: null,
+        rewardCredit: claim.rewardCredit === null || claim.rewardCredit === undefined ? status.rewardCredit : claim.rewardCredit,
+        message: '已领取奖励',
+      })));
+    }
+    const text = String(claim.message || '').toLowerCase();
+    if (text.includes('no unclaimed travel') || text.includes('daily_limit')) {
+      // 网页端已经领过了：当成已领取，避免一直重试。
+      return persistTravelRecord(uid, travelBaseRecord(prior, Object.assign({}, fromStatus, base, {
+        ok: true, claimed: true, state: 'idle', claimedAt: Date.now(), skip: null, message: '已领取（网页端）',
+      })));
+    }
+    if (text.includes('not arrived yet')) {
+      return persistTravelRecord(uid, travelBaseRecord(prior, Object.assign({}, fromStatus, base, {
+        ok: true, claimed: false, state: 'arrived', skip: null, message: '还没到达，下一轮再领',
+      })));
+    }
+    return persistTravelRecord(uid, travelBaseRecord(prior, Object.assign({}, fromStatus, base, {
+      ok: false, claimed: false, skip: 'claim-error', message: truncateTravelMessage(claim.message),
+    })));
+  }
+
+  // plan.action === 'depart'
+  const departAttemptAt = Date.now();
+  const config = await fetchTravelConfig(options);
+  if (!config.ok || !config.travelable) {
+    return persistTravelRecord(uid, travelBaseRecord(prior, Object.assign({}, base, {
+      ok: false, state: 'idle', departAttemptAt,
+      skip: config.ok ? 'no-location' : 'config-error',
+      message: config.ok ? '没有可用的旅行地点' : truncateTravelMessage(config.message),
+    })));
+  }
+  const departure = await departTravelWithLocations(config.locations, options);
+  if (!departure.ok) {
+    return persistTravelRecord(uid, travelBaseRecord(prior, Object.assign({}, base, {
+      ok: false, state: prior.state || null, departAttemptAt,
+      skip: departure.skip || 'error', message: truncateTravelMessage(departure.message),
+    })));
+  }
+  const confirmed = await fetchTravelStatus(options);
+  const record = Object.assign({}, base, {
+    ok: true, claimed: false, departAttemptAt,
+    state: departure.state || 'traveling',
+    location: departure.location || (confirmed.ok ? confirmed.location : ''),
+    locationId: departure.locationId,
+    recordId: confirmed.ok ? confirmed.recordId : 0,
+    departAt: confirmed.ok ? confirmed.departAt : 0,
+    arriveAt: confirmed.ok ? confirmed.arriveAt : 0,
+    rewardCredit: confirmed.ok ? confirmed.rewardCredit : null,
+    message: departure.message || '已派猫猫出门',
+  });
+  if (departure.dailyLimit) {
+    record.claimed = true;
+    record.claimedAt = departAttemptAt;
+    record.skip = 'daily-limit';
+    record.state = 'idle';
+  }
+  return persistTravelRecord(uid, travelBaseRecord(prior, record));
+}
+
+/** 单账号旅行入口（同账号同模式并发去重）。 */
+function claimTravelForUid(uid, mode) {
+  if (!PROFILE.capabilities.accounts || PROFILE.capabilities.travel === false) throw new Error('当前客户端不支持派猫猫旅行');
+  if (!/^[A-Za-z0-9_-]{1,128}$/.test(String(uid || ''))) throw new Error('账号 ID 无效');
+  const normalizedMode = mode === 'depart' || mode === 'claim' ? mode : 'auto';
+  const key = uid + ':' + normalizedMode;
+  if (travelClaims.has(key)) return travelClaims.get(key);
+  const promise = performAccountTravel(uid, normalizedMode).finally(() => travelClaims.delete(key));
+  travelClaims.set(key, promise);
+  return promise;
+}
+
+/** 回执与面板用：把 skip 语义翻译成 skipped，并附一行摘要。 */
+function travelPublicRecord(record) {
+  if (!record) return null;
+  // skipped = 本轮无需再做任何事（今日已派/已领取/派发重试冷却中）。
+  const skipped = record.claimed === true || record.skip === 'daily-limit' || record.skip === 'retry-wait';
+  return Object.assign({}, record, { skipped, summary: summarizeTravelRecord(record) });
 }
 
 /** 通过 CDP 把右下角组件注入到 WorkBuddy 渲染进程（幂等，可反复调用） */
@@ -7359,6 +7584,40 @@ function handleApi(req, res) {
     });
   }
 
+  if (req.method === 'GET' && p === '/api/travel/status') {
+    if (!PROFILE.capabilities.accounts || PROFILE.capabilities.travel === false) {
+      return json(res, 200, { ok: true, supported: false, accounts: [] });
+    }
+    const today = todayStr();
+    const cache = loadTravelCache();
+    const accounts = listAccounts(DATA_DIR).map((a) => ({
+      uid: a.uid,
+      nickname: a.nickname,
+      isPrimary: primaryAccountStore.get() === a.uid,
+      record: travelPublicRecord(travelRecordDate(cache.results[a.uid], today) ? cache.results[a.uid] : null),
+    }));
+    return json(res, 200, { ok: true, supported: true, date: today, completed: !!cache.completed, accounts });
+  }
+
+  // 手动跑一轮旅行对账（面板/脚本用）；body 可选 { uid, mode }。
+  if (req.method === 'POST' && p === '/api/travel/run') {
+    if (!PROFILE.capabilities.accounts || PROFILE.capabilities.travel === false) {
+      return json(res, 400, { ok: false, error: '当前客户端不支持派猫猫旅行' });
+    }
+    return readBody(req).then(async (body) => {
+      const mode = body && ['auto', 'depart', 'claim'].includes(String(body.mode)) ? String(body.mode) : 'auto';
+      const uids = body && typeof body.uid === 'string' && body.uid
+        ? [body.uid]
+        : listAccounts(DATA_DIR).map((a) => a.uid);
+      const results = [];
+      for (const uid of uids) {
+        try { results.push(await claimTravelForUid(uid, mode)); }
+        catch (e) { results.push({ uid, ok: false, message: String(e && e.message || e) }); }
+      }
+      return json(res, 200, { ok: true, mode, results: results.map(travelPublicRecord) });
+    });
+  }
+
   if (req.method === 'GET' && p === '/api/automations') {
     const imported = importAgentInbox(DATA_DIR, { profileId: PROFILE.id });
     imported.forEach((item) => log(`[automation-agent] request=${item.requestId} ${item.ok ? 'imported=' + item.taskId : 'rejected=' + item.error}`));
@@ -9748,6 +10007,10 @@ if (PROFILE.capabilities.accounts && PROFILE.capabilities.checkin !== false) {
   try { installBuiltinTask(DATA_DIR, path.join(__dirname, 'builtin/automations/daily-account-checkin.json')); }
   catch (_) { log('[automation] 初始化签到任务失败'); }
   initializeCheckinConsent(DATA_DIR);
+}
+if (PROFILE.capabilities.accounts && PROFILE.capabilities.travel !== false) {
+  try { installBuiltinTask(DATA_DIR, path.join(__dirname, 'builtin/automations/daily-buddy-travel.json')); }
+  catch (_) { log('[automation] 初始化派猫猫旅行任务失败'); }
 }
 restoreSleepMode();
 startServer();

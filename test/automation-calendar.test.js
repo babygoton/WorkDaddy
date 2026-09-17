@@ -29,9 +29,9 @@ test('weekly/monthly/once match local calendar, skip overlap and nonexistent mon
 });
 test('all three builtins preserve existing edits and deletion across updates',()=>{
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'wd-builtins-'));try{
- const files=fs.readdirSync(path.join(__dirname,'../scripts/builtin/automations')).filter(f=>f.endsWith('.json'));assert.equal(files.length,3);
+ const files=fs.readdirSync(path.join(__dirname,'../scripts/builtin/automations')).filter(f=>f.endsWith('.json'));assert.equal(files.length,4);
  const install=()=>files.forEach(f=>a.installBuiltinTask(dir,path.join(__dirname,'../scripts/builtin/automations',f)));
- install();const original=a.readAutomations(dir);assert.equal(new Set(original.map(t=>t.id)).size,3);
+ install();const original=a.readAutomations(dir);assert.equal(new Set(original.map(t=>t.id)).size,4);
  const edited=original.slice(1).map(t=>({...t,name:'用户修改',enabled:false}));a.writeAutomations(dir,edited);install();assert.deepEqual(a.readAutomations(dir),edited);
  }finally{fs.rmSync(dir,{recursive:true,force:true});}
 });

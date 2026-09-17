@@ -44,6 +44,7 @@ const CAPABILITIES = [
   { id: 'account.forEach', zh: '循环账号', en: 'Iterate accounts', descriptionZh: '对全部或指定账号依次执行步骤；switch:true 会真实切换登录账号，并在循环结束后恢复原账号。', descriptionEn: 'Run steps for all or selected accounts; switch:true physically switches the logged-in account and restores the original account when the loop ends.', example: { op: 'account.forEach', accounts: 'all', switch: true, steps: [] } },
   { id: 'account.status', zh: '查询账号状态', en: 'Read account status', descriptionZh: '查询今日签到、今日活跃和积分等只读状态。', descriptionEn: 'Read check-in, activity, and credit status.', example: { op: 'account.status', fields: ['checkin.today', 'activity.today'] } },
   { id: 'account.checkin', zh: '账号静默签到', en: 'Check in as account', descriptionZh: '使用循环账号的 token 签到，不切换客户端。当天已确认签到时跳过所有请求；返回 ok、skipped、code 等状态。', descriptionEn: 'Check in using the context account token without switching accounts. Confirmed daily records skip all requests. Returns ok, skipped and code.', example: { op: 'account.checkin', saveAs: 'checkin' } },
+  { id: 'account.travel', zh: '派猫猫旅行', en: 'Buddy travel', descriptionZh: '使用循环账号的 token 查询并处理成长中心的派猫猫旅行：未出发就派发，已到达就领取奖励，不切换客户端。默认 auto（对账全流程），也可用 mode:"depart"/"claim" 只做一件事。返回 ok、state、claimed、rewardCredit、skipped、message；账号没有猫猫、今日已派、派发失败等都以 skipped/ok:false 返回，单账号异常可用 logic.catch 捕获。', descriptionEn: 'Use the context account token to read and reconcile growth-center buddy travel: depart when idle, claim the reward when arrived, without switching accounts. mode auto reconciles both, or set mode to depart/claim for one action. Returns ok, state, claimed, rewardCredit, skipped and message.', example: { op: 'account.travel', mode: 'auto', saveAs: 'travel' } },
   { id: 'http.request', zh: 'HTTP 请求', en: 'HTTP request', descriptionZh: '调用 HTTP/HTTPS 接口并保存响应。', descriptionEn: 'Call an HTTP/HTTPS endpoint and retain its response.', example: { op: 'http.request', method: 'GET', url: 'https://example.com/api', saveAs: 'response' } },
   { id: 'http.requestAsAccount', zh: '使用账号请求', en: 'HTTP request as account', descriptionZh: '使用当前循环账号的登录态请求，任务中不会出现 Token。', descriptionEn: 'Call an endpoint with the current account session without exposing a token in the task.', example: { op: 'http.requestAsAccount', method: 'GET', url: 'https://example.com/api' } },
   { id: 'dom.find', zh: '查找页面元素', en: 'Find DOM element', descriptionZh: '使用 CSS、XPath 或文字查找页面元素。', descriptionEn: 'Find an element using CSS, XPath, or text.', example: { op: 'dom.find', locator: { kind: 'xpath', value: "//button[contains(., '领取')]" }, saveAs: 'element' } },
@@ -405,6 +406,7 @@ function validateSteps(steps, depth = 0) {
       if (url.length > 2048) throw new Error(`第 ${index + 1} 步 URL 过长`);
     }
     if (op === 'session.create' || op === 'session.send') validateModelStep(step, op, index);
+    if (op === 'account.travel' && step.mode !== undefined && !['auto', 'depart', 'claim'].includes(String(step.mode))) throw new Error(`第 ${index + 1} 步 mode 只支持 auto、depart、claim`);
   });
 }
 
@@ -491,6 +493,7 @@ function capabilityText(language = 'zh') {
     '触发器：manual 仅手动运行；pageReady 在首次打开、导航完成或账号切换后的页面刷新完成后运行。pageReady 默认同一次页面导航只触发一次；pageLoaded 同样覆盖页面加载（包括切换刷新）；accountSwitched 仅账号切换；clientLoaded 仅 daemon 连接已加载客户端时触发（兼容名，不建议新任务使用）。组合事件同一导航只执行一次。',
     '组合触发：trigger.types:["clientLoaded","panelOpened"] 可多选，存在时替代 trigger.type；空数组仅手动。schedule:{type:"interval",minutes:60} 每小时触发（1–10080 分钟）；也支持 {type:"daily",time:"09:00"}、{type:"weekly",days:[1,2,3,4,5],time:"09:00"}（0=周日）、{type:"monthly",day:15,time:"09:00"}、{type:"once",at:"2026-12-01T09:00"}。均为电脑本地时区，每月不存在的日期跳过，指定时间任务不会重复，可与事件组合；enabled:false 停止所有自动触发。自动任务不提供立即运行；需要测试时在编辑器清空自动触发条件并关闭定时，再手动运行。运行中的同一任务不会重入，错过的定时不会补跑。POST /api/automations/events {type:"panelOpened"} 在面板从关闭变为打开时调用，需标准本地 API 认证。',
     '签到：account.checkin 使用循环账号的 token，先检查本地今日已验证记录，成功则跳过（包括 token 刷新）；失败返回 ok:false，单账号异常可用 logic.catch 捕获。无需 switch:true。',
+    '派猫猫旅行：account.travel 同样使用循环账号的 token，先查官方状态：arrived 领取奖励、traveling 等待、idle 且未达每日上限才派发（派发失败 30 分钟后下一轮重试）。daily_limit_reached 表示今天的行程已经派出，不会再重复派。返回 ok、state、claimed、rewardCredit、skipped、message。无需 switch:true。',
     '通用步骤字段：op 必填；saveAs 可把该步骤返回值保存到 {{vars.<name>}}；每个步骤的返回值也会覆盖 {{step.*}}。嵌套步骤仍按顺序执行。',
     '模板变量：{{now}}、{{event.type}}、{{event.account.uid}}、{{account.uid}}、{{account.nickname}}、{{vars.name}}、{{response.status}}、{{response.text}}、{{response.json}}、{{step.*}}。对象与数组递归展开模板；完整字符串模板保留原始数值/对象/数组类型，混合文本模板会转成字符串。',
     '条件运算符：equals、notEquals、contains、matches、truthy、falsy、gt、gte、lt、lte。matches 的 right 是正则表达式字符串。',
@@ -518,6 +521,7 @@ function capabilityText(language = 'zh') {
     'Template values: {{now}}, {{event.type}}, {{event.account.uid}}, {{account.uid}}, {{account.nickname}}, {{vars.name}}, {{response.status}}, {{response.text}}, {{response.json}}, {{step.*}}. Objects and arrays recursively resolve templates. A whole-value template preserves numbers/objects/arrays; interpolation inside text produces a string.',
     'Condition operators: equals, notEquals, contains, matches, truthy, falsy, gt, gte, lt, lte. matches treats right as a regular-expression string.',
     'Account scope: account.forEach only changes nested context by default. Set switch:true to physically switch the logged-in account and restore the original account after the loop. account.status and http.requestAsAccount use the current context; DOM and current-session steps operate the visible WorkBuddy page after switching.',
+    'Buddy travel: account.travel uses the context account token. It reads the official state first: arrived claims the reward, traveling waits, and idle with no daily limit reached departs (a failed departure retries on the next cycle, throttled to 30 minutes). daily_limit_reached means the trip for today was already dispatched. Returns ok, state, claimed, rewardCredit, skipped and message. No switch:true required.',
     'Locator: {kind,value}. kind supports css, xpath, text, role, ariaLabel, placeholder, and attribute. coordinates is reserved and unavailable to current DOM steps.',
     'DOM waits: use seconds for a fixed delay, or locator plus until:{state:"visible"|"hidden"|"attached"|"detached"|"clickable"} and timeoutMs. until also accepts text containment or attribute/value equality. locators supplies ordered fallbacks; readText is capped at 100000 characters. Iframes support reads only, not clicks or input. DOM read results can be stored with saveAs.',
     'HTTP input: method, url, query, headers, body, timeoutMs (500-60000), saveAs. Response: {ok,status,headers,text,json}; body is capped at 1 MiB. http.request rejects Authorization/Cookie; http.requestAsAccount injects credentials only for current-profile official HTTPS origins, rejecting foreign origins, ports and URL credentials. Redirects are not followed. body/query/headers resolve recursive templates. Non-2xx returns ok:false by default; throwOnHttpError:true enables retry (backoff defaults to 1). Cancellation aborts HTTP and waits.',
@@ -839,6 +843,13 @@ async function executeTask(taskInput, options = {}) {
       if (typeof options.accountCheckin !== 'function') throw new Error('账号签到能力不可用');
       const account = ctx.account || (typeof options.currentAccount === 'function' ? await options.currentAccount() : null);
       const result = await options.accountCheckin(account);
+      if (step.saveAs) ctx.vars[String(step.saveAs)] = result;
+      return result;
+    }
+    if (op === 'account.travel') {
+      if (typeof options.accountTravel !== 'function') throw new Error('派猫猫旅行能力不可用');
+      const account = ctx.account || (typeof options.currentAccount === 'function' ? await options.currentAccount() : null);
+      const result = await options.accountTravel(account, { mode: String(step.mode || 'auto') });
       if (step.saveAs) ctx.vars[String(step.saveAs)] = result;
       return result;
     }

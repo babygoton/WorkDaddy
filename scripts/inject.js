@@ -811,6 +811,11 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     "页面就绪后立即检查首页弹窗与运营位，每 300 毫秒补查，持续约 30 秒；重新出现的弹窗继续关闭，快速切换账号时重新检测新页面。": "Check home popups and promotional slots every 300 ms for about 30 seconds. Close any that reappear and restart detection after account switches.",
     "循环账号静默签到": "Check in all accounts in the background",
     "使用各账号 token 签到，不切换当前账号；跳过今日已签到账号。每小时、客户端加载和打开面板时检查。": "Check in with each account without switching the active account. Skip accounts already checked in today. Check hourly, on client load, and when the panel opens.",
+    '派猫猫旅行（自动派发与领取奖励）': 'Buddy Travel (auto depart and claim rewards)',
+    '使用各账号 token 处理成长中心的派猫猫旅行：未出发就派发，已到达就领取奖励，不切换当前账号。每 15 分钟检查一轮，派发失败 30 分钟后重试；今日已派或已领取的账号不再重复请求。': 'Handle Buddy Travel in the growth center with each account token: depart when idle, claim the reward on arrival, without switching the active account. Check every 15 minutes and retry a failed departure after 30 minutes. Accounts already departed or claimed today are skipped.',
+    '还没到达，下一轮再领': 'Not arrived yet; will claim on a later cycle',
+    '没有可用的旅行地点': 'No travel location is available',
+    '已派猫猫出门': 'Buddy sent out travelling',
     "所有账号已按序处理完毕，已恢复开始时的账号": "All accounts have been processed. The starting account has been restored.",
     "存在账号未完成处理，已尝试恢复开始时的账号": "Some accounts could not be processed. An attempt was made to restore the starting account.",
     "该账号签到未成功，请检查登录状态或签到活动": "Check-in failed for this account. Check its login status and check-in availability.",
@@ -1255,7 +1260,8 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     return !!task && [
       'buddy-fuel-station-close-on-account-switch',
       'daily-account-checkin',
-      'keep-accounts-active-1-plus-1'
+      'keep-accounts-active-1-plus-1',
+      'daily-buddy-travel'
     ].indexOf(task.id) >= 0;
   }
 
@@ -1267,6 +1273,14 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         ],
         "description": [
           "使用各账号 token 签到，不切换当前账号；跳过今日已签到账号。每小时、客户端加载和打开面板时检查。"
+        ]
+      },
+      "daily-buddy-travel": {
+        "name": [
+          "派猫猫旅行（自动派发与领取奖励）"
+        ],
+        "description": [
+          "使用各账号 token 处理成长中心的派猫猫旅行：未出发就派发，已到达就领取奖励，不切换当前账号。每 15 分钟检查一轮，派发失败 30 分钟后重试；今日已派或已领取的账号不再重复请求。"
         ]
       },
       "keep-accounts-active-1-plus-1": {
