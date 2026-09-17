@@ -6,7 +6,8 @@ const crypto = require('crypto');
 const { validateRequirements, assessRequirements } = require('./automation-compatibility');
 const { normalizeToastOptions } = require('./toast-options.js');
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
+const SUPPORTED_SCHEMA_VERSIONS = new Set([1, 2]);
 const MAX_TASKS = 200;
 const MAX_STEPS = 200;
 const MAX_DEPTH = 12;
@@ -57,6 +58,9 @@ const CAPABILITIES = [
   { id: 'session.waitReply', zh: '等待会话回复', en: 'Wait for session reply', descriptionZh: '等待当前会话产生新回复。', descriptionEn: 'Wait for a new reply in the current session.', example: { op: 'session.waitReply', timeoutMs: 120000 } },
   { id: 'state.get', zh: '读取任务状态', en: 'Read task state', descriptionZh: '读取任务或账号范围内的持久化值。', descriptionEn: 'Read a persisted value scoped to a task or account.', example: { op: 'state.get', key: 'lastRun' } },
   { id: 'state.set', zh: '保存任务状态', en: 'Write task state', descriptionZh: '保存任务或账号范围内的持久化值。', descriptionEn: 'Persist a value scoped to a task or account.', example: { op: 'state.set', key: 'lastRun', value: '{{now}}' } },
+  { id: 'time.now', zh: '读取当前时间', en: 'Read current time', descriptionZh: '以 ISO、毫秒时间戳或本地日期格式读取当前时间。', descriptionEn: 'Read current time as ISO text, epoch milliseconds, or a local date.', example: { op: 'time.now', format: 'epochMs', saveAs: 'nowMs' } },
+  { id: 'value.uuid', zh: '生成唯一编号', en: 'Generate UUID', descriptionZh: '生成适用于请求、事件和幂等键的 UUID。', descriptionEn: 'Generate a UUID for requests, events, or idempotency keys.', example: { op: 'value.uuid', saveAs: 'requestId' } },
+  { id: 'value.number', zh: '数值计算', en: 'Calculate number', descriptionZh: '对数值执行加减乘除、最小值或最大值运算，并可限制结果范围。', descriptionEn: 'Add, subtract, multiply, divide, minimize, or maximize numeric values with optional bounds.', example: { op: 'value.number', operator: 'subtract', values: [10, 3], min: 0, saveAs: 'remaining' } },
   { id: 'notify.toast', zh: '显示提示', en: 'Show notification', descriptionZh: '使用 react-hot-toast 从窗口底部弹出提示。level 支持 info/success/warning/error/loading；duration 为 1000–60000 毫秒，默认 4200（loading 默认持续显示）。同一 id 更新原提示；saveAs 保存返回的 id。', descriptionEn: 'Show a react-hot-toast notification at the window bottom. Levels: info/success/warning/error/loading. duration: 1000–60000 ms, default 4200 (loading persists). Reuse id to update; saveAs stores the returned id.', example: { op: 'notify.toast', level: 'success', message: '任务完成', duration: 4200, id: 'progress' } },
   { id: 'notify.dismiss', zh: '关闭通知', en: 'Dismiss notification', descriptionZh: '按 id 关闭本次运行创建的提示，不影响其他任务或界面通知。任务结束时自动清理未结束的 loading 提示。', descriptionEn: 'Dismiss a notification by id within this run. Unfinished loading notifications are cleared when the run ends.', example: { op: 'notify.dismiss', id: 'progress' } },
   { id: 'notify.afterAllTasks', zh: '全部任务完成后汇报主账号', en: 'Report completion to primary account', descriptionZh: '手动监听当前账号的全部 WorkBuddy 会话，连续确认完成后用主账号 token 新建云端汇报会话；不切换账号。未设置主账号或当前即主账号时跳过；账号变化、失败、状态不明时不发送。最长等待 24 小时。', descriptionEn: 'Manually wait for all current-account WorkBuddy conversations, then create a cloud report conversation as the primary account without switching. Skip if no primary or already primary. Abort on changed account, failure or unknown status. Maximum 24 hours.', example: { op: 'notify.afterAllTasks', timeoutMs: 86400000 } },
@@ -116,7 +120,7 @@ function isTaskCompatible(task) {
   try { validateTask(task); return !task.requires || assessRequirements(task.requires, {...automationRuntime,capabilities:CAPABILITIES.filter(c=>c.available!==false).map(c=>c.id)}).length === 0; } catch (_) { return false; }
 }
 
-function isSupportedTaskSchema(task) { return !!task && (task.schemaVersion == null || task.schemaVersion === SCHEMA_VERSION); }
+function isSupportedTaskSchema(task) { return !!task && (task.schemaVersion == null || SUPPORTED_SCHEMA_VERSIONS.has(task.schemaVersion)); }
 
 function normalizeTask(input) {
   const src = input && typeof input === 'object' ? input : {};
@@ -126,7 +130,7 @@ function normalizeTask(input) {
   const steps = Array.isArray(src.steps) ? src.steps.slice(0, MAX_STEPS) : [];
   return {
     ...preserved,
-    schemaVersion: SCHEMA_VERSION,
+    schemaVersion: src.schemaVersion || 1,
     id,
     name: String(src.name || id).slice(0, 120),
     description: String(src.description || '').slice(0, 500),
@@ -339,7 +343,7 @@ function validateLocator(locator) {
   if (kind === 'coordinates' && (!Number.isFinite(Number(locator.x)) || !Number.isFinite(Number(locator.y)))) throw new Error('坐标定位无效');
 }
 
-function validateSteps(steps, depth = 0) {
+function validateSteps(steps, depth = 0, schemaVersion = 1) {
   if (!Array.isArray(steps)) throw new Error('steps 必须是数组');
   if (depth > MAX_DEPTH) throw new Error('任务嵌套层级过深');
   if (steps.length > MAX_STEPS) throw new Error('步骤数量超过限制');
@@ -351,16 +355,20 @@ function validateSteps(steps, depth = 0) {
       normalizeToastOptions({ ...step, id }, op === 'notify.dismiss');
     }
     if (/^state\./.test(op) && (!['task','account'].includes(step.scope || 'task') || typeof step.key !== 'string' || !step.key.trim())) throw new Error('状态需要有效的 scope 和 key');
+    if (schemaVersion < 2 && (['time.now', 'value.uuid', 'value.number'].includes(op) || step.ttlMs != null)) throw new Error('该能力需要自动化协议 V2');
+    if (op === 'state.set' && step.ttlMs != null && (!Number.isInteger(step.ttlMs) || step.ttlMs < 1 || step.ttlMs > 31536000000)) throw new Error('状态有效期必须是 1–31536000000 毫秒的整数');
+    if (op === 'time.now' && !['iso', 'epochMs', 'localDate'].includes(step.format || 'iso')) throw new Error('不支持的时间格式');
+    if (op === 'value.number' && !['add', 'subtract', 'multiply', 'divide', 'min', 'max'].includes(step.operator)) throw new Error('不支持的数值运算');
     if (step.saveAs && (!/^[A-Za-z_][\w-]{0,79}$/.test(step.saveAs) || ['__proto__','prototype','constructor'].includes(step.saveAs))) throw new Error('saveAs 必须是变量名');
     if (step.locators) { if (!Array.isArray(step.locators) || !step.locators.length || step.locators.length > 10) throw new Error('候选定位器需要 1–10 项'); step.locators.forEach(validateLocator); }
     if (!SUPPORTED_OPS.has(op)) throw new Error(`第 ${index + 1} 步不支持能力: ${op || '(空)'}`);
-    if (['logic.sequence', 'logic.repeat', 'logic.retry', 'logic.catch', 'logic.forEach', 'logic.waitUntil', 'account.forEach'].includes(op)) validateSteps(step.steps || [], depth + 1);
+    if (['logic.sequence', 'logic.repeat', 'logic.retry', 'logic.catch', 'logic.forEach', 'logic.waitUntil', 'account.forEach'].includes(op)) validateSteps(step.steps || [], depth + 1, schemaVersion);
     if (op === 'logic.retry' && /\"op\"\s*:\s*\"session\.(create|send|sendCurrent)\"/.test(JSON.stringify(step.steps || []))) throw new Error('会话发送不能放入 retry，避免重复发送');
-    if (op === 'logic.catch') validateSteps(step.onError || [], depth + 1);
-    if (op === 'logic.if') { validateSteps(step.then || [], depth + 1); validateSteps(step.else || [], depth + 1); }
+    if (op === 'logic.catch') validateSteps(step.onError || [], depth + 1, schemaVersion);
+    if (op === 'logic.if') { validateSteps(step.then || [], depth + 1, schemaVersion); validateSteps(step.else || [], depth + 1, schemaVersion); }
     if (op === 'logic.switch') {
-      Object.values(step.cases || {}).forEach((value) => validateSteps(value || [], depth + 1));
-      validateSteps(step.default || [], depth + 1);
+      Object.values(step.cases || {}).forEach((value) => validateSteps(value || [], depth + 1, schemaVersion));
+      validateSteps(step.default || [], depth + 1, schemaVersion);
     }
     if (['dom.find', 'dom.click', 'dom.type', 'dom.clear', 'dom.press', 'dom.readText', 'dom.readAttribute', 'dom.wait'].includes(op) && step.locator) validateLocator(step.locator);
     if (op === 'http.request' || op === 'http.requestAsAccount') {
@@ -374,7 +382,10 @@ function validateSteps(steps, depth = 0) {
 function validateTask(input) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('任务必须是 JSON 对象');
   if (input.kind != null) throw new Error('任务包或索引不能作为本地任务执行');
-  if (input.schemaVersion != null && input.schemaVersion !== 1) throw new Error('不支持的任务协议版本');
+  const schemaVersion = input.schemaVersion || 1;
+  if (!SUPPORTED_SCHEMA_VERSIONS.has(schemaVersion)) throw new Error('不支持的任务协议版本');
+  if (schemaVersion < 2 && input.concurrency != null) throw new Error('并发策略需要自动化协议 V2');
+  if (input.concurrency && (!input.concurrency || input.concurrency.policy !== 'skip')) throw new Error('当前仅支持 skip 并发策略');
   if (input.id != null && !safeId(input.id)) throw new Error('任务 ID 无效');
   if (input.requires) { validateRequirements(input.requires); if(input.requires.taskSchemaVersion !== (input.schemaVersion || 1)) throw new Error('任务协议与兼容要求不一致'); }
   for(const [key,limit] of [['steps',MAX_STEPS],['onSuccess',40],['onFailure',40]]) if(input[key]!=null && (!Array.isArray(input[key]) || input[key].length>limit)) throw new Error('任务步骤不是数组或超过数量限制');
@@ -387,9 +398,9 @@ function validateTask(input) {
   if (!task.name.trim()) throw new Error('任务名称不能为空');
   if (!['manual', 'pageReady', 'pageLoaded', 'accountSwitched', 'clientLoaded', 'panelOpened'].includes(task.trigger.type)) throw new Error('不支持的触发方式: ' + task.trigger.type);
   validateSchedule(task.schedule);
-  validateSteps(task.steps);
-  validateSteps(task.onSuccess || []);
-  validateSteps(task.onFailure || []);
+  validateSteps(task.steps, 0, schemaVersion);
+  validateSteps(task.onSuccess || [], 0, schemaVersion);
+  validateSteps(task.onFailure || [], 0, schemaVersion);
   return task;
 }
 
@@ -444,48 +455,48 @@ function capabilityText(language = 'zh') {
     groups[group].push(item.id + (item.available === false ? (zh ? '（预留）' : ' (reserved)') : ''));
   });
   const lines = zh ? [
-    'WorkDaddy 自动化任务协议 v1',
+    'WorkDaddy 自动化任务协议 v2（兼容 v1）',
     '',
     '任务 JSON：',
-    JSON.stringify({ schemaVersion: 1, id: 'example-task', name: '任务名称', description: '', enabled: true, trigger: { type: 'manual', oncePerNavigation: true }, variables: {}, steps: [], onSuccess: [], onFailure: [] }, null, 2),
+    JSON.stringify({ schemaVersion: 2, id: 'example-task', name: '任务名称', description: '', enabled: true, concurrency: { policy: 'skip' }, trigger: { type: 'manual', oncePerNavigation: true }, variables: {}, steps: [], onSuccess: [], onFailure: [] }, null, 2),
     '',
-    '任务字段：schemaVersion 固定为 1；id 在全部任务中唯一；name 必填；description 可空；enabled 控制生命周期触发；variables 是任务初始变量；steps 是主步骤；onSuccess/onFailure 分别在成功/失败后执行。',
+    '任务字段：schemaVersion 支持 1 和 2，新任务使用 2；id 在全部任务中唯一；name 必填；description 可空；enabled 控制生命周期触发；V2 concurrency.policy 支持 skip；variables 是任务初始变量；steps 是主步骤；onSuccess/onFailure 分别在成功/失败后执行。',
     '约束：最多 200 个任务；每组最多 200 个步骤；最多嵌套 12 层；单次重复最多 100 次；重试最多 10 次；单次等待最多 300 秒。任务中不要保存 Token、Cookie 或密码。',
     '触发器：manual 仅手动运行；pageReady 在首次打开、导航完成或账号切换后的页面刷新完成后运行。pageReady 默认同一次页面导航只触发一次；pageLoaded 同样覆盖页面加载（包括切换刷新）；accountSwitched 仅账号切换；clientLoaded 仅 daemon 连接已加载客户端时触发（兼容名，不建议新任务使用）。组合事件同一导航只执行一次。',
     '组合触发：trigger.types:["clientLoaded","panelOpened"] 可多选，存在时替代 trigger.type；空数组仅手动。schedule:{type:"interval",minutes:60} 每小时触发（1–10080 分钟）；也支持 {type:"daily",time:"09:00"}、{type:"weekly",days:[1,2,3,4,5],time:"09:00"}（0=周日）、{type:"monthly",day:15,time:"09:00"}、{type:"once",at:"2026-12-01T09:00"}。均为电脑本地时区，每月不存在的日期跳过，指定时间任务不会重复，可与事件组合；enabled:false 停止所有自动触发。自动任务不提供立即运行；需要测试时在编辑器清空自动触发条件并关闭定时，再手动运行。运行中的同一任务不会重入，错过的定时不会补跑。POST /api/automations/events {type:"panelOpened"} 在面板从关闭变为打开时调用，需标准本地 API 认证。',
     '签到：account.checkin 使用循环账号的 token，先检查本地今日已验证记录，成功则跳过（包括 token 刷新）；失败返回 ok:false，单账号异常可用 logic.catch 捕获。无需 switch:true。',
     '通用步骤字段：op 必填；saveAs 可把该步骤返回值保存到 {{vars.<name>}}；每个步骤的返回值也会覆盖 {{step.*}}。嵌套步骤仍按顺序执行。',
-    '模板变量：{{now}}、{{event.type}}、{{event.account.uid}}、{{account.uid}}、{{account.nickname}}、{{vars.name}}、{{response.status}}、{{response.text}}、{{response.json}}、{{step.*}}。对象与数组递归展开模板；完整字符串模板保留原始数值/对象/数组类型，混合文本模板会转成字符串。',
+    '模板变量：V2 提供 {{runtime.time.iso}}、{{runtime.time.epochMs}}、{{runtime.time.localDate}}、{{runtime.run.id}}、{{runtime.trigger.type}}；并兼容 {{now}}、{{event.type}}、{{account.uid}}、{{vars.name}}、{{response.json}}、{{step.*}}。对象与数组递归展开模板；完整字符串模板保留原始数值/对象/数组类型，混合文本模板会转成字符串。',
     '条件运算符：equals、notEquals、contains、matches、truthy、falsy、gt、gte、lt、lte。matches 的 right 是正则表达式字符串。',
     '账号作用域：account.forEach 默认只改变嵌套步骤的账号上下文；设置 switch:true 才会真实切换登录账号，并在循环结束后恢复原账号。account.status 和 http.requestAsAccount 使用当前上下文；DOM 与当前会话步骤操作切换后的可见 WorkBuddy 页面。',
     '元素定位 locator：{kind,value}。kind 支持 css、xpath、text、role、ariaLabel、placeholder、attribute。coordinates 仅保留协议格式，当前不可用于 DOM 步骤。',
     'DOM 等待：dom.wait 可使用 seconds 做固定等待；或使用 locator、until:{state:"visible"|"hidden"|"attached"|"detached"|"clickable"}、timeoutMs 等待元素状态。until 还支持 text 包含匹配或 attribute/value 相等。locators 数组提供依次回退的定位器；readText 最多 100000 字符。iframe 内目前只支持读取，不支持点击与输入。DOM 读取结果可用 saveAs 保存。',
     'HTTP 输入：method、url、query、headers、body、timeoutMs（500-60000）、saveAs。响应：{ok,status,headers,text,json}，正文最多 1 MiB。http.request 不允许自定义 Authorization/Cookie；http.requestAsAccount 只对当前客户端官方 HTTPS origin 注入账号登录态；禁止跨域、非默认端口、URL 用户名密码。重定向不会自动跟随。body/query/headers 支持递归模板。默认非 2xx 返回 ok:false 供分支判断；throwOnHttpError:true 抛错以配合 retry（支持 backoff，默认 1）。停止会中止 HTTP 和等待。',
     '会话：session.create 新建并发送第一条消息；session.send 仅向选中且无草稿的指定 conversationId 发送；返回 {accountUid,conversationId,userMessageId,requestId,baselineAssistantId} 回执，saveAs 保存。session.wait 接受 receipt（默认 vars.session）、timeoutMs（最长 300000）、contains，按回执监听。未知发送结果不会自动重发；发送不能嵌套 retry。session.sendCurrent/waitReply 是兼容别名，前者实际上新建会话。仅支持挂载的可见会话，不支持后台任意会话发送。',
-    '状态作用域：state.get/state.set 的 scope 支持 task（默认）或 account；所有状态首先按任务 ID 隔离；task scope 不随账号变化，account scope 再按 uid 隔离；写入合并最新状态。旧版本无任务 ID 的歧义状态不会自动归入任何任务。key 必填；state.get 可配 saveAs。',
+    '状态作用域：state.get/state.set 的 scope 支持 task（默认）或 account；所有状态首先按任务 ID 隔离；account scope 再按 uid 隔离。V2 state.set 可设置 ttlMs，过期后 state.get 返回空值并清理。key 必填；state.get 可配 saveAs。',
     '通知：notify.toast 使用 react-hot-toast，从窗口底部向上弹出；level 支持 info、success、warning、error、loading。可选 duration（1000–60000 毫秒）、id、saveAs；相同 id 更新提示，notify.dismiss 用 id 关闭。id 按本次运行隔离，任务结束自动清理 loading。notify.afterAllTasks 已废弃，仅兼容旧任务；新任务不要使用。',
     '失败语义：未捕获错误会停止主步骤并执行 onFailure；logic.catch 捕获局部错误并把消息写入 {{vars.error.message}}；logic.retry 只重试其嵌套步骤。',
     '',
     '基础接口总目录：',
   ] : [
-    'WorkDaddy Automation Task Protocol v1',
+    'WorkDaddy Automation Task Protocol v2 (backward compatible with v1)',
     '',
     'Task JSON:',
-    JSON.stringify({ schemaVersion: 1, id: 'example-task', name: 'Task name', description: '', enabled: true, trigger: { type: 'manual', oncePerNavigation: true }, variables: {}, steps: [], onSuccess: [], onFailure: [] }, null, 2),
+    JSON.stringify({ schemaVersion: 2, id: 'example-task', name: 'Task name', description: '', enabled: true, concurrency: { policy: 'skip' }, trigger: { type: 'manual', oncePerNavigation: true }, variables: {}, steps: [], onSuccess: [], onFailure: [] }, null, 2),
     '',
-    'Task fields: schemaVersion is 1; id is unique; name is required; description may be empty; enabled controls lifecycle triggers; variables contains initial values; steps is the main sequence; onSuccess/onFailure run after success/failure.',
+    'Task fields: schemaVersion 1 and 2 are supported; new tasks use 2. id is unique; name is required; description may be empty; enabled controls lifecycle triggers; V2 concurrency.policy supports skip; variables contains initial values; steps is the main sequence; onSuccess/onFailure run after success/failure.',
     'Limits: 200 tasks; 200 steps per group; nesting depth 12; 100 repeat iterations; 10 retry attempts; 300 seconds per wait. Never store tokens, cookies, or passwords in a task.',
     'Triggers: manual only runs on demand; pageReady runs after initial load, navigation, or the page refresh following an account switch. pageReady runs once per navigation by default; pageLoaded includes all page loads; accountSwitched only matches switches; clientLoaded is a legacy connection-only trigger. Combined events run once per navigation.',
     'Combined triggers: trigger.types:["clientLoaded","panelOpened"] overrides trigger.type. Empty types means manual only. schedule:{type:"interval",minutes:60} adds an interval of 1–10080 minutes. Also supported: {type:"daily",time:"09:00"}, {type:"weekly",days:[1,2,3,4,5],time:"09:00"} (0=Sunday), {type:"monthly",day:15,time:"09:00"}, {type:"once",at:"2026-12-01T09:00"}. All use local computer time; nonexistent month dates and missed slots are skipped, and calendar slots are not repeated after restart. Only tasks without automatic triggers or a schedule can run manually. Disabled tasks do not auto-run; running tasks skip overlapping triggers. POST /api/automations/events {type:"panelOpened"} requires local API authentication. account.checkin uses the context account token and skips all requests for a confirmed daily check-in; use logic.catch to handle individual account errors.',
     'Common step fields: op is required; saveAs stores the returned value at {{vars.<name>}}; each result also replaces {{step.*}}. Nested steps execute sequentially.',
-    'Template values: {{now}}, {{event.type}}, {{event.account.uid}}, {{account.uid}}, {{account.nickname}}, {{vars.name}}, {{response.status}}, {{response.text}}, {{response.json}}, {{step.*}}. Objects and arrays recursively resolve templates. A whole-value template preserves numbers/objects/arrays; interpolation inside text produces a string.',
+    'Template values: V2 provides {{runtime.time.iso}}, {{runtime.time.epochMs}}, {{runtime.time.localDate}}, {{runtime.run.id}}, and {{runtime.trigger.type}}; {{now}}, {{event.type}}, {{account.uid}}, {{vars.name}}, {{response.json}}, and {{step.*}} remain compatible. Objects and arrays recursively resolve templates.',
     'Condition operators: equals, notEquals, contains, matches, truthy, falsy, gt, gte, lt, lte. matches treats right as a regular-expression string.',
     'Account scope: account.forEach only changes nested context by default. Set switch:true to physically switch the logged-in account and restore the original account after the loop. account.status and http.requestAsAccount use the current context; DOM and current-session steps operate the visible WorkBuddy page after switching.',
     'Locator: {kind,value}. kind supports css, xpath, text, role, ariaLabel, placeholder, and attribute. coordinates is reserved and unavailable to current DOM steps.',
     'DOM waits: use seconds for a fixed delay, or locator plus until:{state:"visible"|"hidden"|"attached"|"detached"|"clickable"} and timeoutMs. until also accepts text containment or attribute/value equality. locators supplies ordered fallbacks; readText is capped at 100000 characters. Iframes support reads only, not clicks or input. DOM read results can be stored with saveAs.',
     'HTTP input: method, url, query, headers, body, timeoutMs (500-60000), saveAs. Response: {ok,status,headers,text,json}; body is capped at 1 MiB. http.request rejects Authorization/Cookie; http.requestAsAccount injects credentials only for current-profile official HTTPS origins, rejecting foreign origins, ports and URL credentials. Redirects are not followed. body/query/headers resolve recursive templates. Non-2xx returns ok:false by default; throwOnHttpError:true enables retry (backoff defaults to 1). Cancellation aborts HTTP and waits.',
     'Sessions: session.create creates by sending the first message; session.send targets only a selected conversationId with an empty composer. Returns {accountUid,conversationId,userMessageId,requestId,baselineAssistantId}; saveAs persists the receipt in variables. session.wait accepts receipt (default vars.session), timeoutMs (up to 300000), contains. Unconfirmed sends are never automatically retried; sends cannot be nested in retry. sendCurrent/waitReply are legacy aliases; sendCurrent creates a new conversation. Only mounted visible sessions are supported.',
-    'State scope: state.get/state.set scope is task (default) or account. all state is isolated by task ID first, with an additional uid dimension for account scope. Writes merge the latest state. Ambiguous legacy state without task IDs is not automatically assigned to any task. key is required; state.get accepts saveAs.',
+    'State scope: state.get/state.set scope is task (default) or account. State is isolated by task ID and account scope adds the uid. V2 state.set accepts ttlMs; expired values are removed and state.get returns empty. key is required; state.get accepts saveAs.',
     'Notifications: notify.toast uses react-hot-toast at bottom-center. level is info, success, warning, error, or loading. Optional duration (1000–60000 ms), id, and saveAs; reuse id to update, notify.dismiss with id to dismiss. IDs are scoped to a run; unfinished loading notifications are cleared when the run ends. notify.afterAllTasks is deprecated and retained only for saved tasks. Do not generate it for new tasks.',
     'Failure behavior: an uncaught error stops main steps and runs onFailure. logic.catch writes a local error to {{vars.error.message}}. logic.retry retries only its nested steps.',
     '',
@@ -670,7 +681,17 @@ function locatorExpression(locator) {
 async function executeTask(taskInput, options = {}) {
   const task = validateTask(taskInput);
   if (!isTaskCompatible(task)) throw new Error('任务与当前 WorkDaddy 不兼容，请升级或使用适配版本');
-  const ctx = { task, account: options.event && options.event.account ? clone(options.event.account) : null, event: clone(options.event) || null, vars: clone(task.variables) || {}, response: null, step: {}, state: {}, now: new Date().toISOString() };
+  const clock = typeof options.now === 'function' ? options.now : Number.isFinite(Number(options.now)) ? () => Number(options.now) : Date.now;
+  const startedAt = clock();
+  const startedDate = new Date(startedAt);
+  const pad = (value) => String(value).padStart(2, '0');
+  const localDate = `${startedDate.getFullYear()}-${pad(startedDate.getMonth() + 1)}-${pad(startedDate.getDate())}`;
+  const runtime = {
+    time: { iso: startedDate.toISOString(), epochMs: startedAt, localDate },
+    run: { id: String(options.runId || crypto.randomUUID()) },
+    trigger: { type: String(options.event && options.event.type || 'manual') },
+  };
+  const ctx = { task, runtime, account: options.event && options.event.account ? clone(options.event.account) : null, event: clone(options.event) || null, vars: clone(task.variables) || {}, response: null, step: {}, state: {}, now: runtime.time.iso };
   if (!ctx.account && options.currentAccount) ctx.account = await options.currentAccount();
   if (ctx.event) ctx.vars.event = clone(ctx.event);
   if (ctx.account) ctx.vars.account = clone(ctx.account);
@@ -724,6 +745,30 @@ async function executeTask(taskInput, options = {}) {
       return { ok: true, key, matched, result: await runSteps(matched ? cases[key] : (step.default || [])) };
     }
     if (op === 'vars.set') { const key = String(step.key || ''); if (!/^[A-Za-z_][\w-]{0,79}$/.test(key) || ['__proto__','constructor','prototype'].includes(key)) throw new Error('变量名无效'); return (ctx.vars[key] = resolveValue(step.value, ctx)); }
+    if (op === 'time.now') {
+      const at = clock();
+      const date = new Date(at);
+      if ((step.format || 'iso') === 'epochMs') return at;
+      if (step.format === 'localDate') return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+      return date.toISOString();
+    }
+    if (op === 'value.uuid') return String((options.randomUUID || crypto.randomUUID)());
+    if (op === 'value.number') {
+      const values = resolveValue(step.values, ctx);
+      if (!Array.isArray(values) || !values.length || values.some((value) => !Number.isFinite(Number(value)))) throw new Error('数值运算需要有效的 values 数组');
+      const numbers = values.map(Number);
+      let value;
+      if (step.operator === 'add') value = numbers.reduce((sum, item) => sum + item, 0);
+      else if (step.operator === 'subtract') value = numbers.slice(1).reduce((sum, item) => sum - item, numbers[0]);
+      else if (step.operator === 'multiply') value = numbers.reduce((sum, item) => sum * item, 1);
+      else if (step.operator === 'divide') value = numbers.slice(1).reduce((sum, item) => sum / item, numbers[0]);
+      else if (step.operator === 'min') value = Math.min(...numbers);
+      else if (step.operator === 'max') value = Math.max(...numbers);
+      if (!Number.isFinite(value)) throw new Error('数值运算结果无效');
+      if (Number.isFinite(Number(step.min))) value = Math.max(Number(step.min), value);
+      if (Number.isFinite(Number(step.max))) value = Math.min(Number(step.max), value);
+      return value;
+    }
     if (op === 'logic.break') { if (!loopDepth) throw new Error('break 只能用于循环'); throw BREAK; }
     if (op === 'logic.waitUntil') {
       const end = Date.now() + Math.min(300000, Math.max(100, Number(step.timeoutMs) || 10000));
@@ -844,7 +889,7 @@ async function executeTask(taskInput, options = {}) {
       return options.sessionWaitReply({ timeoutMs: step.timeoutMs, contains: interpolate(step.contains || '', ctx) });
     }
     if (op === 'state.get') { const result = await getState(step.scope || 'task', ctx.account && ctx.account.uid, String(step.key || '')); if (step.saveAs) ctx.vars[String(step.saveAs)] = result; return result; }
-    if (op === 'state.set' || op === 'state.checkpoint') { const value = resolveValue(step.value, ctx); await setState(step.scope || 'task', ctx.account && ctx.account.uid, String(step.key || ''), value); return { ok: true, value }; }
+    if (op === 'state.set' || op === 'state.checkpoint') { const value = resolveValue(step.value, ctx); await setState(step.scope || 'task', ctx.account && ctx.account.uid, String(step.key || ''), value, { ttlMs: step.ttlMs }); return { ok: true, value }; }
     if (op === 'notify.toast') {
       if (typeof options.notifyToast !== 'function') throw new Error('通知能力不可用');
       const detail = normalizeToastOptions({ ...step, id: step.id == null ? undefined : interpolate(step.id, ctx) });

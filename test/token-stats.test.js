@@ -49,6 +49,25 @@ test('cached scan reuses history and merges today without duplicate calls', () =
   assert.equal(third.accounts[0].account, 'acct-a');
 });
 
+test('daily breakdown keeps account and model dimensions without changing totals', t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wbs-token-series-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(root, 'projects', 'p'), { recursive: true });
+  const file = path.join(root, 'projects', 'p', 'session.jsonl');
+  const now = new Date(2026, 8, 17, 12).getTime();
+  fs.writeFileSync(file, [
+    { timestamp: now - 1000, accountUid: 'a', model: 'alpha', usage: { input_tokens: 10, output_tokens: 2 } },
+    { timestamp: now - 2000, accountUid: 'b', model: 'alpha', usage: { input_tokens: 4 } },
+    { timestamp: now - 3000, accountUid: 'a', model: 'beta', usage: { output_tokens: 3 } },
+  ].map(JSON.stringify).join('\n'));
+  const result = scanTokenStatsCached(root, { now, days: 1 });
+  assert.equal(result.totals.input + result.totals.output, 19);
+  assert.deepEqual(result.dailyBreakdown.map(row => [row.account, row.model, row.input + row.output]), [
+    ['a', 'alpha', 12], ['a', 'beta', 3], ['b', 'alpha', 4],
+  ]);
+  assert.deepEqual(scanTokenStatsCached(root, { now, days: 1, account: 'b' }).dailyBreakdown.map(row => row.account), ['b']);
+});
+
 test('date range is limited to 90 days', () => {
   const now = Date.parse('2026-09-11T10:00:00Z');
   assert.throws(() => dateBounds(now, { from: '2026-01-01', until: '2026-09-11' }), /不能超过 90 天/);
@@ -86,9 +105,59 @@ test('token statistics UI keeps results under an overlay and exposes presets thr
   assert.doesNotMatch(source, /__wbsTokenStatsCacheReady/);
   assert.match(source, /setTimeout\(function \(\) \{ if \(!overlay\.hidden\)/);
   assert.match(source, /formatTokenCount\(item\.calls/);
-  assert.match(source, /var tokenDays = \[\]/);
-  assert.match(source, /data-token-days><option value="1">今天<\/option><option value="7" selected>/);
-  assert.match(source, /data-credit-days><option value="1">今天<\/option><option value="7" selected>/);
+  assert.match(source, /usageTimeSegmentHtml\('token'\)/);
+  assert.match(source, /usageTimeSegmentHtml\('credit'\)/);
+  assert.match(source, /data-' \+ kind \+ '-days="' \+ days/);
+  assert.match(source, /days === 7\) \+ '"'/);
+  assert.doesNotMatch(source, /data-token-account|data-token-model|data-credit-account/);
+  assert.match(source, /data-trend-mode="account"/);
+  assert.match(source, /data-trend-mode="model"/);
+  assert.match(source, /data-trend-series/);
+  assert.match(source, /stats\.dailyBreakdown/);
+  assert.match(source, /renderUsageBreakdown\(creditBody/);
+});
+
+test('usage statistics modal uses a larger responsive dashboard layout in both themes', () => {
+  const source = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'inject.js'), 'utf8');
+  assert.match(source, /wbs-usage-dashboard/);
+  assert.match(source, /wbs-usage-columns/);
+  assert.match(source, /wbs-usage-modal-mask/);
+  assert.match(source, /root\.appendChild\(mask\)/);
+  assert.match(source, /\.wbs-token-stats-modal\{[^}]*width:min\(980px,calc\(100vw - 48px\)\)/);
+  assert.doesNotMatch(source, /\.wbs-token-stats-grid>div:before/);
+  assert.doesNotMatch(source, /--wbs-usage-accent/);
+  assert.doesNotMatch(source, /--wbs-usage-green/);
+  assert.match(source, /\.wbs-usage-tabs button\.active\{border-bottom-color:var\(--wb-color-text-primary/);
+  assert.match(source, /\.wbs-token-stats-grid>div\{[^}]*border:1px solid var\(--wb-border-subtle/);
+  assert.match(source, /\.wbs-token-stats-grid strong\{[^}]*color:var\(--wb-color-text-primary/);
+  assert.match(source, /function renderUsageTrendChart/);
+  assert.match(source, /class="wbs-usage-trend-canvas"/);
+  assert.match(source, /class="wbs-status-popover wbs-usage-trend-tooltip" role="tooltip" hidden/);
+  assert.match(source, /canvas\.addEventListener\('pointermove'/);
+  assert.match(source, /canvas\.addEventListener\('keydown'/);
+  assert.match(source, /context\.font = '11px/);
+  assert.doesNotMatch(source, /canvas\.title =/);
+  assert.match(source, /\.wbs-usage-trend-tooltip\{[^}]*pointer-events:none/);
+  assert.match(source, /\.wbs-usage-header\{[^}]*position:sticky/);
+  assert.match(source, /\.wbs-usage-dashboard\{scrollbar-width:none\}/);
+  assert.match(source, /\.wbs-usage-dashboard::\-webkit-scrollbar\{display:none\}/);
+  assert.match(source, /html\.cb-dark #wbs-token-stats-modal/);
+  assert.match(source, /@media\(max-width:700px\)[\s\S]{0,220}\.wbs-usage-columns\{grid-template-columns:1fr\}/);
+});
+
+test('breakdown lines use distinct chart-only colors across light and dark themes', () => {
+  const source = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'inject.js'), 'utf8');
+  const colors = source.match(/function usageTrendColors\(\) \{([\s\S]*?)\n    \}/);
+  assert.ok(colors);
+  assert.doesNotMatch(colors[1], /--wbs-primary|--wb-color-text/);
+  assert.match(source, /\.wbs-trend-panel\{--wbs-trend-series-1:#/);
+  assert.match(source, /html\.cb-dark #wbs-token-stats-modal \.wbs-trend-panel/);
+  assert.match(source, /html\[data-theme="dark"\] #wbs-token-stats-modal \.wbs-trend-panel/);
+  assert.match(source, /body\[data-vscode-theme-name\*="dark" i\] #wbs-token-stats-modal \.wbs-trend-panel/);
+  assert.match(source, /state\.colorSlots\[mode\]/);
+  assert.match(source, /slots\.delete\(key\)/);
+  assert.match(source, /new Set\(groups\.map\(function \(group\) \{ return group\.key; \}\)\)/);
+  assert.doesNotMatch(source, /selected\.size < 5|最多同时显示 5 条折线/);
 });
 
 test('token cache survives local day rollover without rereading unchanged JSONL files', t => {

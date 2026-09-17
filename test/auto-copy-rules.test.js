@@ -19,6 +19,7 @@ const {
   ensureAutoCopySession,
   ensureAutoCopySessions,
   normalizeAutoCopyLineages,
+  mergeAutoCopyLineages,
   getAutoCopySessionMembers,
   addAutoCopySessionMember,
   removeAutoCopySessionMember,
@@ -291,7 +292,7 @@ test('duplicate session rows sharing one lineage collapse per account without de
   ]);
 });
 
-test('normalizing lineages separates duplicate physical sessions without deleting them', () => {
+test('normalizing lineages records duplicate physical sessions without splitting their family', () => {
   const dataDir = tempDataDir();
   const lineageId = ensureAutoCopySession(dataDir, 'source', 'source-session');
   addAutoCopySessionMember(dataDir, lineageId, 'target', 'target-old');
@@ -299,12 +300,26 @@ test('normalizing lineages separates duplicate physical sessions without deletin
 
   assert.equal(normalizeAutoCopyLineages(dataDir), true);
   const meta = JSON.parse(fs.readFileSync(metaFile(dataDir), 'utf8'));
-  const targetLineages = Object.keys(meta.autoCopy.sessions).filter((id) =>
-    (meta.autoCopy.sessions[id].members || []).some((member) => member.uid === 'target'));
-  assert.equal(targetLineages.length, 2);
-  assert.deepEqual(targetLineages.map((id) =>
-    meta.autoCopy.sessions[id].members.filter((member) => member.uid === 'target').length), [1, 1]);
-  assert.notEqual(meta.autoCopy.sessionIndex.target['target-old'], meta.autoCopy.sessionIndex.target['target-new']);
+  assert.equal(Object.keys(meta.autoCopy.sessions).length, 1);
+  assert.equal(meta.autoCopy.sessionIndex.target['target-old'], lineageId);
+  assert.equal(meta.autoCopy.sessionIndex.target['target-new'], lineageId);
+  assert.deepEqual(meta.autoCopy.duplicates, [{ lineageId, uid: 'target', id: 'target-new' }]);
+  assert.equal(normalizeAutoCopyLineages(dataDir), false, 'an unchanged audit must not rewrite metadata');
+});
+
+test('split lineages can be merged without losing either physical session', () => {
+  const dataDir = tempDataDir();
+  const source = ensureAutoCopySession(dataDir, 'source', 'source-session');
+  const detached = ensureAutoCopySession(dataDir, 'target', 'target-copy');
+  setAutoCopyMapping(dataDir, detached, 'third', { targetId: 'third-copy' });
+
+  assert.deepEqual(mergeAutoCopyLineages(dataDir, source, detached), { ok: true, movedMembers: 1 });
+  assert.equal(getAutoCopySession(dataDir, 'source', 'source-session').lineageId, detached);
+  assert.deepEqual(getAutoCopySessionMemberRecords(dataDir, detached), [
+    { uid: 'target', id: 'target-copy' },
+    { uid: 'source', id: 'source-session' },
+  ]);
+  assert.equal(getAutoCopyMapping(dataDir, detached, 'third').targetId, 'third-copy');
 });
 
 test('long account chains reuse one lineage and clean up without duplicate members', () => {

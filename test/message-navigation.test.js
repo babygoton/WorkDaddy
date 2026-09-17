@@ -76,6 +76,25 @@ test('all navigation turns are built from the structured message store regardles
   assert.equal(turns[1].assistantMessage, assistantTwo);
 });
 
+test('message navigation preview hides only the assistant completion marker at the end', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../scripts/inject.js'), 'utf8');
+  const start = source.indexOf('      function messageText(message, limit) {');
+  const end = source.indexOf('\n      function ensureRoot()', start);
+  assert.ok(start >= 0 && end > start);
+  const context = {};
+  vm.runInNewContext(source.slice(start, end), context);
+
+  const assistant = content => ({ messageType: 'assistant', content });
+  const text = value => ({ type: 'text', text: value });
+  assert.equal(context.messageText(assistant([text('6\n[wbs-reply-done]: #')]), 320), '6');
+  assert.equal(context.messageText(assistant([text('6'), text('[wbs-reply-done]: #')]), 320), '6');
+  assert.equal(context.messageText(assistant([text('[wbs-reply-done]: #')]), 320), '');
+  assert.equal(context.messageText(assistant([text('The [wbs-reply-done]: # syntax is internal, not a final marker here.')]), 320),
+    'The [wbs-reply-done]: # syntax is internal, not a final marker here.');
+  assert.equal(context.messageText({ messageType: 'user', content: [text('[wbs-reply-done]: #')] }, 320),
+    '[wbs-reply-done]: #');
+});
+
 test('pending in-flight user messages (req-* requestId only) are skipped from navigation turns', () => {
   const realUser = { id: 'real-1', messageType: 'user', content: [] };
   const pendingUser = { requestId: 'req-1788055901657776', messageType: 'user', content: [] };
