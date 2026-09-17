@@ -7,7 +7,7 @@ const { replaceFileWithRetry } = require('./atomic-file-write');
 const { previewPackage } = require('./automation-packages');
 const { SCHEMA_VERSION } = require('./automation');
 
-const DISCOVERY_MARKER = 'WorkDaddyAutomationRepositoryV1';
+const DISCOVERY_MARKER = 'WorkDaddyAutomationRepository';
 const CACHE_VERSION = 2;
 const CACHE_TTL_MS = 10 * 60 * 1000;
 const PAGE_SIZE = 100;

@@ -1257,6 +1257,7 @@ function updateMeta(dataDir, info, { preserveBinding = false } = {}) {
     authDomain: info.authDomain || prev.authDomain || '',
     authIssuer: info.authIssuer || prev.authIssuer || '',
     sort: Number.isSafeInteger(prev.sort) && prev.sort > 0 ? prev.sort : 0,
+    note: typeof prev.note === 'string' ? prev.note : '',
     firstSeen: prev.firstSeen || now,
     lastSeen: now,
   };
@@ -1346,9 +1347,19 @@ function getAccountOrder(dataDir) {
 }
 
 function setAccountOrder(dataDir, value) {
+  return setAccountSettings(dataDir, value);
+}
+
+function setAccountSettings(dataDir, value) {
   if (!value || !['expiry', 'fixed'].includes(value.mode) || !Array.isArray(value.uids) ||
-      value.uids.length > 10000 || value.uids.some(uid => typeof uid !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(uid)) ||
+      value.uids.length > 10000 || value.uids.some(uid => typeof uid !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(uid) || ['__proto__', 'prototype', 'constructor'].includes(uid)) ||
       new Set(value.uids).size !== value.uids.length) throw new Error('无效的账号排序设置');
+  if (value.notes !== undefined && (!value.notes || typeof value.notes !== 'object' || Array.isArray(value.notes) ||
+      Object.keys(value.notes).length > 10000 || Object.entries(value.notes).some(([uid, note]) =>
+        !/^[A-Za-z0-9_-]{1,128}$/.test(uid) || ['__proto__', 'prototype', 'constructor'].includes(uid) ||
+        typeof note !== 'string' || note.length > 160 || /[\x00-\x08\x0b-\x1f\x7f]/.test(note)))) {
+    throw new Error('无效的账号备注设置');
+  }
   const current = new Set(listAccounts(dataDir).map(account => account.uid));
   const meta = readMeta(dataDir);
   for (const account of Object.values(meta.accounts)) {
@@ -1358,6 +1369,9 @@ function setAccountOrder(dataDir, value) {
   for (const uid of value.uids) {
     if (!current.has(uid)) continue; // 弹窗打开后删除的账号不能复活。
     meta.accounts[uid] = Object.assign({}, meta.accounts[uid], { sort: ++sort });
+  }
+  if (value.notes) for (const [uid, note] of Object.entries(value.notes)) {
+    if (current.has(uid)) meta.accounts[uid] = Object.assign({}, meta.accounts[uid], { note: note.trim() });
   }
   meta.accountOrderMode = value.mode;
   writeMeta(dataDir, meta);
@@ -1381,9 +1395,11 @@ function listAccounts(dataDir) {
   const list = names.map((n) => {
     const uid = n.replace(/\.info$/, '');
     const savedSort = orderMeta.accounts[uid] && orderMeta.accounts[uid].sort;
+    const savedNote = orderMeta.accounts[uid] && orderMeta.accounts[uid].note;
     const item = {
       uid,
       sort: Number.isSafeInteger(savedSort) && savedSort > 0 ? savedSort : 0,
+      note: typeof savedNote === 'string' ? savedNote : '',
       nickname: '',
       phone: '',
       uin: '',
@@ -1565,6 +1581,7 @@ function switchTo(dataDir, uid, log = () => {}) {
 module.exports = {
   getAccountOrder,
   setAccountOrder,
+  setAccountSettings,
   readModelsFile,
   writeModelsFile,
   writeModelBackup,

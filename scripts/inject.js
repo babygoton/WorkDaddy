@@ -737,6 +737,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
   var WBS_LANGUAGE_KEY = 'workdaddy.ui.language';
   var WBS_ACCOUNT_MASK_KEY = 'workdaddy.account.mask.' + PROFILE_ID;
   var WBS_I18N_EN = {
+    ' 分支到新会话': ' Start a new conversation here', '账号设置': 'Account settings', '排序方式': 'Sort by', '会话结束时提醒切换账号': 'Suggest switching accounts when a reply finishes', '账号备注': 'Account notes', '的备注': ' note', '例如：公司邮箱注册': 'For example: company email', '无效的账号备注设置': 'Invalid account note settings', '保存账号设置失败': 'Failed to save account settings',
     '查询失败，请重新选择时间重试': 'Query failed. Select a time range to retry.',
     '查询已中断，请重新选择时间重试': 'Query interrupted. Select a time range to retry.',
     '无法读取查询进度，请重新选择时间重试': 'Could not read progress. Select a time range to retry.',
@@ -832,7 +833,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '账号': 'Accounts', '主题': 'Theme', '会话': 'Sessions', '模型': 'Models', '增强': 'Enhance', '自动化': 'Automation', '电脑': 'Computer', '关于': 'About', '设置': 'Settings',
     '导出': 'Export', '导入': 'Import', '删除': 'Delete', '编辑': 'Edit', '保存': 'Save', '内置': 'Built-in', '取消': 'Cancel', '确定': 'Confirm', '确认': 'Confirm', '复制': 'Copy', '切换': 'Switch', '启用': 'Enable', '停用': 'Disable', '停止': 'Stop', '立即运行': 'Run now', '新建任务': 'New task', '刷新': 'Refresh', '步骤 JSON': 'Steps JSON', '任务说明': 'Task description', '任务名称': 'Task name', '调度': 'Schedule', '手动运行': 'Manual', '手动': 'Manual', '每小时': 'Hourly', '每天': 'Daily', '选择任务': 'Select tasks', '查看接口': 'View capabilities', '拾取元素': 'Pick element', '复制 XPath': 'Copy XPath', '运行中': 'Running', '已成功': 'Succeeded', '失败': 'Failed', '未运行': 'Not run', '页面加载完成': 'Page loaded', '账号切换完成': 'Account switched', '新自动化任务': 'New automation task', '任务已保存': 'Task saved', '任务已开始运行': 'Task started', '步骤 JSON 格式无效': 'Invalid steps JSON', '步骤 JSON 必须是数组': 'Steps JSON must be an array', '查看接口说明': 'View interface docs', '自动化接口协议': 'Automation interface protocol', '复制全部': 'Copy all', '接口协议已复制': 'Interface protocol copied', '暂无自动化任务，点击“新建任务”开始。': 'No automation tasks yet. Click “New task” to start.', '编辑任务': 'Edit task', '触发方式': 'Trigger', '插入点击步骤': 'Insert click step', 'XPath 已复制': 'XPath copied', '点击步骤已插入': 'Click step inserted', '请先拾取元素': 'Pick an element first', '加载自动化失败': 'Failed to load automations', '读取接口失败': 'Failed to read interfaces', '批量操作失败': 'Batch operation failed', '删除失败': 'Delete failed', '确认删除该任务？': 'Delete this task?', '执行': 'Apply', '已拾取': 'Picked', '运行失败': 'Run failed', '（副本）': ' (copy)', '查看提示词': 'View prompt', '交给 WorkBuddy 创建': 'Ask WorkBuddy to create', '正在打开新任务…': 'Opening a new task…', '已创建新会话，WorkBuddy 完成后任务会自动出现': 'New session created. The task will appear after WorkBuddy finishes.', 'WorkBuddy 创建失败': 'WorkBuddy creation failed', '加载示例失败': 'Failed to load examples', '暂无示例': 'No examples available', '运行日志': 'Run logs', '暂无运行日志': 'No run logs yet', '开始时间': 'Started', '结束时间': 'Finished', '捕获错误': 'Caught error', '暂无执行日志': 'No execution log entries', '执行日志': 'Execution log', '尚未结束': 'Still running',
     '暂存提示词': 'Stash prompt', '暂存': 'Stashed', '引用文本': 'Quote text', '快捷短语': 'Quick phrases', '点击后发送': 'Send on click', '编辑 →': 'Edit →', '新增': 'Add', '批量操作': 'Batch actions', '批量管理': 'Batch manage', '全选': 'Select all', '取消全选': 'Deselect all', '已选 0': 'Selected 0',
-    '分支到新会话': 'Branch to new session', ' 分支到新会话': ' Branch to new session', '从这条回复分支到同一工作区的新会话。': 'Branch from this reply into a new session in the same workspace.', '正在创建分支会话…': 'Creating branch session…', '分支会话已创建，正在打开…': 'Branch created. Opening…', '分支会话已创建，但无法自动打开，请在会话列表中查找。': 'Branch created but could not open automatically. Check the sessions list.', '新会话未出现在列表中，请在会话列表中查找。': 'The new session is not listed yet. Check the sessions list.', '无法确认所选消息的分支位置，请稍后重试': 'Cannot confirm this reply position. Try again shortly.', '分支失败: ': 'Branch failed: ',
+    '分支到新会话': 'Start a new conversation here', '从这里开始新会话': 'Start a new conversation here', '复制到这条回复为止的聊天内容，在当前工作区继续聊；原会话不变。': 'Copy the conversation up to this reply into a new conversation in the current workspace. The original stays unchanged.', '会复制这条回复及之前的聊天内容，在当前工作区新建会话；原会话不会改变。': 'Copy this reply and earlier messages into a new conversation in the current workspace. The original stays unchanged.', '正在创建分支会话…': 'Creating branch session…', '分支会话已创建，正在打开…': 'Branch created. Opening…', '分支会话已创建，但无法自动打开，请在会话列表中查找。': 'Branch created but could not open automatically. Check the sessions list.', '新会话未出现在列表中，请在会话列表中查找。': 'The new session is not listed yet. Check the sessions list.', '无法确认所选消息的分支位置，请稍后重试': 'Cannot confirm this reply position. Try again shortly.', '分支失败: ': 'Branch failed: ',
     '账号汇总': 'Account summary', '账号数': 'Accounts', '总积分': 'Total credits', '手机': 'Phone', '有效期至': 'Expires', '当前使用中': 'Currently active', '隐藏敏感信息': 'Mask sensitive info', '显示明文': 'Show plaintext', '登录新账号': 'Log in a new account', '没有可导出的账号备份': 'No account backups to export', '还没有备份账号。打开/登录一次 WorkBuddy 后会自动备份，稍后再来查看。': 'No account backups yet. Open or log in to WorkBuddy once and check again later.',
     '语言': 'Language', '中文': 'Chinese', '英语': 'English', 'English': 'English', '跟随系统': 'Follow system', '设置语言': 'Language', '首次打开时自动跟随系统语言；未匹配时使用英语。': 'The first launch follows your system language. English is used when no match is found.', '语言设置已更新': 'Language updated',
     '默认': 'Default', 'WorkDaddy 主题': 'WorkDaddy theme', '毛玻璃': 'Frosted glass', '护眼绿': 'Eye-care green', '赛博紫': 'Cyber purple', '主题外观': 'Theme appearance', '壁纸': 'Wallpaper', '头像': 'Avatar', '自定义壁纸': 'Custom wallpaper', '背景蒙版': 'Background overlay', '背景毛玻璃': 'Background blur', '恢复默认': 'Restore default', '恢复官方头像': 'Restore official avatar',
@@ -883,7 +884,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '未设置': 'Not set', '当前使用中': 'Currently active', '停止生成': 'Stop generating', '正常重启': 'Restart normally', '清空日志': 'Clear log', '开发者工具': 'Developer tools', '隐藏功能': 'Hidden feature', '卡死': 'Stuck', '任务': 'Task', '空间': 'Workspace', '全部': 'All', '今天': 'Today', '近 7 天': 'Last 7 days', '近 30 天': 'Last 30 days', '企业配额': 'Enterprise quota', '积分到期分布': 'Credit expiry distribution',
     '连接新服务…': 'Connecting to service…', '等待中': 'Waiting', '运行中': 'Running', '空闲': 'Idle', '已中断': 'Interrupted', '已停止': 'Stopped', '未确认': 'Unconfirmed', '等待确认': 'Waiting for confirmation', '等待新回复': 'Waiting for a new reply', '等待会话': 'Waiting for session', '等待允许': 'Waiting for approval', '整理中': 'Organizing', '恢复中': 'Restoring', '即将完成…': 'Finishing…', '已继续': 'Continued', '检测到会话异常中断，即将自动发送「': 'An interrupted session was detected. Sending “', '自动发送失败，请手动点击发送': 'Automatic send failed. Please click Send manually', '底层发送失败，请手动发送': 'Underlying send failed. Please send manually',
     '导入中…': 'Importing…', ' 个任务': ' task(s)', '导入任务': 'Import tasks', '导出任务': 'Export tasks', '请先勾选要导出的任务': 'Select tasks to export first', '选择 JSON 或 ZIP 任务文件': 'Choose a JSON or ZIP task file', '读取任务文件…': 'Reading task file…', '任务导出成功': 'Tasks exported', '导入失败': 'Import failed', '导出失败': 'Export failed', '可导入': 'Ready to import', '已存在，将跳过': 'Already exists; skipped', '不兼容，无法导入': 'Incompatible; cannot import', '导入后保持停用，可在任务列表中启用。相同 ID 的任务会跳过。': 'Imported tasks stay disabled until you enable them. Existing task IDs are skipped.', '任务文件不能超过 8 MiB': 'Task files must not exceed 8 MiB', '缺少必填参数': 'Required inputs are missing', '需要更新 WorkDaddy': 'Requires a newer WorkDaddy version', '不支持当前客户端或系统': 'Unsupported client or platform', '文件不是自动化任务 JSON': 'Not an automation task JSON file', '任务格式或能力不受支持': 'Unsupported task format or capabilities',
-    '发现更多自动化任务': 'Discover more automations', '正在发现…': 'Discovering…', '搜索任务名称': 'Search task names', '没有匹配的任务': 'No matching tasks', '暂未发现公开任务': 'No public tasks found', '公开任务加载失败': 'Could not load public tasks', '任务来自 Gitee 公开仓库，导入后默认停用。': 'Tasks come from public Gitee repositories and stay disabled after import.', '部分来源暂时无法访问，当前显示上次缓存的结果。': 'Gitee is unavailable. Showing cached results.', '暂无说明': 'No description', '不兼容': 'Incompatible', '无法打开仓库': 'Could not open repository', '任务已导入，启用后生效': 'Task imported. Enable it to run.', '任务已存在，未重复导入': 'Task already exists and was not imported again.', '我也要出现在这里': 'Publish my tasks', '提交公开任务': 'Publish public tasks', '仅收录 Gitee 公开仓库。参考': 'Only public Gitee repositories are indexed. See', '将任务 JSON 放在 tasks/ 目录，并在仓库描述中加入 WorkDaddyAutomationRepositoryV1。实际协议版本写在每个任务 JSON 的 schemaVersion 字段（1 或 2），与仓库标记 V1 无关。': 'Put task JSON files in tasks/ and add WorkDaddyAutomationRepositoryV1 to the repository description. Set schemaVersion (1 or 2) in each task JSON; the repository marker V1 does not determine the task version.', '查看示例仓库': 'View example repository', '上一页': 'Previous', '下一页': 'Next', ' · 匹配 ': ' · Matches ',
+    '发现更多自动化任务': 'Discover more automations', '正在发现…': 'Discovering…', '搜索任务名称': 'Search task names', '没有匹配的任务': 'No matching tasks', '暂未发现公开任务': 'No public tasks found', '公开任务加载失败': 'Could not load public tasks', '任务来自 Gitee 公开仓库，导入后默认停用。': 'Tasks come from public Gitee repositories and stay disabled after import.', '部分来源暂时无法访问，当前显示上次缓存的结果。': 'Gitee is unavailable. Showing cached results.', '暂无说明': 'No description', '不兼容': 'Incompatible', '无法打开仓库': 'Could not open repository', '任务已导入，启用后生效': 'Task imported. Enable it to run.', '任务已存在，未重复导入': 'Task already exists and was not imported again.', '我也要出现在这里': 'Publish my tasks', '提交公开任务': 'Publish public tasks', '仅收录 Gitee 公开仓库。参考': 'Only public Gitee repositories are indexed. See', '将任务 JSON 放在 tasks/ 目录，并在仓库描述中加入 WorkDaddyAutomationRepository。': 'Put task JSON files in tasks/ and add WorkDaddyAutomationRepository to the repository description.', '查看示例仓库': 'View example repository', '上一页': 'Previous', '下一页': 'Next', ' · 匹配 ': ' · Matches ',
     '会话复制完成': 'Session copy complete', '会话复制完成，部分项目失败': 'Session copy complete with some failures', ' · 新复制': ' · Newly copied ', ' · 有': ' · ', ' 项需要留意': ' item(s) need attention', ' · 请稍后重试': ' · Try again later', '会话复制进度': 'Session copy progress',
     '导出账号': 'Export accounts', '导入账号': 'Import accounts', '导出会话': 'Export sessions', '导入会话': 'Import sessions', '导出快捷短语': 'Export quick phrases', '导入快捷短语': 'Import quick phrases', '复制选中到其他账号': 'Copy selected to another account', '删除选中': 'Delete selected', '操作会话': 'Session actions', '连通测试': 'Test connection', '编辑模型': 'Edit model', '模型已保存': 'Model saved', '模型已启用': 'Model enabled', '模型已复制': 'Model copied', '模型配置已共用': 'Model configuration shared', '当前模型': 'Current model', '备选模型': 'Backup models', '模型加载失败：': 'Failed to load models: ', '保存模型失败：': 'Failed to save model: ', '删除当前模型失败：': 'Failed to delete current model: ', '启用模型失败：': 'Failed to enable model: ', '连通测试失败：': 'Connection test failed: ',
     '选择要查看的账号': 'Choose an account to view', '选择账号并输入密码后导出备份': 'Choose accounts and enter a password to export backups', '从加密导出文件导入账号备份': 'Import account backups from an encrypted export', '使用密码导出选中会话': 'Export selected sessions with a password', '使用密码导出选中快捷短语': 'Export selected quick phrases with a password', '从加密文件导入会话': 'Import sessions from an encrypted file', '从加密文件导入快捷短语': 'Import quick phrases from an encrypted file', '仅支持 PNG / JPG / WebP': 'PNG / JPG / WebP only', '点击或拖拽上传壁纸': 'Click or drag to upload a wallpaper', '点击选择图片，或拖拽到此处': 'Click to choose an image, or drag it here', '支持 PNG / JPG / WebP，自动压缩；可添加多张': 'PNG / JPG / WebP supported; images are compressed automatically',
@@ -3580,8 +3581,34 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     var messageNavigation = createMessageNavigation();
     var forkBusy = false;
     var forkSyncTimer = null;
+    var forkTooltip = el('span', 'wbs-telemetry-tooltip wbs-fork-tooltip');
+    forkTooltip.id = 'wbs-fork-tooltip';
+    forkTooltip.setAttribute('role', 'tooltip');
+    forkTooltip.textContent = '会复制这条回复及之前的聊天内容，在当前工作区新建会话；原会话不会改变。';
+    document.body.appendChild(forkTooltip);
+    applyI18n(forkTooltip);
+    function hideForkTooltip() { forkTooltip.classList.remove('is-visible'); }
+    function showForkTooltip(button) {
+      if (!sessState.fork) return;
+      var rect = button.getBoundingClientRect();
+      forkTooltip.classList.add('is-visible');
+      var width = forkTooltip.offsetWidth;
+      var height = forkTooltip.offsetHeight;
+      forkTooltip.style.left = Math.round(Math.max(8, Math.min(window.innerWidth - width - 8, rect.left + rect.width / 2 - width / 2))) + 'px';
+      forkTooltip.style.top = Math.round(rect.bottom + height + 10 < window.innerHeight ? rect.bottom + 7 : rect.top - height - 7) + 'px';
+    }
+    listen(document, 'pointerover', function (event) { var button = event.target.closest && event.target.closest('.wbs-fork-button'); if (button) showForkTooltip(button); });
+    listen(document, 'pointerout', function (event) {
+      var button = event.target.closest && event.target.closest('.wbs-fork-button');
+      if (button && (!event.relatedTarget || !button.contains(event.relatedTarget))) hideForkTooltip();
+    });
+    listen(document, 'focusin', function (event) { var button = event.target.closest && event.target.closest('.wbs-fork-button'); if (button) showForkTooltip(button); });
+    listen(document, 'focusout', function (event) { if (event.target.closest && event.target.closest('.wbs-fork-button')) hideForkTooltip(); });
+    listen(window, 'scroll', hideForkTooltip, true);
+    registerDisposer(function () { forkTooltip.remove(); });
     function syncForkButtons() {
       if (!sessState.fork) {
+        hideForkTooltip();
         document.querySelectorAll('.wbs-fork-button').forEach(function (button) { button.remove(); });
         return;
       }
@@ -3594,9 +3621,9 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         if (!frame) continue;
         var button = el('button', 'wbs-fork-button');
         button.type = 'button';
-        button.title = '分支到新会话';
-        button.setAttribute('aria-label', '分支到新会话');
-        button.innerHTML = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="3" r="2"/><path d="M6 5v12a4 4 0 0 0 4 4h4"/><circle cx="6" cy="19" r="2"/><circle cx="18" cy="6" r="2"/><path d="M18 8a6 6 0 0 1-6 6H6"/></svg>';
+        button.setAttribute('aria-label', '从这里开始新会话');
+        button.setAttribute('aria-describedby', forkTooltip.id);
+        button.innerHTML = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="6" r="2"/><circle cx="18" cy="6" r="2"/><circle cx="12" cy="20" r="2"/><path d="M6 8v1a3 3 0 0 0 3 3h6a3 3 0 0 0 3-3V8M12 12v6"/></svg>';
         feedback.insertBefore(button, feedback.firstChild);
         applyI18n(button);
       }
@@ -3613,6 +3640,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       if (!button) return;
       event.preventDefault();
       event.stopPropagation();
+      hideForkTooltip();
       if (!sessState.fork || forkBusy) return;
       var frame = button.closest('.cr-frame[data-cr-frame-id]');
       var conversation = frame && frame.closest('.cr-document[data-root-id]');
@@ -4815,6 +4843,10 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       });
     }
 
+    var rotationReminderKey = 'workdaddy.account.rotationReminder.' + PROFILE_ID;
+    function rotationReminderEnabled() {
+      try { return localStorage.getItem(rotationReminderKey) === '1'; } catch (_) { return false; }
+    }
     // 账号 pane 初始化：顶部 导出/导入 工具栏 + 列表容器 + 底部退出登录按钮（原 foot 的 logout 迁移到账号 tab）
     if (accountsPane) {
       accountsPane.innerHTML =
@@ -4830,7 +4862,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         '<button class="wbs-acct-io wbs-acct-icon" type="button" data-act="token-stats" title="用量统计" aria-label="用量统计">' + TOKEN_STATS_ICON + '</button>' +
         '<button class="wbs-acct-io wbs-acct-icon" type="button" data-act="export" title="选择账号并输入密码后导出备份" aria-label="导出账号">' + EXPORT_ICON + '</button>' +
         '<button class="wbs-acct-io wbs-acct-icon" type="button" data-act="import" title="从加密导出文件导入账号备份" aria-label="导入账号">' + IMPORT_ICON + '</button>' +
-        '<button class="wbs-acct-io wbs-acct-icon" type="button" data-act="account-more" title="账号排序" aria-label="账号排序"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 4v16m-4-4 4 4 4-4M14 5h7m-7 5h5m-5 5h3"/></svg></button>' +
+        '<button class="wbs-acct-io wbs-acct-icon" type="button" data-act="account-more" title="账号设置" aria-label="账号设置"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2.75a2 2 0 0 1 2 1.4l.4 1.1 1.15.47 1.06-.48a2 2 0 0 1 2.4.45l.8.8a2 2 0 0 1 .45 2.4l-.48 1.06.47 1.15 1.1.4a2 2 0 0 1 0 3.8l-1.1.4-.47 1.15.48 1.06a2 2 0 0 1-.45 2.4l-.8.8a2 2 0 0 1-2.4.45l-1.06-.48-1.15.47-.4 1.1a2 2 0 0 1-3.8 0l-.4-1.1-1.15-.47-1.06.48a2 2 0 0 1-2.4-.45l-.8-.8a2 2 0 0 1-.45-2.4l.48-1.06-.47-1.15-1.1-.4a2 2 0 0 1 0-3.8l1.1-.4.47-1.15-.48-1.06a2 2 0 0 1 .45-2.4l.8-.8a2 2 0 0 1 2.4-.45l1.06.48 1.15-.47.4-1.1A2 2 0 0 1 12 2.75Z"/><circle cx="12" cy="12.5" r="3"/></svg></button>' +
         '</div>' +
         '</div>' +
         '<div class="wbs-acct-list"></div>' +
@@ -4863,16 +4895,25 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         return left === right ? 0 : left - right;
       });
       mask.innerHTML = '<div class="wbs-modal wbs-account-order-modal" role="dialog" aria-modal="true" aria-labelledby="wbs-account-order-title">' +
-        '<div class="wbs-modal-title" id="wbs-account-order-title">账号排序</div>' +
+        '<div class="wbs-modal-title" id="wbs-account-order-title">账号设置</div>' +
+        '<div class="wbs-account-settings-section">排序方式</div>' +
         '<div class="wbs-account-order-modes"><label><input type="radio" name="wbs-account-order" value="expiry">按积分临近时间</label>' +
         '<label><input type="radio" name="wbs-account-order" value="fixed">固定顺序</label></div>' +
         '<div data-fixed-order>' +
         '<div class="wbs-account-order-list" role="list" aria-label="固定账号顺序"></div></div>' +
+        '<label class="wbs-account-settings-toggle"><span>会话结束时提醒切换账号</span><span class="wbs-switch"><input type="checkbox" data-rotation-reminder><span class="wbs-switch-slider"></span></span></label>' +
+        '<div class="wbs-account-settings-section">账号备注</div><div class="wbs-account-notes"></div>' +
         '<div class="wbs-password-error" role="alert"></div><div class="wbs-modal-actions">' +
         '<button class="wbs-modal-btn" type="button" data-order-cancel>取消</button>' +
         '<button class="wbs-modal-btn wbs-modal-ok" type="button" data-order-save>保存</button></div></div>';
       panel.appendChild(mask);
       var list = mask.querySelector('.wbs-account-order-list');
+      var notesList = mask.querySelector('.wbs-account-notes');
+      mask.querySelector('[data-rotation-reminder]').checked = rotationReminderEnabled();
+      notesList.innerHTML = ordered.map(function (a) {
+        return '<label class="wbs-account-note-row"><span data-wbs-i18n-skip>' + esc(a.nickname || '未命名') + '</span>' +
+          '<input type="text" maxlength="160" data-note-uid="' + escAttr(a.uid) + '" value="' + escAttr(a.note || '') + '" placeholder="例如：公司邮箱注册" aria-label="' + escAttr((a.nickname || '未命名') + '的备注') + '"></label>';
+      }).join('') || '<div class="wbs-empty">暂无账号</div>';
       var busy = false, dragged = null;
       function close() {
         if (busy) return;
@@ -4949,21 +4990,27 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       mask.querySelector('[data-order-cancel]').addEventListener('click', close);
       mask.querySelector('[data-order-save]').addEventListener('click', function () {
         if (busy) return;
+        var notes = Object.create(null);
+        notesList.querySelectorAll('[data-note-uid]').forEach(function (input) { notes[input.dataset.noteUid] = input.value.trim(); });
+        var reminder = mask.querySelector('[data-rotation-reminder]').checked;
         busy = true;
         mask.querySelectorAll('button,input').forEach(function (node) { node.disabled = true; });
         mask.querySelector('[data-order-save]').textContent = '保存中…';
-        api('/api/accounts/order', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: mode, uids: ordered.map(function (a) { return a.uid; }) }) })
+        api('/api/accounts/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: mode, uids: ordered.map(function (a) { return a.uid; }), notes: notes }) })
           .then(function (result) {
             state.accountOrder = result.accountOrder;
             var ranks = new Map(); ordered.forEach(function (a, index) { ranks.set(a.uid, index + 1); });
-            state.accounts.forEach(function (a) { a.sort = ranks.get(a.uid) || 0; });
+            state.accounts.forEach(function (a) { a.sort = ranks.get(a.uid) || 0; if (Object.prototype.hasOwnProperty.call(notes, a.uid)) a.note = notes[a.uid]; });
+            try { localStorage.setItem(rotationReminderKey, reminder ? '1' : '0'); } catch (_) {}
+            if (!reminder) closeRotationNotice();
             sortAccountsByCreditExpiry(); reorderAccountCards();
+            applyAccountMask();
             busy = false; close();
           }).catch(function (error) {
             busy = false;
             mask.querySelectorAll('button,input').forEach(function (node) { node.disabled = false; });
             mask.querySelector('[data-order-save]').textContent = '保存';
-            mask.querySelector('[role="alert"]').textContent = error.message || '保存排序失败';
+            mask.querySelector('[role="alert"]').textContent = error.message || '保存账号设置失败';
           });
       });
       drawRows(); syncMode();
@@ -6312,7 +6359,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       }
       function showAutomationDiscoveryGuide() {
         var mask = document.createElement('div'); mask.id = 'wbs-auto-discovery-guide'; mask.className = 'wbs-modal-mask wbs-usage-modal-mask wbs-auto-dialog-mask';
-        mask.innerHTML = '<div class="wbs-modal wbs-auto-guide-modal" role="dialog" aria-modal="true" aria-labelledby="wbs-auto-guide-title"><div class="wbs-auto-modal-head"><div class="wbs-modal-title" id="wbs-auto-guide-title">提交公开任务</div><button class="wbs-auto-modal-close" type="button" data-auto-close title="关闭" aria-label="关闭"><svg aria-hidden="true" viewBox="0 0 16 16"><path d="M3 3l10 10M13 3 3 13"/></svg></button></div><div class="wbs-auto-guide-body"><p>仅收录 Gitee 公开仓库。参考 <button type="button" class="wbs-auto-textbtn" data-auto-discovery-example>babygoton/workdaddy-official-plugin</button>。</p><p>将任务 JSON 放在 tasks/ 目录，并在仓库描述中加入 WorkDaddyAutomationRepositoryV1。实际协议版本写在每个任务 JSON 的 schemaVersion 字段（1 或 2），与仓库标记 V1 无关。</p></div><div class="wbs-modal-actions"><button class="wbs-modal-btn wbs-modal-ok" type="button" data-auto-discovery-example>查看示例仓库</button></div></div>';
+        mask.innerHTML = '<div class="wbs-modal wbs-auto-guide-modal" role="dialog" aria-modal="true" aria-labelledby="wbs-auto-guide-title"><div class="wbs-auto-modal-head"><div class="wbs-modal-title" id="wbs-auto-guide-title">提交公开任务</div><button class="wbs-auto-modal-close" type="button" data-auto-close title="关闭" aria-label="关闭"><svg aria-hidden="true" viewBox="0 0 16 16"><path d="M3 3l10 10M13 3 3 13"/></svg></button></div><div class="wbs-auto-guide-body"><p>仅收录 Gitee 公开仓库。参考 <button type="button" class="wbs-auto-textbtn" data-auto-discovery-example>babygoton/workdaddy-official-plugin</button>。</p><p>将任务 JSON 放在 tasks/ 目录，并在仓库描述中加入 WorkDaddyAutomationRepository。</p></div><div class="wbs-modal-actions"><button class="wbs-modal-btn wbs-modal-ok" type="button" data-auto-discovery-example>查看示例仓库</button></div></div>';
         mountAutomationModal(mask);
         mask.addEventListener('click', function (event) {
           if (!event.target.closest || !event.target.closest('[data-auto-discovery-example]')) return;
@@ -8142,7 +8189,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         '</div>' +
         '<div class="wbs-nd-row">' +
         '<span class="wbs-nd-title">分支到新会话</span>' +
-        '<span class="wbs-nd-hint">从这条回复分支到同一工作区的新会话。</span>' +
+        '<span class="wbs-nd-hint">复制到这条回复为止的聊天内容，在当前工作区继续聊；原会话不变。</span>' +
         '<label class="wbs-switch"><input type="checkbox" id="wbs-sess-fork" aria-label="分支到新会话"><span class="wbs-switch-slider"></span></label>' +
         '</div>' +
         '<div class="wbs-nd-row">' +
@@ -12925,7 +12972,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         var idVal = state.mask ? maskAccountId(rawId) : rawId;
         card.innerHTML =
           '<div class="wbs-info">' +
-          '<div class="wbs-row1"><div class="wbs-name-group"><span class="wbs-name">' + esc(nameVal) + '</span>' + badge + dailyRingsHtml(a) + checkinBadge + invalidAuthBadge + '</div>' + ops + '</div>' +
+          '<div class="wbs-row1"><div class="wbs-name-group"><span class="wbs-name">' + esc(nameVal) + '</span><span class="wbs-account-note"' + (state.mask || !a.note ? ' hidden' : '') + '>' + (state.mask ? '' : esc(a.note || '')) + '</span>' + badge + dailyRingsHtml(a) + checkinBadge + invalidAuthBadge + '</div>' + ops + '</div>' +
           '<div class="wbs-meta wbs-secondary-row">' +
           '<div class="wbs-mi wbs-phone-cell' + (isUinMode ? ' wbs-uin-cell' : '') + '"><span class="wbs-lbl">' + idLbl + '</span><span class="wbs-val">' + esc(idVal) + '</span></div>' +
           '<div class="wbs-mi wbs-token-cell"><span class="wbs-lbl">有效期至</span><span class="wbs-val' + (ts.warn ? ' wbs-warn' : '') + '">' + esc(ts.label) + '</span></div>' +
@@ -13056,6 +13103,8 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         if (!account) continue;
         var nameEl = cards[c].querySelector('.wbs-name');
         if (nameEl) nameEl.textContent = state.mask ? maskAccountName(account.nickname || '(未命名)') : (account.nickname || '(未命名)');
+        var noteEl = cards[c].querySelector('.wbs-account-note');
+        if (noteEl) { noteEl.textContent = state.mask ? '' : (account.note || ''); noteEl.hidden = state.mask || !account.note; }
         var valEl = cards[c].querySelector('.wbs-phone-cell .wbs-val');
         if (valEl) {
           var raw = account.phone ? account.phone : (account.uin ? account.uin : '-');
@@ -13143,7 +13192,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     }
 
     function showRotationNotice(candidate) {
-      if (!candidate || !candidate.uid || state.open || state.rotationNotice) return;
+      if (!rotationReminderEnabled() || !candidate || !candidate.uid || state.open || state.rotationNotice) return;
       var today = rotationToday();
       var dismissed = '';
       try { dismissed = localStorage.getItem('wbs-credit-rotation-dismiss-' + PROFILE_ID) || ''; } catch (_) {}
@@ -13244,9 +13293,9 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     }
 
     function checkCreditRotationAfterSession() {
-      if (!CAPS.accounts || state.open || state.rotationNotice) return;
+      if (!CAPS.accounts || !rotationReminderEnabled() || state.open || state.rotationNotice) return;
       function run() {
-        if (!state.current || !state.current.uid || state.rotationNotice) return;
+        if (!rotationReminderEnabled() || !state.current || !state.current.uid || state.rotationNotice) return;
         var current = state.accounts.filter(function (account) { return String(account.uid) === String(state.current.uid); })[0] || { uid: state.current.uid, creditSegments: [] };
         api('/api/credit-rotation', {
           method: 'POST',
@@ -14413,6 +14462,8 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '.wbs-telemetry-help:hover,.wbs-telemetry-help:focus{color:var(--wb-color-text-primary,#1f1f1f)}',
     '.wbs-telemetry-tooltip{position:absolute;z-index:20;left:0;top:calc(100% + 7px);width:245px;padding:7px 9px;border:1px solid var(--wb-border-default,rgba(0,0,0,.14));border-radius:7px;background:var(--wb-bg-primary,#fff);box-shadow:0 6px 18px rgba(0,0,0,.14);color:var(--wb-color-text-primary,#1f1f1f);font-size:11px;font-weight:400;line-height:1.5;white-space:normal;opacity:0;visibility:hidden;pointer-events:none;transform:translateY(-2px);transition:opacity .12s,transform .12s,visibility .12s}',
     '.wbs-telemetry-help:hover .wbs-telemetry-tooltip,.wbs-telemetry-help:focus .wbs-telemetry-tooltip{opacity:1;visibility:visible;transform:translateY(0)}',
+    '.wbs-fork-tooltip{position:fixed;z-index:2147483647;box-sizing:border-box;width:max-content;max-width:min(255px,calc(100vw - 16px));transform:none;overflow-wrap:anywhere;white-space:normal}.wbs-fork-tooltip.is-visible{opacity:1;visibility:visible;transform:none}',
+    'html.cb-dark .wbs-fork-tooltip,html[data-theme="dark"] .wbs-fork-tooltip,body[data-vscode-theme-name*="dark" i] .wbs-fork-tooltip{background:var(--wb-bg-popover,#202126);color:var(--wb-color-text-primary,#f2f3f5);border-color:var(--wb-border-default,rgba(255,255,255,.16));box-shadow:0 6px 18px rgba(0,0,0,.4)}',
     '.wbs-telemetry-switch{flex:0 0 36px}',
     '.wbs-telemetry-status{margin-top:5px;font-size:10.5px;color:var(--wb-button-primary-bg,#1f1f1f);font-weight:600}',
     '.wbs-telemetry-status.is-off{color:var(--wb-icon-tertiary,#999);font-weight:500}',
@@ -14497,10 +14548,14 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '.wbs-acct-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 14px 9px;border-bottom:1px solid var(--wb-border-subtle,#f0f0f0);background:color-mix(in srgb,var(--wb-bg-secondary,#fff) 25%,transparent);flex-shrink:0}',
     '#wbs-account-order-mask{pointer-events:auto;overscroll-behavior:contain}',
     '.wbs-account-order-modal{box-sizing:border-box;width:360px;max-width:calc(100% - 28px);max-height:calc(100% - 28px);display:flex;flex-direction:column;overflow:auto}',
+    '.wbs-account-settings-section{font-size:11px;font-weight:600;color:var(--wb-color-text-secondary,#666);margin:8px 0 6px}',
+    '.wbs-account-settings-toggle{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:12px 0 6px;padding:10px 0;border-top:1px solid var(--wb-border-subtle,#eee);border-bottom:1px solid var(--wb-border-subtle,#eee);font-size:12px;cursor:pointer}.wbs-account-settings-toggle>span:first-child{min-width:0;line-height:1.4}',
+    '.wbs-account-notes{display:flex;flex-direction:column;gap:7px;max-height:min(180px,27vh);overflow-y:auto;overscroll-behavior:contain;margin-bottom:12px}.wbs-account-note-row{display:grid;grid-template-columns:minmax(0,90px) minmax(0,1fr);align-items:center;gap:8px;font-size:11px}.wbs-account-note-row span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.wbs-account-note-row input{box-sizing:border-box;width:100%;min-width:0;padding:6px 8px;border:1px solid var(--wb-border-default,#ddd);border-radius:7px;background:var(--wb-bg-primary,#fff);color:var(--wb-color-text-primary,#1f1f1f);font:inherit}.wbs-account-note-row input::placeholder{color:var(--wb-color-text-tertiary,#999)}',
     '.wbs-account-order-modes{display:flex;flex-wrap:wrap;gap:10px 16px;font-size:12px}.wbs-account-order-modes label{display:flex;align-items:center;gap:5px;cursor:pointer}.wbs-account-order-modes input{margin:0;accent-color:var(--wb-button-primary-bg)}',
 
     '.wbs-account-order-list{margin-top:12px;max-height:min(280px,40vh);overflow:auto;overscroll-behavior:contain;display:flex;flex-direction:column;gap:5px}',
     '.wbs-account-order-row{display:flex;align-items:center;gap:8px;min-height:34px;padding:3px 8px;border:1px solid var(--wb-border-subtle);border-radius:8px;background:var(--wb-bg-secondary);font-size:12px}.wbs-account-order-row>span{flex:1;min-width:0;overflow-wrap:anywhere}.wbs-account-order-row button{cursor:grab}.wbs-account-order-row.dragging{opacity:.45}.wbs-account-order-row.drop-target{border-color:var(--wb-accent-blue);background:var(--wb-bg-hover)}',
+    '.wbs-account-note{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10.5px;color:var(--wb-color-text-secondary,#666)}.wbs-account-note[hidden]{display:none}',
     '.wbs-account-order-modal :is(button,input):focus-visible{outline:2px solid var(--wb-accent-blue);outline-offset:2px}.wbs-account-order-modal button:disabled{opacity:.5;cursor:default}',
     '.wbs-credit-summary-popover{position:fixed;z-index:2147483647;box-sizing:border-box;width:300px;max-width:calc(100vw - 16px);padding:12px;background:var(--wb-bg-popover,var(--wb-bg-primary));color:var(--wb-color-text-primary);border:1px solid var(--wb-border-default);border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,.18);font:12px/1.5 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;overflow:auto;overscroll-behavior:contain;pointer-events:auto}',
     '.wbs-credit-summary-head{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:10px}.wbs-credit-summary-head strong{font-size:13px}.wbs-credit-summary-head span,.wbs-credit-summary-foot{font-size:10px;color:var(--wb-color-text-secondary)}',

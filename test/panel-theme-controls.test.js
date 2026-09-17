@@ -20,6 +20,11 @@ test('account order is centered in the panel and always shows names without numb
   assert.match(modal, /panel\.appendChild\(mask\)/);
   assert.doesNotMatch(modal, /maskAccountName|wbs-account-order-hint|<small>/);
   assert.match(modal, /esc\(name\)/);
+  assert.match(modal, /账号设置/);
+  assert.match(modal, /data-rotation-reminder/);
+  assert.match(modal, /data-note-uid/);
+  assert.match(modal, /\/api\/accounts\/settings/);
+  assert.match(source, /!rotationReminderEnabled\(\) \|\| state\.open \|\| state\.rotationNotice/);
 });
 test('avatar presets retain legacy custom uploads and are safe before official conversion completes', () => {
   const context = {};

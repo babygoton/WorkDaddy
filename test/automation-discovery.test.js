@@ -12,7 +12,7 @@ const { importTasks, readAutomations } = (() => {
   return { importTasks: transfer.importTasks, readAutomations: automation.readAutomations };
 })();
 
-const MARKER = 'WorkDaddyAutomationRepositoryV1';
+const MARKER = 'WorkDaddyAutomationRepository';
 const runtime = { version: '1.2.43', profileId: 'workbuddy-cn', platform: 'darwin' };
 const task = { schemaVersion: 1, id: 'shared-task', name: '账号提示', description: '显示账号信息', enabled: true, trigger: { type: 'manual' }, schedule: { type: 'manual' }, variables: {}, steps: [{ op: 'notify.toast', message: 'ok' }], onSuccess: [], onFailure: [] };
 
@@ -76,13 +76,14 @@ test('discovery searches only Gitee, paginates and caches task JSON', async () =
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wd-discovery-'));
   try {
     const f = fixture();
-    const discovery = createAutomationDiscovery({ dataDir: dir, fetchImpl: f.fetchImpl, now: f.now, marker: MARKER, pageSize: 2, runtime });
+    const discovery = createAutomationDiscovery({ dataDir: dir, fetchImpl: f.fetchImpl, now: f.now, pageSize: 2, runtime });
     const result = await discovery.getCatalog();
     assert.equal(result.loading, false);
     assert.equal(result.tasks.length, 1);
     assert.equal(result.tasks[0].name, '账号提示');
     assert.equal(result.tasks[0].schemaVersion, 1);
     assert.equal(result.schemaVersion, 2);
+    assert.equal(result.marker, MARKER);
     assert.deepEqual(result.tasks[0].sources.map(source => source.platform), ['gitee']);
     assert.equal(result.tasks[0].compatible, true);
     assert.equal(f.calls.filter(url => url.includes('github.com')).length, 0);
@@ -176,7 +177,8 @@ test('automation UI preloads discovery and exposes fuzzy task search and import'
   assert.match(source, /发现更多自动化任务/);
   assert.match(source, /wbs-auto-discovery-pagination/);
   assert.match(source, /我也要出现在这里/);
-  assert.match(source, /WorkDaddyAutomationRepositoryV1/);
+  assert.match(source, /WorkDaddyAutomationRepository。/);
+  assert.doesNotMatch(source, /WorkDaddyAutomationRepositoryV1/);
   assert.match(source, /wbs-auto-discovery-version/);
   assert.match(source, /wbs-usage-modal-mask wbs-auto-dialog-mask/);
   assert.doesNotMatch(source, /wbs-auto-discovery-stars/);

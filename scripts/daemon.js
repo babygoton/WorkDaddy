@@ -118,6 +118,7 @@ const {
   checkinDisplayValue,
   getAccountOrder,
   setAccountOrder,
+  setAccountSettings,
 } = require('./lib.js');
 const { createThirdPartyImport } = require('./third-party-models.js');
 const { extractCreditSegments, sortCreditSegments, mergeCreditSegments, parseEnterpriseUsage, ENTERPRISE_EDITIONS } = require('./credit-segments.js');
@@ -381,8 +382,8 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 // 1.2.52：成长任务支持在悬浮层内直接接取，并在完成后同步最新任务状态。
 // 1.2.55：成长弹窗支持开启盲盒与抽奖并提示奖励，收敛成长/用量统计 primary 色使用。
 // 1.2.56：成长任务补齐说明与标签、已领取折叠、Buddy 派出，并把用量柱状图改为面积折线图。
-const DAEMON_VERSION = '1.2.63';
-const DAEMON_BUILD_ID = 'release-1.2.63-20260917-session-fork';
+const DAEMON_VERSION = '1.2.64';
+const DAEMON_BUILD_ID = 'release-1.2.64-20260917-account-settings';
 const usageReporter = createUsageReporter({ profile: PROFILE.id, version: DAEMON_VERSION });
 configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const automationDiscovery = createAutomationDiscovery({
@@ -7583,6 +7584,13 @@ function handleApi(req, res) {
   if (req.method === 'POST' && p === '/api/accounts/order') {
     return readBody(req).then((body) => {
       try { return json(res, 200, { ok: true, accountOrder: setAccountOrder(DATA_DIR, body) }); }
+      catch (error) { return json(res, 400, { ok: false, error: error.message }); }
+    });
+  }
+
+  if (req.method === 'POST' && p === '/api/accounts/settings') {
+    return readBody(req).then((body) => {
+      try { return json(res, 200, { ok: true, accountOrder: setAccountSettings(DATA_DIR, body) }); }
       catch (error) { return json(res, 400, { ok: false, error: error.message }); }
     });
   }

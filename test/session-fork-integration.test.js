@@ -85,14 +85,17 @@ test('footer button is first, remains unique on rescan, and disappears when disa
   const footer = { querySelector: () => feedback, closest: () => ({ getAttribute: () => 'assistant-1' }) };
   const context = {
     sessState: { fork: true },
+    forkTooltip: { id: 'wbs-fork-tooltip' },
+    hideForkTooltip() {},
     document: { querySelectorAll: (selector) => selector === '.wbs-fork-button' ? buttons.slice() : [footer] },
-    el: (tag, cls) => ({ tag, className: cls, setAttribute() {}, remove() { buttons.splice(buttons.indexOf(this), 1); } }),
+    el: (tag, cls) => ({ tag, className: cls, attributes: {}, setAttribute(key, value) { this.attributes[key] = value; }, getAttribute(key) { return this.attributes[key]; }, remove() { buttons.splice(buttons.indexOf(this), 1); } }),
     applyI18n() {},
   };
   vm.runInNewContext(injectSource.slice(start, end), context);
   context.syncForkButtons();
   assert.equal(buttons.length, 1);
-  assert.equal(buttons[0].title, '分支到新会话');
+  assert.equal(buttons[0].getAttribute('aria-label'), '从这里开始新会话');
+  assert.equal(buttons[0].title, undefined);
   assert.equal(buttons[0].className, 'wbs-fork-button');
   context.syncForkButtons();
   assert.equal(buttons.length, 1);
@@ -124,6 +127,9 @@ test('enhancement switch and assistant footer control remain opt-out and accessi
   assert.match(injectSource, /分支到新会话/);
   assert.match(injectSource, /\.conversation-finished-footer/);
   assert.match(injectSource, /wbs-fork-button/);
+  assert.match(injectSource, /wbs-telemetry-tooltip wbs-fork-tooltip/);
+  assert.match(injectSource, /会复制这条回复及之前的聊天内容，在当前工作区新建会话；原会话不会改变。/);
+  assert.match(injectSource, /复制到这条回复为止的聊天内容，在当前工作区继续聊；原会话不变。/);
   assert.match(injectSource, /conversation\.closest\('\.cr-message-list'\)/);
   assert.match(injectSource, /findMessageNavigationAdapter\(document, \{/);
   assert.match(daemonSource, /p === '\/api\/sessions\/fork'/);
