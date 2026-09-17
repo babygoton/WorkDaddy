@@ -791,14 +791,15 @@ test('account cards keep the compact three-row layout', () => {
   assert.doesNotMatch(script, /data-tip="' \+ attrTip \+ '" title=/);
   assert.match(script, /creditOpacity\(row\.days\)/);
   assert.match(script, /creditOpacity\(segment\.expiresAt/);
-  assert.match(script, /background:rgba\(34,197,94,var\(--wbs-credit-alpha,1\)\)/);
-  assert.match(script, /background:rgba\(126,134,255,var\(--wbs-credit-alpha,1\)\)/);
-  assert.match(script, /\.wbs-checkin-tag\.ok\{background:#edf9ef/);
-  assert.match(script, /html\.cb-dark \.wbs-checkin-tag\.ok,html\[data-theme="dark"\] \.wbs-checkin-tag\.ok\{/);
+  assert.match(script, /\.wbs-credit-segment,\.wbs-credit-summary-fill\{background:rgba\(var\(--wbs-primary-rgb,34,197,94\),var\(--wbs-credit-alpha,1\)\)/);
+  ['dark', 'cyber-purple', 'nebula'].forEach((themeId) => {
+    assert.match(script, new RegExp('html\\[data-wbs-theme-id="' + themeId + '"\\][\\s\\S]*--wbs-primary-rgb:127,119,221'));
+  });
+  assert.match(script, /\.wbs-daily-rings,\.wbs-checkin-tag\.ok\{[^}]*background:var\(--wbs-badge-bg\)[^}]*color:var\(--wbs-badge-fg\)/);
   assert.match(script, /今日签到/);
   assert.match(script, /function accountStatusTagsHtml\(a\)/);
   assert.match(script, /function checkinBadgeHtml\(a\)/);
-  assert.match(script, /badge \+ checkinBadge/);
+  assert.match(script, /badge \+ dailyRingsHtml\(a\) \+ checkinBadge/);
   assert.match(script, /if \(!usage \|\| usage\.synced !== true\) return '';/);
   assert.match(script, /wbs-usage-tag/);
   assert.match(script, /wbs-usage-tag[^\n]+今日已使用[^\n]+CREDIT_ICON/);
@@ -1165,6 +1166,19 @@ test('session auto-copy plans and API responses collapse duplicate rows by accou
   assert.match(daemon, /dedupeAutoCopySessionRows\(rows, \{ \[source\]: rules\.allLineages \}\)/);
   assert.match(daemon, /dedupeAutoCopySessionRows\(rows, lineagesByUid\)/);
   assert.match(daemon, /const DAEMON_VERSION = '\d+\.\d+\.\d+'/);
+});
+
+test('session pane restores and renders persistent auto-copy progress', () => {
+  const daemon = read('daemon.js');
+  const inject = read('inject.js');
+  assert.match(daemon, /GET' && p === '\/api\/sessions\/auto-copy\/active'/);
+  assert.match(daemon, /function activeAutoCopyJob\(\)/);
+  assert.match(inject, /id="wbs-sess-copy-progress"/);
+  assert.match(inject, /function renderSessionCopyProgress\(job\)/);
+  assert.match(inject, /\/api\/sessions\/auto-copy\/active/);
+  assert.match(inject, /aria-valuenow/);
+  assert.match(inject, /\.wbs-sess-copy-progress\{/);
+  assert.match(inject, /html\.cb-dark \.wbs-sess-copy-progress/);
 });
 
 test('session summary counts effective sessions and models tab only exposes sanitized model APIs', () => {

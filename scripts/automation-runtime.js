@@ -13,17 +13,34 @@ function assertAccountRequestUrl(url, apiHost) {
     throw new Error('账号请求仅允许当前客户端的官方 HTTPS 接口');
   }
 }
-function createTaskState(taskId, read, write) {
+const STATE_V2_MARKER = '__workdaddyAutomationStateV2';
+function createTaskState(taskId, read, write, now = Date.now) {
   const keyFor = (scope, uid, key) => {
     if (!['task','account'].includes(scope) || !String(key || '').trim()) throw new Error('状态 scope 或 key 无效');
     if (scope === 'account' && !uid) throw new Error('账号状态需要账号上下文');
     return JSON.stringify(['v2', taskId, scope, scope === 'account' ? String(uid) : '', key]);
   };
   return {
-    get: async (scope,uid,key) => read()[keyFor(scope,uid,key)],
-    set: async (scope,uid,key,value) => {
+    get: async (scope,uid,key) => {
+      const storageKey = keyFor(scope,uid,key);
+      const state = read();
+      const stored = state[storageKey];
+      if (!stored || typeof stored !== 'object' || stored[STATE_V2_MARKER] !== true) return stored;
+      if (Number.isFinite(stored.expiresAt) && now() >= stored.expiresAt) {
+        delete state[storageKey];
+        write(state);
+        return undefined;
+      }
+      return stored.value;
+    },
+    set: async (scope,uid,key,value,detail = {}) => {
       // Each synchronous read/merge/write sees other runs' latest changes.
-      const state = read(); state[keyFor(scope,uid,key)] = value; write(state);
+      const state = read();
+      const ttlMs = Number(detail.ttlMs);
+      state[keyFor(scope,uid,key)] = Number.isFinite(ttlMs) && ttlMs > 0
+        ? { [STATE_V2_MARKER]: true, value, expiresAt: now() + ttlMs }
+        : value;
+      write(state);
     },
   };
 }

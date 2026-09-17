@@ -808,42 +808,83 @@ function ensureAutoCopySession(dataDir, uid, sessionId, options) {
   return ensureAutoCopySessions(dataDir, uid, [id], options)[id];
 }
 
-// Keep the core lineage invariant: one physical session per account in each
-// lineage. Older copy jobs could append a second session for the same account
-// when a mapping was stale. Preserve every physical row, but move duplicates
-// to their own lineage so the next all-session reconciliation can pair them.
-function normalizeAutoCopyLineages(dataDir) {
-  const meta = readMeta(dataDir);
-  const config = ensureAutoCopyMeta(meta);
-  let changed = false;
+// Audit duplicate physical sessions without changing their lineage. Splitting
+// them here makes the next copy treat the detached row as a new logical
+// session, which can create another duplicate on every account switch.
+function collectAutoCopyDuplicates(config) {
+  const duplicates = [];
   for (const lineageId of Object.keys(config.sessions)) {
     const lineage = config.sessions[lineageId];
     if (!lineage || !Array.isArray(lineage.members)) continue;
     const seenUids = new Set();
-    const kept = [];
     for (const member of lineage.members) {
       const uid = String(member && member.uid || '').trim();
       const id = String(member && member.id || '').trim();
-      if (!uid || !id || !seenUids.has(uid)) {
-        if (uid) seenUids.add(uid);
-        kept.push(member);
-        continue;
-      }
-      const replacementId = crypto.randomUUID();
-      config.sessions[replacementId] = {
-        originLineageId: lineage.originLineageId || lineageId,
-        enabled: lineage.enabled !== false,
-        members: [{ uid, id }],
-        createdAt: Date.now(),
-      };
-      if (!config.sessionIndex[uid]) config.sessionIndex[uid] = {};
-      config.sessionIndex[uid][id] = replacementId;
-      changed = true;
+      if (!uid || !id) continue;
+      if (!seenUids.has(uid)) { seenUids.add(uid); continue; }
+      duplicates.push({ lineageId, uid, id });
     }
-    if (kept.length !== lineage.members.length) lineage.members = kept;
   }
-  if (changed) writeMeta(dataDir, meta);
-  return changed;
+  return duplicates;
+}
+
+function normalizeAutoCopyLineages(dataDir) {
+  const meta = readMeta(dataDir);
+  const config = ensureAutoCopyMeta(meta);
+  const duplicates = collectAutoCopyDuplicates(config);
+  const previous = Array.isArray(config.duplicates) ? config.duplicates : [];
+  const unchanged = previous.length === duplicates.length && previous.every((item, index) => item
+    && String(item.lineageId) === duplicates[index].lineageId
+    && String(item.uid) === duplicates[index].uid
+    && String(item.id) === duplicates[index].id);
+  if (unchanged) return false;
+  config.duplicates = duplicates;
+  writeMeta(dataDir, meta);
+  return true;
+}
+
+function mergeAutoCopyLineages(dataDir, fromLineageId, intoLineageId) {
+  const meta = readMeta(dataDir);
+  const config = ensureAutoCopyMeta(meta);
+  const from = String(fromLineageId || '').trim();
+  const into = String(intoLineageId || '').trim();
+  if (!from || !into || from === into) return { ok: false, reason: 'invalid' };
+  const fromLineage = config.sessions[from];
+  const intoLineage = config.sessions[into];
+  if (!fromLineage || !intoLineage) return { ok: false, reason: 'missing' };
+
+  const knownMembers = new Set((intoLineage.members || []).map((member) =>
+    JSON.stringify([String(member && member.uid || ''), String(member && member.id || '')])));
+  let movedMembers = 0;
+  for (const member of fromLineage.members || []) {
+    const uid = String(member && member.uid || '').trim();
+    const id = String(member && member.id || '').trim();
+    const key = JSON.stringify([uid, id]);
+    if (!uid || !id || knownMembers.has(key)) continue;
+    intoLineage.members = intoLineage.members || [];
+    intoLineage.members.push({ uid, id });
+    knownMembers.add(key);
+    movedMembers++;
+  }
+  for (const uid of Object.keys(config.sessionIndex)) {
+    const index = config.sessionIndex[uid];
+    for (const sessionId of Object.keys(index || {})) {
+      if (index[sessionId] === from) index[sessionId] = into;
+    }
+  }
+  for (const key of Object.keys(config.copies || {})) {
+    let lineageKey;
+    let targetUid;
+    try { [lineageKey, targetUid] = JSON.parse(key); } catch (_) { continue; }
+    if (lineageKey !== from) continue;
+    const destinationKey = autoCopyRuleKey(into, targetUid);
+    if (!config.copies[destinationKey]) config.copies[destinationKey] = config.copies[key];
+    delete config.copies[key];
+  }
+  delete config.sessions[from];
+  config.duplicates = collectAutoCopyDuplicates(config);
+  writeMeta(dataDir, meta);
+  return { ok: true, movedMembers };
 }
 
 function addAutoCopySessionMember(dataDir, lineageId, uid, sessionId) {
@@ -1579,6 +1620,7 @@ module.exports = {
   ensureAutoCopySessions,
   ensureAutoCopySession,
   normalizeAutoCopyLineages,
+  mergeAutoCopyLineages,
   addAutoCopySessionMember,
   removeAutoCopySessionMember,
   moveAutoCopySession,

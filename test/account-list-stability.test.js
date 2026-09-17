@@ -24,7 +24,7 @@ function harness() {
   const pane = el('div', 'pane');
   const ctx = vm.createContext({
     window: {},
-    state: { accounts: [], current: null, open: true, creditRunId: 0, activityRunId: 0, creditRemaining: 0 },
+    state: { accounts: [], current: null, open: true, creditRunId: 0, creditRefreshGeneration: {}, activityRunId: 0, creditRemaining: 0 },
     alive: true, CAPS: { accounts: true }, accountsPane: pane, panel: el(), fab: el(), fabQuietMode: { wake() {} },
     api(route, options) { return new Promise((resolve, reject) => requests.push({ route, options, resolve, reject })); },
     el, esc: String, escAttr: String, tokenState: () => ({ label: '-' }), isIdentityExpired: a => !!a.identityExpired,
@@ -39,7 +39,7 @@ function harness() {
     section('    function nearestCreditExpiry(', '    function pollAutoCopyJob('),
     section('    function render(data)', '    function maskAccountName('),
     section('    function refresh()', '    function updateAccountSummary('),
-    section('    function fetchCreditsForAccounts()', '    function updateCreditCell('),
+    section('    function requestCredit(uid)', '    function updateCreditCell('),
     section('    function setOpen(', '    function setupFabDrag('),
   ].join('\n'), ctx);
   return { ctx, requests, pane, order: () => Array.from(ctx.state.accounts, a => a.uid), cards: () => pane.querySelector('.wbs-acct-list').children.slice() };

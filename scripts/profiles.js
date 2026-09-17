@@ -36,7 +36,7 @@ const PROFILES = {
     modelsFile: path.join(home, '.workbuddy', 'models.json'),
     // billing/积分/签到/无感登录 API host（与 auth.domain 一致；国际版为 www.workbuddy.ai）
     apiHost: 'https://www.codebuddy.cn',
-    capabilities: { accounts: true, sessions: true, models: true, stashPrompt: true, theme: true, checkin: true },
+    capabilities: { accounts: true, sessions: true, models: true, stashPrompt: true, theme: true, checkin: true, growthDaily: true },
     targetHints: ['workbuddy'],
   },
   'workbuddy-ai': {
@@ -50,7 +50,7 @@ const PROFILES = {
     // 两者独立（勿改共用）。“从 XX 导入”即把另一端文件中的模型合并进本端文件。
     modelsFile: path.join(home, '.workbuddy-ai', 'models.json'),
     apiHost: 'https://www.workbuddy.ai',
-    capabilities: { accounts: true, sessions: true, models: true, stashPrompt: true, theme: true, checkin: true },
+    capabilities: { accounts: true, sessions: true, models: true, stashPrompt: true, theme: true, checkin: true, growthDaily: false },
     targetHints: ['workbuddy ai', 'workbuddy'],
   },
   'codebuddy-cn': {

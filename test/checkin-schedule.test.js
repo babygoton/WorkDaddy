@@ -5,13 +5,11 @@ const path = require('node:path');
 const test = require('node:test');
 const daemon = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'daemon.js'), 'utf8');
 
-test('automation task owns startup, panel-open and hourly check-in triggers', () => {
-  const preset = require('../scripts/builtin/automations/daily-account-checkin.json');
-  assert.deepEqual(preset.trigger.types, ['clientLoaded', 'panelOpened']);
-  assert.deepEqual(preset.schedule, { type: 'interval', minutes: 60 });
-  assert.match(daemon, /installBuiltinTask\(DATA_DIR/);
+test('the generic automation scheduler remains available without a bundled check-in task', () => {
+  assert.match(daemon, /createScheduleTicker\(DATA_DIR\)/);
   assert.match(daemon, /automationScheduleTimer\.unref && automationScheduleTimer\.unref\(\)/);
   assert.doesNotMatch(daemon, /startupCheckinTimer|periodicCheckinTimer|claimDailyForAll/);
+  assert.doesNotMatch(daemon, /installBuiltinTask\([^\n]+daily-account-checkin\.json/);
 });
 
 test('check-in refreshes expired credentials only after checking confirmed daily records', () => {
