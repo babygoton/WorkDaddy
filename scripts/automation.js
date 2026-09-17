@@ -5,6 +5,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { validateRequirements, assessRequirements } = require('./automation-compatibility');
 const { normalizeToastOptions } = require('./toast-options.js');
+const { AUTOMATION_MODEL_FIELDS, SESSION_MODEL_FIELDS, THOUGHT_LEVELS, MODEL_KEY_MAX_LENGTH, CONTEXT_WINDOW_MIN, CONTEXT_WINDOW_MAX, isTemplateValue, hasAutomationModelRequest } = require('./automation-model.js');
 
 const SCHEMA_VERSION = 1;
 const MAX_TASKS = 200;
@@ -43,6 +44,7 @@ const CAPABILITIES = [
   { id: 'account.forEach', zh: '循环账号', en: 'Iterate accounts', descriptionZh: '对全部或指定账号依次执行步骤；switch:true 会真实切换登录账号，并在循环结束后恢复原账号。', descriptionEn: 'Run steps for all or selected accounts; switch:true physically switches the logged-in account and restores the original account when the loop ends.', example: { op: 'account.forEach', accounts: 'all', switch: true, steps: [] } },
   { id: 'account.status', zh: '查询账号状态', en: 'Read account status', descriptionZh: '查询今日签到、今日活跃和积分等只读状态。', descriptionEn: 'Read check-in, activity, and credit status.', example: { op: 'account.status', fields: ['checkin.today', 'activity.today'] } },
   { id: 'account.checkin', zh: '账号静默签到', en: 'Check in as account', descriptionZh: '使用循环账号的 token 签到，不切换客户端。当天已确认签到时跳过所有请求；返回 ok、skipped、code 等状态。', descriptionEn: 'Check in using the context account token without switching accounts. Confirmed daily records skip all requests. Returns ok, skipped and code.', example: { op: 'account.checkin', saveAs: 'checkin' } },
+  { id: 'account.travel', zh: '派猫猫旅行', en: 'Buddy travel', descriptionZh: '使用循环账号的 token 查询并处理成长中心的派猫猫旅行：未出发就派发，已到达就领取奖励，不切换客户端。默认 auto（对账全流程），也可用 mode:"depart"/"claim" 只做一件事。返回 ok、state、claimed、rewardCredit、skipped、message；账号没有猫猫、今日已派、派发失败等都以 skipped/ok:false 返回，单账号异常可用 logic.catch 捕获。', descriptionEn: 'Use the context account token to read and reconcile growth-center buddy travel: depart when idle, claim the reward when arrived, without switching accounts. mode auto reconciles both, or set mode to depart/claim for one action. Returns ok, state, claimed, rewardCredit, skipped and message.', example: { op: 'account.travel', mode: 'auto', saveAs: 'travel' } },
   { id: 'http.request', zh: 'HTTP 请求', en: 'HTTP request', descriptionZh: '调用 HTTP/HTTPS 接口并保存响应。', descriptionEn: 'Call an HTTP/HTTPS endpoint and retain its response.', example: { op: 'http.request', method: 'GET', url: 'https://example.com/api', saveAs: 'response' } },
   { id: 'http.requestAsAccount', zh: '使用账号请求', en: 'HTTP request as account', descriptionZh: '使用当前循环账号的登录态请求，任务中不会出现 Token。', descriptionEn: 'Call an endpoint with the current account session without exposing a token in the task.', example: { op: 'http.requestAsAccount', method: 'GET', url: 'https://example.com/api' } },
   { id: 'dom.find', zh: '查找页面元素', en: 'Find DOM element', descriptionZh: '使用 CSS、XPath 或文字查找页面元素。', descriptionEn: 'Find an element using CSS, XPath, or text.', example: { op: 'dom.find', locator: { kind: 'xpath', value: "//button[contains(., '领取')]" }, saveAs: 'element' } },
@@ -71,8 +73,8 @@ for (const [id, zh, en, example, descriptionZh, descriptionEn] of [
   ['logic.forEach', '循环列表', 'Iterate list', {op:'logic.forEach',items:'{{vars.items}}',steps:[]}, '遍历最多 1000 项，使用 vars.item 和 vars.index，退出后恢复上下文。', 'Iterate up to 1000 entries via vars.item and vars.index; restore context on exit.'],
   ['logic.break', '退出循环', 'Break loop', {op:'logic.break'}, '退出最近一层列表、重复或账号循环。', 'Exit the nearest list, repeat or account loop.'],
   ['logic.waitUntil', '等待条件', 'Wait for condition', {op:'logic.waitUntil',timeoutMs:10000,intervalMs:250,steps:[],condition:{left:'{{vars.ready}}',operator:'truthy'}}, '立即执行查询步骤并检查条件；超时失败，可取消。', 'Immediately run polling steps and check a condition; cancellable with timeout.'],
-  ['session.create', '新建会话并发送', 'Create and send', {op:'session.create',message:'你好',saveAs:'receipt'}, '保存现有新建页草稿后发送第一条消息，返回绑定账号、会话和请求的回执。', 'Preserve a New Task draft, send the first message and return an account/conversation/request receipt.'],
-  ['session.send', '向指定可见会话发送', 'Send to visible session', {op:'session.send',conversationId:'{{vars.receipt.conversationId}}',message:'继续',saveAs:'receipt'}, '仅发送到已挂载且选中的指定会话；草稿非空时拒绝，未确认发送不会自动重发。', 'Only send to the selected mounted conversation; reject occupied drafts and never automatically resend unconfirmed sends.'],
+  ['session.create', '新建会话并发送', 'Create and send', {op:'session.create',message:'你好',model:'glm-5.3-flash',saveAs:'receipt'}, '保存现有新建页草稿后发送第一条消息，返回绑定账号、会话和请求的回执。可用 model 指定本次新建任务使用的模型（模型键或显示名），并可选 thoughtLevel:low/medium/high、isThinking、contextWindow；该偏好只在进入新建任务页时读取一次，任务会在本次运行结束前还原用户原值。', 'Preserve a New Task draft, send the first message and return an account/conversation/request receipt. Optional model selects the model for this new task (key or display name), with optional thoughtLevel: low/medium/high, isThinking and contextWindow. The preference is read once when the New Task page opens and restored before the run ends.'],
+  ['session.send', '向指定可见会话发送', 'Send to visible session', {op:'session.send',conversationId:'{{vars.receipt.conversationId}}',message:'继续',model:'glm-5.3-flash',saveAs:'receipt'}, '仅发送到已挂载且选中的指定会话；草稿非空时拒绝，未确认发送不会自动重发。可用 model 指定本次发送使用的模型（模型键或显示名），并可选 thoughtLevel（按该模型真正支持的档位校验，如 low/high/max）与 isThinking；默认在本次运行结束前把会话模型与思考偏好还原成原值，keepModel:true 可保留切换结果。不支持 contextWindow。', 'Only send to the selected mounted conversation; reject occupied drafts and never automatically resend unconfirmed sends. Optional model sends with a chosen model (key or display name), with optional thoughtLevel (validated against the efforts that model supports, e.g. low/high/max) and isThinking. The conversation model and thinking preference are restored before the run ends unless keepModel is true. contextWindow is not supported.'],
   ['session.wait', '等待指定回复完成', 'Wait for bound reply', {op:'session.wait',receipt:'{{vars.receipt}}',timeoutMs:180000}, '按回执绑定账号、会话和请求等待完成；失败、取消或身份变化时退出。', 'Wait by account/conversation/request receipt; fail on errors, cancellation or identity changes.'],
   ['state.checkpoint', '保存检查点', 'Save checkpoint', {op:'state.checkpoint',key:'progress',value:{done:'{{vars.done}}'}}, '显式保存进度，使用 state.get 恢复；不会自动重放发送或其他副作用。', 'Explicitly save progress; restore with state.get. Never automatically replay sends or other side effects.'],
 ]) CAPABILITIES.push({id,zh,en,example,descriptionZh,descriptionEn});
@@ -339,6 +341,41 @@ function validateLocator(locator) {
   if (kind === 'coordinates' && (!Number.isFinite(Number(locator.x)) || !Number.isFinite(Number(locator.y)))) throw new Error('坐标定位无效');
 }
 
+/**
+ * 模型字段的静态校验。
+ * session.create 允许 model / thoughtLevel / isThinking / contextWindow；
+ * session.send 允许 model / thoughtLevel / isThinking，外加 keepModel
+ * （默认 false = 运行结束前把目标会话的模型与思考偏好还原成原值）。
+ * 这里只做形状与取值校验；真实键是否存在、思考档位是否被该模型支持，都由运行时按权威清单解析。
+ */
+function validateModelStep(step, op, index) {
+  const where = `第 ${index + 1} 步`;
+  const isSend = op === 'session.send';
+  if (step.keepModel != null && step.keepModel !== '' && !isTemplateValue(step.keepModel)) {
+    if (!isSend) throw new Error(`${where} keepModel 只用于 session.send`);
+    if (typeof step.keepModel !== 'boolean') throw new Error(`${where} keepModel 必须是布尔值`);
+  }
+  if (isSend && step.contextWindow != null && step.contextWindow !== '' && !isTemplateValue(step.contextWindow)) {
+    throw new Error(`${where} session.send 不支持 contextWindow，需要设置上下文窗口请使用 session.create`);
+  }
+  const present = (isSend ? SESSION_MODEL_FIELDS : AUTOMATION_MODEL_FIELDS).filter((key) => step[key] != null && step[key] !== '');
+  if (!present.length) return;
+  if (step.model == null || step.model === '') throw new Error(`${where} 指定 ${present.join('/')} 时必须同时指定 model`);
+  if (typeof step.model !== 'string' && !isTemplateValue(step.model)) throw new Error(`${where} model 必须是字符串`);
+  if (typeof step.model === 'string' && step.model.trim().length > MODEL_KEY_MAX_LENGTH && !isTemplateValue(step.model)) throw new Error(`${where} model 过长`);
+  // session.create 走新建任务偏好，档位由 WorkBuddy 的固定集合决定；
+  // session.send 走模型下拉，每个模型支持的档位不同（例如 low/high/max），
+  // 静态期只校验形状，具体档位在运行时按该模型的 supportedEfforts 解析。
+  if (isSend) {
+    if (step.thoughtLevel != null && step.thoughtLevel !== '' && !isTemplateValue(step.thoughtLevel) && (typeof step.thoughtLevel !== 'string' || !step.thoughtLevel.trim() || step.thoughtLevel.trim().length > 16)) throw new Error(`${where} thoughtLevel 必须是不超过 16 字符的非空字符串`);
+  } else if (step.thoughtLevel != null && step.thoughtLevel !== '' && !isTemplateValue(step.thoughtLevel) && !THOUGHT_LEVELS.includes(step.thoughtLevel)) throw new Error(`${where} thoughtLevel 只支持 ${THOUGHT_LEVELS.join('/')}`);
+  if (step.isThinking != null && step.isThinking !== '' && !isTemplateValue(step.isThinking) && typeof step.isThinking !== 'boolean') throw new Error(`${where} isThinking 必须是布尔值`);
+  if (step.contextWindow != null && step.contextWindow !== '' && !isTemplateValue(step.contextWindow)) {
+    const size = Number(step.contextWindow);
+    if (!Number.isInteger(size) || size < CONTEXT_WINDOW_MIN || size > CONTEXT_WINDOW_MAX) throw new Error(`${where} contextWindow 必须是 ${CONTEXT_WINDOW_MIN}–${CONTEXT_WINDOW_MAX} 之间的整数`);
+  }
+}
+
 function validateSteps(steps, depth = 0) {
   if (!Array.isArray(steps)) throw new Error('steps 必须是数组');
   if (depth > MAX_DEPTH) throw new Error('任务嵌套层级过深');
@@ -368,6 +405,8 @@ function validateSteps(steps, depth = 0) {
       if (!/^https?:\/\//i.test(url) && !/^\{\{\s*[\w.-]+\s*\}\}$/.test(url)) throw new Error(`第 ${index + 1} 步 URL 仅支持 http(s)`);
       if (url.length > 2048) throw new Error(`第 ${index + 1} 步 URL 过长`);
     }
+    if (op === 'session.create' || op === 'session.send') validateModelStep(step, op, index);
+    if (op === 'account.travel' && step.mode !== undefined && !['auto', 'depart', 'claim'].includes(String(step.mode))) throw new Error(`第 ${index + 1} 步 mode 只支持 auto、depart、claim`);
   });
 }
 
@@ -454,6 +493,7 @@ function capabilityText(language = 'zh') {
     '触发器：manual 仅手动运行；pageReady 在首次打开、导航完成或账号切换后的页面刷新完成后运行。pageReady 默认同一次页面导航只触发一次；pageLoaded 同样覆盖页面加载（包括切换刷新）；accountSwitched 仅账号切换；clientLoaded 仅 daemon 连接已加载客户端时触发（兼容名，不建议新任务使用）。组合事件同一导航只执行一次。',
     '组合触发：trigger.types:["clientLoaded","panelOpened"] 可多选，存在时替代 trigger.type；空数组仅手动。schedule:{type:"interval",minutes:60} 每小时触发（1–10080 分钟）；也支持 {type:"daily",time:"09:00"}、{type:"weekly",days:[1,2,3,4,5],time:"09:00"}（0=周日）、{type:"monthly",day:15,time:"09:00"}、{type:"once",at:"2026-12-01T09:00"}。均为电脑本地时区，每月不存在的日期跳过，指定时间任务不会重复，可与事件组合；enabled:false 停止所有自动触发。自动任务不提供立即运行；需要测试时在编辑器清空自动触发条件并关闭定时，再手动运行。运行中的同一任务不会重入，错过的定时不会补跑。POST /api/automations/events {type:"panelOpened"} 在面板从关闭变为打开时调用，需标准本地 API 认证。',
     '签到：account.checkin 使用循环账号的 token，先检查本地今日已验证记录，成功则跳过（包括 token 刷新）；失败返回 ok:false，单账号异常可用 logic.catch 捕获。无需 switch:true。',
+    '派猫猫旅行：account.travel 同样使用循环账号的 token，先查官方状态：arrived 领取奖励、traveling 等待、idle 且未达每日上限才派发（派发失败 30 分钟后下一轮重试）。daily_limit_reached 表示今天的行程已经派出，不会再重复派。返回 ok、state、claimed、rewardCredit、skipped、message。无需 switch:true。',
     '通用步骤字段：op 必填；saveAs 可把该步骤返回值保存到 {{vars.<name>}}；每个步骤的返回值也会覆盖 {{step.*}}。嵌套步骤仍按顺序执行。',
     '模板变量：{{now}}、{{event.type}}、{{event.account.uid}}、{{account.uid}}、{{account.nickname}}、{{vars.name}}、{{response.status}}、{{response.text}}、{{response.json}}、{{step.*}}。对象与数组递归展开模板；完整字符串模板保留原始数值/对象/数组类型，混合文本模板会转成字符串。',
     '条件运算符：equals、notEquals、contains、matches、truthy、falsy、gt、gte、lt、lte。matches 的 right 是正则表达式字符串。',
@@ -461,7 +501,7 @@ function capabilityText(language = 'zh') {
     '元素定位 locator：{kind,value}。kind 支持 css、xpath、text、role、ariaLabel、placeholder、attribute。coordinates 仅保留协议格式，当前不可用于 DOM 步骤。',
     'DOM 等待：dom.wait 可使用 seconds 做固定等待；或使用 locator、until:{state:"visible"|"hidden"|"attached"|"detached"|"clickable"}、timeoutMs 等待元素状态。until 还支持 text 包含匹配或 attribute/value 相等。locators 数组提供依次回退的定位器；readText 最多 100000 字符。iframe 内目前只支持读取，不支持点击与输入。DOM 读取结果可用 saveAs 保存。',
     'HTTP 输入：method、url、query、headers、body、timeoutMs（500-60000）、saveAs。响应：{ok,status,headers,text,json}，正文最多 1 MiB。http.request 不允许自定义 Authorization/Cookie；http.requestAsAccount 只对当前客户端官方 HTTPS origin 注入账号登录态；禁止跨域、非默认端口、URL 用户名密码。重定向不会自动跟随。body/query/headers 支持递归模板。默认非 2xx 返回 ok:false 供分支判断；throwOnHttpError:true 抛错以配合 retry（支持 backoff，默认 1）。停止会中止 HTTP 和等待。',
-    '会话：session.create 新建并发送第一条消息；session.send 仅向选中且无草稿的指定 conversationId 发送；返回 {accountUid,conversationId,userMessageId,requestId,baselineAssistantId} 回执，saveAs 保存。session.wait 接受 receipt（默认 vars.session）、timeoutMs（最长 300000）、contains，按回执监听。未知发送结果不会自动重发；发送不能嵌套 retry。session.sendCurrent/waitReply 是兼容别名，前者实际上新建会话。仅支持挂载的可见会话，不支持后台任意会话发送。',
+    '会话：session.create 新建并发送第一条消息；session.send 仅向选中且无草稿的指定 conversationId 发送；返回 {accountUid,conversationId,userMessageId,requestId,baselineAssistantId} 回执，saveAs 保存。session.wait 接受 receipt（默认 vars.session）、timeoutMs（最长 300000）、contains，按回执监听。未知发送结果不会自动重发；发送不能嵌套 retry。session.sendCurrent/waitReply 是兼容别名，前者实际上新建会话。仅支持挂载的可见会话，不支持后台任意会话发送。模型：session.create 支持 model（模型键或显示名；models.json 里的本地自定义模型可只写 id，会自动补 custom-local: 前缀）、thoughtLevel（low/medium/high）、isThinking、contextWindow；该偏好只在进入新建任务页时读取一次，任务会在本次运行结束前还原用户原值；未知模型会报错并列出候选。session.send 同样支持 model（走 composer 的模型下拉真实切换，而不是改运行时镜像）、thoughtLevel（按目标模型支持的档位校验，如 low/high/max）与 isThinking；默认在本次运行结束前把会话模型与思考偏好还原成原值，keepModel:true 保留切换结果；不支持 contextWindow。',
     '状态作用域：state.get/state.set 的 scope 支持 task（默认）或 account；所有状态首先按任务 ID 隔离；task scope 不随账号变化，account scope 再按 uid 隔离；写入合并最新状态。旧版本无任务 ID 的歧义状态不会自动归入任何任务。key 必填；state.get 可配 saveAs。',
     '通知：notify.toast 使用 react-hot-toast，从窗口底部向上弹出；level 支持 info、success、warning、error、loading。可选 duration（1000–60000 毫秒）、id、saveAs；相同 id 更新提示，notify.dismiss 用 id 关闭。id 按本次运行隔离，任务结束自动清理 loading。notify.afterAllTasks 已废弃，仅兼容旧任务；新任务不要使用。',
     '失败语义：未捕获错误会停止主步骤并执行 onFailure；logic.catch 捕获局部错误并把消息写入 {{vars.error.message}}；logic.retry 只重试其嵌套步骤。',
@@ -481,10 +521,11 @@ function capabilityText(language = 'zh') {
     'Template values: {{now}}, {{event.type}}, {{event.account.uid}}, {{account.uid}}, {{account.nickname}}, {{vars.name}}, {{response.status}}, {{response.text}}, {{response.json}}, {{step.*}}. Objects and arrays recursively resolve templates. A whole-value template preserves numbers/objects/arrays; interpolation inside text produces a string.',
     'Condition operators: equals, notEquals, contains, matches, truthy, falsy, gt, gte, lt, lte. matches treats right as a regular-expression string.',
     'Account scope: account.forEach only changes nested context by default. Set switch:true to physically switch the logged-in account and restore the original account after the loop. account.status and http.requestAsAccount use the current context; DOM and current-session steps operate the visible WorkBuddy page after switching.',
+    'Buddy travel: account.travel uses the context account token. It reads the official state first: arrived claims the reward, traveling waits, and idle with no daily limit reached departs (a failed departure retries on the next cycle, throttled to 30 minutes). daily_limit_reached means the trip for today was already dispatched. Returns ok, state, claimed, rewardCredit, skipped and message. No switch:true required.',
     'Locator: {kind,value}. kind supports css, xpath, text, role, ariaLabel, placeholder, and attribute. coordinates is reserved and unavailable to current DOM steps.',
     'DOM waits: use seconds for a fixed delay, or locator plus until:{state:"visible"|"hidden"|"attached"|"detached"|"clickable"} and timeoutMs. until also accepts text containment or attribute/value equality. locators supplies ordered fallbacks; readText is capped at 100000 characters. Iframes support reads only, not clicks or input. DOM read results can be stored with saveAs.',
     'HTTP input: method, url, query, headers, body, timeoutMs (500-60000), saveAs. Response: {ok,status,headers,text,json}; body is capped at 1 MiB. http.request rejects Authorization/Cookie; http.requestAsAccount injects credentials only for current-profile official HTTPS origins, rejecting foreign origins, ports and URL credentials. Redirects are not followed. body/query/headers resolve recursive templates. Non-2xx returns ok:false by default; throwOnHttpError:true enables retry (backoff defaults to 1). Cancellation aborts HTTP and waits.',
-    'Sessions: session.create creates by sending the first message; session.send targets only a selected conversationId with an empty composer. Returns {accountUid,conversationId,userMessageId,requestId,baselineAssistantId}; saveAs persists the receipt in variables. session.wait accepts receipt (default vars.session), timeoutMs (up to 300000), contains. Unconfirmed sends are never automatically retried; sends cannot be nested in retry. sendCurrent/waitReply are legacy aliases; sendCurrent creates a new conversation. Only mounted visible sessions are supported.',
+    'Sessions: session.create creates by sending the first message; session.send targets only a selected conversationId with an empty composer. Returns {accountUid,conversationId,userMessageId,requestId,baselineAssistantId}; saveAs persists the receipt in variables. session.wait accepts receipt (default vars.session), timeoutMs (up to 300000), contains. Unconfirmed sends are never automatically retried; sends cannot be nested in retry. sendCurrent/waitReply are legacy aliases; sendCurrent creates a new conversation. Only mounted visible sessions are supported. Model: session.create accepts model (key or display name; local models.json entries may be given as a bare id and gain the custom-local: prefix), plus optional thoughtLevel (low/medium/high), isThinking and contextWindow. The preference is read once when the New Task page opens and the original value is restored before the run ends; an unknown model fails with the candidate list. session.send also accepts model (a real switch through the composer model menu, not a runtime mirror write), thoughtLevel (validated against the efforts the target model supports, e.g. low/high/max) and isThinking; the conversation model and thinking preference are restored before the run ends unless keepModel is true. contextWindow is not supported.',
     'State scope: state.get/state.set scope is task (default) or account. all state is isolated by task ID first, with an additional uid dimension for account scope. Writes merge the latest state. Ambiguous legacy state without task IDs is not automatically assigned to any task. key is required; state.get accepts saveAs.',
     'Notifications: notify.toast uses react-hot-toast at bottom-center. level is info, success, warning, error, or loading. Optional duration (1000–60000 ms), id, and saveAs; reuse id to update, notify.dismiss with id to dismiss. IDs are scoped to a run; unfinished loading notifications are cleared when the run ends. notify.afterAllTasks is deprecated and retained only for saved tasks. Do not generate it for new tasks.',
     'Failure behavior: an uncaught error stops main steps and runs onFailure. logic.catch writes a local error to {{vars.error.message}}. logic.retry retries only its nested steps.',
@@ -805,6 +846,13 @@ async function executeTask(taskInput, options = {}) {
       if (step.saveAs) ctx.vars[String(step.saveAs)] = result;
       return result;
     }
+    if (op === 'account.travel') {
+      if (typeof options.accountTravel !== 'function') throw new Error('派猫猫旅行能力不可用');
+      const account = ctx.account || (typeof options.currentAccount === 'function' ? await options.currentAccount() : null);
+      const result = await options.accountTravel(account, { mode: String(step.mode || 'auto') });
+      if (step.saveAs) ctx.vars[String(step.saveAs)] = result;
+      return result;
+    }
     if (op === 'account.status') {
       if (typeof options.accountStatus !== 'function') throw new Error('账号状态能力不可用');
       const account = ctx.account || (typeof options.currentAccount === 'function' ? await options.currentAccount() : null);
@@ -832,7 +880,10 @@ async function executeTask(taskInput, options = {}) {
     }
     if (op === 'session.create' || op === 'session.send') {
       if (typeof options.sessionAction !== 'function') throw new Error('会话能力不可用');
-      const receipt = await options.sessionAction(op, resolveValue(step,ctx)); ctx.vars.session = receipt; return receipt;
+      const detail = resolveValue(step,ctx);
+      // 模板解析成空（变量缺失）时必须报错，否则会静默沿用账号默认模型。
+      if (hasAutomationModelRequest(step) && !hasAutomationModelRequest(detail)) throw new Error('模型参数解析为空，请检查模板变量');
+      const receipt = await options.sessionAction(op, detail); ctx.vars.session = receipt; return receipt;
     }
     if (op === 'session.wait') { if (typeof options.sessionAction !== 'function') throw new Error('会话能力不可用'); return options.sessionAction(op, {...resolveValue(step,ctx),receipt:resolveValue(step.receipt,ctx)||ctx.vars.session}); }
     if (op === 'session.sendCurrent') {

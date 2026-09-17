@@ -137,7 +137,10 @@ test('fresh CN and AI profiles receive all three presets without reinstalling de
     try {
       const context = { initializeCheckinConsent: require('../scripts/checkin-consent').initializeCheckinConsent, PROFILE: PROFILES[id], DATA_DIR: dir, path, __dirname: path.join(__dirname, '../scripts'), installBuiltinTask: automation.installBuiltinTask, log() {} };
       vm.runInNewContext(init, context);
-      assert.deepEqual(automation.readAutomations(dir).map(t => t.id).sort(), ['buddy-fuel-station-close-on-account-switch', 'daily-account-checkin', 'keep-accounts-active-1-plus-1']);
+      const expected = ['buddy-fuel-station-close-on-account-switch', 'daily-account-checkin', 'keep-accounts-active-1-plus-1'];
+      // 派猫猫旅行只在国内客户端提供：workbuddy-ai 的 travel 能力是 false，不装这个内置任务。
+      if (PROFILES[id].capabilities.travel !== false) expected.push('daily-buddy-travel');
+      assert.deepEqual(automation.readAutomations(dir).map(t => t.id).sort(), expected.sort());
       automation.writeAutomations(dir, []);
       vm.runInNewContext(init, context);
       assert.equal(automation.readAutomations(dir).length, 0);

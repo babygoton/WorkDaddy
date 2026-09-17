@@ -36,6 +36,7 @@ function analyzeTask(task) {
         capabilities.add(op);
         if (op === 'account.forEach' && (value.switch === true || value.switchAccounts === true)) effects.add('account-switch');
         if (op === 'account.checkin') effects.add('account-checkin');
+        if (op === 'account.travel') effects.add('account-travel');
         if (/^session\.(create|send|sendCurrent)$/.test(op) || op === 'notify.afterAllTasks') effects.add('send-message');
         if (/^dom\.(click|type|clear|press)$/.test(op)) effects.add('page-input');
         if (/^state\.(set|checkpoint)$/.test(op)) effects.add('write-state');

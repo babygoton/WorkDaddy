@@ -126,7 +126,7 @@ const { createCreditHistorySync, historyRange } = require('./credit-history-sync
 const { createCreditUsageStore } = require('./credit-usage-store.js');
 const { scanTokenStatsCached, tokenStatsCacheReady } = require('./token-stats.js');
 const { initializeCheckinConsent, readCheckinConsent, decideCheckinConsent } = require('./checkin-consent.js');
-const { classifyCheckinResult, checkinEndpointsForToken } = require('./checkin-result.js');
+const { classifyCheckinResult, checkinEndpointsForToken, tokenIssuerOrigin, ISSUER_HOST_MAP } = require('./checkin-result.js');
 const {
   DAY_MS: TOKEN_REFRESH_DAY_MS,
   refreshAuthToken,
@@ -134,6 +134,19 @@ const {
   normalizeTimestamp: normalizeTokenTimestamp,
 } = require('./token-refresh.js');
 const { fetchGrowthTodayActive, activateGrowthAccount, fetchGrowthStreak, createGrowthStreakCache } = require('./growth-active.js');
+const {
+  fetchTravelConfig,
+  fetchTravelStatus,
+  claimTravel,
+  departTravelWithLocations,
+  planTravelStep,
+  rollTravelCacheToToday,
+  mergeTravelRecord,
+  travelCacheCompleted,
+  summarizeTravelRecord,
+  travelRecordDate,
+  truncateTravelMessage,
+} = require('./growth-travel.js');
 const {
   captureException,
   captureMessage,
@@ -181,6 +194,16 @@ const {
 } = require('./automation.js');
 
 const { assertAccountRequestUrl, createTaskState, cancellableWait, createRendererGate, probeSessionReceipt, receiptComplete } = require('./automation-runtime.js');
+const {
+  newTaskModelStorageKey,
+  normalizeAutomationModelRequest,
+  normalizeSessionModelRequest,
+  resolveAutomationModelKey,
+  pickEffortLevel,
+  readBooleanFlag,
+  readNewTaskModelId,
+  buildNewTaskModelValue,
+} = require('./automation-model.js');
 const acquireAutomationRenderer = createRendererGate();
 const acquireAutomationInput = createRendererGate();
 let automationInputActive = false;
@@ -354,8 +377,9 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 // 1.2.24：账号轮换恢复真实积分段消耗检测，仅推荐缓存中到期时间最近的可用账号。
 // 1.2.25：首页弹窗任务补齐成长/活动入口，并按 renderer 页面身份修复重连后的 pageReady 触发。
 // 1.2.26：无效账号备份不再显示可点击的切换按钮，导入路径拒绝写入无效认证数据。
-const DAEMON_VERSION = '1.2.42';
-const DAEMON_BUILD_ID = 'release-1.2.42-20260914-streaming-session-transfer';
+// 1.2.45：自动化新增「派猫猫旅行」能力（account.travel）：按官方状态自动派发、到点领取奖励，带每日缓存与派发重试节流。
+const DAEMON_VERSION = '1.2.45';
+const DAEMON_BUILD_ID = 'release-1.2.45-20260917-automation-buddy-travel';
 const usageReporter = createUsageReporter({ profile: PROFILE.id, version: DAEMON_VERSION });
 configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const HOST = '127.0.0.1';
@@ -2676,6 +2700,8 @@ async function waitPageLoaded(timeoutMs = 6000) {
 
 const CHECKIN_CACHE_FILE = path.join(DATA_DIR, 'checkin-cache.json');
 const CHECKIN_REQUEST_TIMEOUT_MS = 12000;
+const TRAVEL_CACHE_FILE = path.join(DATA_DIR, 'travel-cache.json');
+const TRAVEL_REQUEST_TIMEOUT_MS = 12000;
 // 声明式自动化任务：任务 JSON 只保存步骤，不保存账号 Token；运行时按账号上下文
 // 读取受管备份并把凭据限制在一次 HTTP 请求内。第三方代码执行不在此模块范围内。
 const growthStreakCache = createGrowthStreakCache(async (uid) => {
@@ -3026,37 +3052,77 @@ function startAutomationRun(task, event = null) {
       }
       throw new Error('等待会话回复超时');
     }
-    const accountUid = (currentAccount() || {}).uid;
-    if (!accountUid) throw new Error('没有可用账号');
-    if (op === 'session.create') await withInput(() => ensureAutomationNewTask({ guard: () => {
-      if (isCancelled() || (currentAccount() || {}).uid !== accountUid) throw new Error('发送前账号或运行状态已变化');
-    } }));
-    const before = await readSession();
-    if (op === 'session.send') {
-      if (!detail.conversationId || !before || before.conversationId !== detail.conversationId) throw new Error('只能发送到已选中的指定会话');
-      if (before.busy) throw new Error('目标会话正在运行');
-      // The common sender checks the exact editor immediately before typing.
-      // New Task surface discovery cannot identify a conversation composer.
-    }
-    if (isCancelled() || (currentAccount() || {}).uid !== accountUid) throw new Error('发送前账号或运行状态已变化');
-    await withInput(() => acSendPhrase(String(detail.message || ''), { requireEmpty: true, isCancelled, guard: async () => {
-      if (isCancelled() || (currentAccount() || {}).uid !== accountUid) throw new Error('账号或运行状态已变化，停止发送');
-      const selected = await readSession();
-      if (op === 'session.send' ? !selected || selected.conversationId !== detail.conversationId : selected && (!before || selected.conversationId !== before.conversationId)) throw new Error('会话已变化，停止发送');
-    } }));
-    // Do not retry an unconfirmed send: it may already have reached WorkBuddy.
-    const end = Date.now() + 12000;
-    while (Date.now() < end) {
-      if ((currentAccount() || {}).uid !== accountUid) throw new Error('发送后账号已变化，请检查会话；不会自动重发');
-      const snapshot = await readSession();
-      if (snapshot && snapshot.userMessageId && (!before || snapshot.conversationId !== before.conversationId || snapshot.userMessageId !== before.userMessageId)) {
-        if (op === 'session.send' && snapshot.conversationId !== detail.conversationId) throw new Error('发送后会话发生变化，请检查发送结果');
-        lastReceipt = {ok:true,accountUid,conversationId:snapshot.conversationId,userMessageId:snapshot.userMessageId,requestId:snapshot.requestId,baselineAssistantId:before && before.conversationId===snapshot.conversationId ? before.assistantId : ''};
-        return lastReceipt;
+    const modelRequest = op === 'session.create' ? normalizeAutomationModelRequest(detail)
+      : (op === 'session.send' ? normalizeSessionModelRequest(detail) : null);
+    const keepModel = op === 'session.send' ? readBooleanFlag(detail.keepModel, false) : false;
+    let modelRun = null;
+    let sessionModelRun = null;
+    let modelInfo = null;
+    try {
+      const accountUid = (currentAccount() || {}).uid;
+      if (!accountUid) throw new Error('没有可用账号');
+      if (op === 'session.create') {
+        // 必须在进入新建任务视图之前写入偏好（视图挂载时只读一次）。
+        if (modelRequest) modelRun = await prepareNewTaskModel(accountUid, modelRequest);
+        await withInput(() => ensureAutomationNewTask({ guard: () => {
+          if (isCancelled() || (currentAccount() || {}).uid !== accountUid) throw new Error('发送前账号或运行状态已变化');
+        } }));
+        if (modelRun) {
+          modelInfo = await modelRun.verify();
+          appendRunLog('session:model:' + modelInfo.requested + (modelInfo.displayAfter ? ' display=' + modelInfo.displayAfter : ''));
+        }
       }
-      await cancellableWait(100,isCancelled);
+      const before = await readSession();
+      if (op === 'session.send') {
+        if (!detail.conversationId || !before || before.conversationId !== detail.conversationId) throw new Error('只能发送到已选中的指定会话');
+        if (before.busy) throw new Error('目标会话正在运行');
+        // The common sender checks the exact editor immediately before typing.
+        // New Task surface discovery cannot identify a conversation composer.
+        // 会话内换模型必须发生在发送之前：发送时读的就是会话当前模型。
+        if (modelRequest) {
+          const run = await withInput(() => prepareSessionModel(modelRequest));
+          modelInfo = run.info;
+          sessionModelRun = run.needsRestore && !keepModel ? run : null;
+          appendRunLog('session:model:' + run.info.requested + (run.info.displayAfter ? ' display=' + run.info.displayAfter : '')
+            + (run.info.effort ? ' effort=' + run.info.effort : '')
+            + (run.info.thinking == null ? '' : ' thinking=' + run.info.thinking)
+            + ' scope=session' + (run.needsRestore ? (keepModel ? ' keep=true' : ' restore=on') : ''));
+        }
+      }
+      if (isCancelled() || (currentAccount() || {}).uid !== accountUid) throw new Error('发送前账号或运行状态已变化');
+      await withInput(() => acSendPhrase(String(detail.message || ''), { requireEmpty: true, isCancelled, guard: async () => {
+        if (isCancelled() || (currentAccount() || {}).uid !== accountUid) throw new Error('账号或运行状态已变化，停止发送');
+        const selected = await readSession();
+        if (op === 'session.send' ? !selected || selected.conversationId !== detail.conversationId : selected && (!before || selected.conversationId !== before.conversationId)) throw new Error('会话已变化，停止发送');
+      } }));
+      // Do not retry an unconfirmed send: it may already have reached WorkBuddy.
+      const end = Date.now() + 12000;
+      while (Date.now() < end) {
+        if ((currentAccount() || {}).uid !== accountUid) throw new Error('发送后账号已变化，请检查会话；不会自动重发');
+        const snapshot = await readSession();
+        if (snapshot && snapshot.userMessageId && (!before || snapshot.conversationId !== before.conversationId || snapshot.userMessageId !== before.userMessageId)) {
+          if (op === 'session.send' && snapshot.conversationId !== detail.conversationId) throw new Error('发送后会话发生变化，请检查发送结果');
+          lastReceipt = {ok:true,accountUid,conversationId:snapshot.conversationId,userMessageId:snapshot.userMessageId,requestId:snapshot.requestId,baselineAssistantId:before && before.conversationId===snapshot.conversationId ? before.assistantId : ''};
+          if (modelInfo) { lastReceipt.model = modelInfo.requested; lastReceipt.modelDisplay = modelInfo.displayAfter || null; }
+          return lastReceipt;
+        }
+        await cancellableWait(100,isCancelled);
+      }
+      throw new Error('未确认会话发送回执，请检查 WorkBuddy；不会自动重发');
+    } finally {
+      // 无论成功、失败还是被停止，都要把用户的模型偏好还原回去。
+      if (modelRun) await restoreNewTaskModelPreference(modelRun.snapshot);
+      if (sessionModelRun) {
+        // 会话用的是用户自己的模型设置：除非 keepModel，否则连思考偏好一起还原。
+        // 还原失败只记日志，绝不覆盖任务本身的结果。
+        try {
+          const done = await withInput(() => sessionModelRun.restore(), true);
+          if (done && done.length) appendRunLog('session:model:restore:' + done.join(','));
+        } catch (error) {
+          appendRunLog('session:model:restore-failed:' + String((error && error.message) || error).slice(0, 160));
+        }
+      }
     }
-    throw new Error('未确认会话发送回执，请检查 WorkBuddy；不会自动重发');
   };
   // Compatibility aliases retain the historical New Task send behavior.
   const sessionSendCurrent = async message => sessionAction('session.create',{message});
@@ -3090,7 +3156,13 @@ function startAutomationRun(task, event = null) {
   run.cleanupNotifications = runNotifier.cleanup;
   const publicAccounts = () => listAccounts(DATA_DIR).map(a => ({uid:a.uid,nickname:a.nickname,isPrimary:primaryAccountStore.get()===a.uid}));
   const publicCurrent = () => { const a = currentAccount(); return a ? {uid:a.uid,nickname:a.nickname,isPrimary:primaryAccountStore.get()===a.uid} : null; };
-  const runDeps = { sessionAction, primaryAccount: async () => publicAccounts().find(a=>a.isPrimary) || null, dismissToast: runNotifier.dismiss, completionReport, event, listAccounts: async () => publicAccounts(), currentAccount: publicCurrent, accountSwitch: (account, detail) => withInput(() => automationSwitchAccount(account), !!(detail && detail.restore)), accountStatus: automationAccountStatus, accountCheckin: async (account) => {
+  const runDeps = { sessionAction, primaryAccount: async () => publicAccounts().find(a=>a.isPrimary) || null, dismissToast: runNotifier.dismiss, completionReport, event, listAccounts: async () => publicAccounts(), currentAccount: publicCurrent, accountSwitch: (account, detail) => withInput(() => automationSwitchAccount(account), !!(detail && detail.restore)), accountStatus: automationAccountStatus, accountTravel: async (account, detail) => {
+    if (!account || !account.uid) throw new Error('没有可用账号');
+    const mode = detail && detail.mode ? String(detail.mode) : 'auto';
+    const result = await claimTravelForUid(account.uid, mode);
+    appendRunLog('account:travel:' + mode + ':' + (result.ok ? (result.claimed ? 'claimed' : result.state || 'ok') : 'failed') + ' ' + summarizeTravelRecord(result));
+    return travelPublicRecord(result);
+  }, accountCheckin: async (account) => {
     if (!account || !account.uid) throw new Error('没有可用账号');
     const result = await claimDailyForUid(account.uid);
     appendRunLog('account:checkin:' + (result.skipped ? 'skipped' : result.ok ? 'success' : 'failed'));
@@ -3284,6 +3356,209 @@ async function performAccountCheckin(uid) {
     }
   }
   return { uid, ...(refreshError ? { refreshError } : {}), ...rec };
+}
+
+/* ================= 派猫猫旅行（account.travel：自动派发 + 到点领取） ================= */
+
+const travelClaims = new Map();
+
+function loadTravelCache() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(TRAVEL_CACHE_FILE, 'utf8')) || {};
+    // 跨日只丢掉收尾记录，仍在旅行中的未领行程要留着，否则今天就领不到了。
+    return rollTravelCacheToToday(raw, todayStr());
+  } catch (_) {
+    return { date: todayStr(), completed: false, results: {} };
+  }
+}
+
+function saveTravelCache(cache) {
+  try {
+    fs.writeFileSync(TRAVEL_CACHE_FILE, JSON.stringify(cache, null, 2));
+  } catch (e) {
+    log('[travel] 写入缓存失败: ' + e.message);
+  }
+}
+
+/** 旅行接口必须打账号自己签发的域名（同签到：JWT 的 iss 决定 host，其次看备份里的 domain）。 */
+function travelApiHost(accessToken, auth) {
+  const issuer = tokenIssuerOrigin(accessToken);
+  const mapped = issuer ? ISSUER_HOST_MAP.get(issuer) : null;
+  if (mapped) return mapped;
+  const domain = String(auth && auth.domain || '').trim();
+  if (domain) return domain.startsWith('http') ? domain : 'https://' + domain;
+  return String(PROFILE.apiHost || 'https://www.workbuddy.cn').replace(/\/+$/, '');
+}
+
+function travelBaseRecord(prior, patch) {
+  return Object.assign({
+    date: todayStr(), mode: 'auto', ok: false, state: null, location: '', locationId: null,
+    recordId: 0, departAt: 0, arriveAt: 0, rewardCredit: null, claimed: false, claimedAt: 0,
+    skip: null, message: '', at: Date.now(), departAttemptAt: 0,
+  }, prior || {}, patch || {});
+}
+
+/** 写回缓存：与旧记录合并后落盘，再按「是否还有可重试项」更新当日完成标记。 */
+function persistTravelRecord(uid, record) {
+  const today = todayStr();
+  const cache = loadTravelCache();
+  const prior = travelRecordDate(cache.results[uid], today) ? cache.results[uid] : null;
+  const merged = prior ? mergeTravelRecord(prior, record) : record;
+  merged.date = today;
+  cache.results[uid] = merged;
+  cache.date = today;
+  cache.completed = travelCacheCompleted(cache.results);
+  saveTravelCache(cache);
+  return merged;
+}
+
+/**
+ * 对单个账号跑一轮旅行对账（auto：到达就领、未出发就派；也可只 depart / 只 claim）。
+ * 全程只用该账号备份里的 token，不切换当前登录账号。
+ */
+async function performAccountTravel(uid, mode) {
+  const normalizedMode = mode === 'depart' || mode === 'claim' ? mode : 'auto';
+  const today = todayStr();
+  const cache = loadTravelCache();
+  const prior = travelRecordDate(cache.results[uid], today) ? (cache.results[uid] || {}) : {};
+  const base = { mode: normalizedMode, at: Date.now(), skip: null, message: '' };
+
+  const refreshed = await refreshAccountBackupToken(uid);
+  const root = refreshed.root;
+  if (!root) {
+    return persistTravelRecord(uid, travelBaseRecord(prior, Object.assign({}, base, {
+      ok: false, skip: 'no-backup', message: refreshed.error || '读取账号备份失败',
+    })));
+  }
+  const auth = root.auth && typeof root.auth === 'object' ? root.auth : {};
+  const accessToken = auth.accessToken || auth.access_token || auth.token;
+  if (!accessToken) {
+    return persistTravelRecord(uid, travelBaseRecord(prior, Object.assign({}, base, {
+      ok: false, skip: 'no-accessToken', message: '账号缺少 accessToken',
+    })));
+  }
+  const options = { accessToken, apiHost: travelApiHost(accessToken, auth), timeoutMs: TRAVEL_REQUEST_TIMEOUT_MS };
+  const status = await fetchTravelStatus(options);
+  const plan = planTravelStep({ mode: normalizedMode, status, prior, now: Date.now() });
+  base.message = plan.reason;
+
+  if (!status.ok || plan.action === 'error') {
+    return persistTravelRecord(uid, travelBaseRecord(prior, Object.assign({}, base, {
+      ok: false, skip: plan.skip || 'status-error', state: prior.state || null,
+      message: plan.reason || truncateTravelMessage(status.message),
+    })));
+  }
+
+  // 官方状态里能拿到多少就先合并多少（地点、到达时间、预计奖励）。
+  const fromStatus = {
+    state: status.state,
+    location: status.location || prior.location || '',
+    locationId: status.locationId === null || status.locationId === undefined ? prior.locationId : status.locationId,
+    buddyId: status.buddyId,
+    recordId: status.recordId || prior.recordId || 0,
+    departAt: status.departAt || prior.departAt || 0,
+    arriveAt: status.arriveAt || prior.arriveAt || 0,
+    rewardCredit: status.rewardCredit === null || status.rewardCredit === undefined ? prior.rewardCredit : status.rewardCredit,
+  };
+
+  if (plan.action === 'wait') {
+    return persistTravelRecord(uid, travelBaseRecord(prior, Object.assign({}, fromStatus, base, {
+      ok: plan.skip !== 'retry-wait',
+      state: status.state === 'idle' ? (prior.state || 'idle') : status.state,
+      claimed: status.state === 'idle' ? prior.claimed === true : false,
+    })));
+  }
+
+  if (plan.action === 'skip') {
+    // idle + daily_limit_reached：今天的行程已经派出，保留地点/积分只改成完结。
+    return persistTravelRecord(uid, travelBaseRecord(prior, Object.assign({}, fromStatus, base, {
+      ok: true, already: true, claimed: true, state: 'idle', skip: 'daily-limit',
+      claimedAt: Number(prior.claimedAt) || Date.now(),
+    })));
+  }
+
+  if (plan.action === 'claim') {
+    const claim = await claimTravel(status.recordId, options);
+    if (claim.ok) {
+      return persistTravelRecord(uid, travelBaseRecord(prior, Object.assign({}, fromStatus, base, {
+        ok: true, claimed: true, state: 'idle', claimedAt: Date.now(), skip: null,
+        rewardCredit: claim.rewardCredit === null || claim.rewardCredit === undefined ? status.rewardCredit : claim.rewardCredit,
+        message: '已领取奖励',
+      })));
+    }
+    const text = String(claim.message || '').toLowerCase();
+    if (text.includes('no unclaimed travel') || text.includes('daily_limit')) {
+      // 网页端已经领过了：当成已领取，避免一直重试。
+      return persistTravelRecord(uid, travelBaseRecord(prior, Object.assign({}, fromStatus, base, {
+        ok: true, claimed: true, state: 'idle', claimedAt: Date.now(), skip: null, message: '已领取（网页端）',
+      })));
+    }
+    if (text.includes('not arrived yet')) {
+      return persistTravelRecord(uid, travelBaseRecord(prior, Object.assign({}, fromStatus, base, {
+        ok: true, claimed: false, state: 'arrived', skip: null, message: '还没到达，下一轮再领',
+      })));
+    }
+    return persistTravelRecord(uid, travelBaseRecord(prior, Object.assign({}, fromStatus, base, {
+      ok: false, claimed: false, skip: 'claim-error', message: truncateTravelMessage(claim.message),
+    })));
+  }
+
+  // plan.action === 'depart'
+  const departAttemptAt = Date.now();
+  const config = await fetchTravelConfig(options);
+  if (!config.ok || !config.travelable) {
+    return persistTravelRecord(uid, travelBaseRecord(prior, Object.assign({}, base, {
+      ok: false, state: 'idle', departAttemptAt,
+      skip: config.ok ? 'no-location' : 'config-error',
+      message: config.ok ? '没有可用的旅行地点' : truncateTravelMessage(config.message),
+    })));
+  }
+  const departure = await departTravelWithLocations(config.locations, options);
+  if (!departure.ok) {
+    return persistTravelRecord(uid, travelBaseRecord(prior, Object.assign({}, base, {
+      ok: false, state: prior.state || null, departAttemptAt,
+      skip: departure.skip || 'error', message: truncateTravelMessage(departure.message),
+    })));
+  }
+  const confirmed = await fetchTravelStatus(options);
+  const record = Object.assign({}, base, {
+    ok: true, claimed: false, departAttemptAt,
+    state: departure.state || 'traveling',
+    location: departure.location || (confirmed.ok ? confirmed.location : ''),
+    locationId: departure.locationId,
+    recordId: confirmed.ok ? confirmed.recordId : 0,
+    departAt: confirmed.ok ? confirmed.departAt : 0,
+    arriveAt: confirmed.ok ? confirmed.arriveAt : 0,
+    rewardCredit: confirmed.ok ? confirmed.rewardCredit : null,
+    message: departure.message || '已派猫猫出门',
+  });
+  if (departure.dailyLimit) {
+    record.claimed = true;
+    record.claimedAt = departAttemptAt;
+    record.skip = 'daily-limit';
+    record.state = 'idle';
+  }
+  return persistTravelRecord(uid, travelBaseRecord(prior, record));
+}
+
+/** 单账号旅行入口（同账号同模式并发去重）。 */
+function claimTravelForUid(uid, mode) {
+  if (!PROFILE.capabilities.accounts || PROFILE.capabilities.travel === false) throw new Error('当前客户端不支持派猫猫旅行');
+  if (!/^[A-Za-z0-9_-]{1,128}$/.test(String(uid || ''))) throw new Error('账号 ID 无效');
+  const normalizedMode = mode === 'depart' || mode === 'claim' ? mode : 'auto';
+  const key = uid + ':' + normalizedMode;
+  if (travelClaims.has(key)) return travelClaims.get(key);
+  const promise = performAccountTravel(uid, normalizedMode).finally(() => travelClaims.delete(key));
+  travelClaims.set(key, promise);
+  return promise;
+}
+
+/** 回执与面板用：把 skip 语义翻译成 skipped，并附一行摘要。 */
+function travelPublicRecord(record) {
+  if (!record) return null;
+  // skipped = 本轮无需再做任何事（今日已派/已领取/派发重试冷却中）。
+  const skipped = record.claimed === true || record.skip === 'daily-limit' || record.skip === 'retry-wait';
+  return Object.assign({}, record, { skipped, summary: summarizeTravelRecord(record) });
 }
 
 /** 通过 CDP 把右下角组件注入到 WorkBuddy 渲染进程（幂等，可反复调用） */
@@ -5126,6 +5401,381 @@ async function readAutomationAgentSurface(focusComposer = false) {
   return response && response.result && response.result.value;
 }
 
+/* ===== 自动化指定模型（session.create 的 model / thoughtLevel）=====
+ * WorkBuddy 的新建任务模型偏好存在渲染进程 localStorage 的
+ * `cb-newtask:model:<uid>`，值为 {id,isThinking,reasoningEffort,contextWindow}。
+ * 它只在进入「新建任务」视图时被读取一次（非响应式），所以必须在视图挂载之前
+ * 写入，并且本次运行结束前还原用户原值。机制与实测证据见
+ * docs/automation-model-selection.md。 */
+
+function newTaskModelReadExpression(key) {
+  return `(function(){try{var k=${JSON.stringify(key)};var raw=window.localStorage.getItem(k);return {present:raw!==null,raw:raw};}catch(e){return {error:'localStorage 不可用: '+String(e&&e.message||e)}}})()`;
+}
+
+async function readNewTaskModelPreference(key) {
+  const response = await cdpSend('Runtime.evaluate', { expression: newTaskModelReadExpression(key), returnByValue: true });
+  const value = response && response.result && response.result.value;
+  if (!value || value.error) throw new Error((value && value.error) || '读取新建任务模型偏好失败');
+  return { key, present: !!value.present, raw: value.present ? String(value.raw) : null };
+}
+
+async function writeNewTaskModelPreference(key, raw) {
+  const expression = `(function(){try{window.localStorage.setItem(${JSON.stringify(key)},${JSON.stringify(raw)});return {ok:window.localStorage.getItem(${JSON.stringify(key)})===${JSON.stringify(raw)}};}catch(e){return {ok:false,error:String(e&&e.message||e)}}})()`;
+  const response = await cdpSend('Runtime.evaluate', { expression, returnByValue: true });
+  const value = response && response.result && response.result.value;
+  if (!value || !value.ok) throw new Error((value && value.error) || '写入新建任务模型偏好失败');
+}
+
+// 还原失败不能覆盖任务本身的错误，只记日志；绝不在这里重试写入。
+async function restoreNewTaskModelPreference(snapshot) {
+  if (!snapshot || !snapshot.key) return;
+  const body = snapshot.present
+    ? `window.localStorage.setItem(${JSON.stringify(snapshot.key)},${JSON.stringify(String(snapshot.raw))});`
+    : `window.localStorage.removeItem(${JSON.stringify(snapshot.key)});`;
+  try {
+    const response = await cdpSend('Runtime.evaluate', { expression: `(function(){try{${body}return {ok:true};}catch(e){return {ok:false,error:String(e&&e.message||e)}}})()`, returnByValue: true });
+    const value = response && response.result && response.result.value;
+    if (!value || !value.ok) log('[automation-model] 还原新建任务模型偏好失败: ' + ((value && value.error) || 'unknown'));
+  } catch (error) {
+    log('[automation-model] 还原新建任务模型偏好异常: ' + String((error && error.message) || error));
+  }
+}
+
+// 权威模型键清单：会话控制器的 modelSwitchTracker.knownModels（{key,name}）。
+// 会话刚挂载时可能是惰性加载，做一次短重试；取不到时返回空数组走回退路径。
+const AUTOMATION_KNOWN_MODELS_EXPRESSION = `(function(){try{var compat=window.__wbsWorkBuddyCompat;var cs=(compat&&typeof compat.findConversationControllers==='function'&&compat.findConversationControllers(document))||[];for(var i=0;i<cs.length;i++){var t=cs[i]&&cs[i].modelSwitchTracker;var km=(t&&t.knownModels)||[];if(km.length)return km.map(function(m){return {key:String((m&&(m.key||m.id))||''),name:String((m&&(m.name||m.displayName||m.label))||'')}}).filter(function(m){return m.key})}return []}catch(e){return []}})()`;
+
+async function readAutomationKnownModels() {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const response = await cdpSend('Runtime.evaluate', { expression: AUTOMATION_KNOWN_MODELS_EXPRESSION, returnByValue: true });
+      const value = response && response.result && response.result.value;
+      if (Array.isArray(value) && value.length) return value;
+    } catch (_) { /* 渲染器尚未就绪时按"清单不可用"处理 */ }
+    if (attempt === 0) await sleep(400);
+  }
+  return [];
+}
+
+function officialModelCandidates() {
+  try { return listOfficialModels().map((model) => ({ id: model.id, name: model.name })); } catch (_) { return []; }
+}
+
+// composer 上模型选择器的显示文本，仅用于运行日志与回执留痕（判断界面是否跟上）。
+async function readAutomationModelSelector() {
+  try {
+    const response = await cdpSend('Runtime.evaluate', {
+      expression: `(function(){try{var el=document.querySelector('button.cr-model-selector__trigger')||document.querySelector('.cr-model-selector__trigger');if(!el)return null;var t=String(el.innerText||el.textContent||'').trim();return t.slice(0,60)||null}catch(e){return null}})()`,
+      returnByValue: true,
+    });
+    const value = response && response.result && response.result.value;
+    return typeof value === 'string' && value ? value : null;
+  } catch (_) { return null; }
+}
+
+/**
+ * 进入新建任务视图之前写入模型偏好。
+ * 若视图已经打开，偏好不会被重新读取——此时宁可报错也不要用旧模型静默发送。
+ * 返回的对象带 verify()（写入后回读校验）与 snapshot（结束前还原用户原值）。
+ */
+async function prepareNewTaskModel(uid, request) {
+  const key = newTaskModelStorageKey(uid);
+  const surface = await readAutomationAgentSurface(false);
+  if (surface && surface.newTaskReady && surface.hasComposer) {
+    throw new Error('新建任务页已打开：模型偏好只在进入该页时读取一次，请先切换到其他会话后重试');
+  }
+  const resolved = resolveAutomationModelKey(request.model, {
+    knownModels: await readAutomationKnownModels(),
+    customModels: officialModelCandidates(),
+  });
+  const snapshot = await readNewTaskModelPreference(key);
+  const built = buildNewTaskModelValue(snapshot.raw, resolved, request);
+  const displayBefore = await readAutomationModelSelector();
+  await writeNewTaskModelPreference(key, built.raw);
+  return {
+    key,
+    snapshot,
+    resolved,
+    verify: async () => {
+      const after = await readNewTaskModelPreference(key);
+      const readBack = readNewTaskModelId(after.raw);
+      // 回读不一致说明 WorkBuddy 没有采纳这次偏好（例如页面并未重新挂载），
+      // 必须取消发送，避免任务以为换了模型、实际沿用旧模型。
+      if (readBack !== resolved.key) {
+        throw new Error('新建任务模型偏好未生效（写入 ' + resolved.key + '，回读 ' + (readBack || '空') + '），已取消发送');
+      }
+      const displayAfter = await readAutomationModelSelector();
+      // 运行日志由 sessionAction 记录：appendRunLog 属于 startAutomationRun 的闭包作用域，
+      // 本函数位于模块顶层，不能直接引用它。
+      return { requested: resolved.key, custom: !!resolved.custom, unverified: !!resolved.unverified, displayBefore, displayAfter };
+    },
+  };
+}
+
+/* ===== 自动化指定模型（session.send 的会话内切换）=====
+ * 会话内换模型不能写 sessionStore（那只是运行时状态的镜像 setter：实测 store 值变了，
+ * 但选择器文本不变、sessions.model 不变、宿主日志没有 unstable_setSessionModel）。
+ * 唯一可行路径是 composer 的模型下拉，候选与它们的 React 处理器挂在渲染器 fiber 上：
+ *   .cr-model-selector__item → 祖先 ModelItem fiber 的 memoizedProps
+ *     .option {id, name, supportedEfforts, canDisableThinking, ...}
+ *     .isSelected / .isThinking / .currentEffort
+ *     .onSelectEffort(modelId, effort) / .onToggleThinking(modelId, enabled)
+ * 因此分两步：先只读地开合菜单读候选（据此解析模型键与思考档位），再点选项并回读校验。
+ * 机制与实测证据见 docs/automation-model-selection.md。 */
+
+const SESSION_MODEL_MENU_TOOLKIT = `
+  function __smSleep(ms){ return new Promise(function(r){ setTimeout(r, ms); }); }
+  function __smProps(el){ if(!el) return null; var k = Object.keys(el).filter(function(x){ return x.indexOf('__reactProps$') === 0; })[0]; return k ? el[k] : null; }
+  function __smFiber(el){ if(!el) return null; var k = Object.keys(el).filter(function(x){ return x.indexOf('__reactFiber$') === 0; })[0]; return k ? el[k] : null; }
+  function __smTrigger(){
+    var list = Array.prototype.slice.call(document.querySelectorAll('button.cr-model-selector__trigger,.cr-model-selector__trigger'));
+    list = list.filter(function(el){ var r = el.getBoundingClientRect(); return r.width > 40 && r.height > 8 && r.bottom > 0 && r.top < window.innerHeight && r.right > 0 && r.left < window.innerWidth; });
+    list.sort(function(a,b){ return b.getBoundingClientRect().bottom - a.getBoundingClientRect().bottom; });
+    return list[0] || null;
+  }
+  function __smPopover(){ return document.querySelector('.cr-model-selector__popover'); }
+  function __smEvent(el){ return { currentTarget: el, target: el, type: 'click', bubbles: true, cancelable: true, nativeEvent: { type: 'click' }, preventDefault: function(){}, stopPropagation: function(){}, isDefaultPrevented: function(){ return false; }, isPropagationStopped: function(){ return false; }, persist: function(){} }; }
+  function __smItemFiber(id){
+    var pop = __smPopover(); if (!pop) return null;
+    var els = Array.prototype.slice.call(pop.querySelectorAll('.cr-model-selector__item'));
+    for (var i = 0; i < els.length; i++) {
+      var f = __smFiber(els[i]), d = 0;
+      while (f && d < 8) { var mp = f.memoizedProps; if (mp && mp.option && String(mp.option.id) === String(id)) return f; f = f.return; d++; }
+    }
+    return null;
+  }
+  function __smItemEl(id){
+    var pop = __smPopover(); if (!pop) return null;
+    var els = Array.prototype.slice.call(pop.querySelectorAll('.cr-model-selector__item'));
+    for (var i = 0; i < els.length; i++) {
+      var f = __smFiber(els[i]), d = 0;
+      while (f && d < 8) { var mp = f.memoizedProps; if (mp && mp.option && String(mp.option.id) === String(id)) return els[i]; f = f.return; d++; }
+    }
+    return null;
+  }
+  function __smItemState(id){
+    var f = __smItemFiber(id); if (!f) return null;
+    var mp = f.memoizedProps, opt = mp.option || {};
+    return {
+      id: String(opt.id), name: String(opt.name || ''), isSelected: !!mp.isSelected,
+      isThinking: mp.isThinking === true ? true : (mp.isThinking === false ? false : null),
+      canDisableThinking: opt.canDisableThinking === false ? false : (opt.canDisableThinking === true ? true : null),
+      currentEffort: mp.currentEffort == null ? '' : String(mp.currentEffort),
+      supportedEfforts: Array.isArray(opt.supportedEfforts) ? opt.supportedEfforts.map(String) : [],
+      canSelectEffort: typeof mp.onSelectEffort === 'function',
+      canToggleThinking: typeof mp.onToggleThinking === 'function'
+    };
+  }
+  function __smCatalog(){
+    var pop = __smPopover(); if (!pop) return [];
+    var out = [];
+    Array.prototype.slice.call(pop.querySelectorAll('.cr-model-selector__item')).forEach(function(el){
+      var f = __smFiber(el), mp = null, d = 0;
+      while (f && d < 8) { if (f.memoizedProps && f.memoizedProps.option && f.memoizedProps.option.id) { mp = f.memoizedProps; break; } f = f.return; d++; }
+      if (!mp) return;
+      var opt = mp.option || {};
+      out.push({
+        id: String(opt.id), name: String(opt.name || ''), selected: !!mp.isSelected,
+        isThinking: mp.isThinking === true ? true : (mp.isThinking === false ? false : null),
+        canDisableThinking: opt.canDisableThinking === false ? false : (opt.canDisableThinking === true ? true : null),
+        currentEffort: mp.currentEffort == null ? '' : String(mp.currentEffort),
+        supportedEfforts: Array.isArray(opt.supportedEfforts) ? opt.supportedEfforts.map(String) : []
+      });
+    });
+    return out;
+  }
+  async function __smOpen(){
+    if (__smPopover()) return { ok: true };
+    var t = __smTrigger(); if (!t) return { ok: false, code: 'no-composer-model-selector' };
+    var p = __smProps(t); if (!p || typeof p.onClick !== 'function') return { ok: false, code: 'model-selector-not-clickable' };
+    p.onClick(__smEvent(t));
+    for (var i = 0; i < 40; i++) { await __smSleep(50); if (__smPopover() && __smCatalog().length) return { ok: true }; }
+    return { ok: false, code: 'model-menu-not-opened' };
+  }
+  async function __smClose(){
+    if (__smPopover()) { var t = __smTrigger(); if (t) { var p = __smProps(t); if (p && typeof p.onClick === 'function') p.onClick(__smEvent(t)); } }
+    for (var i = 0; i < 20; i++) { await __smSleep(50); if (!__smPopover()) break; }
+    return !__smPopover();
+  }
+`;
+
+// 只读探查：开合一次菜单，取候选清单与当前选中项的思考状态，不修改任何设置。
+function sessionModelProbeExpression() {
+  return `(async function(){${SESSION_MODEL_MENU_TOOLKIT}
+    var opened = await __smOpen();
+    if (!opened.ok) return opened;
+    var catalog = __smCatalog();
+    if (!catalog.length) { await __smClose(); return { ok: false, code: 'model-menu-empty' }; }
+    var selected = catalog.filter(function(x){ return x.selected; })[0] || null;
+    await __smClose();
+    return { ok: true, items: catalog, selected: selected ? selected.id : null };
+  })()`;
+}
+
+/**
+ * 应用一次模型设置：切模型（switchModel !== false 时）与/或改该模型的思考档位、思考开关。
+ * switchModel:false 用于「只把某个模型的思考偏好改回去」，避免把会话又切走。
+ */
+function sessionModelSwitchExpression(request) {
+  return `(async function(req){${SESSION_MODEL_MENU_TOOLKIT}
+    try {
+      var opened = await __smOpen();
+      if (!opened.ok) return opened;
+      var before = __smItemState(req.id);
+      if (!before) { await __smClose(); return { ok: false, code: 'model-option-missing', id: req.id }; }
+      var changes = [];
+      if (!before.isSelected && req.switchModel !== false) {
+        var el = __smItemEl(req.id);
+        var p = __smProps(el);
+        if (!p || typeof p.onClick !== 'function') { await __smClose(); return { ok: false, code: 'model-option-not-clickable', id: req.id }; }
+        p.onClick(__smEvent(el));
+        changes.push('model');
+        for (var w = 0; w < 24 && __smPopover(); w++) await __smSleep(50);
+        if (__smPopover()) await __smClose();
+        var reopened = await __smOpen();
+        if (!reopened.ok) return reopened;
+      }
+      // 未选中项的 currentEffort/isThinking 只是占位值，切换完成后再读才是该模型的真实偏好。
+      var prefs = __smItemState(req.id);
+      if (req.effort) {
+        var st = __smItemState(req.id);
+        if (!st || !st.canSelectEffort) { await __smClose(); return { ok: false, code: 'effort-not-supported', id: req.id }; }
+        if (String(st.currentEffort) !== String(req.effort)) {
+          __smItemFiber(req.id).memoizedProps.onSelectEffort(req.id, req.effort);
+          changes.push('effort');
+          await __smSleep(450);
+        }
+      }
+      if (req.thinking === true || req.thinking === false) {
+        var st2 = __smItemState(req.id);
+        if (!st2 || !st2.canToggleThinking) { await __smClose(); return { ok: false, code: 'thinking-not-supported', id: req.id }; }
+        if (st2.isThinking !== req.thinking) {
+          __smItemFiber(req.id).memoizedProps.onToggleThinking(req.id, req.thinking);
+          changes.push('thinking');
+          await __smSleep(450);
+        }
+      }
+      var after = __smItemState(req.id);
+      await __smClose();
+      if (!after) return { ok: false, code: 'model-option-lost', id: req.id };
+      var problems = [];
+      if (req.switchModel !== false && !after.isSelected) problems.push('model');
+      if (req.effort && String(after.currentEffort) !== String(req.effort)) problems.push('effort');
+      if ((req.thinking === true || req.thinking === false) && after.isThinking !== req.thinking) problems.push('thinking');
+      return { ok: problems.length === 0, code: problems.length ? 'switch-unconfirmed' : 'ok', problems: problems,
+               id: after.id, name: after.name, effort: after.currentEffort, thinking: after.isThinking,
+               before: before, prefsBefore: prefs, changes: changes };
+    } catch (e) {
+      try { await __smClose(); } catch (_) {}
+      return { ok: false, code: 'exception', message: String((e && e.message) || e) };
+    }
+  })(${JSON.stringify(request)})`;
+}
+
+// 会话内模型操作失败时给出可读原因，而不是把渲染器的内部 code 直接抛给任务。
+const SESSION_MODEL_ERROR_TEXT = {
+  'no-composer-model-selector': '当前视图没有 composer 模型选择器，请确认目标会话已选中',
+  'model-selector-not-clickable': '模型选择器不可点击',
+  'model-menu-not-opened': '模型下拉未能打开',
+  'model-menu-empty': '模型下拉没有候选项',
+  'model-option-not-clickable': '模型选项不可点击',
+  'effort-not-supported': '该模型不支持切换思考档位',
+  'thinking-not-supported': '该模型不支持切换思考开关',
+};
+
+function sessionModelError(value, fallback) {
+  if (!value) return new Error(fallback + '：渲染器无响应');
+  const code = String(value.code || '');
+  const detail = SESSION_MODEL_ERROR_TEXT[code] || (value.message ? code + ' ' + value.message : code);
+  return new Error(fallback + '：' + (detail || '未知原因') + (value.problems && value.problems.length ? '（未生效项：' + value.problems.join('/') + '）' : ''));
+}
+
+async function readSessionModelMenu() {
+  const response = await cdpSend('Runtime.evaluate', { expression: sessionModelProbeExpression(), awaitPromise: true, returnByValue: true });
+  const value = response && response.result && response.result.value;
+  if (!value || !value.ok) throw sessionModelError(value, '读取会话模型下拉失败');
+  return value;
+}
+
+async function applySessionModel(call) {
+  const response = await cdpSend('Runtime.evaluate', { expression: sessionModelSwitchExpression(call), awaitPromise: true, returnByValue: true });
+  const value = response && response.result && response.result.value;
+  if (!value || !value.ok) throw sessionModelError(value, '切换会话模型失败');
+  return value;
+}
+
+/**
+ * session.send 的模型切换：读下拉 → 按候选解析模型键与思考档位 → 点击选项 → 回读校验。
+ * 返回的对象带 restore()：把会话模型切回原样，并把目标模型的思考偏好改回原值。
+ * 任何一步拿不到确认都直接报错——绝不带着"以为换了模型"的状态去发送。
+ */
+async function prepareSessionModel(request) {
+  if (!cdp.connected) throw new Error('CDP 未连接');
+  const menu = await readSessionModelMenu();
+  const resolved = resolveAutomationModelKey(request.model, {
+    knownModels: menu.items.map((item) => ({ key: item.id, name: item.name })),
+  });
+  const target = menu.items.find((item) => item.id === resolved.key);
+  if (!target) throw new Error('模型下拉里不存在 ' + resolved.key);
+  const selectedBefore = menu.selected || null;
+  const beforeState = selectedBefore ? menu.items.find((item) => item.id === selectedBefore) || null : null;
+  const displayBefore = await readAutomationModelSelector();
+
+  const call = { id: resolved.key, switchModel: true };
+  let effortUnverified = false;
+  if (request.thoughtLevel) {
+    const effort = pickEffortLevel(request.thoughtLevel, target.supportedEfforts);
+    if (!effort.ok) {
+      throw new Error(effort.reason === 'unsupported'
+        ? '模型 ' + resolved.key + ' 不支持 thoughtLevel=' + request.thoughtLevel + '，可选：' + effort.supported.join('/')
+        : 'thoughtLevel 不能为空');
+    }
+    call.effort = effort.effort;
+    effortUnverified = !!effort.unverified;
+  }
+  if (request.isThinking != null) {
+    if (request.isThinking === false && target.canDisableThinking === false) throw new Error('模型 ' + resolved.key + ' 不能关闭思考（isThinking:false 不被支持）');
+    call.thinking = request.isThinking;
+  }
+
+  const applied = await applySessionModel(call);
+  const displayAfter = await readAutomationModelSelector();
+  // 还原基准必须是「切换完成后、改档位之前」的读数：未选中项的 currentEffort 只是占位值。
+  const prefsBefore = applied.prefsBefore || null;
+  const beforeEffort = prefsBefore ? String(prefsBefore.currentEffort || '') : '';
+  const beforeThinking = prefsBefore ? prefsBefore.isThinking : null;
+  const modelChanged = applied.changes.includes('model');
+  const effortChanged = !!call.effort && beforeEffort !== String(call.effort);
+  const thinkingChanged = (call.thinking === true || call.thinking === false) && beforeThinking !== call.thinking;
+
+  return {
+    resolved,
+    applied,
+    displayBefore,
+    displayAfter,
+    info: { requested: resolved.key, custom: !!resolved.custom, unverified: !!effortUnverified, displayBefore, displayAfter, effort: applied.effort || null, thinking: applied.thinking },
+    needsRestore: modelChanged || effortChanged || thinkingChanged,
+    restore: async () => {
+      // 顺序很重要：必须趁目标模型还被选中时先把它的思考偏好改回去，最后才把会话切回原模型。
+      // 一旦切走，目标项回到未选中态，它的 currentEffort/isThinking 读数就只是占位值，
+      // 既算不出该改什么，也校验不了改没改成。
+      const done = [];
+      const back = { id: resolved.key, switchModel: false };
+      if (effortChanged && beforeEffort) back.effort = beforeEffort;
+      if (thinkingChanged && (beforeThinking === true || beforeThinking === false)) back.thinking = beforeThinking;
+      if (back.effort || back.thinking !== undefined) {
+        await applySessionModel(back);
+        done.push('prefs=' + resolved.key);
+      }
+      if (modelChanged && selectedBefore && selectedBefore !== resolved.key) {
+        await applySessionModel({ id: selectedBefore, switchModel: true });
+        done.push('model=' + selectedBefore);
+      }
+      return done;
+    },
+  };
+}
+
 async function ensureAutomationNewTask(options = {}) {
   if (!cdp.connected) throw new Error('CDP 未连接');
   let surface = null;
@@ -6931,6 +7581,40 @@ function handleApi(req, res) {
       if (!body || typeof body.enabled !== 'boolean') return json(res, 400, { ok: false, error: 'Invalid check-in choice' });
       try { return json(res, 200, applyCheckinConsent(body.enabled)); }
       catch (_) { return json(res, 500, { ok: false, error: 'Unable to save check-in choice' }); }
+    });
+  }
+
+  if (req.method === 'GET' && p === '/api/travel/status') {
+    if (!PROFILE.capabilities.accounts || PROFILE.capabilities.travel === false) {
+      return json(res, 200, { ok: true, supported: false, accounts: [] });
+    }
+    const today = todayStr();
+    const cache = loadTravelCache();
+    const accounts = listAccounts(DATA_DIR).map((a) => ({
+      uid: a.uid,
+      nickname: a.nickname,
+      isPrimary: primaryAccountStore.get() === a.uid,
+      record: travelPublicRecord(travelRecordDate(cache.results[a.uid], today) ? cache.results[a.uid] : null),
+    }));
+    return json(res, 200, { ok: true, supported: true, date: today, completed: !!cache.completed, accounts });
+  }
+
+  // 手动跑一轮旅行对账（面板/脚本用）；body 可选 { uid, mode }。
+  if (req.method === 'POST' && p === '/api/travel/run') {
+    if (!PROFILE.capabilities.accounts || PROFILE.capabilities.travel === false) {
+      return json(res, 400, { ok: false, error: '当前客户端不支持派猫猫旅行' });
+    }
+    return readBody(req).then(async (body) => {
+      const mode = body && ['auto', 'depart', 'claim'].includes(String(body.mode)) ? String(body.mode) : 'auto';
+      const uids = body && typeof body.uid === 'string' && body.uid
+        ? [body.uid]
+        : listAccounts(DATA_DIR).map((a) => a.uid);
+      const results = [];
+      for (const uid of uids) {
+        try { results.push(await claimTravelForUid(uid, mode)); }
+        catch (e) { results.push({ uid, ok: false, message: String(e && e.message || e) }); }
+      }
+      return json(res, 200, { ok: true, mode, results: results.map(travelPublicRecord) });
     });
   }
 
@@ -9323,6 +10007,10 @@ if (PROFILE.capabilities.accounts && PROFILE.capabilities.checkin !== false) {
   try { installBuiltinTask(DATA_DIR, path.join(__dirname, 'builtin/automations/daily-account-checkin.json')); }
   catch (_) { log('[automation] 初始化签到任务失败'); }
   initializeCheckinConsent(DATA_DIR);
+}
+if (PROFILE.capabilities.accounts && PROFILE.capabilities.travel !== false) {
+  try { installBuiltinTask(DATA_DIR, path.join(__dirname, 'builtin/automations/daily-buddy-travel.json')); }
+  catch (_) { log('[automation] 初始化派猫猫旅行任务失败'); }
 }
 restoreSleepMode();
 startServer();

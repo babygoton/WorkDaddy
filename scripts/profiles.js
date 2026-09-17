@@ -36,11 +36,13 @@ const PROFILES = {
     modelsFile: path.join(home, '.workbuddy', 'models.json'),
     // billing/积分/签到/无感登录 API host（与 auth.domain 一致；国际版为 www.workbuddy.ai）
     apiHost: 'https://www.codebuddy.cn',
-    capabilities: { accounts: true, sessions: true, models: true, stashPrompt: true, theme: true, checkin: true },
+    capabilities: { accounts: true, sessions: true, models: true, stashPrompt: true, theme: true, checkin: true, travel: true },
     targetHints: ['workbuddy'],
   },
   'workbuddy-ai': {
-    id: 'workbuddy-ai', name: 'WorkBuddy AI', appName: 'WorkDaddy AI', region: 'intl', kind: 'workbuddy', mode: 'agents',
+    // travel：成长中心的派猫猫旅行目前只在国内客户端提供；国际版账号实测没有该活动，
+  // 关掉可避免后台任务对无效接口反复请求。若官方后续上线，把 travel 改回 true 即可。
+  id: 'workbuddy-ai', name: 'WorkBuddy AI', appName: 'WorkDaddy AI', region: 'intl', kind: 'workbuddy', mode: 'agents',
     // Windows 安装目录无空格：%LOCALAPPDATA%\Programs\WorkBuddyAI\WorkBuddyAI.exe（PR#8 实机确认）
     appPath: appPath('WorkBuddy AI', 'WorkBuddyAI.exe', 'WorkBuddyAI'),
     dataRoot: path.join(home, '.workbuddy-ai'),
@@ -50,7 +52,7 @@ const PROFILES = {
     // 两者独立（勿改共用）。“从 XX 导入”即把另一端文件中的模型合并进本端文件。
     modelsFile: path.join(home, '.workbuddy-ai', 'models.json'),
     apiHost: 'https://www.workbuddy.ai',
-    capabilities: { accounts: true, sessions: true, models: true, stashPrompt: true, theme: true, checkin: true },
+    capabilities: { accounts: true, sessions: true, models: true, stashPrompt: true, theme: true, checkin: true, travel: false },
     targetHints: ['workbuddy ai', 'workbuddy'],
   },
   'codebuddy-cn': {
@@ -61,7 +63,7 @@ const PROFILES = {
     sessionDb: path.join(appSupport, 'CodeBuddy CN', 'codebuddy-sessions.vscdb'),
     modelsFile: path.join(appSupport, 'CodeBuddy CN', 'User', 'globalStorage', 'state.vscdb'),
     apiHost: 'https://www.codebuddy.cn',
-    capabilities: { accounts: false, sessions: true, models: false, stashPrompt: false, theme: false, checkin: true },
+    capabilities: { accounts: false, sessions: true, models: false, stashPrompt: false, theme: false, checkin: true, travel: false },
     targetHints: ['codebuddy cn'],
   },
   'codebuddy-intl': {
@@ -72,7 +74,7 @@ const PROFILES = {
     sessionDb: path.join(appSupport, 'CodeBuddy', 'codebuddy-sessions.vscdb'),
     modelsFile: path.join(appSupport, 'CodeBuddy', 'User', 'globalStorage', 'state.vscdb'),
     apiHost: 'https://www.codebuddy.ai',
-    capabilities: { accounts: false, sessions: true, models: false, stashPrompt: false, theme: false, checkin: true },
+    capabilities: { accounts: false, sessions: true, models: false, stashPrompt: false, theme: false, checkin: true, travel: false },
     targetHints: ['codebuddy'],
   },
 };
