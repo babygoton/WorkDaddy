@@ -240,7 +240,7 @@ test('automation session sends only after entering the WorkBuddy new-task surfac
   const inject = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'inject.js'), 'utf8');
   assert.match(daemon, /conversation-list-tab-button-box/);
   assert.match(daemon, /async function ensureAutomationNewTask\(options = \{\}\)/);
-  assert.match(daemon, /if \(op === 'session.create'\) await withInput\(\(\) => ensureAutomationNewTask\(\{ guard:/);
+  assert.match(daemon, /if \(op === 'session\.create'\) \{[\s\S]{0,400}?await withInput\(\(\) => ensureAutomationNewTask\(\{ guard:/);
   assert.match(daemon, /newTaskReady/);
   assert.match(daemon, /if\(!newTaskReady\)\{/);
   assert.match(inject, /data-auto-stop/);
