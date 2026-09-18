@@ -22,6 +22,11 @@ const APP_CN = /\/WorkBuddy\.app(?:\/|$)/i;
 const APP_AI = /\/WorkBuddy AI\.app(?:\/|$)/i;
 const APP_CBCN = /\/CodeBuddy CN\.app(?:\/|$)/i;
 const APP_CBINTL = /\/CodeBuddy\.app(?:\/|$)/i;
+// Linux 没有 .app 包：渲染进程页面来自应用安装目录里的 resources（如
+// file:///opt/WorkBuddy/resources/app.asar/...）。海外版是复制到 XDG 数据目录的应用副本，
+// 路径形如 ~/.local/share/workbuddy-ai/app/workbuddy/...，必须先于 CN 规则判定。
+const APP_AI_LINUX = /\/workbuddy-ai\//i;
+const APP_CN_LINUX = /\/opt\/WorkBuddy\//i;
 const DOMAIN_WB_AI = /https?:\/\/(?:[^/]+\.)?workbuddy\.ai(?:\/|$)/i;
 const DOMAIN_WB_CN = /https?:\/\/(?:[^/]+\.)?workbuddy\.cn(?:\/|$)/i;
 const DOMAIN_CB_CN = /https?:\/\/(?:[^/]+\.)?codebuddy\.cn(?:\/|$)/i;
@@ -36,7 +41,9 @@ const DOMAIN_CB_AI = /https?:\/\/(?:[^/]+\.)?codebuddy\.ai(?:\/|$)/i;
 function classifyTarget(url, title, description) {
   const u = normalizeTargetUrl(url);
   if (APP_AI.test(u)) return 'workbuddy-ai';
+  if (APP_AI_LINUX.test(u)) return 'workbuddy-ai';
   if (APP_CN.test(u)) return 'workbuddy-cn';
+  if (APP_CN_LINUX.test(u)) return 'workbuddy-cn';
   if (APP_CBCN.test(u)) return 'codebuddy-cn';
   if (APP_CBINTL.test(u)) return 'codebuddy-intl';
   if (DOMAIN_WB_AI.test(u)) return 'workbuddy-ai';
@@ -61,6 +68,8 @@ function looksLikeWbFamilyTarget(target) {
   const u = normalizeTargetUrl(url);
   return (
     /\/CodeBuddy(?: CN)?\.app(?:\/|$)/i.test(u) ||
+    APP_CN_LINUX.test(u) ||
+    APP_AI_LINUX.test(u) ||
     /^vscode-/i.test(url) ||
     /codebuddy/i.test(haystack) ||
     /^WorkBuddy(?:\s|$)/i.test(title)

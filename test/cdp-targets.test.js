@@ -102,6 +102,33 @@ test('isTargetForProfile 企业配置只接受自身域名或路径提示', () =
   }, enterprise), false);
 });
 
+test('isTargetForProfile Linux 双实例：CN 与 AI 互不认领（两端可执行文件同名 workbuddy）', () => {
+  // 真实事故：CN 与海外版是同一构建的两个副本，可执行文件都叫 workbuddy。
+  // 企业/自定义目标的 targetHints 里若写裸应用名 'workbuddy'，海外版会把国内版的
+  // 页面认成自己的注入目标 → 跨实例注入（守护进程挂到了另一个客户端上）。
+  // 修复：targetHints 改用「安装目录 + 端专属标记」，两者在页面 URL 之间互不包含。
+  const linuxCnUrl = 'file:///opt/WorkBuddy/resources/app.asar/renderer/index.html';
+  const linuxAiUrl = 'file:///home/u/.local/share/workbuddy-ai/app/workbuddy/resources/app.asar/renderer/index.html';
+
+  const cnProfile = { ...PROFILES['workbuddy-cn'] };
+  const aiProfile = {
+    ...PROFILES['workbuddy-ai'],
+    customTarget: true,
+    apiHost: 'https://www.workbuddy.ai',
+    targetHints: ['/home/u/.local/share/workbuddy-ai/app', 'workbuddy-ai'],
+  };
+
+  assert.equal(isTargetForProfile({ type: 'page', url: linuxCnUrl, title: 'WorkBuddy' }, cnProfile), true);
+  assert.equal(isTargetForProfile({ type: 'page', url: linuxAiUrl, title: 'WorkBuddy' }, cnProfile), false);
+  assert.equal(isTargetForProfile({ type: 'page', url: linuxAiUrl, title: 'WorkBuddy' }, aiProfile), true);
+  assert.equal(isTargetForProfile({ type: 'page', url: linuxCnUrl, title: 'WorkBuddy' }, aiProfile), false);
+
+  // 反面样本：裸应用名会同时命中两端，因此不能作为自定义目标的提示
+  const looseProfile = { ...aiProfile, targetHints: ['workbuddy'] };
+  assert.equal(isTargetForProfile({ type: 'page', url: linuxCnUrl, title: 'WorkBuddy' }, looseProfile), true,
+    '裸应用名会误认兄弟端——这正是本用例要防住的写法');
+});
+
 test('looksLikeWbFamilyTarget 把四客户端页面都视为同族（不清理）', () => {
   assert.equal(looksLikeWbFamilyTarget({ type: 'page', url: AI_URL, title: 'WorkBuddy' }), true);
   assert.equal(looksLikeWbFamilyTarget({ type: 'page', url: CN_URL, title: 'WorkBuddy' }), true);

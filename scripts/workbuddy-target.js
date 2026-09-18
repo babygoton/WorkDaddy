@@ -3,6 +3,8 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+// 用 plat 而非 platform：buildTargetFromBinary 内部已有同名局部变量（平台字符串）
+const plat = require('./platform.js');
 
 const TARGET_FILE = 'workbuddy-target.json';
 const CUSTOM_PROFILES = new Set(['workbuddy-cn', 'workbuddy-ai']);
@@ -178,6 +180,64 @@ function buildTargetFromBinary(options = {}) {
   if (!binary || !isAbsolute(binary, platform)) throw new Error(platform === 'win32' ? '请选择完整的 WorkBuddy .exe 路径' : '请选择完整的 WorkBuddy 应用可执行文件路径');
   const processName = pathApi.basename(binary);
   if (platform === 'win32' && !/\.exe$/i.test(processName)) throw new Error('请选择 WorkBuddy 的 .exe 主程序');
+  // Linux：没有 .app 包，安装目录里就是 Electron 主程序（实测 5.5.4: /opt/WorkBuddy/workbuddy）。
+  // 数据根沿用 ~/.workbuddy（CN）/ ~/.workbuddy-ai（AI），登录凭据在 $XDG_DATA_HOME 下，
+  // 与 macOS 同构、仅根不同。海外版常以独立 HOME 启动，此时 os.homedir() 即隔离 HOME。
+  // 注意末尾的 .exe 判断与 darwin 分支同理：以 .exe 结尾的路径说明这是跨平台传入的
+  // Windows/企业版目标，应继续走下面的通用分支（它按 localAppData 推导数据根与 apiHost）。
+  if (platform === 'linux' && !/\.exe$/i.test(processName)) {
+    const posixPath = path.posix;
+    const profileId = clean(options.profileId) || 'workbuddy-cn';
+    const ai = profileId === 'workbuddy-ai';
+    const port = Number(options.cdpPort) || (ai ? 9223 : 9222);
+    const home = options.home || os.homedir();
+    const xdgData = clean(options.xdgDataHome) || clean(process.env.XDG_DATA_HOME) ||
+      posixPath.join(home, '.local', 'share');
+    const extensionAuth = posixPath.join(xdgData, 'CodeBuddyExtension', 'Data', 'Public', 'auth');
+    // 官方包（/opt/WorkBuddy/workbuddy）按 official 处理：数据源全部走 profiles.js 的
+    // Linux 默认值，customTarget 保持 false，CDP 目标判定可用「标题兜底」，
+    // 避免自定义目标下 targetHints 过严导致注入目标匹配不上。
+    // 海外版/企业版副本路径与数据目录都不标准，按 enterprise 显式写全。
+    const clientType = clean(options.clientType) || (ai ? 'enterprise' : 'official');
+    if (clientType === 'official') {
+      return validateTarget({
+        schemaVersion: 1,
+        clientType,
+        profileId,
+        binary,
+        version: clean(options.version),
+        processNames: [processName],
+        cdp: { mode: 'argument', port },
+      }, { platform });
+    }
+    // 海外版/企业版：Electron 的 userData 可能被 WORKBUDDY_CONFIG_DIR 或
+    // --user-data-dir 重定向（本机海外版就是 $HOME/.config/workbuddy-ai），
+    // 不能硬套 ~/.workbuddy-ai，必须按「含 workbuddy.db」探测真实数据根。
+    const dataRoot = clean(options.dataRoot) || clean(process.env.WBSWITCH_TARGET_DATA_ROOT) || plat.pickLinuxDataRoot(
+      plat.linuxDataRootCandidates(profileId, { home, env: options.env || process.env })
+    );
+    const authFile = clean(options.authFile) || plat.linuxAuthFileFor(extensionAuth, profileId);
+    return validateTarget({
+      schemaVersion: 1,
+      clientType,
+      profileId,
+      binary,
+      version: clean(options.version),
+      processNames: [processName],
+      dataRoot,
+      authFile,
+      sessionDb: posixPath.join(dataRoot, 'workbuddy.db'),
+      modelsFile: posixPath.join(dataRoot, 'models.json'),
+      apiHost: ai ? 'https://www.workbuddy.ai' : 'https://www.codebuddy.cn',
+      // 归属提示必须能区分「同一应用的多个实例」。CN 与 AI 的可执行文件**同名**
+      // （都叫 workbuddy），若把裸应用名写进 targetHints，海外版会把国内版的页面
+      // 认成自己的注入目标，导致跨实例注入。改用「安装目录 + 端专属标记」，
+      // 二者在 CN / AI 的页面 URL 之间互不包含。
+      targetHints: [posixPath.dirname(binary), ai ? 'workbuddy-ai' : 'workbuddy-cn'].filter(Boolean),
+      cdp: { mode: 'argument', port },
+      capabilities: { accounts: true, sessions: true, models: true, stashPrompt: true, theme: true, checkin: true },
+    }, { platform });
+  }
   // Keep accepting legacy cross-platform test/configuration paths ending in
   // .exe; real macOS app binaries use the branch below with their native name.
   if (platform === 'darwin' && !/\.exe$/i.test(processName)) {
@@ -348,7 +408,7 @@ function configureFromInstaller(argv = process.argv.slice(2)) {
   const dataDir = clean(cliValue(argv, '--data-dir'));
   const platform = clean(cliValue(argv, '--platform')) || process.env.WBSWITCH_TARGET_PLATFORM || 'win32';
   const pathApi = platformPath(platform);
-  if (platform !== 'win32' && platform !== 'darwin') throw new Error('仅支持 win32 或 darwin 客户端配置');
+  if (platform !== 'win32' && platform !== 'darwin' && platform !== 'linux') throw new Error('仅支持 win32 / darwin / linux 客户端配置');
   if (platform !== 'win32') {
     const target = buildTargetFromBinary({
       binary,
