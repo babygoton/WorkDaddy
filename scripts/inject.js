@@ -894,13 +894,15 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '安全传输': 'Secure transfer', '选择内容': 'Select content', '选择账号': 'Select accounts', '选择目标账号': 'Select target account', '选择目标账号…': 'Select a target account…', '密码': 'Password', '请输入密码': 'Enter password', '密码不能为空': 'Password cannot be empty', '请至少选择一项': 'Select at least one item', '处理中…': 'Processing…', '新版文件请输入密码': 'Enter the password for the new file', '新版文件必须输入密码；旧版导出文件可留空。': 'New files require a password; older exports may be left blank.', '新版文件请输入密码；已有的相同短语会自动跳过。': 'Enter the password for the new file; duplicate phrases are skipped.',
     '电脑休眠': 'Computer sleep', '允许电脑休眠': 'Allow computer sleep', '持续禁止休眠': 'Keep awake', '所有会话结束允许休眠': 'Allow sleep when all sessions end', '系统默认，空闲后正常休眠': 'System default; sleep normally when idle', '保持唤醒，防黑屏锁屏': 'Stay awake to prevent screen lock', '任一会话运行中都保持唤醒': 'Stay awake while any session is running', '允许显示器休眠': 'Allow display sleep', '禁止休眠时，是否允许显示器单独黑屏': 'When sleep is blocked, allow the display to turn off',
     '发送错误诊断': 'Send error diagnostics', '推荐开启': 'Recommended', '由环境变量控制': 'Controlled by environment variable', '默认开启 · 设置读取失败': 'Enabled by default · failed to read setting', '保存中…': 'Saving…', '此开关控制脱敏错误诊断。匿名安装数和日活独立统计（随机安装标识、系统、架构、版本、客户端类型及出口国家），不受此开关影响。不包含账号、会话内容、Token 或 API Key。': 'This switch controls redacted error diagnostics. Anonymous installation and daily active counts are collected independently (random installation ID, system, architecture, version, client type, and network country). No accounts, session content, tokens, or API keys.', '查看错误诊断说明': 'View diagnostics details', '问题反馈': 'Report an issue', '会话监听日志': 'Session monitor log', '仅保存在当前页面内存': 'Stored only in this page memory',
-    '权限免打扰': 'Permission quiet mode', '异常中断会话': 'Continue interrupted sessions', '决策弹窗': 'Decision prompts', '用弹窗提问': 'Ask with a dialog', '确认弹窗自动允许': 'Auto-allow confirmation dialogs', '自动复制所有会话': 'Auto-copy all sessions', '会话消息索引': 'Message index', '引用消息文本': 'Quote message text', '选择登录方式': 'Choose a login method', '假退出': 'Soft logout', '无感登录': 'Seamless login',
+    '权限免打扰': 'Permission quiet mode', '异常中断会话': 'Continue interrupted sessions', '决策弹窗': 'Decision prompts', '用弹窗提问': 'Ask with a dialog', '确认弹窗自动允许': 'Auto-allow confirmation dialogs', '自动同步所有会话': 'Auto-sync all sessions', '会话消息索引': 'Message index', '引用消息文本': 'Quote message text', '选择登录方式': 'Choose a login method', '假退出': 'Soft logout', '无感登录': 'Seamless login',
     '未设置': 'Not set', '当前使用中': 'Currently active', '停止生成': 'Stop generating', '正常重启': 'Restart normally', '清空日志': 'Clear log', '开发者工具': 'Developer tools', '隐藏功能': 'Hidden feature', '卡死': 'Stuck', '任务': 'Task', '空间': 'Workspace', '全部': 'All', '今天': 'Today', '近 7 天': 'Last 7 days', '近 30 天': 'Last 30 days', '企业配额': 'Enterprise quota', '积分到期分布': 'Credit expiry distribution',
     '连接新服务…': 'Connecting to service…', '等待中': 'Waiting', '运行中': 'Running', '空闲': 'Idle', '已中断': 'Interrupted', '已停止': 'Stopped', '未确认': 'Unconfirmed', '等待确认': 'Waiting for confirmation', '等待新回复': 'Waiting for a new reply', '等待会话': 'Waiting for session', '等待允许': 'Waiting for approval', '整理中': 'Organizing', '恢复中': 'Restoring', '即将完成…': 'Finishing…', '已继续': 'Continued', '检测到会话异常中断，即将自动发送「': 'An interrupted session was detected. Sending “', '自动发送失败，请手动点击发送': 'Automatic send failed. Please click Send manually', '底层发送失败，请手动发送': 'Underlying send failed. Please send manually',
     '导入中…': 'Importing…', ' 个任务': ' task(s)', '导入任务': 'Import tasks', '导出任务': 'Export tasks', '请先勾选要导出的任务': 'Select tasks to export first', '选择 JSON 或 ZIP 任务文件': 'Choose a JSON or ZIP task file', '读取任务文件…': 'Reading task file…', '任务导出成功': 'Tasks exported', '导入失败': 'Import failed', '导出失败': 'Export failed', '可导入': 'Ready to import', '已存在，将跳过': 'Already exists; skipped', '不兼容，无法导入': 'Incompatible; cannot import', '导入后保持停用，可在任务列表中启用。相同 ID 的任务会跳过。': 'Imported tasks stay disabled until you enable them. Existing task IDs are skipped.', '任务文件不能超过 8 MiB': 'Task files must not exceed 8 MiB', '缺少必填参数': 'Required inputs are missing', '需要更新 WorkDaddy': 'Requires a newer WorkDaddy version', '不支持当前客户端或系统': 'Unsupported client or platform', '文件不是自动化任务 JSON': 'Not an automation task JSON file', '任务格式或能力不受支持': 'Unsupported task format or capabilities',
-    '发现更多自动化任务': 'Discover more automations', '正在发现…': 'Discovering…', '搜索任务名称': 'Search task names', '没有匹配的任务': 'No matching tasks', '暂未发现公开任务': 'No public tasks found', '公开任务加载失败': 'Could not load public tasks', '任务来自 Gitee 公开仓库，导入后默认停用。': 'Tasks come from public Gitee repositories and stay disabled after import.', '部分来源暂时无法访问，当前显示上次缓存的结果。': 'Gitee is unavailable. Showing cached results.', '暂无说明': 'No description', '不兼容': 'Incompatible', '无法打开仓库': 'Could not open repository', '任务已导入，启用后生效': 'Task imported. Enable it to run.', '任务已存在，未重复导入': 'Task already exists and was not imported again.', '我也要出现在这里': 'Publish my tasks', '提交公开任务': 'Publish public tasks', '仅收录 Gitee 公开仓库。参考': 'Only public Gitee repositories are indexed. See', '将任务 JSON 放在 tasks/ 目录，并在仓库描述中加入 WorkDaddyAutomationRepository。': 'Put task JSON files in tasks/ and add WorkDaddyAutomationRepository to the repository description.', '查看示例仓库': 'View example repository', '上一页': 'Previous', '下一页': 'Next', ' · 匹配 ': ' · Matches ',
-    '会话复制完成': 'Session copy complete', '会话复制完成，部分项目失败': 'Session copy complete with some failures', ' · 新复制': ' · Newly copied ', ' · 有': ' · ', ' 项需要留意': ' item(s) need attention', ' · 请稍后重试': ' · Try again later', '会话复制进度': 'Session copy progress',
-    '导出账号': 'Export accounts', '导入账号': 'Import accounts', '导出会话': 'Export sessions', '导入会话': 'Import sessions', '导出快捷短语': 'Export quick phrases', '导入快捷短语': 'Import quick phrases', '复制选中到其他账号': 'Copy selected to another account', '删除选中': 'Delete selected', '操作会话': 'Session actions', '连通测试': 'Test connection', '编辑模型': 'Edit model', '模型已保存': 'Model saved', '模型已启用': 'Model enabled', '模型已复制': 'Model copied', '模型配置已共用': 'Model configuration shared', '当前模型': 'Current model', '备选模型': 'Backup models', '模型加载失败：': 'Failed to load models: ', '保存模型失败：': 'Failed to save model: ', '删除当前模型失败：': 'Failed to delete current model: ', '启用模型失败：': 'Failed to enable model: ', '连通测试失败：': 'Connection test failed: ',
+    '发现更多自动化任务': 'Discover more automations', '正在发现…': 'Discovering…', '搜索任务名称': 'Search task names', '没有匹配的任务': 'No matching tasks', '暂未发现公开任务': 'No public tasks found', '公开任务加载失败': 'Could not load public tasks', '这些任务来自互联网公开仓库，均为第三方内容，与 WorkDaddy 无归属关系。导入后默认停用，请先安全评估再启用。': 'These tasks come from public repositories and are third-party content unaffiliated with WorkDaddy. Imported tasks stay disabled; review them before enabling.', '部分来源暂时无法访问，当前显示上次缓存的结果。': 'Some sources are unavailable. Showing cached results.', '暂无说明': 'No description', '不兼容': 'Incompatible', '无法打开仓库': 'Could not open repository', '任务已导入，启用后生效': 'Task imported. Enable it to run.', '任务已存在，未重复导入': 'Task already exists and was not imported again.', '我也要出现在这里': 'Publish my tasks', '提交公开任务': 'Publish public tasks', '收录 GitHub 和 Gitee 公开仓库。参考': 'Public GitHub and Gitee repositories are indexed. See', '将任务 JSON 放在 tasks/ 目录，并在仓库描述中加入 WorkDaddyAutomationRepository。': 'Put task JSON files in tasks/ and add WorkDaddyAutomationRepository to the repository description.', '查看示例仓库': 'View example repository', '上一页': 'Previous', '下一页': 'Next', ' · 匹配 ': ' · Matches ', '安全评估': 'Safety review', '评估中…': 'Reviewing…', '安全评估会话已创建': 'Safety review session created', '安全评估失败': 'Safety review failed', '会话创建失败': 'Could not create the session', '无法读取评估状态': 'Could not read review status', '未返回安全评估运行记录': 'No safety review run was returned', '无法创建会话': 'Could not create a session', '评估会话仍在创建，请稍后查看 WorkBuddy': 'The review session is still being created. Check WorkBuddy shortly.',
+    '会话同步完成': 'Session sync complete', '会话同步完成，发现冲突': 'Session sync complete with conflicts', '会话同步完成，部分项目失败': 'Session sync complete with some failures', '会话同步等待中': 'Session sync waiting', '正在同步会话': 'Syncing session', '会话同步失败': 'Session sync failed', '同步等待中': 'Sync waiting', '同步失败': 'Sync failed', '同步': 'Sync', '已同步': 'Synced', ' · 新同步': ' · Newly synced ', ' · 有': ' · ', ' 项需要留意': ' item(s) need attention', ' · 请稍后重试': ' · Try again later', '会话同步进度': 'Session sync progress', ' 个会话两边都修改过，未覆盖任何一边': ' session(s) were changed on both sides; neither side was overwritten', '其他账号': 'Other account', '同步完成': 'Sync complete', '同步完成，发现冲突': 'Sync complete with conflicts', '同步完成，部分失败': 'Sync complete with some failures', '正在把已标记的会话同步到「': 'Syncing marked sessions to “', ' 个未变化会话': ' unchanged session(s)', '同步任务未完成，请稍后重试': 'Sync did not finish. Try again later',
+    ' · 跳过': ' · Skipped', ' · 冲突': ' · Conflicts', '成功': 'Succeeded', '跳过': 'Skipped', '已跳过': 'Skipped', '部分失败': 'Partial failure', '冲突': 'Conflict', '处理中': 'Processing', '两边都修改过，未覆盖': 'Changed on both sides; neither side was overwritten', '部分文件失败': 'Some files failed', '当前任务未记录逐项明细。': 'No per-session details were recorded for this task.', '会话同步明细': 'Session sync details', '会话同步结果筛选': 'Filter session sync results', '当前分类没有会话。': 'No sessions in this category.', '正在把已标记的会话从「': 'Syncing marked sessions from “', '」同步到「': '” to “', '查看明细': 'View details', ' 个候选会话': ' candidate session(s)', ' 秒后自动关闭': ' seconds until automatic close',
+    '收录 GitHub 和 Gitee 公开仓库。参考 ': 'Public GitHub and Gitee repositories are indexed. See ', '。': '.', '克隆示例仓库：': 'Clone the example repository: ', '删除 ': 'Delete ', ' 目录中不需要的示例任务。': ' directory tasks you do not need.', '把你的自动化任务 JSON 放进 ': 'Put your automation task JSON in ', ' 目录。': ' directory.', '提交改动并推送到 GitHub 或 Gitee。': 'Commit and push changes to GitHub or Gitee.', '在仓库简介中加入关键词 ': 'Add the keyword ',
+    '导出账号': 'Export accounts', '导入账号': 'Import accounts', '导出会话': 'Export sessions', '导入会话': 'Import sessions', '导出快捷短语': 'Export quick phrases', '导入快捷短语': 'Import quick phrases', '同步选中到其他账号': 'Sync selected to another account', '删除选中': 'Delete selected', '操作会话': 'Session actions', '连通测试': 'Test connection', '编辑模型': 'Edit model', '模型已保存': 'Model saved', '模型已启用': 'Model enabled', '模型已复制': 'Model copied', '模型配置已共用': 'Model configuration shared', '当前模型': 'Current model', '备选模型': 'Backup models', '模型加载失败：': 'Failed to load models: ', '保存模型失败：': 'Failed to save model: ', '删除当前模型失败：': 'Failed to delete current model: ', '启用模型失败：': 'Failed to enable model: ', '连通测试失败：': 'Connection test failed: ',
     '选择要查看的账号': 'Choose an account to view', '选择账号并输入密码后导出备份': 'Choose accounts and enter a password to export backups', '从加密导出文件导入账号备份': 'Import account backups from an encrypted export', '使用密码导出选中会话': 'Export selected sessions with a password', '使用密码导出选中快捷短语': 'Export selected quick phrases with a password', '从加密文件导入会话': 'Import sessions from an encrypted file', '从加密文件导入快捷短语': 'Import quick phrases from an encrypted file', '仅支持 PNG / JPG / WebP': 'PNG / JPG / WebP only', '点击或拖拽上传壁纸': 'Click or drag to upload a wallpaper', '点击选择图片，或拖拽到此处': 'Click to choose an image, or drag it here', '支持 PNG / JPG / WebP，自动压缩；可添加多张': 'PNG / JPG / WebP supported; images are compressed automatically',
     '未命名账号': 'Unnamed account', '未命名模型': 'Unnamed model', '未命名': 'Unnamed', '未知错误': 'Unknown error', '未知': 'Unknown', '有效期未知': 'Expiry unknown', '未找到输入框': 'Composer not found', '输入框内容为空': 'Composer is empty', '当前输入框暂不支持引用插入': 'The current composer does not support quote insertion', '引用插入失败，请重试': 'Could not insert quote. Please try again', '短语不能为空': 'Quick phrase cannot be empty', '请输入快捷短语': 'Enter a quick phrase', '删除快捷短语': 'Delete quick phrase', '编辑快捷短语': 'Edit quick phrase', '新增快捷短语': 'Add quick phrase', '确定删除': 'Confirm deletion', '确认永久删除': 'Confirm permanent deletion',
     '本机回环 CDP 注入 · 不改官方安装包': 'Local CDP injection · official app untouched', '一个基于 ': 'A ', ' 的 WorkBuddy 桌面端增强工具。零侵入、零重签名——只把界面组件注入到正在运行的 WorkBuddy 渲染进程里。': ' WorkBuddy desktop enhancement tool using Chrome DevTools Protocol (CDP). No intrusion or re-signing; UI components are injected into the running renderer.', '问题反馈': 'Report an issue',
@@ -922,7 +924,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '，显示器保持唤醒': ', display stays awake', '，显示器保持唤醒，防锁屏开启': ', display stays awake, screen lock blocked', '，显示器可单独休眠': ', display may sleep on its own', '，已防锁屏': ', screen lock blocked', '，更新完成': ', update complete', '，跳过': ', skipped',
     '（阶段：': ' (stage: ', '；安装日志：': '; install log: ', '；尝试 ID：': '; attempt ID: ', '；诊断日志：': '; diagnostics log: ',
     // —— 模板条目（{name}/{n} 占位，最长优先整句替换，杜绝中英混合）——
-    '已切换为「{name}」，开始领取积分…': 'Switched to “{name}”, claiming credits…', '已切换为「{name}」，正在复制已标记会话…': 'Switched to “{name}”, copying marked sessions…', '已登录「{name}」': 'Logged in as “{name}”', '已发送「{text}」': 'Sent “{text}”', '「{name}」的备份': 'Backup of “{name}”', '「{name}」的本地备份，不可恢复': 'Local backup of “{name}”, cannot be restored', '「{name}」，请刷新 WorkBuddy 窗口': '“{name}”, please refresh the WorkBuddy window', '「{name}」，重启后生效': '“{name}”, effective after restart', '定位到第{n}条用户消息': 'Jump to user message {n}', '已关闭：{reason}': 'Disabled: {reason}', '已开启：{reason}': 'Enabled: {reason}', '已删除 {n} 项': 'Deleted {n} item(s)', '已复制 {n} 项': 'Copied {n} item(s)', '检测到会话异常中断，即将自动发送「{text}」': 'An interrupted session was detected. Sending “{text}”', '输入框非空，已放弃会话 {id} 的自动继续': 'Composer is not empty; skipped auto-continue for session {id}',
+    '已切换为「{name}」，开始领取积分…': 'Switched to “{name}”, claiming credits…', '已切换为「{name}」，正在同步已标记会话…': 'Switched to “{name}”, syncing marked sessions…', '已登录「{name}」': 'Logged in as “{name}”', '已发送「{text}」': 'Sent “{text}”', '「{name}」的备份': 'Backup of “{name}”', '「{name}」的本地备份，不可恢复': 'Local backup of “{name}”, cannot be restored', '「{name}」，请刷新 WorkBuddy 窗口': '“{name}”, please refresh the WorkBuddy window', '「{name}」，重启后生效': '“{name}”, effective after restart', '定位到第{n}条用户消息': 'Jump to user message {n}', '已关闭：{reason}': 'Disabled: {reason}', '已开启：{reason}': 'Enabled: {reason}', '已删除 {n} 项': 'Deleted {n} item(s)', '已复制 {n} 项': 'Copied {n} item(s)', '检测到会话异常中断，即将自动发送「{text}」': 'An interrupted session was detected. Sending “{text}”', '输入框非空，已放弃会话 {id} 的自动继续': 'Composer is not empty; skipped auto-continue for session {id}',
     // —— 第二批补齐（inject 剩余 + daemon 端会进入 UI/API 的文案）——
     '没有找到符合格式的账号，请先让 WorkBuddy 整理 JSON': 'No compatible accounts found. Ask WorkBuddy to format the JSON first.',
     '免打扰': 'Quiet mode', 'WorkBuddy 即将退出并重新打开到登录页': 'WorkBuddy will exit and reopen to the login page', 'WorkBuddy 队列尚未准备完成': 'WorkBuddy queue is not ready yet', 'WorkBuddy 队列排序接口不可用': 'WorkBuddy queue sort API unavailable', 'WorkBuddy 队列立即发送接口不可用': 'WorkBuddy queue send-now API unavailable', '未找到 WorkBuddy 队列接口': 'WorkBuddy queue API not found',
@@ -959,13 +961,13 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '状态机日志': 'state machine log', '监控激活会话中': 'Monitoring active sessions',
     '更换头像': 'Change avatar', '黑色半透明遮罩，压暗背景图': 'Black translucent overlay that dims the wallpaper',
     '机器人自动停靠': 'Auto-dock robot', '闲置 5 秒后收起到窗口右侧，鼠标靠近边缘展开': 'Tuck into the right edge after 5 idle seconds; move near the edge to reveal',
-    '时间': 'Time', '自动复制': 'Auto-copy', '模型名': 'Model name', '自定义名称': 'Custom name', '确认操作': 'Confirm operation', '小贴士': 'Tip',
+    '时间': 'Time', '自动同步': 'Auto-sync', '模型名': 'Model name', '自定义名称': 'Custom name', '确认操作': 'Confirm operation', '小贴士': 'Tip',
     '解决 WorkBuddy 不支持多个同名模型的问题。': 'Solves WorkBuddy not supporting multiple models with the same name.',
     '清空': 'Clear', '继续': 'Continue', '更换': 'Change',
-    '删除所有账号副本': 'Delete across accounts', '删除选中会话及所有账号的同源副本': 'Delete selected sessions and their linked copies across accounts',
+    '删除所有账号同步副本': 'Delete synced copies across accounts', '删除选中会话及所有账号的同步副本': 'Delete selected sessions and their synced copies across accounts',
     '删除所有账号的同源会话？': 'Delete linked sessions across all accounts?', '再次确认永久删除': 'Confirm permanent deletion again',
     '继续确认': 'Continue to confirmation', '永久删除': 'Delete permanently',
-    '将永久删除所选会话，以及已关联到其他账号的所有同源副本、消息文件和本地缓存。此操作不可恢复。': 'Permanently deletes the selected sessions and all linked copies, message files and local cache across accounts. This cannot be undone.',
+    '将永久删除所选会话，以及已关联到其他账号的所有同步副本、消息文件和本地缓存。此操作不可恢复。': 'Permanently deletes the selected sessions and all synced copies, message files and local cache across accounts. This cannot be undone.',
     '消息文字阴影': 'Message text shadow', '增强壁纸上的消息文字辨识度': 'Improve message readability over wallpaper',
     '文字阴影设置失败: ': 'Could not set text shadow: ', '读取文字阴影失败: ': 'Could not load text shadow: ',
     '悬浮机器人': 'Floating robot', '机器人外观': 'Robot appearance', '白色': 'White', '黑色': 'Black',
@@ -983,9 +985,9 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     'WorkBuddy 队列删除接口不可用': 'WorkBuddy queue delete API is unavailable', 'WorkBuddy 队列响应超时（': 'WorkBuddy queue response timed out (',
     '已导出': 'Exported', '成功导入': 'Imported successfully', '当前账号': 'Current account', '个账号': ' account(s)', '个账号（已加密）': ' account(s) (encrypted)', '，但页面刷新失败，请手动刷新': ', but the page refresh failed; please refresh manually',
     '操作成功': 'Operation succeeded', '导入完成：成功': 'Import complete: succeeded', '失败原因：': 'Failure reasons:', '页面刷新失败：': 'Page refresh failed:', '未知原因': 'Unknown reason', '会话已写入，请手动刷新。': 'Sessions were written; please refresh manually.', '刷新页面': 'Refresh page', '刷新中…': 'Refreshing…', '页面刷新成功。': 'Page refreshed successfully.', '页面尚未刷新，请点击“刷新页面”。': 'The page has not been refreshed; click “Refresh page”.',
-    '随空间自动复制': 'Auto-copy with workspace', '切换账号时自动复制': 'Auto-copy on account switch',
-    '切换账号时自动复制当前账号的所有会话，包括之后新增的会话': 'Auto-copy all sessions of the current account on switch, including new ones afterwards',
-    '已开启切换账号时自动复制': 'Auto-copy on account switch is on', '(未指定空间)': ' (no workspace specified)',
+    '随空间自动同步': 'Auto-sync with workspace', '切换账号时自动同步': 'Auto-sync on account switch',
+    '切换账号时自动同步当前账号的所有会话，包括之后新增的会话': 'Auto-sync all sessions of the current account on switch, including new ones afterwards',
+    '已开启切换账号时自动同步': 'Auto-sync on account switch is on', '(未指定空间)': ' (no workspace specified)',
     '未选择项目的一次性任务/临时会话': 'One-off task / temporary session without a chosen project',
     '所选账号将加密保存，密码不能为空，请妥善保管。': 'Selected accounts are encrypted; a password is required and should be kept safe.',
     '模型配置文件格式不受支持：应为数组或包含 models 数组的对象': 'Unsupported model config format: expected an array or an object with a models array',
@@ -1022,8 +1024,8 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '账号缺少已确认的登录文件名，拒绝猜测写入目标': 'Account has no confirmed login filename; refusing to guess a write target',
     '备份文件校验失败：uid 不匹配，已中止切换': 'Backup validation failed: uid mismatch; switch aborted',
     // —— 第六批：会话/模型批量操作 + 头像 + 修补剩余整句 ——
-    '请先勾选要复制的会话': 'Select the sessions to copy first', '请先勾选要导出的会话': 'Select the sessions to export first', '请先勾选要删除的会话': 'Select the sessions to delete first',
-    '将加密导出': 'Export with encryption', '已导入': 'Imported', '已复制': 'Copied', '已删除': 'Deleted', '请选择目标账号': 'Select the target account', '加载账号失败:': 'Account loading failed:',
+    '请先勾选要同步的会话': 'Select the sessions to sync first', '请先勾选要导出的会话': 'Select the sessions to export first', '请先勾选要删除的会话': 'Select the sessions to delete first',
+    '将加密导出': 'Export with encryption', '已导入': 'Imported', '已复制': 'Copied', '已同步': 'Synced', '已删除': 'Deleted', '请选择目标账号': 'Select the target account', '加载账号失败:': 'Account loading failed:',
     '会话将导入到「': 'Importing sessions into “', '会话将保留导出时的账号归属。': 'Sessions keep the account ownership from export.',
     ' 个会话': ' session(s)', ' 个会话（已加密）': ' session(s) (encrypted)', ' 个会话及其本地消息附件。': ' session(s) and their local message attachments.', ' 个会话到…': ' session(s) to…', ' 个会话？': ' session(s)?',
     ' 个模型': ' model(s)', ' 个当前模型': ' current model(s)', ' 个模型备份': ' model backup(s)',
@@ -1102,9 +1104,9 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '确定删除这条快捷短语吗？删除后不可恢复。': 'Delete this quick phrase? This cannot be undone.',
     '（旧版文件可留空）': ' (may be left blank for older files)', '密码不能为空，请妥善保管。': 'Password cannot be empty; keep it safe.',
     '展开': 'Expand', '共': 'Total', '条（': ' (', '备份': 'Backup',
-    '无可复制的目标账号（已排除会话所属账号）': 'No target accounts to copy to (the session owner account is excluded)',
+    '无可同步的目标账号（已排除会话所属账号）': 'No target accounts to sync to (the session owner account is excluded)',
     '删除后会话将从列表中移除，该账号下的本地消息文件将被永久删除，此操作不可恢复。': 'The sessions are removed from the list and their local message files are permanently deleted; this cannot be undone.',
-    '删除后会话将从列表中移除，本账号的会话与其自动复制到其他账号的同源副本（本地消息文件）都将被永久删除，此操作不可恢复。': 'The sessions are removed from the list. These sessions and their auto-copied counterparts in other accounts (local message files) are permanently deleted; this cannot be undone.',
+    '删除后会话将从列表中移除，本账号的会话及同步到其他账号的同源会话（本地消息文件）都将被永久删除，此操作不可恢复。': 'The sessions are removed from the list. These sessions and their synced counterparts in other accounts (local message files) are permanently deleted; this cannot be undone.',
     '含其他账号副本 {n} 个': ' including {n} other-account copies',
     '以「不让当前账号登录身份过期」的方式切到登录页，可以登录新账号，也可以切回已登录账号': 'Goes to the login page without letting the current account expire; log in a new account or switch back to an existing one.',
     '不退出 WorkBuddy，在浏览器完成授权后新账号自动加入列表': 'Keeps WorkBuddy running; after authorizing in the browser, the new account is added to the list automatically.',
@@ -1360,7 +1362,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
 
   var accountMaskEnabled = false;
   try { accountMaskEnabled = localStorage.getItem(WBS_ACCOUNT_MASK_KEY) === '1'; } catch (_) {}
-  var state = { accounts: [], current: null, open: false, batchRunning: false, creditRunId: 0, creditRefreshGeneration: {}, activityRunId: 0, dailyProgressRunId: 0, dailyProgressForceNext: false, dailyProgressRefreshing: {}, dailyProgressRefreshErrors: {}, dailyClaimedExpanded: {}, creditRemaining: 0, creditSummaryValue: null, mask: accountMaskEnabled, rotationNotice: null, rotationPromptDay: '' };
+  var state = { accounts: [], current: null, open: false, batchRunning: false, creditRunId: 0, creditRefreshGeneration: {}, activityRunId: 0, dailyProgressRunId: 0, dailyProgressForceNext: false, dailyProgressRefreshing: {}, dailyProgressRefreshErrors: {}, dailyClaimedExpanded: {}, creditRemaining: 0, creditSummaryValue: null, mask: accountMaskEnabled, rotationNotice: null, rotationPromptDay: '', sessionCopyNotice: null, sessionCopyDetailsModal: null, sessionCopyNoticePollTimer: null, sessionCopyNoticeChecked: false, sessionCopyNoticeActiveAttempts: 0 };
   var currentBuild = null;
   // 当前注入的 daemon 版本号（由 daemon.js 注入时把 __WBS_VERSION__ 替换为 DAEMON_VERSION）
   // 「关于」tab 直接展示，升级 daemon 后这里自动同步
@@ -6021,7 +6023,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     function buildAutomationPane() {
       if (!automationPane) return;
       automationPane.dataset.built = '1';
-      var automationState = { tasks: [], runs: [], examples: [], selected: {}, batchMode: false, editingId: null, pollTimer: null, stopping: {}, agentDraft: '', agentCreating: false, discovery: null, discoveryLoading: true, discoveryError: '' };
+      var automationState = { tasks: [], runs: [], examples: [], selected: {}, batchMode: false, editingId: null, pollTimer: null, reviewPollTimer: null, reviewingId: null, stopping: {}, agentDraft: '', agentCreating: false, discovery: null, discoveryLoading: true, discoveryError: '' };
       function defaultTask() {
         return { schemaVersion: 2, id: 'task_' + Date.now().toString(36), name: '新自动化任务', description: '', enabled: true, concurrency: { policy: 'skip' }, trigger: { type: 'manual', oncePerNavigation: true }, variables: {}, steps: [] };
       }
@@ -6090,6 +6092,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
           var action = running ? '<button type="button" class="wbs-auto-icon is-running' + (stopping ? ' is-stopping' : '') + '" data-auto-stop="' + escAttr(run.id) + '" title="' + (stopping ? '正在停止…' : '停止本次执行') + '" aria-label="' + (stopping ? '正在停止…' : '停止本次执行') + '" aria-busy="true"' + (stopping ? ' disabled' : '') + '>' + (stopping ? AUTO_STOPPING_SVG : AUTO_STOP_SVG) + '</button>'
             : task.manualRunnable ? '<button type="button" class="wbs-auto-icon" data-auto-run="' + escAttr(task.id) + '" title="立即运行" aria-label="立即运行">' + MODEL_ENABLE_SVG + '</button>' : '';
           row.innerHTML = '<div class="wbs-auto-row-head">' + check + '<div class="wbs-auto-name"' + (wbsBuiltinAutomationText(task, 'name') ? '' : ' data-wbs-i18n-skip="1"') + ' title="' + escAttr(task.name) + '">' + esc(task.name) + '</div>' +
+            '<button type="button" class="wbs-auto-review" data-auto-review="' + escAttr(task.id) + '" title="安全评估"' + (automationState.reviewingId ? ' disabled' : '') + '>' + (automationState.reviewingId === task.id ? '评估中…' : '安全评估') + '</button>' +
             '<label class="wbs-switch wbs-auto-enabled" title="' + (task.manualRunnable ? '手动任务无需自动触发' : '启用自动触发') + '"' + (task.manualRunnable || task.compatible === false ? ' hidden' : '') + '><input type="checkbox" data-auto-enabled="' + escAttr(task.id) + '" aria-label="启用自动触发"' + (task.enabled ? ' checked' : '') + '><span class="wbs-switch-slider"></span></label></div>' +
             (task.description ? '<div class="wbs-auto-description"' + (wbsBuiltinAutomationText(task, 'description') ? '' : ' data-wbs-i18n-skip="1"') + ' title="' + escAttr(task.description) + '">' + esc(task.description) + '</div>' : '') +
             '<div class="wbs-auto-row-foot"><div class="wbs-auto-details"><div class="wbs-auto-triggers" aria-label="触发方式">' + triggerBadgesHtml(task) + '</div><div class="wbs-auto-state-line"><span class="wbs-auto-state ' + stateClass + '">' + esc(taskStatusLabel(task, run, stopping)) + '</span>' +
@@ -6136,7 +6139,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         return cursor === wanted.length;
       }
       function discoverySourceLabel(source) {
-        return 'Gitee · ' + source.repository;
+        return (source.platform === 'github' ? 'GitHub' : 'Gitee') + ' · ' + source.repository;
       }
       function renderAutomationDiscovery(mask) {
         var list = mask.querySelector('.wbs-auto-discovery-list');
@@ -6167,8 +6170,9 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
           var seenRepositories = {};
           (task.sources || []).filter(function (source) {
             var repository = String(source.repository || '').toLocaleLowerCase();
-            if (source.platform !== 'gitee' || !repository || seenRepositories[repository]) return false;
-            seenRepositories[repository] = true; return true;
+            var key = source.platform + ':' + repository;
+            if (['github', 'gitee'].indexOf(source.platform) < 0 || !repository || seenRepositories[key]) return false;
+            seenRepositories[key] = true; return true;
           }).forEach(function (source) {
             var button = document.createElement('button'); button.type = 'button'; button.className = 'wbs-auto-source';
             button.setAttribute('data-auto-discovery-source', source.repositoryUrl || '');
@@ -6184,7 +6188,8 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       }
       function showAutomationDiscoveryGuide() {
         var mask = document.createElement('div'); mask.id = 'wbs-auto-discovery-guide'; mask.className = 'wbs-modal-mask wbs-usage-modal-mask wbs-auto-dialog-mask';
-        mask.innerHTML = '<div class="wbs-modal wbs-auto-guide-modal" role="dialog" aria-modal="true" aria-labelledby="wbs-auto-guide-title"><div class="wbs-auto-modal-head"><div class="wbs-modal-title" id="wbs-auto-guide-title">提交公开任务</div><button class="wbs-auto-modal-close" type="button" data-auto-close title="关闭" aria-label="关闭"><svg aria-hidden="true" viewBox="0 0 16 16"><path d="M3 3l10 10M13 3 3 13"/></svg></button></div><div class="wbs-auto-guide-body"><p>仅收录 Gitee 公开仓库。参考 <button type="button" class="wbs-auto-textbtn" data-auto-discovery-example>babygoton/workdaddy-official-plugin</button>。</p><p>将任务 JSON 放在 tasks/ 目录，并在仓库描述中加入 WorkDaddyAutomationRepository。</p></div><div class="wbs-modal-actions"><button class="wbs-modal-btn wbs-modal-ok" type="button" data-auto-discovery-example>查看示例仓库</button></div></div>';
+        mask.innerHTML = '<div class="wbs-modal wbs-auto-guide-modal" role="dialog" aria-modal="true" aria-labelledby="wbs-auto-guide-title"><div class="wbs-auto-modal-head"><div class="wbs-modal-title" id="wbs-auto-guide-title">提交公开任务</div><button class="wbs-auto-modal-close" type="button" data-auto-close title="关闭" aria-label="关闭"><svg aria-hidden="true" viewBox="0 0 16 16"><path d="M3 3l10 10M13 3 3 13"/></svg></button></div><div class="wbs-auto-guide-body"><p>收录 GitHub 和 Gitee 公开仓库。参考 <button type="button" class="wbs-auto-textbtn" data-auto-discovery-example>babygoton/workdaddy-official-plugin</button>。</p><p>将任务 JSON 放在 tasks/ 目录，并在仓库描述中加入 WorkDaddyAutomationRepository。</p></div><div class="wbs-modal-actions"><button class="wbs-modal-btn wbs-modal-ok" type="button" data-auto-discovery-example>查看示例仓库</button></div></div>';
+        mask.querySelector('.wbs-auto-guide-body').innerHTML = '<p>收录 GitHub 和 Gitee 公开仓库。参考 <button type="button" class="wbs-auto-textbtn" data-auto-discovery-example>babygoton/workdaddy-official-plugin</button>。</p><ol><li>克隆示例仓库：<code>git clone https://github.com/babygoton/workdaddy-official-plugin.git</code></li><li>删除 <code>tasks/</code> 目录中不需要的示例任务。</li><li>把你的自动化任务 JSON 放进 <code>tasks/</code> 目录。</li><li>提交改动并推送到 GitHub 或 Gitee。</li><li>在仓库简介中加入关键词 <code>WorkDaddyAutomationRepository</code>。</li></ol>';
         mountAutomationModal(mask);
         mask.addEventListener('click', function (event) {
           if (!event.target.closest || !event.target.closest('[data-auto-discovery-example]')) return;
@@ -6194,9 +6199,8 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       function showAutomationDiscovery() {
         closePanelModal(root.querySelector('#wbs-auto-discovery-mask'));
         var mask = document.createElement('div'); mask.id = 'wbs-auto-discovery-mask'; mask.className = 'wbs-modal-mask wbs-usage-modal-mask wbs-auto-dialog-mask';
-        mask.innerHTML = '<div class="wbs-modal wbs-token-stats-modal wbs-auto-discovery-modal" role="dialog" aria-modal="true" aria-labelledby="wbs-auto-discovery-title"><div class="wbs-usage-header wbs-auto-discovery-header"><div class="wbs-auto-modal-head"><div><div class="wbs-modal-title" id="wbs-auto-discovery-title">发现更多自动化任务</div><div class="wbs-auto-discovery-note">任务来自 Gitee 公开仓库，导入后默认停用。</div></div><div class="wbs-auto-discovery-head-actions"><button class="wbs-auto-textbtn" type="button" data-auto-discovery-guide>我也要出现在这里</button><button class="wbs-auto-modal-close" type="button" data-auto-close title="关闭" aria-label="关闭"><svg aria-hidden="true" viewBox="0 0 16 16"><path d="M3 3l10 10M13 3 3 13"/></svg></button></div></div><input class="wbs-auto-discovery-search" type="search" maxlength="120" aria-label="搜索任务名称" placeholder="搜索任务名称"></div><div class="wbs-usage-scroll wbs-auto-discovery-list"></div><div class="wbs-modal-actions wbs-auto-discovery-pagination"><span class="wbs-auto-discovery-total" role="status"></span><button class="wbs-modal-btn" type="button" data-auto-discovery-page="prev" aria-label="上一页">上一页</button><span class="wbs-auto-discovery-page"></span><button class="wbs-modal-btn" type="button" data-auto-discovery-page="next" aria-label="下一页">下一页</button></div></div>';
-        var note = mask.querySelector('.wbs-auto-discovery-note');
-        if (automationState.discovery && automationState.discovery.stale) note.textContent = '部分来源暂时无法访问，当前显示上次缓存的结果。';
+        mask.innerHTML = '<div class="wbs-modal wbs-token-stats-modal wbs-auto-discovery-modal" role="dialog" aria-modal="true" aria-labelledby="wbs-auto-discovery-title"><div class="wbs-usage-header wbs-auto-discovery-header"><div class="wbs-auto-modal-head"><div><div class="wbs-modal-title" id="wbs-auto-discovery-title">发现更多自动化任务</div><div class="wbs-auto-discovery-note">这些任务来自互联网公开仓库，均为第三方内容，与 WorkDaddy 无归属关系。导入后默认停用，请先安全评估再启用。</div><div class="wbs-auto-discovery-note wbs-auto-discovery-status" hidden>部分来源暂时无法访问，当前显示上次缓存的结果。</div></div><div class="wbs-auto-discovery-head-actions"><button class="wbs-auto-textbtn" type="button" data-auto-discovery-guide>我也要出现在这里</button><button class="wbs-auto-modal-close" type="button" data-auto-close title="关闭" aria-label="关闭"><svg aria-hidden="true" viewBox="0 0 16 16"><path d="M3 3l10 10M13 3 3 13"/></svg></button></div></div><input class="wbs-auto-discovery-search" type="search" maxlength="120" aria-label="搜索任务名称" placeholder="搜索任务名称"></div><div class="wbs-usage-scroll wbs-auto-discovery-list"></div><div class="wbs-modal-actions wbs-auto-discovery-pagination"><span class="wbs-auto-discovery-total" role="status"></span><button class="wbs-modal-btn" type="button" data-auto-discovery-page="prev" aria-label="上一页">上一页</button><span class="wbs-auto-discovery-page"></span><button class="wbs-modal-btn" type="button" data-auto-discovery-page="next" aria-label="下一页">下一页</button></div></div>';
+        mask.querySelector('.wbs-auto-discovery-status').hidden = !(automationState.discovery && automationState.discovery.stale);
         mountAutomationModal(mask);
         renderAutomationDiscovery(mask);
         var search = mask.querySelector('.wbs-auto-discovery-search');
@@ -6264,6 +6268,41 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
           setOpen(true, { automation: true }); switchTab('automations'); showExamples();
           toast('WorkBuddy 创建失败：' + (error.message || error), true, root);
         });
+      }
+      function finishSafetyReview(error) {
+        automationState.reviewingId = null;
+        if (!alive) return;
+        render();
+        if (error) {
+          setOpen(true, { automation: true }); switchTab('automations');
+          toast('安全评估失败：' + error, true, root);
+        } else toast('安全评估会话已创建', false, root);
+      }
+      function pollSafetyReview(runId, startedAt) {
+        api('/api/automations/run-status?id=' + encodeURIComponent(runId)).then(function (result) {
+          if (!alive) return;
+          var run = result.run || {};
+          if (run.status === 'success') return finishSafetyReview(null);
+          if (run.status === 'failed' || run.status === 'cancelled') return finishSafetyReview(run.error || '会话创建失败');
+          if (Date.now() - startedAt >= 120000) {
+            automationState.reviewingId = null;
+            render();
+            toast('评估会话仍在创建，请稍后查看 WorkBuddy', false, root);
+            return;
+          }
+          automationState.reviewPollTimer = setTimeout(function () { pollSafetyReview(runId, startedAt); }, 800);
+        }).catch(function (error) { if (alive) finishSafetyReview(error.message || '无法读取评估状态'); });
+      }
+      function startSafetyReview(task) {
+        if (!task || automationState.reviewingId) return;
+        automationState.reviewingId = task.id;
+        render();
+        setOpen(false);
+        api('/api/automations/safety-review', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: task.id }) }).then(function (result) {
+          if (!alive) return;
+          if (!result.runId) throw new Error('未返回安全评估运行记录');
+          pollSafetyReview(result.runId, Date.now());
+        }).catch(function (error) { if (alive) finishSafetyReview(error.message || '无法创建会话'); });
       }
       function closePanelModal(mask) {
         if (!mask) return;
@@ -6500,14 +6539,15 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
           .finally(function () { e.target.disabled = false; });
       });
       automationPane.querySelector('#wbs-auto-list').addEventListener('click', function (e) {
-        var button = e.target.closest && e.target.closest('button[data-auto-run],button[data-auto-stop],button[data-auto-logs],button[data-auto-edit],button[data-auto-copy],button[data-auto-delete]');
+        var button = e.target.closest && e.target.closest('button[data-auto-run],button[data-auto-stop],button[data-auto-logs],button[data-auto-edit],button[data-auto-copy],button[data-auto-delete],button[data-auto-review]');
         if (!button || !automationPane.querySelector('#wbs-auto-list').contains(button)) return;
         e.preventDefault();
         e.stopPropagation();
-        var id = button.getAttribute('data-auto-run') || button.getAttribute('data-auto-stop') || button.getAttribute('data-auto-logs') || button.getAttribute('data-auto-edit') || button.getAttribute('data-auto-copy') || button.getAttribute('data-auto-delete');
+        var id = button.getAttribute('data-auto-run') || button.getAttribute('data-auto-stop') || button.getAttribute('data-auto-logs') || button.getAttribute('data-auto-edit') || button.getAttribute('data-auto-copy') || button.getAttribute('data-auto-delete') || button.getAttribute('data-auto-review');
         if (!id) return;
         var task = automationState.tasks.filter(function (item) { return item.id === id; })[0];
-        if (button.hasAttribute('data-auto-stop')) {
+        if (button.hasAttribute('data-auto-review')) startSafetyReview(task);
+        else if (button.hasAttribute('data-auto-stop')) {
           if (button.dataset.autoActionPending) return;
           button.dataset.autoActionPending = '1';
           var stopRunId = String(button.getAttribute('data-auto-stop') || '');
@@ -6533,7 +6573,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         else if (button.hasAttribute('data-auto-copy')) { var copy = JSON.parse(JSON.stringify(task)); copy.id = 'task_' + Date.now().toString(36); copy.name = task.name + '（副本）'; showEditor(copy); }
         else if (button.hasAttribute('data-auto-delete')) showAutomationConfirm('删除该自动化任务？', '删除后无法恢复。', function () { api('/api/automations/bulk', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ids: [id], action: 'delete' }) }).then(load).catch(function (err) { toast(err.message || '删除失败', true, root); }); });
       });
-      registerDisposer(function () { if (automationState.pollTimer) clearInterval(automationState.pollTimer); hideEditor(); root.querySelectorAll('.wbs-auto-dialog-mask').forEach(closePanelModal); });
+      registerDisposer(function () { if (automationState.pollTimer) clearInterval(automationState.pollTimer); if (automationState.reviewPollTimer) clearTimeout(automationState.reviewPollTimer); hideEditor(); root.querySelectorAll('.wbs-auto-dialog-mask').forEach(closePanelModal); });
       load();
       loadAgentInfo();
       loadAutomationDiscovery();
@@ -6564,9 +6604,11 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     }
     var SESS_WS_INIT = 2;    // 每个空间默认显示条数
     var SESS_WS_STEP = 10;   // 展开一次追加条数
-    function sessionCopyAccountLabel(uid) {
-      var account = sessionsState.accounts.find(function (item) { return item.uid === uid; });
-      return account ? (account.nickname || account.uid) : (uid ? '账号 ' + String(uid).slice(0, 6) : '账号');
+    function sessionCopyAccountLabel(uid, fallbackName) {
+      var key = String(uid || '');
+      var account = sessionsState.accounts.find(function (item) { return String(item.uid || '') === key; });
+      if (account) return account.nickname || account.uid;
+      return fallbackName || (key ? '账号 ' + key.slice(0, 6) : '账号');
     }
     function renderSessionCopyProgress(job) {
       sessionsState.autoCopyJob = job || null;
@@ -6577,11 +6619,12 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       var total = Math.max(0, Number(job.total) || 0);
       var processed = Math.min(total, Math.max(0, Number(job.processed) || 0));
       var percent = total ? Math.round(processed / total * 100) : (active ? 0 : 100);
-      var title = job.status === 'queued' ? '会话复制等待中' : job.status === 'running' ? '正在复制会话' : job.status === 'done' ? '会话复制完成' : job.status === 'partial' ? '会话复制完成，部分项目失败' : '会话复制失败';
-      var route = sessionCopyAccountLabel(job.sourceUid) + ' → ' + sessionCopyAccountLabel(job.targetUid);
+      var title = job.status === 'queued' ? '会话同步等待中' : job.status === 'running' ? '正在同步会话' : job.status === 'done' ? '会话同步完成' : job.status === 'conflict' ? '会话同步完成，发现冲突' : job.status === 'partial' ? '会话同步完成，部分项目失败' : '会话同步失败';
+      var route = sessionCopyAccountLabel(job.sourceUid, job.sourceName) + ' → ' + sessionCopyAccountLabel(job.targetUid, job.targetName);
       var detail = route;
       if (active && job.currentLabel) detail += ' · ' + job.currentLabel;
-      else if (job.status === 'done') detail += ' · 新复制 ' + (Number(job.copied) || 0) + '，已存在 ' + (Number(job.skipped) || 0);
+      else if (job.status === 'done') detail += ' · 新同步 ' + (Number(job.copied) || 0) + '，已存在 ' + (Number(job.skipped) || 0);
+      else if (job.status === 'conflict') detail += ' · ' + (Number(job.conflicts) || 1) + ' 个会话两边都修改过，未覆盖任何一边';
       else if (job.status === 'partial') detail += ' · 有 ' + ((Number(job.failed) || 0) + (Number(job.partial) || 0)) + ' 项需要留意';
       else if (job.status === 'error') detail += ' · 请稍后重试';
       box.className = 'wbs-sess-copy-progress is-' + String(job.status || 'running');
@@ -6623,24 +6666,24 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         '<div class="wbs-sess-toolbar">' +
         '<button class="wbs-sess-bbtn" type="button" id="wbs-sess-batch">批量操作</button>' +
         '<button class="wbs-sess-bbtn" type="button" id="wbs-sess-import" title="从加密文件导入会话">' + IMPORT_ICON + '<span>导入</span></button>' +
-        '<button class="wbs-sess-auto-all" type="button" id="wbs-sess-auto-all" role="checkbox" aria-checked="false" aria-label="自动复制所有会话" title="切换账号时自动复制当前账号的所有会话，包括之后新增的会话">' +
+        '<button class="wbs-sess-auto-all" type="button" id="wbs-sess-auto-all" role="checkbox" aria-checked="false" aria-label="自动同步所有会话" title="切换账号时自动同步当前账号的所有会话，包括之后新增的会话">' +
         '<span class="wbs-sess-auto-all-box" aria-hidden="true"><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="12" height="12" rx="2"/><path class="wbs-sess-auto-all-check" d="m4.5 8 2.2 2.2L11.5 5.5"/></svg></span>' +
-        '<span class="wbs-sess-auto-all-label">自动复制所有会话</span>' +
+        '<span class="wbs-sess-auto-all-label">自动同步所有会话</span>' +
         '</button>' +
         '<span class="wbs-sess-count" id="wbs-sess-count"></span>' +
         '<div class="wbs-sess-batchbar" id="wbs-sess-batchbar" style="display:none">' +
         '<button class="wbs-sess-bbtn wbs-sess-check-all" type="button" id="wbs-sess-check-all">全选</button>' +
         '<span class="wbs-sess-batch-count" id="wbs-sess-batch-count">已选 0</span>' +
-        '<button class="wbs-sess-bbtn" type="button" id="wbs-sess-copy" title="复制选中到其他账号"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg><span>复制</span></button>' +
+        '<button class="wbs-sess-bbtn" type="button" id="wbs-sess-copy" title="同步选中到其他账号"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg><span>同步</span></button>' +
         '<button class="wbs-sess-bbtn" type="button" id="wbs-sess-export" title="使用密码导出选中会话">' + EXPORT_ICON + '<span>导出</span></button>' +
         '<button class="wbs-sess-bbtn wbs-sess-delbtn" type="button" id="wbs-sess-delete" title="删除选中"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg><span>删除</span></button>' +
-        '<button class="wbs-sess-bbtn wbs-sess-delbtn" type="button" id="wbs-sess-delete-all" style="display:none" title="删除选中会话及所有账号的同源副本">' + TRASH_SVG + '<span>删除所有账号副本</span></button>' +
+        '<button class="wbs-sess-bbtn wbs-sess-delbtn" type="button" id="wbs-sess-delete-all" style="display:none" title="删除选中会话及所有账号的同步副本">' + TRASH_SVG + '<span>删除所有账号同步副本</span></button>' +
         '<button class="wbs-sess-bbtn wbs-sess-done" type="button" id="wbs-sess-done">取消</button>' +
         '</div>' +
         '</div>' +
         '<div class="wbs-sess-copy-progress" id="wbs-sess-copy-progress" role="status" aria-live="polite" hidden>' +
-        '<div class="wbs-sess-copy-head"><span class="wbs-sess-copy-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></span><strong class="wbs-sess-copy-title">正在复制会话</strong><span class="wbs-sess-copy-count">0 / 0</span></div>' +
-        '<div class="wbs-sess-copy-detail"></div><div class="wbs-sess-copy-track" role="progressbar" aria-label="会话复制进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span class="wbs-sess-copy-fill"></span></div>' +
+        '<div class="wbs-sess-copy-head"><span class="wbs-sess-copy-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></span><strong class="wbs-sess-copy-title">正在同步会话</strong><span class="wbs-sess-copy-count">0 / 0</span></div>' +
+        '<div class="wbs-sess-copy-detail"></div><div class="wbs-sess-copy-track" role="progressbar" aria-label="会话同步进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span class="wbs-sess-copy-fill"></span></div>' +
         '</div>' +
         '<input type="file" id="wbs-sess-import-file" accept=".wds,.json,application/json,application/octet-stream" style="display:none">' +
         '<div class="wbs-sess-list" id="wbs-sess-list"></div>' +
@@ -6733,9 +6776,9 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       function canEditAutoCopy(uid) { return sessionsState.uid !== '' && !!uid; }
       function autoCopyButton(kind, key, uid, enabled, inherited) {
         if (sessionsState.autoCopyAll || !canEditAutoCopy(uid)) return '';
-        var title = inherited ? '随空间自动复制' : (enabled ? '取消自动复制' : '切换账号时自动复制');
+        var title = inherited ? '随空间自动同步' : (enabled ? '取消自动同步' : '切换账号时自动同步');
         var disabled = inherited ? ' disabled' : '';
-        return '<button class="wbs-sess-auto' + (enabled ? ' active' : '') + (inherited ? ' inherited' : '') + '" type="button" data-auto-kind="' + kind + '" data-auto-key="' + escAttr(key) + '" data-auto-uid="' + escAttr(uid) + '" aria-label="' + escAttr(title) + '" title="' + escAttr(title) + '" aria-pressed="' + (enabled ? 'true' : 'false') + '"' + disabled + '><span class="wbs-sess-auto-label">自动复制</span><span class="wbs-sess-auto-switch' + (enabled ? ' on' : '') + '" aria-hidden="true"><span></span></span></button>';
+        return '<button class="wbs-sess-auto' + (enabled ? ' active' : '') + (inherited ? ' inherited' : '') + '" type="button" data-auto-kind="' + kind + '" data-auto-key="' + escAttr(key) + '" data-auto-uid="' + escAttr(uid) + '" aria-label="' + escAttr(title) + '" title="' + escAttr(title) + '" aria-pressed="' + (enabled ? 'true' : 'false') + '"' + disabled + '><span class="wbs-sess-auto-label">自动同步</span><span class="wbs-sess-auto-switch' + (enabled ? ' on' : '') + '" aria-hidden="true"><span></span></span></button>';
       }
       var tasks = [];
       var groups = {};
@@ -6822,7 +6865,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     function updateSessionSummary(countEl) {
       if (!countEl) return;
       countEl.innerHTML = '<span class="wbs-sess-summary-tag">共 ' + sessionsState.list.length + ' 个会话</span>' +
-        '<span class="wbs-sess-summary-tag wbs-sess-summary-auto">自动复制 ' + activeAutoCopyCount() + '</span>';
+        '<span class="wbs-sess-summary-tag wbs-sess-summary-auto">自动同步 ' + activeAutoCopyCount() + '</span>';
     }
     function updateAutoCopyAllButton() {
       if (!sessionsPane) return;
@@ -6847,12 +6890,12 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         sessionsState.autoCopyAll = !!(response && response.autoCopyAll);
         button.disabled = false;
         renderSessions();
-        toast(sessionsState.autoCopyAll ? '已开启自动复制所有会话' : '已关闭自动复制所有会话', false, root);
+        toast(sessionsState.autoCopyAll ? '已开启自动同步所有会话' : '已关闭自动同步所有会话', false, root);
       }).catch(function (e) {
         sessionsState.autoCopyAll = previous;
         button.disabled = false;
         renderSessions();
-        toast('自动复制所有会话设置失败: ' + (e.message || e), true, root);
+        toast('自动同步所有会话设置失败: ' + (e.message || e), true, root);
       });
     }
     function shortWs(w) {
@@ -6926,7 +6969,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         body: JSON.stringify({ uid: uid, kind: kind, key: key, enabled: enabled }),
       }).then(function (response) {
         if (response && response.rules) sessionsState.autoCopy = response.rules;
-        toast(enabled ? '已开启切换账号时自动复制' : '已关闭自动复制', false, root);
+        toast(enabled ? '已开启切换账号时自动同步' : '已关闭自动同步', false, root);
         updateSessCount();
       }).catch(function (e) {
         sessionsState.list.forEach(function (s) {
@@ -6935,7 +6978,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         });
         sessionsState.autoCopy = oldAutoCopy;
         updateAutoCopyButtons(listEl);
-        toast('自动复制设置失败: ' + (e.message || e), true, root);
+        toast('自动同步设置失败: ' + (e.message || e), true, root);
       });
     }
     function updateAutoCopyButtons(listEl) {
@@ -6955,7 +6998,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
             state = !!session.autoCopySession || inherited;
           }
         }
-        var title = inherited ? '随空间自动复制' : (state ? '取消自动复制' : '切换账号时自动复制');
+        var title = inherited ? '随空间自动同步' : (state ? '取消自动同步' : '切换账号时自动同步');
         button.classList.toggle('active', state);
         button.classList.toggle('inherited', inherited);
         button.disabled = inherited;
@@ -7076,7 +7119,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       if (copyBtn) {
         copyBtn.addEventListener('click', function () {
           var ids = selectedSessIds();
-          if (!ids.length) { toast('请先勾选要复制的会话', true, root); return; }
+          if (!ids.length) { toast('请先勾选要同步的会话', true, root); return; }
           openCopyModal(ids);
         });
       }
@@ -7220,7 +7263,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       var okBtn = sessionsPane.querySelector('#wbs-sess-modal-ok');
       okBtn.textContent = '确定';
       okBtn.disabled = false;
-      titleEl.textContent = '复制 ' + ids.length + ' 个会话到…';
+      titleEl.textContent = '同步 ' + ids.length + ' 个会话到…';
       api('/api/accounts').then(function (d) {
         var accts = (d && d.accounts) || [];
         var curUid = (d && d.current && d.current.uid) || '';
@@ -7232,7 +7275,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         if (!Object.keys(ownerUids).length && curUid) ownerUids[curUid] = true; // 兜底：无归属信息时排除当前账号
         var targets = accts.filter(function (a) { return !ownerUids[a.uid]; });
         if (!targets.length) {
-          body.innerHTML = '<div class="wbs-empty">无可复制的目标账号（已排除会话所属账号）</div>';
+          body.innerHTML = '<div class="wbs-empty">无可同步的目标账号（已排除会话所属账号）</div>';
         } else {
           body.innerHTML = '<select class="wbs-sess-select wbs-sess-target" id="wbs-sess-target" title="选择目标账号">' +
             '<option value="">选择目标账号…</option>' +
@@ -7250,11 +7293,11 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
             headers: { 'content-type': 'application/json' },
             body: JSON.stringify({ ids: ids, targetUid: sel.value }),
           }).then(function () {
-            toast('已复制 ' + ids.length + ' 个会话', false, root);
+            toast('已同步 ' + ids.length + ' 个会话', false, root);
             showSessModal(false);
             loadSessions();
           }).catch(function (e) {
-            toast('复制失败: ' + (e.message || e), true, root);
+            toast('同步失败: ' + (e.message || e), true, root);
           });
         };
       }).catch(function (e) {
@@ -7272,8 +7315,8 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       var pending = false;
       titleEl.textContent = allAccounts ? '删除所有账号的同源会话？' : '删除 ' + ids.length + ' 个会话？';
       body.innerHTML = allAccounts
-        ? '<p>已选 ' + ids.length + ' 个会话</p><div class="wbs-modal-warn">将永久删除所选会话，以及已关联到其他账号的所有同源副本、消息文件和本地缓存。此操作不可恢复。</div>'
-        : '<div class="wbs-modal-warn">删除后会话将从列表中移除，本账号的会话与其自动复制到其他账号的同源副本（本地消息文件）都将被永久删除，此操作不可恢复。</div>';
+        ? '<p>已选 ' + ids.length + ' 个会话</p><div class="wbs-modal-warn">将永久删除所选会话，以及已关联到其他账号的所有同步副本、消息文件和本地缓存。此操作不可恢复。</div>'
+        : '<div class="wbs-modal-warn">删除后会话将从列表中移除，本账号的会话及同步到其他账号的同源会话（本地消息文件）都将被永久删除，此操作不可恢复。</div>';
       okBtn.textContent = allAccounts ? '继续确认' : '确定';
       okBtn.disabled = false;
       showSessModal(true);
@@ -12603,32 +12646,222 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       return JSON.stringify([state.current && state.current.uid, rows]);
     }
 
-    function pollAutoCopyJob(jobId, accountName) {
-      if (!jobId) return;
-      var attempts = 0;
-      var poll = function () {
-        attempts++;
-        api('/api/sessions/auto-copy/status?id=' + encodeURIComponent(jobId)).then(function (d) {
-          var job = d && d.job;
-          if (!job) return;
-          renderSessionCopyProgress(job);
-          if (job.status === 'queued' || job.status === 'running') {
-            if (attempts < 120) setBuildTimeout(poll, 700);
-            return;
-          }
-          if (job.status === 'done') {
-            toast('已切换到「' + accountName + '」，已复制 ' + job.total + ' 个会话', false, root);
-          } else if (job.status === 'partial') {
-            toast('已切换到「' + accountName + '」，复制完成，' + job.failed + ' 项失败', true, root);
-          } else {
-            toast('已切换到「' + accountName + '」，自动复制失败', true, root);
-          }
-          setBuildTimeout(refresh, 900);
-        }).catch(function () {
-          if (attempts < 120) setBuildTimeout(poll, 1000);
+    function closeSessionCopyNotice() {
+      var notice = state.sessionCopyNotice;
+      if (!notice) return;
+      if (notice.timer) clearTimeout(notice.timer);
+      if (notice.countdownTimer) clearInterval(notice.countdownTimer);
+      if (notice.place) window.removeEventListener('resize', notice.place);
+      if (notice.node && notice.node.parentNode) notice.node.remove();
+      state.sessionCopyNotice = null;
+    }
+
+    function closeSessionCopyDetails() {
+      var mask = state.sessionCopyDetailsModal;
+      if (!mask) return;
+      if (mask.__wbsKeyHandler) document.removeEventListener('keydown', mask.__wbsKeyHandler, true);
+      if (mask.parentNode) mask.remove();
+      state.sessionCopyDetailsModal = null;
+    }
+
+    function sessionCopyFailedItems(job) {
+      if (!job) return 0;
+      var explicit = Number(job.failedItems);
+      if (Number.isFinite(explicit)) return Math.max(0, explicit);
+      return Math.max(0, (Number(job.partial) || 0) + (Number(job.failed) || 0));
+    }
+
+    function sessionCopySummaryText(job) {
+      return '同步 ' + (Number(job && job.copied) || 0) + ' · 跳过 ' + (Number(job && job.skipped) || 0) +
+        ' · 失败 ' + sessionCopyFailedItems(job) + ' · 冲突 ' + (Number(job && job.conflicts) || 0);
+    }
+
+    function showSessionCopyDetails(job) {
+      if (!job) return;
+      closeSessionCopyDetails();
+      var mask = document.createElement('div');
+      mask.className = 'wbs-modal-mask wbs-session-copy-details-modal';
+      mask.setAttribute('role', 'presentation');
+      var details = Array.isArray(job.details) ? job.details : [];
+      var statusLabels = { copied: '已同步', skipped: '已跳过', partial: '部分失败', failed: '失败', conflict: '冲突', running: '处理中' };
+      var tabDefs = [
+        { id: 'copied', label: '成功', count: details.filter(function (item) { return item && item.status === 'copied'; }).length },
+        { id: 'skipped', label: '跳过', count: details.filter(function (item) { return item && item.status === 'skipped'; }).length },
+        { id: 'conflict', label: '冲突', count: details.filter(function (item) { return item && item.status === 'conflict'; }).length },
+        { id: 'failed', label: '失败', count: details.filter(function (item) { return item && (item.status === 'failed' || item.status === 'partial'); }).length },
+      ];
+      mask.innerHTML = '<div class="wbs-modal wbs-session-copy-details" role="dialog" aria-modal="true" aria-labelledby="wbs-session-copy-details-title">' +
+        '<div class="wbs-auto-modal-head"><div><div class="wbs-modal-title" id="wbs-session-copy-details-title">会话同步明细</div><div class="wbs-session-copy-details-summary"></div></div>' +
+        '<button type="button" class="wbs-auto-modal-close" data-session-copy-details-close title="关闭" aria-label="关闭"><svg aria-hidden="true" viewBox="0 0 16 16"><path d="M3 3l10 10M13 3 3 13"/></svg></button></div>' +
+        '<div class="wbs-model-tabs wbs-session-copy-detail-tabs" role="tablist" aria-label="会话同步结果筛选">' + tabDefs.map(function (tab, index) {
+          return '<button type="button" class="wbs-model-tab' + (index === 0 ? ' active' : '') + '" role="tab" aria-selected="' + (index === 0 ? 'true' : 'false') + '" data-session-copy-tab="' + tab.id + '">' + tab.label + ' <span class="wbs-model-tab-count">' + tab.count + '</span></button>';
+        }).join('') + '</div>' +
+        '<div class="wbs-session-copy-detail-list" role="tabpanel"></div>' +
+        '<div class="wbs-modal-actions"><button class="wbs-modal-btn wbs-modal-ok" type="button" data-session-copy-details-close>关闭</button></div></div>';
+      mask.querySelector('.wbs-session-copy-details-summary').textContent = sessionCopySummaryText(job);
+      document.body.appendChild(mask);
+      state.sessionCopyDetailsModal = mask;
+      var list = mask.querySelector('.wbs-session-copy-detail-list');
+      var renderTab = function (tabId) {
+        var filtered = details.filter(function (item) {
+          var status = String(item && item.status || 'running');
+          return tabId === 'failed' ? (status === 'failed' || status === 'partial') : status === tabId;
+        });
+        var rows = filtered.map(function (item) {
+          var status = String(item && item.status || 'running');
+          var note = status === 'conflict' ? '两边都修改过，未覆盖' : status === 'partial' ? '部分文件失败' : (item && item.error ? item.error : '');
+          return '<div class="wbs-session-copy-detail-row is-' + escAttr(status) + '">' +
+            '<span class="wbs-session-copy-detail-status">' + esc(statusLabels[status] || status) + '</span>' +
+            '<span class="wbs-session-copy-detail-label" title="' + escAttr(item && item.label || '') + '">' + esc(item && item.label || '未命名会话') + '</span>' +
+            (note ? '<span class="wbs-session-copy-detail-note">' + esc(note) + '</span>' : '') +
+            '</div>';
+        }).join('');
+        list.innerHTML = rows || '<div class="wbs-session-copy-detail-empty">当前分类没有会话。</div>';
+        mask.querySelectorAll('[data-session-copy-tab]').forEach(function (tab) {
+          var active = tab.getAttribute('data-session-copy-tab') === tabId;
+          tab.classList.toggle('active', active);
+          tab.setAttribute('aria-selected', active ? 'true' : 'false');
         });
       };
-      setBuildTimeout(poll, 700);
+      renderTab('copied');
+      mask.querySelectorAll('[data-session-copy-tab]').forEach(function (tab) {
+        tab.addEventListener('click', function () { renderTab(tab.getAttribute('data-session-copy-tab')); });
+      });
+      var close = function () { closeSessionCopyDetails(); };
+      mask.querySelectorAll('[data-session-copy-details-close]').forEach(function (button) { button.addEventListener('click', close); });
+      mask.addEventListener('click', function (event) { if (event.target === mask) close(); });
+      mask.__wbsKeyHandler = function (event) { if (event.key === 'Escape') close(); };
+      document.addEventListener('keydown', mask.__wbsKeyHandler, true);
+    }
+
+    function sessionCopyAccountLabel(uid, fallbackName) {
+      var key = String(uid || '');
+      for (var i = 0; i < state.accounts.length; i++) {
+        if (String(state.accounts[i].uid || '') === key) return state.accounts[i].nickname || '未命名账号';
+      }
+      for (var j = 0; j < sessionsState.accounts.length; j++) {
+        if (String(sessionsState.accounts[j].uid || '') === key) return sessionsState.accounts[j].nickname || '未命名账号';
+      }
+      if (key && state.current && String(state.current.uid || '') === key) return state.current.nickname || '当前账号';
+      return fallbackName || (key ? '账号 ' + key.slice(0, 6) : '账号');
+    }
+
+    function placeSessionCopyNotice() {
+      var notice = state.sessionCopyNotice;
+      if (!notice || !notice.node) return;
+      var node = notice.node;
+      var width = Math.min(348, Math.max(270, window.innerWidth - 24));
+      node.style.width = width + 'px';
+      var right = parseFloat(fab.style.right);
+      var bottom = parseFloat(fab.style.bottom);
+      if (!Number.isFinite(right)) right = 22;
+      if (!Number.isFinite(bottom)) bottom = 22;
+      // Keep the notice aligned with the account panel/floating button even
+      // while the panel is open; the panel itself is anchored to the same edge.
+      var anchorRight = window.innerWidth - right;
+      var anchorTop = state.open ? window.innerHeight - 20 : window.innerHeight - bottom - (fab.offsetHeight || 64) * 0.5;
+      var left = Math.max(12, Math.min(window.innerWidth - width - 12, anchorRight - width));
+      node.style.left = left + 'px';
+      node.style.top = Math.max(12, Math.min(window.innerHeight - node.offsetHeight - 12, anchorTop - node.offsetHeight - 12)) + 'px';
+    }
+
+    function renderSessionCopyNotice(job, accountName) {
+      if (!job) return;
+      if (!state.sessionCopyNotice || state.sessionCopyNotice.jobId !== job.id) {
+        closeSessionCopyNotice();
+        var node = document.createElement('div');
+        node.className = 'wbs-session-copy-notice';
+        node.setAttribute('role', 'status');
+        node.setAttribute('aria-live', 'polite');
+        node.innerHTML = '<div class="wbs-session-copy-head"><span class="wbs-session-copy-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 1v1"/></svg></span><strong class="wbs-session-copy-title">正在同步会话</strong><span class="wbs-session-copy-count">0 / 0</span><button type="button" class="wbs-session-copy-close" aria-label="关闭" title="关闭">×</button></div>' +
+          '<div class="wbs-session-copy-route"></div><div class="wbs-session-copy-track" role="progressbar" aria-label="会话同步进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span class="wbs-session-copy-fill"></span></div><div class="wbs-session-copy-status"></div><div class="wbs-session-copy-summary"></div><div class="wbs-session-copy-actions" hidden><button type="button" class="wbs-session-copy-details-btn" data-session-copy-details>查看明细</button><span class="wbs-session-copy-countdown"></span></div>';
+        document.body.appendChild(node);
+        state.sessionCopyNotice = { node: node, jobId: job.id, job: null, timer: null, countdownTimer: null, closeScheduled: false, place: placeSessionCopyNotice };
+        node.querySelector('.wbs-session-copy-close').addEventListener('click', closeSessionCopyNotice);
+        node.querySelector('[data-session-copy-details]').addEventListener('click', function () { showSessionCopyDetails(state.sessionCopyNotice && state.sessionCopyNotice.job); });
+        window.addEventListener('resize', placeSessionCopyNotice);
+      }
+      var notice = state.sessionCopyNotice;
+      var node = notice.node;
+      notice.job = job;
+      var active = job.status === 'queued' || job.status === 'running';
+      var total = Math.max(0, Number(job.total) || 0);
+      var processed = Math.min(total, Math.max(0, Number(job.processed) || 0));
+      var percent = total ? Math.round(processed / total * 100) : (active ? 0 : 100);
+      var title = job.status === 'queued' ? '同步等待中' : active ? '正在同步会话' : job.status === 'done' ? '同步完成' : job.status === 'conflict' ? '同步完成，发现冲突' : job.status === 'partial' ? '同步完成，部分失败' : '同步失败';
+      var sourceLabel = sessionCopyAccountLabel(job.sourceUid, job.sourceName);
+      var targetLabel = accountName || sessionCopyAccountLabel(job.targetUid, job.targetName);
+      var status = active ? '正在把已标记的会话从「' + sourceLabel + '」同步到「' + targetLabel + '」' :
+        job.status === 'error' ? '同步任务未完成，请稍后重试' : '';
+      node.className = 'wbs-session-copy-notice is-' + String(job.status || 'running');
+      node.querySelector('.wbs-session-copy-title').textContent = title;
+      node.querySelector('.wbs-session-copy-count').textContent = processed + ' / ' + total;
+      node.querySelector('.wbs-session-copy-route').textContent = sourceLabel + ' → ' + targetLabel;
+      node.querySelector('.wbs-session-copy-status').textContent = status;
+      node.querySelector('.wbs-session-copy-status').hidden = !active && job.status !== 'error';
+      node.querySelector('.wbs-session-copy-summary').textContent = active ? '已处理 ' + processed + ' 个候选会话' : sessionCopySummaryText(job);
+      var actions = node.querySelector('.wbs-session-copy-actions');
+      actions.hidden = active;
+      var track = node.querySelector('.wbs-session-copy-track');
+      track.setAttribute('aria-valuenow', String(percent));
+      track.setAttribute('aria-valuetext', title + '，' + processed + '/' + total);
+      node.querySelector('.wbs-session-copy-fill').style.width = percent + '%';
+      placeSessionCopyNotice();
+      if (!active && !notice.closeScheduled) {
+        notice.closeScheduled = true;
+        var remaining = 10;
+        var countdown = node.querySelector('.wbs-session-copy-countdown');
+        countdown.textContent = remaining + ' 秒后自动关闭';
+        notice.countdownTimer = setInterval(function () {
+          remaining--;
+          if (remaining > 0) countdown.textContent = remaining + ' 秒后自动关闭';
+        }, 1000);
+        notice.timer = setBuildTimeout(closeSessionCopyNotice, 10000);
+      }
+    }
+
+    function pollSessionCopyNotice(jobId, accountName) {
+      if (state.sessionCopyNoticePollTimer) clearTimeout(state.sessionCopyNoticePollTimer);
+      state.sessionCopyNoticePollTimer = null;
+      var endpoint = jobId ? '/api/sessions/auto-copy/status?id=' + encodeURIComponent(jobId) : '/api/sessions/auto-copy/active';
+      api(endpoint).then(function (result) {
+        var job = result && result.job;
+        if (!job) {
+          // Account switching reloads the renderer before the daemon enqueues
+          // its copy job. Keep a short retry window so the new page can catch
+          // that job instead of permanently treating the switch as empty.
+          if (!jobId && !state.sessionCopyNoticeChecked && state.sessionCopyNoticeActiveAttempts < 10) {
+            state.sessionCopyNoticeActiveAttempts++;
+            state.sessionCopyNoticePollTimer = setBuildTimeout(function () { pollSessionCopyNotice('', ''); }, 700);
+            return;
+          }
+          state.sessionCopyNoticeChecked = true;
+          closeSessionCopyNotice();
+          return;
+        }
+        state.sessionCopyNoticeChecked = true;
+        state.sessionCopyNoticeActiveAttempts = 0;
+        renderSessionCopyNotice(job, accountName);
+        renderSessionCopyProgress(job);
+        if (job.status === 'queued' || job.status === 'running') {
+          state.sessionCopyNoticePollTimer = setBuildTimeout(function () { pollSessionCopyNotice(job.id, accountName); }, 700);
+        } else {
+          setBuildTimeout(refresh, 900);
+        }
+      }).catch(function () {
+        state.sessionCopyNoticePollTimer = setBuildTimeout(function () { pollSessionCopyNotice(jobId, accountName); }, 1200);
+      });
+    }
+
+    function pollActiveSessionCopyNotice() {
+      if (state.sessionCopyNoticeChecked || state.sessionCopyNotice || state.sessionCopyNoticePollTimer) return;
+      state.sessionCopyNoticeActiveAttempts = 0;
+      pollSessionCopyNotice('', '');
+    }
+
+    function pollAutoCopyJob(jobId, accountName) {
+      if (!jobId) return;
+      pollSessionCopyNotice(jobId, accountName);
     }
 
     // token 过期状态：< 7 天 / 已过期 -> 红字高亮
@@ -12743,7 +12976,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
               var autoCopy = r && r.autoCopy;
               toast(
                 r.reloaded
-                  ? (autoCopy && autoCopy.jobId ? '已切换为「' + (r.nickname || r.uid) + '」，正在复制已标记会话…' : '已切换为「' + (r.nickname || r.uid) + '」，开始领取积分…')
+                  ? (autoCopy && autoCopy.jobId ? '已切换为「' + (r.nickname || r.uid) + '」，正在同步已标记会话…' : '已切换为「' + (r.nickname || r.uid) + '」，开始领取积分…')
                   : '已切换为「' + (r.nickname || r.uid) + '」，重启后生效',
                 false,
                 root
@@ -12861,6 +13094,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
           fetchCreditsForAccounts();
           fetchActivityForAccounts();
           fetchDailyProgressForAccounts(forceDailyProgress);
+          pollActiveSessionCopyNotice();
         })
         .catch(function (e) {
           if (!alive || requestId !== state.accountRefreshId) return;
@@ -13393,6 +13627,10 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     // setBuildTimeout(scanSessionHealth, 250);
     // 初始同步防休眠状态（悬浮角标）
     syncSleepState();
+    // Account switching reloads the renderer before the copy worker starts.
+    // Start independently of the account pane so the floating notice is
+    // visible even when the user never opens WorkDaddy's panel after switching.
+    try { setBuildTimeout(pollActiveSessionCopyNotice, 250); } catch (e) {}
     // 定期同步（30s）：daemon 重启或外部状态变化后角标保持一致
     sleepSyncTimer = setBuildInterval(syncSleepState, 30000);
     // 免打扰：启动即同步开关状态（若「弹窗自动点允许」已开启则挂上观察者，无需打开增强页）
@@ -13437,6 +13675,12 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     });
     registerDisposer(function () {
       restoreAvatarDom();
+      closeSessionCopyNotice();
+      closeSessionCopyDetails();
+      if (state.sessionCopyNoticePollTimer) {
+        clearTimeout(state.sessionCopyNoticePollTimer);
+        state.sessionCopyNoticePollTimer = null;
+      }
       root.remove();
       stashBtn.remove();
       exploreBtn.remove();
@@ -13893,6 +14137,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '.wbs-auto-row:hover{background:var(--wb-bg-hover,#f5f5f5)}',
     '.wbs-auto-check{display:flex;align-items:center;justify-content:center;flex:0 0 20px;cursor:pointer}.wbs-auto-check input{accent-color:var(--wb-button-primary-bg,#1f1f1f)}',
     '.wbs-auto-main{min-width:0;flex:1}.wbs-auto-name{display:block;flex:1;min-width:0;font-size:12px;font-weight:650;color:var(--wb-color-text-primary,#1f1f1f);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+    '.wbs-auto-review{flex:0 0 auto;min-width:64px;height:25px;padding:0 6px;border:1px solid var(--wb-border-default,#ddd);border-radius:6px;background:var(--wb-bg-tertiary,#f5f5f5);color:var(--wb-color-text-secondary,#666);font:inherit;font-size:11px;cursor:pointer}.wbs-auto-review:hover{background:var(--wb-bg-hover,#eee);color:var(--wb-color-text-primary,#222)}.wbs-auto-review:focus-visible{outline:2px solid var(--wb-button-primary-bg,#1f1f1f);outline-offset:2px}.wbs-auto-review:disabled{opacity:.6;cursor:wait}',
     '.wbs-auto-status{flex:0 0 auto;padding:2px 6px;border-radius:999px;font-size:10px;font-weight:500}.wbs-auto-status.on{color:#1b7f56;background:rgba(46,190,126,.14)}.wbs-auto-status.off{color:var(--wb-icon-tertiary,#888);background:var(--wb-bg-tertiary,#f1f1f1)}',
     '.wbs-auto-meta{margin-top:3px;color:var(--wb-icon-tertiary,#999);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
     '.wbs-auto-enabled{flex:0 0 auto;margin-left:4px}.wbs-auto-actions{display:flex;gap:2px;flex:0 0 auto}.wbs-auto-icon{display:inline-flex;align-items:center;justify-content:center;width:27px;height:27px;padding:0;border:0;border-radius:7px;background:transparent;color:var(--wb-icon-secondary,#666);cursor:pointer;line-height:27px}.wbs-auto-icon svg{width:15px;height:15px;display:block;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round}.wbs-auto-icon:hover,.wbs-auto-icon:focus-visible{background:var(--wb-bg-hover,#f0f0f0);color:var(--wb-color-text-primary,#1f1f1f);outline:none}.wbs-auto-icon.danger:hover{color:#d04a4a}.wbs-auto-icon.is-running,.wbs-auto-icon.is-running:hover{opacity:1;filter:none;background:transparent;color:var(--wb-icon-secondary,#666);cursor:pointer}.wbs-auto-icon:disabled{opacity:.45;cursor:wait}',
@@ -13901,6 +14146,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '.wbs-auto-cap-link{display:flex;justify-content:flex-end;margin-top:7px}.wbs-auto-textbtn{padding:3px 4px;border:0;background:transparent;color:var(--wb-color-text-secondary,#666);font:inherit;font-size:11px;cursor:pointer}.wbs-auto-textbtn:hover{color:var(--wb-color-text-primary,#1f1f1f);text-decoration:underline}',
     '#wbs-auto-discover.is-loading svg{animation:wbs-auto-discover-pulse 1s ease-in-out infinite}@keyframes wbs-auto-discover-pulse{50%{opacity:.35}}#wbs-auto-discover:disabled{cursor:wait;opacity:.68}',
     '.wbs-modal.wbs-auto-discovery-modal{display:grid;grid-template-rows:auto auto minmax(0,1fr);gap:9px;width:calc(100% - 24px);max-width:620px;height:min(560px,calc(100% - 28px));box-sizing:border-box;overflow:hidden}.wbs-auto-discovery-note{margin-top:3px;color:var(--wb-color-text-secondary,#666);font-size:11px;line-height:1.45}.wbs-auto-discovery-search{box-sizing:border-box;width:100%;height:32px;padding:6px 10px;border:1px solid var(--wb-border-default,#ddd);border-radius:8px;background:var(--wb-bg-popover,#fff);color:var(--wb-color-text-primary,#1f1f1f);font:inherit;font-size:12px;outline:none}.wbs-auto-discovery-search:focus{border-color:var(--wb-button-primary-bg,#1f1f1f);box-shadow:0 0 0 2px color-mix(in srgb,var(--wb-button-primary-bg,#1f1f1f) 18%,transparent)}.wbs-auto-discovery-search::placeholder{color:var(--wb-icon-tertiary,#888)}',
+    '.wbs-auto-discovery-header .wbs-auto-modal-head>div:first-child{min-width:0}.wbs-auto-discovery-status[hidden]{display:none}',
     '.wbs-auto-discovery-list{display:flex;min-height:0;flex-direction:column;gap:6px;overflow:auto;padding-right:2px}.wbs-auto-discovery-empty{display:flex;min-height:160px;align-items:center;justify-content:center;color:var(--wb-icon-tertiary,#888);font-size:12px}.wbs-auto-discovery-item{display:flex;flex:0 0 auto;flex-direction:column;gap:6px;padding:9px 10px;border:1px solid var(--wb-border-subtle,#e5e5e5);border-radius:9px;background:color-mix(in srgb,var(--wb-bg-secondary,#fff) 24%,transparent)}.wbs-auto-discovery-head{display:flex;align-items:flex-start;gap:8px}.wbs-auto-discovery-name{min-width:0;flex:1;color:var(--wb-color-text-primary,#1f1f1f);font-size:12px;font-weight:650;line-height:1.4;overflow-wrap:anywhere}.wbs-auto-discovery-version{flex:0 0 auto;padding:2px 6px;border:1px solid var(--wb-border-default,#ddd);border-radius:6px;background:var(--wb-bg-tertiary,#f5f5f5);color:var(--wb-color-text-secondary,#666);font-size:10px;font-weight:600;white-space:nowrap}.wbs-auto-discovery-description{color:var(--wb-color-text-secondary,#666);font-size:11px;line-height:1.45;overflow-wrap:anywhere}.wbs-auto-discovery-foot{display:flex;align-items:flex-end;gap:8px}.wbs-auto-sources{display:flex;min-width:0;flex:1;flex-wrap:wrap;gap:4px}.wbs-auto-source{max-width:100%;padding:3px 6px;border:1px solid var(--wb-border-subtle,#ddd);border-radius:6px;background:var(--wb-bg-tertiary,#f5f5f5);color:var(--wb-color-text-secondary,#666);font:inherit;font-size:10px;line-height:1.3;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.wbs-auto-source:hover,.wbs-auto-source:focus-visible{border-color:var(--wb-border-strong,#bbb);color:var(--wb-color-text-primary,#1f1f1f);outline:none}.wbs-auto-discovery-foot>.wbs-modal-btn{flex:0 0 auto;min-width:48px;padding:5px 9px}.wbs-auto-discovery-foot>.wbs-modal-btn:disabled{opacity:.45;cursor:not-allowed}',
     '.wbs-auto-batchbar{display:flex;align-items:center;gap:6px;margin:4px 0 7px}.wbs-auto-batch-count{margin-right:auto;color:var(--wb-icon-tertiary,#888);font-size:11px}.wbs-auto-field input,.wbs-auto-field textarea{box-sizing:border-box;width:100%;border:1px solid var(--wb-border-default,#dedede);border-radius:7px;background:var(--wb-bg-popover,#fff);color:var(--wb-color-text-primary,#1f1f1f);font:inherit;font-size:12px;outline:none}.wbs-auto-field{display:flex;flex-direction:column;gap:4px;margin-bottom:8px;color:var(--wb-icon-secondary,#666);font-size:11px}.wbs-auto-field input{height:30px;padding:5px 8px}.wbs-auto-field textarea{min-height:72px;padding:8px;resize:vertical;line-height:1.45}.wbs-auto-field textarea[data-auto-field="steps"]{min-height:150px;resize:none;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}.wbs-auto-field input:focus,.wbs-auto-field textarea:focus{border-color:var(--wb-button-primary-bg,#1f1f1f);box-shadow:0 0 0 2px color-mix(in srgb,var(--wb-button-primary-bg,#1f1f1f) 20%,transparent)}.wbs-auto-trigger-seg{display:flex;gap:3px;padding:3px;border-radius:9px;background:var(--wb-bg-tertiary,#f0f0f0)}.wbs-auto-trigger-seg label{flex:1;display:flex;align-items:center;justify-content:center;min-height:28px;padding:0 8px;border-radius:7px;color:var(--wb-icon-secondary,#666);cursor:pointer}.wbs-auto-trigger-seg input{position:absolute;opacity:0;pointer-events:none}.wbs-auto-trigger-seg label:has(input:checked){background:var(--wb-button-primary-bg,#1f1f1f);color:var(--wb-button-primary-fg,#fff);box-shadow:0 1px 4px rgba(0,0,0,.16)}',
     '.wbs-modal.wbs-auto-agent-modal{display:flex;flex-direction:column;width:calc(100% - 24px);max-width:520px;max-height:calc(100% - 28px);box-sizing:border-box}.wbs-auto-agent-intro{margin:0 0 14px;color:var(--wb-color-text-secondary,#666);font-size:12px;line-height:1.6;overflow-wrap:anywhere}.wbs-auto-agent-input-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:7px;font-size:12px;font-weight:600}.wbs-auto-agent-input-head #wbs-auto-examples{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:5px}.wbs-auto-example-fill{border:1px solid var(--wb-border-subtle,#ddd);border-radius:6px;padding:3px 8px;background:var(--wb-bg-tertiary,#f5f5f5);font-weight:400}.wbs-auto-agent-prompt{display:block;box-sizing:border-box;flex:1 1 160px;min-height:60px;width:100%;height:160px;max-height:26vh;resize:none;overflow:auto;padding:10px 12px;border:1px solid var(--wb-border-default,#ddd);border-radius:9px;background:var(--wb-bg-tertiary,#f5f5f5);color:var(--wb-color-text-primary,#1f1f1f);font-family:inherit;font-size:12px;line-height:1.65;white-space:pre-wrap;overflow-wrap:anywhere}.wbs-auto-agent-prompt:focus{outline:2px solid color-mix(in srgb,var(--wb-button-primary-bg,#1f1f1f) 30%,transparent);outline-offset:1px;border-color:var(--wb-button-primary-bg,#1f1f1f)}.wbs-auto-agent-prompt::placeholder{color:var(--wb-icon-tertiary,#888)}.wbs-auto-agent-hint{margin:8px 0 14px;font-size:11px;color:var(--wb-color-text-secondary,#666)}.wbs-auto-agent-modal .wbs-modal-actions{flex-shrink:0;margin-top:0}.wbs-auto-agent-modal .wbs-modal-ok:disabled{opacity:.4;cursor:default}',
@@ -14319,6 +14565,43 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '.wbs-credit-rotation-today:hover,.wbs-credit-rotation-close:hover{background:var(--wb-bg-hover,#f5f6f8);color:var(--wb-color-text-primary,#1f2937)}',
     '.wbs-credit-rotation-actions button:focus-visible{outline:2px solid var(--wb-accent-blue,#4f86ff);outline-offset:2px}',
     '.wbs-credit-rotation-actions button:disabled{opacity:.55;cursor:wait}',
+    '.wbs-session-copy-notice{position:fixed;z-index:2147483647;box-sizing:border-box;min-height:108px;padding:12px 13px 11px;border:1px solid var(--wb-border-subtle,rgba(0,0,0,.1));border-radius:13px;background:var(--wb-bg-popover,#fff);color:var(--wb-color-text-primary,#1f2937);box-shadow:0 12px 34px rgba(0,0,0,.18);font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;animation:wbs-session-copy-in .2s cubic-bezier(.22,1,.36,1);pointer-events:auto}',
+    '@keyframes wbs-session-copy-in{from{opacity:0;transform:translateY(7px) scale(.985)}to{opacity:1;transform:translateY(0) scale(1)}}',
+    '.wbs-session-copy-head{display:flex;align-items:center;gap:7px;min-height:22px}',
+    '.wbs-session-copy-icon{display:inline-flex;align-items:center;justify-content:center;width:23px;height:23px;flex:0 0 23px;border-radius:7px;background:color-mix(in srgb,var(--wb-button-primary-bg,#1f1f1f) 11%,transparent);color:var(--wb-button-primary-bg,#1f1f1f)}',
+    '.wbs-session-copy-title{min-width:0;flex:1;font-size:12px;font-weight:700;line-height:1.35;overflow-wrap:anywhere}',
+    '.wbs-session-copy-count{flex:0 0 auto;color:var(--wb-color-text-secondary,#667085);font-size:10.5px;font-variant-numeric:tabular-nums;white-space:nowrap}',
+    '.wbs-session-copy-close{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;flex:0 0 22px;margin:-2px -3px -2px 1px;padding:0;border:0;border-radius:6px;background:transparent;color:var(--wb-icon-tertiary,#8a8f98);font:inherit;font-size:17px;line-height:1;cursor:pointer}',
+    '.wbs-session-copy-close:hover{background:var(--wb-bg-hover,#f5f6f8);color:var(--wb-color-text-primary,#1f2937)}',
+    '.wbs-session-copy-close:focus-visible{outline:2px solid var(--wb-accent-blue,#4f86ff);outline-offset:1px}',
+    '.wbs-session-copy-route{margin:6px 28px 8px 30px;color:var(--wb-color-text-secondary,#667085);font-size:10.5px;line-height:1.35;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+    '.wbs-session-copy-track{height:6px;overflow:hidden;border-radius:999px;background:var(--wb-bg-tertiary,#edf0f3);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--wb-border-subtle,#dfe3e8) 65%,transparent)}',
+    '.wbs-session-copy-fill{display:block;width:0;height:100%;border-radius:inherit;background:var(--wb-button-primary-bg,#1f1f1f);transition:width .25s ease}',
+    '.wbs-session-copy-status{min-height:16px;margin-top:7px;color:var(--wb-color-text-secondary,#667085);font-size:10.5px;line-height:1.45;overflow-wrap:anywhere}',
+    '.wbs-session-copy-summary{margin-top:3px;color:var(--wb-color-text-primary,#1f1f1f);font-size:10.5px;line-height:1.45;font-variant-numeric:tabular-nums}',
+    '.wbs-session-copy-actions{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:8px}',
+    '.wbs-session-copy-details-btn{min-height:26px;padding:4px 9px;border:1px solid var(--wb-border-default,#d7dbe0);border-radius:7px;background:var(--wb-bg-hover,#f5f6f8);color:var(--wb-color-text-primary,#1f1f1f);font:inherit;font-size:10.5px;cursor:pointer}',
+    '.wbs-session-copy-details-btn:hover{background:var(--wb-bg-active,#e9edf2)}',
+    '.wbs-session-copy-details-btn:focus-visible{outline:2px solid var(--wb-accent-blue,#4f86ff);outline-offset:1px}',
+    '.wbs-session-copy-countdown{color:var(--wb-color-text-secondary,#667085);font-size:10px;white-space:nowrap}',
+    '.wbs-modal.wbs-session-copy-details{display:grid;grid-template-rows:auto auto minmax(0,1fr) auto;width:min(620px,calc(100vw - 28px));height:min(620px,calc(100vh - 28px));box-sizing:border-box;overflow:hidden}',
+    '.wbs-session-copy-details-summary{margin-top:4px;color:var(--wb-color-text-secondary,#667085);font-size:11px;font-variant-numeric:tabular-nums}',
+    '.wbs-session-copy-detail-tabs{margin-top:12px;margin-bottom:0}.wbs-session-copy-detail-tabs .wbs-model-tab{font-size:12px}',
+    '.wbs-session-copy-detail-list{min-height:0;overflow:auto;margin-top:12px;border:1px solid var(--wb-border-subtle,#e2e5e9);border-radius:8px;background:var(--wb-bg-secondary,#fafbfc)}',
+    '.wbs-session-copy-detail-row{display:grid;grid-template-columns:58px minmax(0,1fr) minmax(0,1.1fr);gap:8px;align-items:center;min-height:34px;padding:6px 9px;border-bottom:1px solid var(--wb-border-subtle,#e7e9ed);font-size:11px}',
+    '.wbs-session-copy-detail-row:last-child{border-bottom:0}',
+    '.wbs-session-copy-detail-status{font-weight:650;color:var(--wb-color-text-secondary,#667085)}',
+    '.wbs-session-copy-detail-label{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--wb-color-text-primary,#1f1f1f)}',
+    '.wbs-session-copy-detail-note{min-width:0;overflow:hidden;color:var(--wb-color-text-secondary,#667085);text-overflow:ellipsis;white-space:nowrap}',
+    '.wbs-session-copy-detail-row.is-copied .wbs-session-copy-detail-status{color:#238a5b}.wbs-session-copy-detail-row.is-conflict .wbs-session-copy-detail-status{color:#a55f09}.wbs-session-copy-detail-row.is-failed .wbs-session-copy-detail-status,.wbs-session-copy-detail-row.is-partial .wbs-session-copy-detail-status{color:#b05d18}',
+    '.wbs-session-copy-detail-empty{padding:28px 14px;text-align:center;color:var(--wb-color-text-secondary,#667085);font-size:11px}',
+    '.wbs-session-copy-notice.is-done .wbs-session-copy-icon{background:color-mix(in srgb,#2e9b68 15%,transparent);color:#238a5b}.wbs-session-copy-notice.is-done .wbs-session-copy-fill{background:#2e9b68}',
+    '.wbs-session-copy-notice.is-partial .wbs-session-copy-icon,.wbs-session-copy-notice.is-error .wbs-session-copy-icon{background:color-mix(in srgb,#c77a17 16%,transparent);color:#a96208}.wbs-session-copy-notice.is-partial .wbs-session-copy-fill{background:#c77a17}',
+    '.wbs-session-copy-notice.is-conflict .wbs-session-copy-icon{background:color-mix(in srgb,#b46a17 17%,transparent);color:#a55f09}.wbs-session-copy-notice.is-conflict .wbs-session-copy-fill{background:#b46a17}.wbs-session-copy-notice.is-conflict .wbs-session-copy-status{color:#96570b}',
+    '.wbs-session-copy-notice.is-error .wbs-session-copy-fill{background:#c44343}',
+    'html.cb-dark .wbs-session-copy-notice,html[data-theme="dark"] .wbs-session-copy-notice,body[data-vscode-theme-name*="dark" i] .wbs-session-copy-notice{border-color:var(--wb-border-default,rgba(255,255,255,.16));background:var(--wb-bg-popover,#25262a);color:var(--wb-color-text-primary,#f2f3f5);box-shadow:0 14px 38px rgba(0,0,0,.42)}html.cb-dark .wbs-session-copy-track,html[data-theme="dark"] .wbs-session-copy-track,body[data-vscode-theme-name*="dark" i] .wbs-session-copy-track{background:var(--wb-bg-tertiary,#34363b)}html.cb-dark .wbs-session-copy-route,html[data-theme="dark"] .wbs-session-copy-route,body[data-vscode-theme-name*="dark" i] .wbs-session-copy-route,html.cb-dark .wbs-session-copy-status,html[data-theme="dark"] .wbs-session-copy-status,body[data-vscode-theme-name*="dark" i] .wbs-session-copy-status{color:var(--wb-color-text-secondary,#b9bdc7)}html.cb-dark .wbs-session-copy-notice.is-conflict .wbs-session-copy-status,html[data-theme="dark"] .wbs-session-copy-notice.is-conflict .wbs-session-copy-status,body[data-vscode-theme-name*="dark" i] .wbs-session-copy-notice.is-conflict .wbs-session-copy-status{color:#e4b36a}',
+    'html.cb-dark .wbs-session-copy-summary,html[data-theme="dark"] .wbs-session-copy-summary,body[data-vscode-theme-name*="dark" i] .wbs-session-copy-summary,html.cb-dark .wbs-session-copy-detail-label,html[data-theme="dark"] .wbs-session-copy-detail-label,body[data-vscode-theme-name*="dark" i] .wbs-session-copy-detail-label{color:var(--wb-color-text-primary,#f2f3f5)}html.cb-dark .wbs-session-copy-details,html[data-theme="dark"] .wbs-session-copy-details,body[data-vscode-theme-name*="dark" i] .wbs-session-copy-details{background:var(--wb-bg-popover,#25262a);color:var(--wb-color-text-primary,#f2f3f5)}html.cb-dark .wbs-session-copy-detail-list,html[data-theme="dark"] .wbs-session-copy-detail-list,body[data-vscode-theme-name*="dark" i] .wbs-session-copy-detail-list{border-color:var(--wb-border-default,rgba(255,255,255,.16));background:var(--wb-bg-secondary,#202126)}html.cb-dark .wbs-session-copy-detail-row,html[data-theme="dark"] .wbs-session-copy-detail-row,body[data-vscode-theme-name*="dark" i] .wbs-session-copy-detail-row{border-color:var(--wb-border-default,rgba(255,255,255,.12))}',
+    '@media(max-width:460px){.wbs-session-copy-notice{min-height:104px;padding:11px 12px 10px}.wbs-session-copy-route{margin-left:29px;margin-right:24px}.wbs-session-copy-status{font-size:10px}.wbs-session-copy-detail-row{grid-template-columns:52px minmax(0,1fr);gap:5px}.wbs-session-copy-detail-note{grid-column:2;font-size:10px}}',
     '.wbs-fab.wbs-fab-credit-alert .button{animation:wbs-credit-robot-alert .45s ease-out}',
     '@keyframes wbs-credit-robot-alert{0%,100%{transform:translateY(0)}45%{transform:translateY(-5px)}75%{transform:translateY(1px)}}',
     '.wbs-usage-modal-mask{position:fixed!important;inset:0!important;z-index:2147483647!important;box-sizing:border-box;padding:24px;border-radius:0!important;background:rgba(15,18,24,.36);backdrop-filter:blur(5px);-webkit-backdrop-filter:blur(5px)}',
@@ -14344,7 +14627,9 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '@media(max-width:700px){.wbs-usage-modal-mask{padding:12px}.wbs-usage-columns{grid-template-columns:1fr}.wbs-token-stats-modal{width:calc(100vw - 24px);max-width:calc(100vw - 24px);height:calc(100vh - 24px);max-height:calc(100vh - 24px)}.wbs-token-stats-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}',
     '@media(max-width:620px){.wbs-usage-header{padding:14px 14px 0}.wbs-usage-scroll{padding:4px 14px 14px}.wbs-token-stats-modal>.wbs-modal-actions{padding:10px 14px}.wbs-trend-controls{flex-direction:column}.wbs-trend-legend{width:100%;flex:none}.wbs-usage-segment button{min-width:0}}',
     '.wbs-modal.wbs-auto-discovery-modal{display:flex;flex-direction:column;width:min(980px,calc(100vw - 48px));max-width:calc(100vw - 48px);height:min(84vh,800px);max-height:calc(100vh - 48px);gap:0;padding:0;border:1px solid var(--wb-border-default,rgba(20,24,32,.14));border-radius:16px;box-shadow:0 24px 80px rgba(15,18,24,.22)}.wbs-auto-discovery-header{padding-bottom:14px}.wbs-auto-discovery-header .wbs-auto-modal-head{align-items:center;flex-wrap:wrap}.wbs-auto-discovery-head-actions{display:flex;align-items:center;gap:10px}.wbs-auto-discovery-header .wbs-auto-textbtn{white-space:normal;text-align:right}.wbs-auto-discovery-list{flex:1;gap:8px;padding-top:14px;scrollbar-width:thin;overscroll-behavior:contain}.wbs-auto-discovery-item{padding:13px 14px}.wbs-auto-discovery-pagination{display:flex;align-items:center;justify-content:flex-end;gap:8px;margin:0}.wbs-auto-discovery-total{margin-right:auto;font-size:11px;color:var(--wb-color-text-secondary,#666)}.wbs-auto-discovery-page{min-width:36px;text-align:center;font-size:11px;font-variant-numeric:tabular-nums;color:var(--wb-color-text-secondary,#666)}.wbs-auto-discovery-pagination .wbs-modal-btn{min-width:54px;margin:0}.wbs-auto-discovery-pagination .wbs-modal-btn:disabled{opacity:.45;cursor:not-allowed}.wbs-auto-discovery-pagination .wbs-modal-btn:focus-visible,.wbs-auto-discovery-header button:focus-visible{outline:2px solid var(--wb-button-primary-bg,#1f1f1f);outline-offset:2px}',
+    '.wbs-auto-discovery-head-actions [data-auto-discovery-guide]{display:inline-flex;align-items:center;justify-content:center;min-height:30px;padding:6px 11px;border:1px solid var(--wb-button-primary-bg,#1f1f1f);border-radius:7px;background:var(--wb-button-primary-bg,#1f1f1f);color:var(--wb-button-primary-fg,#fff);font:inherit;font-size:11px;font-weight:600;text-decoration:none;white-space:nowrap;cursor:pointer;box-shadow:0 1px 2px rgba(0,0,0,.12)}.wbs-auto-discovery-head-actions [data-auto-discovery-guide]:hover{background:var(--wb-button-primary-hover-bg,var(--wb-button-primary-bg,#1f1f1f));color:var(--wb-button-primary-fg,#fff)}.wbs-auto-discovery-head-actions [data-auto-discovery-guide]:focus-visible{outline:2px solid var(--wb-button-primary-bg,#1f1f1f);outline-offset:2px}',
     '.wbs-modal.wbs-auto-guide-modal{box-sizing:border-box;width:min(520px,calc(100vw - 32px));max-width:calc(100vw - 32px);max-height:calc(100vh - 32px);overflow:auto;padding:18px 20px}.wbs-auto-guide-body{font-size:12px;line-height:1.65;color:var(--wb-color-text-secondary,#666);overflow-wrap:anywhere}.wbs-auto-guide-body p{margin:0 0 10px}.wbs-auto-guide-body .wbs-auto-textbtn{padding:0;color:var(--wb-color-text-primary,#1f1f1f);text-decoration:underline;overflow-wrap:anywhere;text-align:left}.wbs-auto-guide-modal .wbs-modal-actions{margin-top:12px}.wbs-auto-guide-body .wbs-auto-textbtn:focus-visible{outline:2px solid var(--wb-button-primary-bg,#1f1f1f);outline-offset:2px}',
+    '.wbs-auto-guide-body ol{margin:8px 0 0;padding-left:20px}.wbs-auto-guide-body li{margin:0 0 8px;padding-left:2px}.wbs-auto-guide-body code{padding:2px 4px;border-radius:4px;background:var(--wb-bg-tertiary,#f2f3f5);color:var(--wb-color-text-primary,#1f1f1f);font:10.5px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;overflow-wrap:anywhere}',
     'html.cb-dark #wbs-auto-discovery-mask,html[data-theme="dark"] #wbs-auto-discovery-mask,body[data-vscode-theme-name*="dark" i] #wbs-auto-discovery-mask,html.cb-dark #wbs-auto-discovery-guide,html[data-theme="dark"] #wbs-auto-discovery-guide,body[data-vscode-theme-name*="dark" i] #wbs-auto-discovery-guide{color-scheme:dark;background:rgba(0,0,0,.56)}html.cb-dark .wbs-auto-discovery-version,html[data-theme="dark"] .wbs-auto-discovery-version,body[data-vscode-theme-name*="dark" i] .wbs-auto-discovery-version{border-color:var(--wb-border-subtle,rgba(255,255,255,.18));background:var(--wb-bg-tertiary,#303137);color:var(--wb-color-text-secondary,#d0d0d5)}',
     '@media(max-width:700px){.wbs-modal.wbs-auto-discovery-modal{width:calc(100vw - 24px);max-width:calc(100vw - 24px);height:calc(100vh - 24px);max-height:calc(100vh - 24px)}}@media(max-width:620px){.wbs-auto-discovery-header{padding-bottom:12px}.wbs-auto-discovery-pagination{gap:5px;flex-wrap:wrap}.wbs-auto-discovery-pagination .wbs-modal-btn{min-width:45px;padding:6px}.wbs-auto-discovery-total{flex-basis:100%}}',
     /* 登录新账号二选一弹窗（方法一 假退出 / 方法二 无感登录） */

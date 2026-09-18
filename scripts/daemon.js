@@ -175,6 +175,7 @@ const {
   readAutomations,
   writeAutomations,
   validateTask,
+  createSafetyReviewTask,
   executeTask,
   canManuallyRunTask,
   taskMatchesEvent,
@@ -375,8 +376,8 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 // 1.2.52：成长任务支持在悬浮层内直接接取，并在完成后同步最新任务状态。
 // 1.2.55：成长弹窗支持开启盲盒与抽奖并提示奖励，收敛成长/用量统计 primary 色使用。
 // 1.2.56：成长任务补齐说明与标签、已领取折叠、Buddy 派出，并把用量柱状图改为面积折线图。
-const DAEMON_VERSION = '1.2.70';
-const DAEMON_BUILD_ID = 'release-1.2.70-20260918-automation-model-id';
+const DAEMON_VERSION = '1.2.74';
+const DAEMON_BUILD_ID = 'release-1.2.74-20260919-auto-copy-tabs-labels';
 const usageReporter = createUsageReporter({ profile: PROFILE.id, version: DAEMON_VERSION });
 configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const automationDiscovery = createAutomationDiscovery({
@@ -4089,6 +4090,10 @@ async function syncAutoCopyLineage(lineageId, targetUid) {
   if (!lineageId || PROFILE.kind !== 'workbuddy') return { members: 0, synced: 0, failedFiles: 0, targetIds: [], targetPresent: false };
   const records = getAutoCopySessionMemberRecords(DATA_DIR, lineageId);
   if (!records.length) return { members: 0, synced: 0, failedFiles: 0, targetIds: [], targetPresent: false };
+  const targetMapping = typeof getAutoCopyMapping === 'function'
+    ? getAutoCopyMapping(DATA_DIR, lineageId, targetUid)
+    : null;
+  const baselineAt = Number(targetMapping && targetMapping.updatedAt) || 0;
   const live = [];
   for (const member of records) {
     await yieldAutoCopyToRenderer();
@@ -4106,6 +4111,29 @@ async function syncAutoCopyLineage(lineageId, targetUid) {
   const targetIds = live.map((member) => member.id);
   const targetPresent = targetUid === undefined || live.some((member) => member.uid === String(targetUid || '').trim());
   if (live.length < 2) return { members: live.length, synced: 0, failedFiles: 0, targetIds, targetPresent };
+  // Once a lineage has been synchronized, a changed file on each side means
+  // both accounts wrote new content since the last common snapshot. Do not
+  // pick one side by mtime and silently overwrite the other; surface a
+  // conflict for the user after the progress bar completes.
+  const changedSinceBaseline = baselineAt > 0
+    ? live.filter((member) => Number(member.contentMtime || 0) > baselineAt)
+    : [];
+  if (changedSinceBaseline.length >= 2) {
+    return {
+      members: live.length,
+      synced: 0,
+      failedFiles: 0,
+      targetIds,
+      targetPresent,
+      conflict: true,
+      conflicts: 1,
+    };
+  }
+  // The lineage already has the target member and neither side changed since
+  // the last successful sync. Avoid a full overwrite of an unchanged session.
+  if (targetPresent && baselineAt > 0 && changedSinceBaseline.length === 0) {
+    return { members: live.length, synced: 0, failedFiles: 0, targetIds, targetPresent, unchanged: true };
+  }
   const latest = selectLatestAutoCopyMember(live);
   if (!latest) return { members: live.length, synced: 0, failedFiles: 0, targetIds, targetPresent };
   const sourceRow = latest.row;
@@ -4129,6 +4157,17 @@ async function syncAutoCopyLineage(lineageId, targetUid) {
       );
     } catch (error) {
       log(`[sessions-auto-copy] 同步会话元数据失败 ${target.uid}/${target.id}: ${error.message}`);
+    }
+  }
+  if (!failedFiles && targetUid !== undefined && typeof setAutoCopyMapping === 'function') {
+    const targetMember = live.find((member) => member.uid === String(targetUid || '').trim());
+    if (targetMember) {
+      setAutoCopyMapping(DATA_DIR, lineageId, targetUid, {
+        ...(targetMapping || {}),
+        targetId: targetMember.id,
+        status: 'copied',
+        failedFiles: 0,
+      });
     }
   }
   return { members: live.length, synced, failedFiles, sourceId: latest.id, targetIds, targetPresent };
@@ -4584,7 +4623,7 @@ function hasPendingAutoCopyTo(uid) {
 
 function pruneAutoCopyJobs() {
   const completed = Array.from(autoCopyJobs.values())
-    .filter((job) => job.status === 'done' || job.status === 'partial' || job.status === 'error')
+    .filter((job) => job.status === 'done' || job.status === 'partial' || job.status === 'conflict' || job.status === 'error')
     .sort((a, b) => (a.finishedAt || 0) - (b.finishedAt || 0));
   while (completed.length > 100) {
     const oldest = completed.shift();
@@ -4613,13 +4652,16 @@ function runAutoCopyQueue() {
     });
 }
 
-function startAutoCopyJob(sourceUid, targetUid, plan) {
+function startAutoCopyJob(sourceUid, targetUid, plan, labels) {
   const id = crypto.randomUUID();
+  const accountLabels = labels && typeof labels === 'object' ? labels : {};
   const job = {
     id,
     status: 'queued',
     sourceUid,
     targetUid,
+    sourceName: String(accountLabels.sourceName || ''),
+    targetName: String(accountLabels.targetName || ''),
     plan: Array.isArray(plan) ? plan : [],
     total: Array.isArray(plan) ? plan.length : 0,
     processed: 0,
@@ -4627,6 +4669,9 @@ function startAutoCopyJob(sourceUid, targetUid, plan) {
     skipped: 0,
     failed: 0,
     partial: 0,
+    conflicts: 0,
+    failedItems: 0,
+    details: [],
     error: null,
     currentLabel: '',
     startedAt: Date.now(),
@@ -4644,6 +4689,13 @@ function startAutoCopyJob(sourceUid, targetUid, plan) {
     job.total = job.plan.length;
     for (const src of job.plan) {
       job.currentLabel = String(src.custom_title || src.title || src.cwd || '未命名会话');
+      const detail = {
+        id: String(src.id || ''),
+        label: job.currentLabel,
+        status: 'running',
+        failedFiles: 0,
+        conflicts: 0,
+      };
       await yieldAutoCopyToRenderer();
       try {
         let result;
@@ -4652,8 +4704,13 @@ function startAutoCopyJob(sourceUid, targetUid, plan) {
           // members before/after the switch instead of blindly overwriting it
           // from the account that happened to be active most recently.
           const synced = await syncAutoCopyLineage(src.lineageId, targetUid);
-          if (synced.targetPresent) {
-            result = { status: synced.failedFiles ? 'partial' : 'skipped', failedFiles: synced.failedFiles };
+          if (synced.conflict) {
+            result = { status: 'conflict', conflicts: synced.conflicts || 1, failedFiles: 0 };
+          } else if (synced.targetPresent) {
+            result = {
+              status: synced.failedFiles ? 'partial' : (synced.synced ? 'copied' : 'skipped'),
+              failedFiles: synced.failedFiles,
+            };
           } else {
             result = await copySessionRecord(src, targetUid, {
               sourceUid,
@@ -4661,25 +4718,37 @@ function startAutoCopyJob(sourceUid, targetUid, plan) {
               auto: true,
             });
             const synced = await syncAutoCopyLineage(src.lineageId, targetUid);
+            if (synced.conflict) result.status = 'conflict';
+            result.conflicts = synced.conflicts || 0;
             result.failedFiles = (result.failedFiles || 0) + synced.failedFiles;
             if (synced.failedFiles) result.status = 'partial';
           }
         } else {
           result = await copySessionRecord(src, targetUid, { sourceUid, auto: true });
         }
+        detail.status = result.status === 'partial' ? 'partial'
+          : result.status === 'conflict' ? 'conflict'
+          : result.status === 'skipped' ? 'skipped' : 'copied';
+        detail.failedFiles = Number(result.failedFiles) || 0;
+        detail.conflicts = Number(result.conflicts) || 0;
         if (result.status === 'skipped') job.skipped++;
-        else if (result.status === 'partial') job.partial++;
+        else if (result.status === 'partial') { job.partial++; job.failedItems++; }
+        else if (result.status === 'conflict') job.conflicts += Number(result.conflicts) || 1;
         else job.copied++;
         if (result.failedFiles) job.failed += result.failedFiles;
       } catch (e) {
         job.failed++;
+        job.failedItems++;
+        detail.status = 'failed';
+        detail.error = String(e.message || e).slice(0, 240);
         log(`[sessions-auto-copy] ${sourceUid} -> ${targetUid} 会话 ${src.id} 失败: ${e.message}`);
       }
+      if (job.details.length < 500) job.details.push(detail);
       job.processed++;
     }
-    job.status = job.failed || job.partial ? 'partial' : 'done';
+    job.status = job.conflicts ? 'conflict' : (job.failed || job.partial ? 'partial' : 'done');
     job.finishedAt = Date.now();
-    log(`[sessions-auto-copy] ${sourceUid} -> ${targetUid} 完成 total=${job.total} copied=${job.copied} skipped=${job.skipped} partial=${job.partial} failed=${job.failed}`);
+    log(`[sessions-auto-copy] ${sourceUid} -> ${targetUid} 完成 total=${job.total} copied=${job.copied} skipped=${job.skipped} partial=${job.partial} conflicts=${job.conflicts} failed=${job.failed}`);
     const cleanup = setTimeout(() => autoCopyJobs.delete(id), 30 * 60 * 1000);
     if (cleanup.unref) cleanup.unref();
     pruneAutoCopyJobs();
@@ -4702,9 +4771,14 @@ function publicAutoCopyJob(job) {
     skipped: job.skipped,
     partial: job.partial,
     failed: job.failed,
+    failedItems: job.failedItems,
+    conflicts: job.conflicts,
+    details: Array.isArray(job.details) ? job.details.slice(0, 500) : [],
     error: job.error,
     sourceUid: job.sourceUid,
     targetUid: job.targetUid,
+    sourceName: job.sourceName,
+    targetName: job.targetName,
     currentLabel: job.currentLabel,
     startedAt: job.startedAt,
     finishedAt: job.finishedAt,
@@ -7389,6 +7463,22 @@ function handleApi(req, res) {
     });
   }
 
+  if (req.method === 'POST' && p === '/api/automations/safety-review') {
+    return readBody(req).then((body) => {
+      try {
+        const id = String(body && body.id || '').trim();
+        if (!readAutomations(DATA_DIR).some(task => task.id === id)) return json(res, 404, { ok: false, error: '自动化任务不存在' });
+        if (Array.from(automationRuns.values()).some(run => run.safetyReviewTaskId === id && run.status === 'running')) {
+          return json(res, 409, { ok: false, error: '该任务正在安全评估中' });
+        }
+        const review = createSafetyReviewTask(DATA_DIR, id);
+        const run = startAutomationRun(review);
+        run.safetyReviewTaskId = id;
+        return json(res, 202, { ok: true, runId: run.id });
+      } catch (error) { return json(res, 400, { ok: false, error: error.message }); }
+    });
+  }
+
   if (req.method === 'GET' && p === '/api/automations/run-status') {
     const run = automationRuns.get(String(url.searchParams.get('id') || ''));
     return run ? json(res, 200, { ok: true, run: automationPublicRun(run) }) : json(res, 404, { ok: false, error: '运行记录不存在' });
@@ -9405,7 +9495,8 @@ function handleApi(req, res) {
       try {
         // 只记录源账号；自动复制队列会在 renderer 刷新并完成组件注入后重新规划。
         // 不在这里预规划，否则大量会话的同步 SQLite/文件扫描会让切换界面长时间无响应。
-        const sourceUid = String((currentAccount() || {}).uid || '').trim();
+        const sourceAccount = currentAccount() || {};
+        const sourceUid = String(sourceAccount.uid || '').trim();
         const acct = switchTo(DATA_DIR, uid, log);
         const hint = '登录文件已切换，请重启 WorkBuddy 使新账号生效';
         let reloaded = false;
@@ -9464,7 +9555,10 @@ function handleApi(req, res) {
         const sourceRules = sourceUid ? getAutoCopyRules(DATA_DIR, sourceUid) : { allSessions: false, sessionIds: [], workspaces: [] };
         const hasSourceAutoCopyRules = !!(sourceRules.allSessions || sourceRules.sessionIds.length || sourceRules.workspaces.length);
         const autoCopyJob = (hasSourceAutoCopyRules || hasPendingAutoCopyTo(sourceUid))
-          ? startAutoCopyJob(sourceUid, uid, [])
+          ? startAutoCopyJob(sourceUid, uid, [], {
+            sourceName: sourceAccount.nickname || '',
+            targetName: acct.nickname || '',
+          })
           : null;
         return json(res, 200, {
           ok: true,

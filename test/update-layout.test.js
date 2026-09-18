@@ -1155,7 +1155,7 @@ test('automatic session copy includes workspace-only rules when the initial plan
   assert.match(daemon, /const sourceRules = sourceUid \? getAutoCopyRules\(DATA_DIR, sourceUid\)/);
   assert.match(daemon, /hasSourceAutoCopyRules/);
   assert.match(daemon, /hasPendingAutoCopyTo\(uid\)/);
-  assert.match(daemon, /startAutoCopyJob\(sourceUid, uid, \[\]\)/);
+  assert.match(daemon, /startAutoCopyJob\(sourceUid, uid, \[\]/);
   assert.match(daemon, /syncAutoCopyLineage\(src\.lineageId, targetUid\)/);
   assert.match(daemon, /selectLatestAutoCopyMember\(live\)/);
   assert.match(daemon, /ensureAutoCopySessions\(DATA_DIR, source, lineageSessionIds, \{ enabled: !rules\.allSessions \}\)/);
@@ -1176,7 +1176,11 @@ test('session copy-all is a separate override with a distinct toggle and hidden 
   assert.match(inject, /getAttribute\('aria-checked'\)/);
   assert.match(inject, /\.wbs-sess-auto-all\{display:inline-flex/);
   assert.doesNotMatch(inject, /wbs-sess-auto-all-switch/);
-  assert.match(inject, /自动复制所有会话/);
+  assert.match(inject, /自动同步所有会话/);
+  assert.doesNotMatch(inject, /自动复制所有会话|会话复制完成|正在复制已标记会话/);
+  assert.match(inject, /同步选中到其他账号/);
+  assert.match(inject, /<span>同步<\/span>/);
+  assert.match(inject, /复制选中快捷短语/);
   assert.match(inject, /sessionsState\.autoCopyAll/);
   assert.match(inject, /if \(sessionsState\.autoCopyAll \|\| !canEditAutoCopy\(uid\)\) return ''/);
   assert.match(inject, /\/api\/sessions\/auto-copy-all/);
@@ -1204,6 +1208,43 @@ test('session pane restores and renders persistent auto-copy progress', () => {
   assert.match(inject, /aria-valuenow/);
   assert.match(inject, /\.wbs-sess-copy-progress\{/);
   assert.match(inject, /html\.cb-dark \.wbs-sess-copy-progress/);
+});
+
+test('account switching shows a compact copy notice and defers conflict feedback until completion', () => {
+  const daemon = read('daemon.js');
+  const inject = read('inject.js');
+  assert.match(daemon, /conflict: true/);
+  assert.match(daemon, /conflicts: 0/);
+  assert.match(daemon, /job\.status = job\.conflicts \? 'conflict'/);
+  assert.match(daemon, /failedItems: 0/);
+  assert.match(daemon, /sourceName: String\(accountLabels\.sourceName/);
+  assert.match(daemon, /targetName: String\(accountLabels\.targetName/);
+  assert.match(daemon, /sourceName: job\.sourceName/);
+  assert.match(daemon, /targetName: job\.targetName/);
+  assert.match(daemon, /details: Array\.isArray\(job\.details\)/);
+  assert.match(daemon, /unchanged: true/);
+  assert.match(inject, /wbs-session-copy-notice/);
+  assert.match(inject, /function pollSessionCopyNotice\(jobId, accountName\)/);
+  assert.match(inject, /sessionCopySummaryText\(job\)/);
+  assert.match(inject, /会话同步完成，发现冲突/);
+  assert.match(inject, /会话同步明细/);
+  assert.match(inject, /会话同步结果筛选/);
+  assert.match(inject, /正在同步已标记会话/);
+  assert.match(inject, /setBuildTimeout\(closeSessionCopyNotice, 10000\)/);
+  assert.match(inject, /sessionCopyNoticeChecked/);
+  assert.match(inject, /sessionCopyNoticeActiveAttempts < 10/);
+  assert.match(inject, /data-session-copy-details/);
+  assert.match(inject, /秒后自动关闭/);
+  assert.match(inject, /wbs-session-copy-details-modal/);
+  assert.match(inject, /data-session-copy-tab/);
+  assert.match(inject, /wbs-session-copy-detail-tabs/);
+  assert.match(inject, /wbs-model-tabs wbs-session-copy-detail-tabs/);
+  assert.match(inject, /grid-template-rows:auto auto minmax\(0,1fr\) auto/);
+  assert.match(inject, /sourceLabel = sessionCopyAccountLabel/);
+  assert.match(inject, /\.wbs-session-copy-status'\)\.hidden = !active/);
+  assert.match(inject, /setBuildTimeout\(pollActiveSessionCopyNotice, 250\)/);
+  assert.match(inject, /renderer before the daemon enqueues/);
+  assert.match(inject, /html\.cb-dark \.wbs-session-copy-notice/);
 });
 
 test('session summary counts effective sessions and models tab only exposes sanitized model APIs', () => {

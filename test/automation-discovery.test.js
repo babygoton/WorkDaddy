@@ -25,9 +25,9 @@ function fixture() {
   const calls = [];
   const pushed = { github: '2026-09-16T10:00:00Z', gitee: '2026-09-16 18:00:00' };
   const githubRepositories = [
-    { full_name: 'other/first', html_url: 'https://github.com/other/first', stargazers_count: 1, default_branch: 'main', pushed_at: pushed.github },
-    { full_name: 'demo/tasks', html_url: 'https://github.com/demo/tasks', stargazers_count: 5, default_branch: 'main', pushed_at: pushed.github },
-    { full_name: 'other/last', html_url: 'https://github.com/other/last', stargazers_count: 2, default_branch: 'main', pushed_at: pushed.github },
+    { full_name: 'other/first', html_url: 'https://github.com/other/first', description: MARKER + ' sample tasks', stargazers_count: 1, default_branch: 'main', pushed_at: pushed.github },
+    { full_name: 'demo/tasks', html_url: 'https://github.com/demo/tasks', description: MARKER + ' sample tasks', stargazers_count: 5, default_branch: 'main', pushed_at: pushed.github },
+    { full_name: 'other/last', html_url: 'https://github.com/other/last', description: 'Unrelated tasks', stargazers_count: 2, default_branch: 'main', pushed_at: pushed.github },
   ];
   const giteeRepositories = [
     { url: 'https://gitee.com/other/first', title: 'other/first', stars: 3 },
@@ -72,7 +72,7 @@ function fixture() {
   return { calls, pushed, fetchImpl, now: () => now, advance(ms) { now += ms; } };
 }
 
-test('discovery searches only Gitee, paginates and caches task JSON', async () => {
+test('discovery searches GitHub and Gitee, deduplicates task JSON and caches results', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wd-discovery-'));
   try {
     const f = fixture();
@@ -84,9 +84,9 @@ test('discovery searches only Gitee, paginates and caches task JSON', async () =
     assert.equal(result.tasks[0].schemaVersion, 1);
     assert.equal(result.schemaVersion, 2);
     assert.equal(result.marker, MARKER);
-    assert.deepEqual(result.tasks[0].sources.map(source => source.platform), ['gitee']);
+    assert.deepEqual(result.tasks[0].sources.map(source => source.platform), ['github', 'gitee']);
     assert.equal(result.tasks[0].compatible, true);
-    assert.equal(f.calls.filter(url => url.includes('github.com')).length, 0);
+    assert.equal(f.calls.filter(url => url.includes('api.github.com/search/repositories')).length, 2);
     assert.equal(f.calls.filter(url => url.includes('so.gitee.com/')).length, 2);
     assert.ok(fs.existsSync(path.join(dir, 'automation-discovery-cache.json')));
 
@@ -97,13 +97,13 @@ test('discovery searches only Gitee, paginates and caches task JSON', async () =
     f.advance(10 * 60 * 1000);
     await discovery.getCatalog();
     assert.ok(f.calls.length > before, 'stale cache should refresh repository searches');
-    assert.equal(f.calls.filter(url => url.includes('/contents/tasks')).length, 2, 'unmarked or unchanged repositories should not be rescanned');
+    assert.equal(f.calls.filter(url => url.includes('/contents/tasks')).length, 4, 'unmarked or unchanged repositories should not be rescanned');
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
 
-test('discovery ignores the old GitHub cache and reads V2 from task JSON, not the repository marker', async () => {
+test('discovery ignores the old cache and reads V2 from task JSON, not the repository marker', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wd-discovery-version-'));
   try {
     fs.writeFileSync(path.join(dir, 'automation-discovery-cache.json'), JSON.stringify({
@@ -115,7 +115,7 @@ test('discovery ignores the old GitHub cache and reads V2 from task JSON, not th
     const v2 = { ...task, id: 'v2-task', name: 'V2 提醒', schemaVersion: 2 };
     const fetchImpl = async input => {
       const url = new URL(String(input));
-      if (url.hostname === 'raw.giteeusercontent.com') return new Response(JSON.stringify(v2));
+      if (url.hostname === 'raw.giteeusercontent.com' || url.hostname === 'raw.githubusercontent.com') return new Response(JSON.stringify(v2));
       return f.fetchImpl(input);
     };
     const discovery = createAutomationDiscovery({ dataDir: dir, fetchImpl, now: f.now, marker: MARKER, pageSize: 2, runtime });
@@ -127,8 +127,8 @@ test('discovery ignores the old GitHub cache and reads V2 from task JSON, not th
     const imported = importTasks(dir, { content: discovery.getTaskContent(catalog.tasks[0].key), selected: ['0'] }, runtime);
     assert.equal(imported.imported, 1);
     assert.equal(readAutomations(dir)[0].schemaVersion, 2);
-    assert.deepEqual(catalog.tasks[0].sources.map(source => source.platform), ['gitee']);
-    assert.equal(f.calls.some(url => url.includes('github.com')), false);
+    assert.deepEqual(catalog.tasks[0].sources.map(source => source.platform), ['github', 'gitee']);
+    assert.equal(f.calls.some(url => url.includes('api.github.com/search/repositories')), true);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -166,6 +166,42 @@ test('failed refresh keeps the last complete cached catalog', async () => {
   }
 });
 
+test('GitHub failure leaves Gitee results available and reports only that source as stale', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wd-discovery-github-fallback-'));
+  try {
+    const f = fixture();
+    const discovery = createAutomationDiscovery({ dataDir: dir, fetchImpl: async input => {
+      if (new URL(String(input)).hostname === 'api.github.com') throw new Error('GitHub timeout');
+      return f.fetchImpl(input);
+    }, now: f.now, pageSize: 2, runtime });
+    const catalog = await discovery.getCatalog();
+    assert.equal(catalog.tasks.length, 1);
+    assert.deepEqual(catalog.tasks[0].sources.map(source => source.platform), ['gitee']);
+    assert.equal(catalog.stale, true);
+    assert.deepEqual(catalog.errors.map(error => error.platform), ['github']);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('Gitee failure leaves GitHub tasks importable', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wd-discovery-gitee-fallback-'));
+  try {
+    const f = fixture();
+    const discovery = createAutomationDiscovery({ dataDir: dir, fetchImpl: async input => {
+      if (new URL(String(input)).hostname === 'so.gitee.com') throw new Error('Gitee timeout');
+      return f.fetchImpl(input);
+    }, now: f.now, pageSize: 2, runtime });
+    const catalog = await discovery.getCatalog();
+    assert.deepEqual(catalog.tasks[0].sources.map(source => source.platform), ['github']);
+    assert.equal(catalog.stale, true);
+    assert.equal(importTasks(dir, { content: discovery.getTaskContent(catalog.tasks[0].key), selected: ['0'] }, runtime).imported, 1);
+    assert.equal(readAutomations(dir)[0].enabled, false);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('automation UI preloads discovery and exposes fuzzy task search and import', () => {
   const source = fs.readFileSync(path.join(__dirname, '../scripts/inject.js'), 'utf8');
   assert.match(source, /id="wbs-auto-discover"[^>]*disabled/);
@@ -177,9 +213,14 @@ test('automation UI preloads discovery and exposes fuzzy task search and import'
   assert.match(source, /发现更多自动化任务/);
   assert.match(source, /wbs-auto-discovery-pagination/);
   assert.match(source, /我也要出现在这里/);
+  assert.match(source, /wbs-auto-discovery-head-actions \[data-auto-discovery-guide\]/);
+  assert.match(source, /git clone https:\/\/github\.com\/babygoton\/workdaddy-official-plugin\.git/);
+  assert.match(source, /<ol><li>克隆示例仓库/);
+  assert.match(source, /WorkDaddyAutomationRepository<\/code>/);
   assert.match(source, /WorkDaddyAutomationRepository。/);
   assert.doesNotMatch(source, /WorkDaddyAutomationRepositoryV1/);
   assert.match(source, /wbs-auto-discovery-version/);
+  assert.match(source, /source\.platform === 'github'/);
   assert.match(source, /wbs-usage-modal-mask wbs-auto-dialog-mask/);
   assert.doesNotMatch(source, /wbs-auto-discovery-stars/);
 });

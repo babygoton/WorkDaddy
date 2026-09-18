@@ -8,7 +8,7 @@ const { previewPackage } = require('./automation-packages');
 const { SCHEMA_VERSION } = require('./automation');
 
 const DISCOVERY_MARKER = 'WorkDaddyAutomationRepository';
-const CACHE_VERSION = 2;
+const CACHE_VERSION = 3;
 const CACHE_TTL_MS = 10 * 60 * 1000;
 const PAGE_SIZE = 100;
 const MAX_REPOSITORIES = 1000;
@@ -34,7 +34,7 @@ function documentIdentity(content) {
 }
 
 function emptyCache() {
-  return { version: CACHE_VERSION, checkedAt: 0, refreshedAt: 0, providers: { gitee: [] }, repositories: {}, errors: [] };
+  return { version: CACHE_VERSION, checkedAt: 0, refreshedAt: 0, providers: { github: [], gitee: [] }, repositories: {}, errors: [] };
 }
 
 function readCache(file) {
@@ -42,6 +42,9 @@ function readCache(file) {
     const stat = fs.statSync(file);
     if (stat.size > 32 * 1024 * 1024) return emptyCache();
     const value = JSON.parse(fs.readFileSync(file, 'utf8'));
+    if (value && value.version === 2 && value.providers && value.repositories) {
+      return { ...value, version: CACHE_VERSION, checkedAt: 0, providers: { github: [], gitee: value.providers.gitee || [] } };
+    }
     if (!value || value.version !== CACHE_VERSION || !value.providers || !value.repositories) return emptyCache();
     return value;
   } catch (_) {
@@ -106,9 +109,36 @@ async function request(fetchImpl, url, options = {}) {
   throw new Error('远程请求跳转次数过多');
 }
 
-async function requestJson(fetchImpl, url, allowedHosts) {
-  const bytes = await request(fetchImpl, url, { allowedHosts, limit: MAX_JSON_BYTES });
+async function requestJson(fetchImpl, url, allowedHosts, options = {}) {
+  const bytes = await request(fetchImpl, url, { allowedHosts, limit: MAX_JSON_BYTES, ...options });
   return JSON.parse(bytes.toString('utf8'));
+}
+
+function githubRepository(item, marker) {
+  if (!String(item && item.description || '').includes(marker)) return null;
+  const fullName = String(item.full_name || '');
+  if (!REPOSITORY_NAME.test(fullName) || item.html_url !== 'https://github.com/' + fullName) return null;
+  return {
+    key: 'github:' + fullName.toLowerCase(), platform: 'github', fullName,
+    repositoryUrl: item.html_url,
+    stars: Math.max(0, Number(item.stargazers_count) || 0),
+    pushedAt: String(item.pushed_at || ''), defaultBranch: String(item.default_branch || 'main'),
+  };
+}
+
+async function searchGitHub(fetchImpl, marker, pageSize) {
+  const repositories = [];
+  for (let page = 1; repositories.length < MAX_REPOSITORIES; page++) {
+    const url = new URL('https://api.github.com/search/repositories');
+    url.searchParams.set('q', marker + ' in:description');
+    url.searchParams.set('per_page', String(Math.min(100, pageSize)));
+    url.searchParams.set('page', String(page));
+    const result = await requestJson(fetchImpl, url, ['api.github.com'], { timeoutMs: 25000 });
+    if (!result || !Array.isArray(result.items)) throw new Error('GitHub 搜索结果无效');
+    result.items.forEach(item => { const repo = githubRepository(item, marker); if (repo) repositories.push(repo); });
+    if (result.items.length < Math.min(100, pageSize) || page * Math.min(100, pageSize) >= Math.min(MAX_REPOSITORIES, Number(result.total_count) || 0)) break;
+  }
+  return repositories.slice(0, MAX_REPOSITORIES);
 }
 
 function giteeRepository(hit, marker) {
@@ -167,20 +197,41 @@ function safeDownloadUrl(repository, entry) {
   return parsed.toString();
 }
 
+function safeGithubDownloadUrl(repository, entry) {
+  const fallback = 'https://raw.githubusercontent.com/' + encodeRepository(repository.fullName) + '/' + encodeURIComponent(repository.defaultBranch || 'main') + '/' + encodeRemotePath(entry.path);
+  const candidate = new URL(String(entry.download_url || fallback));
+  const prefix = '/' + repository.fullName + '/';
+  const suffix = '/' + encodeRemotePath(entry.path);
+  if (candidate.protocol !== 'https:' || candidate.hostname !== 'raw.githubusercontent.com' ||
+      candidate.search || candidate.hash || !candidate.pathname.startsWith(prefix) ||
+      !candidate.pathname.endsWith(suffix) || candidate.pathname.length <= prefix.length + suffix.length) {
+    throw new Error('任务下载地址不受信任');
+  }
+  return candidate.toString();
+}
+
 function trustedTaskUrl(repository, url) {
   const prefix = '/' + repository.fullName + '/';
   return url.protocol === 'https:' && ['gitee.com', 'raw.giteeusercontent.com'].includes(url.hostname) && url.pathname.startsWith(prefix) && url.pathname.includes('/raw/');
 }
 
 async function scanRepository(fetchImpl, repository) {
-  const listing = await requestJson(fetchImpl, 'https://gitee.com/api/v5/repos/' + encodeRepository(repository.fullName) + '/contents/tasks', ['gitee.com']);
+  const github = repository.platform === 'github';
+  const listing = await requestJson(fetchImpl, github
+    ? 'https://api.github.com/repos/' + encodeRepository(repository.fullName) + '/contents/tasks?ref=' + encodeURIComponent(repository.defaultBranch || 'main')
+    : 'https://gitee.com/api/v5/repos/' + encodeRepository(repository.fullName) + '/contents/tasks',
+  [github ? 'api.github.com' : 'gitee.com'], github ? { timeoutMs: 25000 } : {});
   if (!Array.isArray(listing)) throw new Error('仓库 tasks 目录无效');
-  const entries = listing.filter(entry => entry && entry.type === 'file' && /\.json$/i.test(entry.name || '')).slice(0, MAX_TASKS_PER_REPOSITORY);
+  const entries = listing.filter(entry => entry && entry.type === 'file' && /\.json$/i.test(entry.name || '') &&
+    !/[\\/]/.test(entry.name) && entry.path === 'tasks/' + entry.name).slice(0, MAX_TASKS_PER_REPOSITORY);
   const tasks = [];
   for (const entry of entries) {
-    const downloadUrl = safeDownloadUrl(repository, entry);
-    const allowedHosts = ['gitee.com', 'raw.giteeusercontent.com'];
-    const content = (await request(fetchImpl, downloadUrl, { allowedHosts, validateUrl: url => trustedTaskUrl(repository, url), accept: 'application/json,text/plain', limit: MAX_TASK_BYTES })).toString('utf8');
+    const downloadUrl = github ? safeGithubDownloadUrl(repository, entry) : safeDownloadUrl(repository, entry);
+    const allowedHosts = github ? ['raw.githubusercontent.com'] : ['gitee.com', 'raw.giteeusercontent.com'];
+    const trusted = github
+      ? url => url.protocol === 'https:' && url.hostname === 'raw.githubusercontent.com' && url.pathname === new URL(downloadUrl).pathname
+      : url => trustedTaskUrl(repository, url);
+    const content = (await request(fetchImpl, downloadUrl, { allowedHosts, validateUrl: trusted, accept: 'application/json,text/plain', limit: MAX_TASK_BYTES, timeoutMs: github ? 25000 : REQUEST_TIMEOUT_MS })).toString('utf8');
     tasks.push({ path: String(entry.path || 'tasks/' + entry.name), downloadUrl, content });
   }
   return tasks;
@@ -263,12 +314,14 @@ function createAutomationDiscovery(options) {
 
   async function refresh() {
     const errors = [];
-    const search = await Promise.allSettled([searchGitee(fetchImpl, marker, pageSize)]);
-    const providers = { gitee: state.providers.gitee || [] };
-    if (search[0].status === 'fulfilled') providers.gitee = search[0].value;
-    else errors.push({ platform: 'gitee', message: String(search[0].reason && search[0].reason.message || search[0].reason) });
+    const search = await Promise.allSettled([searchGitHub(fetchImpl, marker, pageSize), searchGitee(fetchImpl, marker, pageSize)]);
+    const providers = { github: state.providers.github || [], gitee: state.providers.gitee || [] };
+    for (const [index, platform] of ['github', 'gitee'].entries()) {
+      if (search[index].status === 'fulfilled') providers[platform] = search[index].value;
+      else errors.push({ platform, message: String(search[index].reason && search[index].reason.message || search[index].reason) });
+    }
     const repositories = {};
-    const allRepositories = providers.gitee;
+    const allRepositories = [...providers.github, ...providers.gitee];
     await mapLimit(allRepositories, 4, async repository => {
       const cached = state.repositories && state.repositories[repository.key];
       let tasks = cached && cached.pushedAt === repository.pushedAt && Array.isArray(cached.tasks) ? cached.tasks : null;
@@ -281,7 +334,7 @@ function createAutomationDiscovery(options) {
       }
       repositories[repository.key] = { ...repository, tasks };
     });
-    const searchSucceeded = search[0].status === 'fulfilled';
+    const searchSucceeded = search.some(result => result.status === 'fulfilled');
     state = {
       version: CACHE_VERSION,
       checkedAt: now(),
@@ -303,7 +356,6 @@ function createAutomationDiscovery(options) {
   function getTaskContent(key) {
     const wanted = String(key || '');
     for (const repository of Object.values(state.repositories || {})) {
-      if (repository.platform !== 'gitee') continue;
       for (const file of repository.tasks || []) {
         try { if (documentIdentity(file.content).key === wanted) return file.content; } catch (_) {}
       }
