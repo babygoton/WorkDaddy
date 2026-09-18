@@ -59,16 +59,16 @@ test('native privilege query validates real helper response and never defaults e
   ]) assert.throws(() => boundary.detectNativeWindowsPrivilege('C:\\Apps\\WorkDaddy', 'workbuddy-cn', () => result));
 });
 
-test('native daemon reuse requires matching actual privilege as well as profile/build/data identity', () => {
+test('native daemon reuse requires matching privilege, profile, build, data and app directories', () => {
   const src = read('scripts/win-launcher.js');
   const fn = src.slice(src.indexOf('function nativeDaemonStatusMatches('), src.indexOf('\nasync function waitForNativeDaemon'));
-  const baseline = { ok: true, profile: { id: 'workbuddy-cn' }, dataDir: 'data', version: '1', buildId: 'build', privilege: 'elevated' };
+  const baseline = { ok: true, profile: { id: 'workbuddy-cn' }, dataDir: 'data', appDir: 'app', version: '1', buildId: 'build', privilege: 'elevated' };
   for (const privilege of ['elevated', 'standard']) {
-    const context = vm.createContext({ WINDOWS_PRIVILEGE: privilege, readDaemonIdentity: () => ({ version: '1', buildId: 'build' }), PROFILE: { id: 'workbuddy-cn' }, DATA_DIR: 'data', sameWindowsPath: (a, b) => a === b });
+    const context = vm.createContext({ WINDOWS_PRIVILEGE: privilege, readDaemonIdentity: () => ({ version: '1', buildId: 'build' }), PROFILE: { id: 'workbuddy-cn' }, DATA_DIR: 'data', WORKDADDY_APP_DIR: 'app', sameWindowsPath: (a, b) => a === b });
     vm.runInContext(fn, context);
     const status = { ...baseline, privilege };
     assert.equal(context.nativeDaemonStatusMatches(status), true);
-    for (const delta of [{ privilege: privilege === 'standard' ? 'elevated' : 'standard' }, { version: 'old' }, { buildId: 'old' }, { dataDir: 'other' }, { profile: { id: 'workbuddy-ai' } }]) {
+    for (const delta of [{ privilege: privilege === 'standard' ? 'elevated' : 'standard' }, { version: 'old' }, { buildId: 'old' }, { dataDir: 'other' }, { appDir: 'other' }, { appDir: '' }, { profile: { id: 'workbuddy-ai' } }]) {
       assert.equal(context.nativeDaemonStatusMatches({ ...status, ...delta }), false);
     }
   }

@@ -53,6 +53,14 @@ New-Item -ItemType Directory -Force -Path $stageRoot | Out-Null
 try {
   Expand-Archive -LiteralPath $zipPath -DestinationPath $stageRoot -Force
   $scriptsPayload = Join-Path $stageRoot 'scripts'
+  if (-not (Test-Path -LiteralPath (Join-Path $stageRoot 'WorkDaddy.portable') -PathType Leaf) -or
+      -not (Test-Path -LiteralPath (Join-Path $stageRoot 'Start-WorkDaddy.cmd') -PathType Leaf) -or
+      -not (Test-Path -LiteralPath (Join-Path $stageRoot 'Stop-WorkDaddy.cmd') -PathType Leaf) -or
+      -not (Test-Path -LiteralPath (Join-Path $stageRoot 'WorkDaddyLauncher.exe') -PathType Leaf)) {
+    throw 'Portable ZIP is missing its marker or native launcher.'
+  }
+  $stagedProfile = (Get-Content -LiteralPath (Join-Path $scriptsPayload 'profile-id.txt') -Raw -Encoding UTF8).Trim()
+  if ($stagedProfile -ne $Profile) { throw "Portable ZIP profile mismatch: $stagedProfile != $Profile" }
   if (-not (Test-Path -LiteralPath (Join-Path $scriptsPayload 'runtime\node\node.exe') -PathType Leaf)) {
     throw 'The ZIP payload does not contain the bundled Node runtime.'
   }
@@ -91,11 +99,18 @@ try {
     throw "Setup artifact is missing or empty: $setup"
   }
   Write-Host "Created $setup"
+  # Setup.exe 只安装 scripts/ 与原生启动器；便携标记和启动/停止脚本留在 ZIP 中。
+  $portable = Join-Path $OutputDirectory ("$packageName-Portable-$version.zip")
+  Move-Item -LiteralPath $zipPath -Destination $portable -Force
+  if (-not (Test-Path -LiteralPath $portable -PathType Leaf) -or (Get-Item -LiteralPath $portable).Length -le 0) {
+    throw "Portable artifact is missing or empty: $portable"
+  }
+  Write-Host "Created $portable"
 } finally {
   if (Test-Path -LiteralPath $stageRoot) {
     Remove-Item -LiteralPath $stageRoot -Recurse -Force -ErrorAction SilentlyContinue
   }
-  # ZIP is only an internal staging input. Windows releases publish Setup.exe only.
+  # 构建失败时暂存 ZIP 不再具有发布意义，清理掉；成功路径中它已被改名为便携版。
   if (Test-Path -LiteralPath $zipPath -PathType Leaf) {
     Remove-Item -LiteralPath $zipPath -Force -ErrorAction SilentlyContinue
   }

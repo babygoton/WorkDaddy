@@ -84,6 +84,10 @@ node scripts/workbuddy-target.js --configure --platform darwin \
 2. 双击安装器完成安装
 3. 双击打开 `WorkDaddy` 或 `WorkDaddy AI` 桌面快捷方式
 
+免安装使用可下载对应的 `WorkDaddy-Portable-x.y.z.zip` / `WorkDaddy-AI-Portable-x.y.z.zip`：解压到可写目录，双击顶层 `Start-WorkDaddy.cmd`（或直接运行 `WorkDaddyLauncher.exe`）。仍需先安装对应的 WorkBuddy 客户端。便携包不创建桌面快捷方式或卸载项；账号备份和运行数据仍保存在当前用户的 `%APPDATA%\WorkDaddy`，不会随 ZIP 搬走。同一客户端 profile 不能同时运行安装版与便携版，也不能同时运行两份便携版。
+
+便携版不使用面板中的自动更新。手动换版本或删除解压目录前，先在原目录运行 `Stop-WorkDaddy.cmd`，确认后台进程停止，再解压新版 ZIP；它不会删除账号备份。需要常驻安装时请另行下载对应的 Setup.exe。
+
 #### 企业专享版 / VPC 客户端
 
 企业专享版用户仍安装与界面最接近的 `WorkDaddy` 或 `WorkDaddy AI`。安装程序会先自动识别对应的官方客户端，并在安装向导中显示路径和版本；企业版用户点击「浏览」改选自己的 `.exe` 主程序即可，不需要修改配置文件或设置系统环境变量。
@@ -108,7 +112,7 @@ WBSWITCH_PROFILE=workbuddy-ai bash scripts/relaunch-with-cdp.sh
 
 暂存提示词和主题功能在两个 WorkBuddy profile 开启。CodeBuddy profile 的适配暂缓，不进入当前发布包。
 
-当前发布脚本只打包两个 WorkBuddy 客户端，共 4 个包：`WorkDaddy-<version>.dmg`、`WorkDaddy-AI-<version>.dmg`、`WorkDaddy-Setup-<version>.exe`、`WorkDaddy-AI-Setup-<version>.exe`。macOS 构建时传 `WORKDADDY_BUILD_PROFILE=workbuddy-cn` 或 `workbuddy-ai` 可单独重打一个客户端。Windows ZIP 仅作安装器构建的临时输入，不作为发布包。
+当前发布脚本只打包两个 WorkBuddy 客户端，Windows 每个客户端发布 Setup.exe 与便携版 ZIP 两个包：`WorkDaddy-Setup-<version>.exe` / `WorkDaddy-Portable-<version>.zip`、`WorkDaddy-AI-Setup-<version>.exe` / `WorkDaddy-AI-Portable-<version>.zip`（加上 macOS 共 6 个包）。macOS 构建时传 `WORKDADDY_BUILD_PROFILE=workbuddy-cn` 或 `workbuddy-ai` 可单独重打一个客户端。Windows 便携版 ZIP 与 Setup.exe 同源生成，顶层只有启动和停止入口。
 
 `install.sh` 做了：
 
