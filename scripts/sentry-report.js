@@ -11,11 +11,11 @@ const os = require('os');
 const path = require('path');
 const https = require('https');
 const crypto = require('crypto');
+const plat = require('./platform.js');
 
 const DEFAULT_DSN = 'https://6cc1bae83102c222717df3b6e74ae9d4@o4511947624939520.ingest.us.sentry.io/4511947692572672';
 const CLIENT = 'workdaddy-sentry/1';
 const HOME = os.homedir();
-const IS_WIN = process.platform === 'win32';
 const PROFILE_ID = String(process.env.WBSWITCH_PROFILE || 'workbuddy-cn').trim().toLowerCase();
 const CLIENT_VARIANT = PROFILE_ID === 'workbuddy-ai' ? 'workbuddy-ai'
   : PROFILE_ID === 'codebuddy-cn' ? 'codebuddy-cn'
@@ -23,9 +23,12 @@ const CLIENT_VARIANT = PROFILE_ID === 'workbuddy-ai' ? 'workbuddy-ai'
 const CLIENT_NAME = CLIENT_VARIANT === 'workbuddy-ai' ? 'WorkBuddy AI'
   : CLIENT_VARIANT === 'codebuddy-cn' ? 'CodeBuddy CN'
     : CLIENT_VARIANT === 'codebuddy-intl' ? 'CodeBuddy' : 'WorkBuddy';
-const SHARED_DATA_DIR = process.env.WBSWITCH_SHARED_DATA_DIR || (IS_WIN
-  ? path.join(process.env.APPDATA || path.join(HOME, 'AppData', 'Roaming'), 'WorkDaddy')
-  : path.join(HOME, 'Library', 'Application Support', 'WorkDaddy'));
+// 平台路径统一由 platform.js 推导（同目录、零 npm 依赖，不违反本文件的「不依赖 npm」约束）。
+// 语义与原先的内联写法逐平台一致：Windows %APPDATA% / macOS ~/Library/Application Support。
+// Linux 原先落在「非 Windows 即 macOS」分支，会在用户家目录下凭空创建
+// ~/Library/Application Support/WorkDaddy，这里改为 $XDG_CONFIG_HOME。
+const SHARED_DATA_DIR = process.env.WBSWITCH_SHARED_DATA_DIR
+  || path.join(plat.appSupport, 'WorkDaddy');
 const DATA_DIR = process.env.WBSWITCH_DATA_DIR || (PROFILE_ID === 'workbuddy-cn'
   ? SHARED_DATA_DIR : path.join(SHARED_DATA_DIR, 'profiles', PROFILE_ID));
 const INSTALLATION_ID_FILE = path.join(SHARED_DATA_DIR, 'installation-id');
