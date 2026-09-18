@@ -108,7 +108,7 @@ The queue item's 暂存提示词 tag is rendered by `syncQueueTags` (in `scripts
 - A release version must be identical in the package filename, macOS `Info.plist` (`CFBundleShortVersionString`/`CFBundleVersion`), and the packaged `scripts/daemon.js` `DAEMON_VERSION`. A package named `1.0.10` that runs daemon code reporting `1.0.6` is invalid.
 - Update availability has one source of truth: compare the latest GitHub or cached release version with the running `DAEMON_VERSION` every time. Never persist or trust a cached `hasUpdate` decision across daemon versions, and clear any existing update card/red dot when no newer version exists.
 - Build scripts must always rewrite the staged daemon version from the release `VERSION`; never rely on the version embedded in the reusable `WorkDaddy.app` shell or on a conditional test-only override.
-- Windows releases are `Setup.exe` only. The `*-win64.zip` created by the installer pipeline is temporary staging and must be deleted before artifact upload or GitHub Release publication; ZIP remains supported only as an updater fallback for historical releases.
+- Windows releases include two profile-specific `Setup.exe` files and two `*-Portable-<VERSION>.zip` files. The `*-win64.zip` inputs are temporary staging and must be removed before publication. Portable ZIPs use the native launcher, keep account data under `%APPDATA%\WorkDaddy`, and do not run the installer-style updater; historical ZIP updater compatibility remains unchanged for installed editions.
 - Before publishing or handing off a package, inspect the actual DMG/Setup.exe payload and record the daemon version, app metadata version, profile branding, and required update scripts. Do not infer package correctness from the filename alone.
 - The repair prompt `安装失败自主解决提示词.txt` may remain in the source tree for the user-initiated repair-agent flow, but it must not be copied into Windows Setup.exe payloads or macOS release staging directories. Release verification must confirm that the prompt is absent from the deliverable.
 - The updater must reject an artifact whose internal daemon version does not match the GitHub release target, and must leave a local diagnostic trail showing the selected asset, expected version, internal version, and installation attempt ID.
@@ -117,7 +117,7 @@ The queue item's 暂存提示词 tag is rendered by `syncQueueTags` (in `scripts
 
 Use this exact flow for a Windows release. The two client packages are built from the same source tree, but each is staged with its own profile, installation directory, daemon port, desktop shortcut, and WorkBuddy executable name.
 
-1. Start from the requested source commit/branch and confirm the working tree. Do not silently change the release version in `scripts/daemon.js` when producing a fixed-version package; pass the requested version explicitly to the release script. Before building, remove only the existing `release/windows/*-Setup-*.exe` files if the request is to replace all installer artifacts; keep unrelated files outside that directory untouched.
+1. Start from the requested source commit/branch and confirm the working tree. Do not silently change the release version in `scripts/daemon.js` when producing a fixed-version package; pass the requested version explicitly to the release script. Before building, remove only existing `release/windows/*-Setup-*.exe` and `release/windows/*-Portable-*.zip` files if the request is to replace all release artifacts; keep unrelated files outside that directory untouched.
 
 2. From the repository root, run the Windows release builder with Git Bash, Inno Setup 6, and Python available. Prefer explicit tool paths on the build host so the result is reproducible and does not depend on `PATH`:
 
@@ -138,18 +138,20 @@ Use this exact flow for a Windows release. The two client packages are built fro
    if ($p.ExitCode -ne 0) { throw "Windows build failed: $($p.ExitCode)" }
    ```
 
-   `build-win-release.ps1` must build both `workbuddy-cn` and `workbuddy-ai`. `build-win-zip.sh` creates only an internal staging ZIP; `build-win-installer.ps1` rewrites the staged daemon version and build id to the requested release version before compiling Setup.exe. Do not hand-copy scripts into an old installer directory.
+   `build-win-release.ps1` must build both `workbuddy-cn` and `workbuddy-ai`. `build-win-zip.sh` creates a staging ZIP; `build-win-installer.ps1` validates its version/profile, compiles Setup.exe, then renames it to the Portable ZIP. Do not hand-copy scripts into an old installer directory.
 
 3. Deliver only these files (replace `<VERSION>` with the requested release version):
 
    ```text
    release/windows/WorkDaddy-Setup-<VERSION>.exe
    release/windows/WorkDaddy-AI-Setup-<VERSION>.exe
+   release/windows/WorkDaddy-Portable-<VERSION>.zip
+   release/windows/WorkDaddy-AI-Portable-<VERSION>.zip
    ```
 
-   Remove all generated `WorkDaddy-<VERSION>-win64.zip`, `WorkDaddy-AI-<VERSION>-win64.zip`, stale `release/windows/*-Setup-*.exe` files that are not part of this release, build logs, temporary verification directories, and `release/.cache` before handoff or publication. The ZIPs are staging inputs, not Windows release artifacts. Confirm that `安装失败自主解决提示词.txt` is absent from both Setup.exe payloads.
+   Remove all generated `WorkDaddy-<VERSION>-win64.zip`, `WorkDaddy-AI-<VERSION>-win64.zip`, stale Setup/Portable artifacts from other versions, build logs, temporary verification directories, and `release/.cache` before handoff or publication. Only the `*-win64.zip` files are staging inputs. Confirm that `安装失败自主解决提示词.txt` is absent from all four payloads.
 
-4. Inspect the actual Setup.exe payloads, not just their filenames. Run `innounp -t` on both files, list or extract them, and verify all of the following for each package:
+4. Inspect the actual Setup.exe and Portable ZIP payloads, not just their filenames. Run `innounp -t` on both Setup files and extract both ZIPs; verify all of the following for each profile:
 
    - `scripts/runtime/node/node.exe` exists.
    - `scripts/daemon.js` reports the requested `<VERSION>`.
@@ -157,6 +159,7 @@ Use this exact flow for a Windows release. The two client packages are built fro
    - CN uses `workbuddy-cn`, `47832`, `9222` as its defaults; AI uses `workbuddy-ai`, `47833`, `9223`.
    - The extracted `scripts/inject.js` keeps the platform placeholder unquoted (`var WBS_PLATFORM = __WBS_PLATFORM__;`) so daemon replacement with `JSON.stringify(process.platform)` produces the correct `"win32"` value. Confirm the Windows path contains the auto-open installer flow and does not enter the macOS reboot progress branch.
    - The package contains no `安装失败自主解决提示词.txt` and no temporary ZIP.
+   - The ZIP root contains `WorkDaddy.portable`, `WorkDaddyLauncher.exe`, `Start-WorkDaddy.cmd`, and `Stop-WorkDaddy.cmd`, but no Install/Uninstall commands. The Setup payload contains no portable marker.
 
 5. Run release checks from the same repository:
 
@@ -171,7 +174,7 @@ Use this exact flow for a Windows release. The two client packages are built fro
 
    A skipped `sqlite3` CLI fallback test is expected on machines without the CLI. Windows runtime operation uses the bundled Node `node:sqlite` implementation and must not depend on a separately installed `sqlite3.exe`.
 
-6. Smoke-test installation and startup in this order: install WorkDaddy AI first (including an elevated installer run), launch it; install WorkDaddy second with a normal installer run, launch it; then repeat normal and elevated shortcut launches for both profiles. Both clients must remain open simultaneously. If a previous install left a daemon/watchdog running, the installer may stop only the exact current-profile lifecycle after verifying script path, Node path, PID, owner, profile, port, and daemon status. It must never kill all `WorkBuddy.exe`/`Electron.exe` processes.
+6. Smoke-test installation and startup in this order: install WorkDaddy AI first (including an elevated installer run), launch it; install WorkDaddy second with a normal installer run, launch it; then repeat normal and elevated shortcut launches for both profiles. Both clients must remain open simultaneously. Separately on a clean profile, extract each Portable ZIP, launch it with Start, stop it with Stop, then confirm manual replacement works without deleting account data. Do not run an installed and portable copy of the same profile simultaneously. If a previous install left a daemon/watchdog running, the installer may stop only the exact current-profile lifecycle after verifying script path, Node path, PID, owner, profile, port, and daemon status. It must never kill all `WorkBuddy.exe`/`Electron.exe` processes.
 
 7. When a PID file is missing during an install/update race, the launcher may reconstruct it only for one exact current-profile watchdog. Multiple matches, an unverified path, a foreign owner, an elevated target from a standard process, or an unbound daemon must fail closed with actionable logs. The old generic “请先完全退出 WorkBuddy” cold-start gate must not be used for a verified current-profile process; the launcher should restart that process precisely and wait for its expected CDP port.
 

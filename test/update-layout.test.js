@@ -624,17 +624,42 @@ test('Windows release packages bundle a pinned Node runtime and build a user-lev
   assert.match(launcher, /runtime\\node\\node\.exe/);
 });
 
-test('Windows release publishes Setup.exe only and removes temporary ZIP staging', () => {
+test('Windows release publishes paired Setup.exe and portable ZIP artifacts', () => {
   const workflow = fs.readFileSync(path.join(repoRoot, '.github', 'workflows', 'build-win.yml'), 'utf8');
   const installer = read('build-win-installer.ps1');
+  const build = read('build-win-zip.sh');
+  const start = read('Start-WorkDaddy.cmd');
+  const stop = read('Stop-WorkDaddy.cmd');
+  const iss = fs.readFileSync(path.join(repoRoot, 'scripts', 'win', 'workdaddy.iss'), 'utf8');
   const guide = fs.readFileSync(path.join(repoRoot, 'AGENTS.md'), 'utf8');
-  assert.match(workflow, /仅 Setup\.exe/);
-  assert.doesNotMatch(workflow, /release\/windows\/WorkDaddy-\*-win64\.zip/);
-  assert.match(workflow, /确认仅保留 Setup\.exe 发行产物/);
-  assert.match(installer, /ZIP is only an internal staging input/);
+  assert.match(workflow, /WorkDaddy-Portable-\*\.zip/);
+  assert.match(workflow, /WorkDaddy-AI-Portable-\*\.zip/);
+  assert.match(installer, /Move-Item -LiteralPath \$zipPath -Destination \$portable/);
   assert.match(installer, /Remove-Item -LiteralPath \$zipPath/);
-  assert.match(guide, /Windows releases are `Setup\.exe` only/);
-  assert.match(guide, /temporary staging/);
+  assert.match(build, /\$STAGE\/WorkDaddy\.portable/);
+  assert.doesNotMatch(build, /cp scripts\/(?:Install|Uninstall)-WorkDaddy\.cmd "\$STAGE\//);
+  assert.match(start, /WorkDaddyLauncher\.exe/);
+  assert.doesNotMatch(start, /scripts\\launcher\.cmd/);
+  assert.match(stop, /WorkDaddyLauncher\.exe" --stop-lifecycle --app-dir "%~dp0"/);
+  assert.match(build, /cp scripts\/Stop-WorkDaddy\.cmd "\$STAGE\/Stop-WorkDaddy\.cmd"/);
+  assert.doesNotMatch(iss, /Source:.*WorkDaddy\.portable/);
+  assert.match(guide, /WorkDaddy-AI-Portable-<VERSION>\.zip/);
+});
+
+test('portable Windows daemon never checks or applies installer updates', () => {
+  const daemon = read('daemon.js');
+  assert.match(daemon, /IS_PORTABLE_WIN = IS_WIN && fs\.existsSync\(path\.join\(WORKDADDY_DIR_WIN, 'WorkDaddy\.portable'\)\)/);
+  assert.match(daemon, /if \(IS_PORTABLE_WIN && \['\/api\/update-download', '\/api\/update-apply'\]\.includes\(p\)\)/);
+  assert.match(daemon, /if \(!IS_PORTABLE_WIN\) \{\s*setTimeout\(\(\) => \{ checkUpdate\(true\)/);
+  assert.match(daemon, /if \(IS_PORTABLE_WIN\) return Promise\.resolve\(updateState\);/);
+});
+
+test('Windows native launcher refuses to reuse a daemon from another package directory', () => {
+  const launcher = read('win-launcher.js');
+  const daemon = read('daemon.js');
+  assert.match(daemon, /if \(IS_WIN\) status\.appDir = WORKDADDY_DIR_WIN;/);
+  assert.match(launcher, /status\.appDir && sameWindowsPath\(status\.appDir, WORKDADDY_APP_DIR\)/);
+  assert.match(launcher, /if \(status && status\.appDir && !sameWindowsPath\(status\.appDir, WORKDADDY_APP_DIR\)\) \{/);
 });
 
 test('Windows Setup waits for WorkBuddy and stops only a native-verified profile lifecycle', () => {

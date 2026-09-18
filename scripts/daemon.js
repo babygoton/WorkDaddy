@@ -384,7 +384,7 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 // 1.2.55：成长弹窗支持开启盲盒与抽奖并提示奖励，收敛成长/用量统计 primary 色使用。
 // 1.2.56：成长任务补齐说明与标签、已领取折叠、Buddy 派出，并把用量柱状图改为面积折线图。
 const DAEMON_VERSION = '1.2.65';
-const DAEMON_BUILD_ID = 'release-1.2.65-20260918-linux-package';
+const DAEMON_BUILD_ID = 'release-1.2.65-20260918-linux-portable';
 const usageReporter = createUsageReporter({ profile: PROFILE.id, version: DAEMON_VERSION });
 configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const automationDiscovery = createAutomationDiscovery({
@@ -400,6 +400,7 @@ const IS_LINUX = process.platform === 'linux';
 // Windows 安装目录（install.ps1 铺、launcher 用、更新替换目标），对应 macOS 的 /Applications/WorkDaddy.app
 const WORKDADDY_INSTALL_NAME = PROFILE.id === 'workbuddy-ai' ? 'WorkDaddy AI' : 'WorkDaddy';
 const WORKDADDY_DIR_WIN = process.env.WBSWITCH_APP_DIR || path.resolve(__dirname, '..');
+const IS_PORTABLE_WIN = IS_WIN && fs.existsSync(path.join(WORKDADDY_DIR_WIN, 'WorkDaddy.portable'));
 const UI_PORT_BASE = parseInt(process.env.WBSWITCH_PORT || String(profileUiPortCandidates(PROFILE.id)[0]), 10);
 const ALLOW_UI_PORT_FALLBACK = !process.env.WBSWITCH_PORT;
 let ACTUAL_PORT = UI_PORT_BASE; // 实际监听端口（可能回退到当前 profile 的备用端口）
@@ -778,6 +779,7 @@ function checkUpdate(force) {
     updateState.checkedAt = Date.now();
     return Promise.resolve(updateState);
   }
+  if (IS_PORTABLE_WIN) return Promise.resolve(updateState);
   if (!force && updateTimer) {
     // 有缓存且未过期且非强制 → 直接返回缓存（面板高频打开不重复请求）
     if (Date.now() - updateState.checkedAt < UPDATE_CHECK_INTERVAL && updateState.latest) {
@@ -882,6 +884,7 @@ function checkUpdate(force) {
 // 下载安装包（macOS .dmg / Windows Setup.exe 或旧 ZIP），流式写文件更新 progress，带 SHA-256 校验
 // 同一 daemon 内只允许一个下载流程，避免并发请求互相删除/覆盖固定目标文件。
 function downloadUpdate() {
+  if (IS_PORTABLE_WIN) return Promise.reject(new Error('便携版请从发布页手动下载新版 ZIP'));
   if (updateDownloadPromise) return updateDownloadPromise;
   updateDownloadPromise = Promise.resolve()
     .then(() => downloadUpdateInternal())
@@ -1359,6 +1362,7 @@ function extractAppFromDmg(dmgPath) {
 // 安装：macOS 继续使用 apply-update.sh；Windows 打开已校验的可见 Setup.exe，
 // 由 Inno Setup 确认 WorkBuddy 已退出、替换文件并启动新版。
 function applyUpdate() {
+  if (IS_PORTABLE_WIN) return Promise.reject(new Error('便携版不能运行安装式更新，请手动下载新版 ZIP'));
   if (!updateState.downloaded) {
     updateDebug('apply-error', { stage: 'preflight', error: '尚未下载完成', latest: updateState.latest });
     return Promise.reject(new Error('尚未下载完成'));
@@ -7689,6 +7693,7 @@ function handleApi(req, res) {
       status.cdp.targetUrl = cdp.targetUrl;
       status.current = currentAccount();
       status.dataDir = DATA_DIR;
+      if (IS_WIN) status.appDir = WORKDADDY_DIR_WIN;
       status.authFile = currentAuthFile();
     }
     return json(res, 200, status);
@@ -9374,6 +9379,9 @@ function handleApi(req, res) {
   }
 
   // 自动更新：检查（GET /api/update-check，force=1 强制刷新）→ 下载（POST /api/update-download）→ 状态（GET /api/update-status）→ 安装（POST /api/update-apply）
+  if (IS_PORTABLE_WIN && ['/api/update-download', '/api/update-apply'].includes(p)) {
+    return json(res, 409, { ok: false, error: '便携版请从发布页手动下载新版 ZIP' });
+  }
   if (req.method === 'GET' && p === '/api/update-check') {
     const force = url.searchParams.get('force') === '1';
     return Promise.resolve(checkUpdate(force)).then((st) =>
@@ -10032,9 +10040,11 @@ runAutomationSchedules();
 const automationScheduleTimer = setInterval(runAutomationSchedules, 1000);
 automationScheduleTimer.unref && automationScheduleTimer.unref();
 // 自动更新：启动时检查一次（延迟 8s 等网络就绪），之后每 6 小时一次
-setTimeout(() => { checkUpdate(true).catch(() => {}); }, 8000);
-updateTimer = setInterval(() => { checkUpdate(false).catch(() => {}); }, UPDATE_CHECK_INTERVAL);
-updateTimer.unref && updateTimer.unref();
+if (!IS_PORTABLE_WIN) {
+  setTimeout(() => { checkUpdate(true).catch(() => {}); }, 8000);
+  updateTimer = setInterval(() => { checkUpdate(false).catch(() => {}); }, UPDATE_CHECK_INTERVAL);
+  updateTimer.unref && updateTimer.unref();
+}
 
 process.on('SIGTERM', () => {
   log('收到 SIGTERM，退出');
