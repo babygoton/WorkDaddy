@@ -5,6 +5,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { validateRequirements, assessRequirements } = require('./automation-compatibility');
 const { normalizeToastOptions } = require('./toast-options.js');
+const { normalizeAutomationModelId } = require('./automation-model.js');
 
 const SCHEMA_VERSION = 2;
 const SUPPORTED_SCHEMA_VERSIONS = new Set([1, 2]);
@@ -41,6 +42,7 @@ const CAPABILITIES = [
   { id: 'logic.retry', zh: '失败重试', en: 'Retry on failure', descriptionZh: '失败后按次数和间隔重试。', descriptionEn: 'Retry failed steps with a bounded delay.', example: { op: 'logic.retry', times: 3, delayMs: 1000, steps: [] } },
   { id: 'logic.catch', zh: '捕获错误', en: 'Catch an error', descriptionZh: '执行 steps；失败时把错误写入 vars.error 并运行 onError。', descriptionEn: 'Run steps; on failure, write the error to vars.error and run onError.', example: { op: 'logic.catch', steps: [], onError: [] } },
   { id: 'logic.assert', zh: '条件断言', en: 'Assert a condition', descriptionZh: '条件不成立时终止任务并给出错误信息。', descriptionEn: 'Stop the task with an error when a condition is false.', example: { op: 'logic.assert', condition: { left: '{{response.ok}}', operator: 'truthy' }, message: '请求失败' } },
+  { id: 'log.write', zh: '写入运行日志', en: 'Write run log', descriptionZh: '将固定 message 中的 {参数名} 替换为 params 标量值后写入运行日志。参数可引用模板；拒绝凭据字段，对手机号和令牌格式脱敏。不弹出通知。', descriptionEn: 'Write a run log using {name} placeholders and scalar params. Templates are supported; credential paths are rejected and phone/token patterns are redacted. No notification.', example: { op: 'log.write', message: '账号 {account}：{state}', params: { account: '{{account.uid}}', state: '{{vars.catStatus.json.data.state}}' } } },
   { id: 'account.forEach', zh: '循环账号', en: 'Iterate accounts', descriptionZh: '对全部或指定账号依次执行步骤；switch:true 会真实切换登录账号，并在循环结束后恢复原账号。', descriptionEn: 'Run steps for all or selected accounts; switch:true physically switches the logged-in account and restores the original account when the loop ends.', example: { op: 'account.forEach', accounts: 'all', switch: true, steps: [] } },
   { id: 'account.status', zh: '查询账号状态', en: 'Read account status', descriptionZh: '查询今日签到、今日活跃和积分等只读状态。', descriptionEn: 'Read check-in, activity, and credit status.', example: { op: 'account.status', fields: ['checkin.today', 'activity.today'] } },
   { id: 'account.checkin', zh: '账号静默签到', en: 'Check in as account', descriptionZh: '使用循环账号的 token 签到，不切换客户端。当天已确认签到时跳过所有请求；返回 ok、skipped、code 等状态。', descriptionEn: 'Check in using the context account token without switching accounts. Confirmed daily records skip all requests. Returns ok, skipped and code.', example: { op: 'account.checkin', saveAs: 'checkin' } },
@@ -75,8 +77,8 @@ for (const [id, zh, en, example, descriptionZh, descriptionEn] of [
   ['logic.forEach', '循环列表', 'Iterate list', {op:'logic.forEach',items:'{{vars.items}}',steps:[]}, '遍历最多 1000 项，使用 vars.item 和 vars.index，退出后恢复上下文。', 'Iterate up to 1000 entries via vars.item and vars.index; restore context on exit.'],
   ['logic.break', '退出循环', 'Break loop', {op:'logic.break'}, '退出最近一层列表、重复或账号循环。', 'Exit the nearest list, repeat or account loop.'],
   ['logic.waitUntil', '等待条件', 'Wait for condition', {op:'logic.waitUntil',timeoutMs:10000,intervalMs:250,steps:[],condition:{left:'{{vars.ready}}',operator:'truthy'}}, '立即执行查询步骤并检查条件；超时失败，可取消。', 'Immediately run polling steps and check a condition; cancellable with timeout.'],
-  ['session.create', '新建会话并发送', 'Create and send', {op:'session.create',message:'你好',saveAs:'receipt'}, '保存现有新建页草稿后发送第一条消息，返回绑定账号、会话和请求的回执。', 'Preserve a New Task draft, send the first message and return an account/conversation/request receipt.'],
-  ['session.send', '向指定可见会话发送', 'Send to visible session', {op:'session.send',conversationId:'{{vars.receipt.conversationId}}',message:'继续',saveAs:'receipt'}, '仅发送到已挂载且选中的指定会话；草稿非空时拒绝，未确认发送不会自动重发。', 'Only send to the selected mounted conversation; reject occupied drafts and never automatically resend unconfirmed sends.'],
+  ['session.create', '新建会话并发送', 'Create and send', {op:'session.create',message:'你好',model:'deepseek-v4.1-flash',saveAs:'receipt'}, '保存现有新建页草稿后发送第一条消息；V2 可选 model（精确模型 ID），发送后恢复原新建任务模型偏好。返回绑定账号、会话和请求的回执。', 'Preserve a New Task draft and send the first message. V2 accepts an optional model ID and restores the New Task model preference after sending. Returns an account/conversation/request receipt.'],
+  ['session.send', '向指定可见会话发送', 'Send to visible session', {op:'session.send',conversationId:'{{vars.receipt.conversationId}}',message:'继续',model:'deepseek-v4.1-flash',saveAs:'receipt'}, '仅发送到已挂载且选中的指定会话；V2 可选 model（精确模型 ID），切换后会话保留该模型。草稿非空时拒绝，未确认发送不会自动重发。', 'Send only to a selected mounted conversation. V2 accepts an optional model ID, which remains selected in the conversation. Reject occupied drafts and never automatically resend unconfirmed sends.'],
   ['session.wait', '等待指定回复完成', 'Wait for bound reply', {op:'session.wait',receipt:'{{vars.receipt}}',timeoutMs:180000}, '按回执绑定账号、会话和请求等待完成；失败、取消或身份变化时退出。', 'Wait by account/conversation/request receipt; fail on errors, cancellation or identity changes.'],
   ['state.checkpoint', '保存检查点', 'Save checkpoint', {op:'state.checkpoint',key:'progress',value:{done:'{{vars.done}}'}}, '显式保存进度，使用 state.get 恢复；不会自动重放发送或其他副作用。', 'Explicitly save progress; restore with state.get. Never automatically replay sends or other side effects.'],
 ]) CAPABILITIES.push({id,zh,en,example,descriptionZh,descriptionEn});
@@ -350,6 +352,19 @@ function validateSteps(steps, depth = 0, schemaVersion = 1) {
   steps.forEach((step, index) => {
     if (!step || typeof step !== 'object') throw new Error(`第 ${index + 1} 步不是对象`);
     const op = String(step.op || '').trim();
+    if (op === 'log.write') {
+      if (typeof step.message !== 'string' || !step.message.trim() || step.message.length > 240 || /\{\{|\}\}/.test(step.message)) throw new Error('日志 message 需要不含模板的固定文字（最多 240 字符）');
+      const params = step.params == null ? {} : step.params;
+      if (!params || typeof params !== 'object' || Array.isArray(params) || Object.keys(params).length > 10) throw new Error('日志 params 需要最多 10 个命名参数');
+      for (const [key, value] of Object.entries(params)) {
+        if (!/^[A-Za-z_][\w-]{0,39}$/.test(key) || /token|cookie|password|secret|auth|credential|key|header|body|content/i.test(key)) throw new Error('日志参数名无效或涉及敏感字段');
+        if (!['string', 'number', 'boolean'].includes(typeof value) || typeof value === 'string' && value.length > 240) throw new Error('日志参数只支持短标量');
+        if (typeof value === 'string' && value.includes('{{')) {
+          const match = value.match(/^\{\{\s*([\w.-]+)\s*\}\}$/);
+          if (!match || match[1].split('.').some(part => /token|cookie|password|secret|auth|credential|key|header|body|content|text/i.test(part))) throw new Error('日志模板涉及敏感字段或格式无效');
+        }
+      }
+    }
     if (op === 'notify.toast' || op === 'notify.dismiss') {
       const id = typeof step.id === 'string' && /\{\{[\w. -]+\}\}/.test(step.id) ? 'template-id' : step.id;
       normalizeToastOptions({ ...step, id }, op === 'notify.dismiss');
@@ -362,6 +377,10 @@ function validateSteps(steps, depth = 0, schemaVersion = 1) {
     if (step.saveAs && (!/^[A-Za-z_][\w-]{0,79}$/.test(step.saveAs) || ['__proto__','prototype','constructor'].includes(step.saveAs))) throw new Error('saveAs 必须是变量名');
     if (step.locators) { if (!Array.isArray(step.locators) || !step.locators.length || step.locators.length > 10) throw new Error('候选定位器需要 1–10 项'); step.locators.forEach(validateLocator); }
     if (!SUPPORTED_OPS.has(op)) throw new Error(`第 ${index + 1} 步不支持能力: ${op || '(空)'}`);
+    if ((op === 'session.create' || op === 'session.send') && Object.hasOwn(step, 'model')) {
+      if (schemaVersion < 2) throw new Error('指定会话模型需要自动化协议 V2');
+      normalizeAutomationModelId(step.model);
+    }
     if (['logic.sequence', 'logic.repeat', 'logic.retry', 'logic.catch', 'logic.forEach', 'logic.waitUntil', 'account.forEach'].includes(op)) validateSteps(step.steps || [], depth + 1, schemaVersion);
     if (op === 'logic.retry' && /\"op\"\s*:\s*\"session\.(create|send|sendCurrent)\"/.test(JSON.stringify(step.steps || []))) throw new Error('会话发送不能放入 retry，避免重复发送');
     if (op === 'logic.catch') validateSteps(step.onError || [], depth + 1, schemaVersion);
@@ -442,6 +461,17 @@ function compare(left, operator, right) {
   throw new Error('不支持的判断运算符: ' + operator);
 }
 
+function safeLogParam(value) {
+  if (value == null || typeof value === 'object') return '-';
+  return String(value).replace(/[\r\n\t]+/g, ' ')
+    .replace(/\b1[3-9]\d{9}\b/g, phone => '***' + phone.slice(-4))
+    .replace(/\bBearer\s+[^\s,;]+/ig, 'Bearer [已隐藏]')
+    .replace(/\b[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g, '[已隐藏]')
+    .replace(/\b(?:access[_-]?token|refresh[_-]?token|cookie|authorization|api[_-]?key|password)\s*[:=]\s*[^\s,;]+/ig, '[已隐藏]')
+    .replace(/\b[A-Fa-f0-9]{32,}\b/g, '[已隐藏]')
+    .slice(0, 100);
+}
+
 function capabilityText(language = 'zh') {
   const zh = language !== 'en';
   const available = CAPABILITIES.filter((item) => item.available !== false);
@@ -472,7 +502,8 @@ function capabilityText(language = 'zh') {
     '元素定位 locator：{kind,value}。kind 支持 css、xpath、text、role、ariaLabel、placeholder、attribute。coordinates 仅保留协议格式，当前不可用于 DOM 步骤。',
     'DOM 等待：dom.wait 可使用 seconds 做固定等待；或使用 locator、until:{state:"visible"|"hidden"|"attached"|"detached"|"clickable"}、timeoutMs 等待元素状态。until 还支持 text 包含匹配或 attribute/value 相等。locators 数组提供依次回退的定位器；readText 最多 100000 字符。iframe 内目前只支持读取，不支持点击与输入。DOM 读取结果可用 saveAs 保存。',
     'HTTP 输入：method、url、query、headers、body、timeoutMs（500-60000）、saveAs。响应：{ok,status,headers,text,json}，正文最多 1 MiB。http.request 不允许自定义 Authorization/Cookie；http.requestAsAccount 只对当前客户端官方 HTTPS origin 注入账号登录态；禁止跨域、非默认端口、URL 用户名密码。重定向不会自动跟随。body/query/headers 支持递归模板。默认非 2xx 返回 ok:false 供分支判断；throwOnHttpError:true 抛错以配合 retry（支持 backoff，默认 1）。停止会中止 HTTP 和等待。',
-    '会话：session.create 新建并发送第一条消息；session.send 仅向选中且无草稿的指定 conversationId 发送；返回 {accountUid,conversationId,userMessageId,requestId,baselineAssistantId} 回执，saveAs 保存。session.wait 接受 receipt（默认 vars.session）、timeoutMs（最长 300000）、contains，按回执监听。未知发送结果不会自动重发；发送不能嵌套 retry。session.sendCurrent/waitReply 是兼容别名，前者实际上新建会话。仅支持挂载的可见会话，不支持后台任意会话发送。',
+    '运行日志：log.write 使用固定 message 和 params 命名标量参数，例如 {account} 对应 params.account:"{{account.uid}}"。会脱敏手机号和常见令牌格式，拒绝敏感字段路径；不要在 message 中写凭据。运行日志不弹通知，单次运行不按条数截断；daemon 重启后内存中的运行记录会清空。',
+    '会话：session.create 新建并发送第一条消息；session.send 仅向选中且无草稿的指定 conversationId 发送。V2 两者均可选 model（精确模型 ID，支持模板），切换未确认则拒绝发送；create 发送后恢复新建任务模型偏好，send 保留会话模型。返回 {accountUid,conversationId,userMessageId,requestId,baselineAssistantId} 回执，saveAs 保存。session.wait 接受 receipt（默认 vars.session）、timeoutMs（最长 300000）、contains，按回执监听。未知发送结果不会自动重发；发送不能嵌套 retry。session.sendCurrent/waitReply 是兼容别名，前者实际上新建会话。仅支持挂载的可见会话，不支持后台任意会话发送。',
     '状态作用域：state.get/state.set 的 scope 支持 task（默认）或 account；所有状态首先按任务 ID 隔离；account scope 再按 uid 隔离。V2 state.set 可设置 ttlMs，过期后 state.get 返回空值并清理。key 必填；state.get 可配 saveAs。',
     '通知：notify.toast 使用 react-hot-toast，从窗口底部向上弹出；level 支持 info、success、warning、error、loading。可选 duration（1000–60000 毫秒）、id、saveAs；相同 id 更新提示，notify.dismiss 用 id 关闭。id 按本次运行隔离，任务结束自动清理 loading。notify.afterAllTasks 已废弃，仅兼容旧任务；新任务不要使用。',
     '失败语义：未捕获错误会停止主步骤并执行 onFailure；logic.catch 捕获局部错误并把消息写入 {{vars.error.message}}；logic.retry 只重试其嵌套步骤。',
@@ -495,7 +526,8 @@ function capabilityText(language = 'zh') {
     'Locator: {kind,value}. kind supports css, xpath, text, role, ariaLabel, placeholder, and attribute. coordinates is reserved and unavailable to current DOM steps.',
     'DOM waits: use seconds for a fixed delay, or locator plus until:{state:"visible"|"hidden"|"attached"|"detached"|"clickable"} and timeoutMs. until also accepts text containment or attribute/value equality. locators supplies ordered fallbacks; readText is capped at 100000 characters. Iframes support reads only, not clicks or input. DOM read results can be stored with saveAs.',
     'HTTP input: method, url, query, headers, body, timeoutMs (500-60000), saveAs. Response: {ok,status,headers,text,json}; body is capped at 1 MiB. http.request rejects Authorization/Cookie; http.requestAsAccount injects credentials only for current-profile official HTTPS origins, rejecting foreign origins, ports and URL credentials. Redirects are not followed. body/query/headers resolve recursive templates. Non-2xx returns ok:false by default; throwOnHttpError:true enables retry (backoff defaults to 1). Cancellation aborts HTTP and waits.',
-    'Sessions: session.create creates by sending the first message; session.send targets only a selected conversationId with an empty composer. Returns {accountUid,conversationId,userMessageId,requestId,baselineAssistantId}; saveAs persists the receipt in variables. session.wait accepts receipt (default vars.session), timeoutMs (up to 300000), contains. Unconfirmed sends are never automatically retried; sends cannot be nested in retry. sendCurrent/waitReply are legacy aliases; sendCurrent creates a new conversation. Only mounted visible sessions are supported.',
+    'Run logs: log.write takes a fixed message and named scalar params; {account} reads params.account:"{{account.uid}}". Phone and common token patterns are redacted, and sensitive paths are rejected. Never put credentials in message. Run logs do not show notifications and are not truncated by entry count; in-memory runs are cleared on daemon restart.',
+    'Sessions: session.create creates by sending the first message; session.send targets only a selected conversationId with an empty composer. In V2 both accept an optional model (exact model ID, templates supported) and refuse to send if the switch is unconfirmed. create restores the New Task model preference after sending; send keeps the model selected in the conversation. Returns {accountUid,conversationId,userMessageId,requestId,baselineAssistantId}; saveAs persists the receipt in variables. session.wait accepts receipt (default vars.session), timeoutMs (up to 300000), contains. Unconfirmed sends are never automatically retried; sends cannot be nested in retry. sendCurrent/waitReply are legacy aliases; sendCurrent creates a new conversation. Only mounted visible sessions are supported.',
     'State scope: state.get/state.set scope is task (default) or account. State is isolated by task ID and account scope adds the uid. V2 state.set accepts ttlMs; expired values are removed and state.get returns empty. key is required; state.get accepts saveAs.',
     'Notifications: notify.toast uses react-hot-toast at bottom-center. level is info, success, warning, error, or loading. Optional duration (1000–60000 ms), id, and saveAs; reuse id to update, notify.dismiss with id to dismiss. IDs are scoped to a run; unfinished loading notifications are cleared when the run ends. notify.afterAllTasks is deprecated and retained only for saved tasks. Do not generate it for new tasks.',
     'Failure behavior: an uncaught error stops main steps and runs onFailure. logic.catch writes a local error to {{vars.error.message}}. logic.retry retries only its nested steps.',
@@ -745,6 +777,12 @@ async function executeTask(taskInput, options = {}) {
       return { ok: true, key, matched, result: await runSteps(matched ? cases[key] : (step.default || [])) };
     }
     if (op === 'vars.set') { const key = String(step.key || ''); if (!/^[A-Za-z_][\w-]{0,79}$/.test(key) || ['__proto__','constructor','prototype'].includes(key)) throw new Error('变量名无效'); return (ctx.vars[key] = resolveValue(step.value, ctx)); }
+    if (op === 'log.write') {
+      const params = Object.fromEntries(Object.entries(step.params || {}).map(([key, value]) => [key, safeLogParam(resolveValue(value, ctx))]));
+      const message = step.message.replace(/\{([A-Za-z_][\w-]*)\}/g, (match, key) => Object.hasOwn(params, key) ? params[key] : match);
+      log('任务日志: ' + message);
+      return { ok: true };
+    }
     if (op === 'time.now') {
       const at = clock();
       const date = new Date(at);
@@ -877,7 +915,9 @@ async function executeTask(taskInput, options = {}) {
     }
     if (op === 'session.create' || op === 'session.send') {
       if (typeof options.sessionAction !== 'function') throw new Error('会话能力不可用');
-      const receipt = await options.sessionAction(op, resolveValue(step,ctx)); ctx.vars.session = receipt; return receipt;
+      const detail = resolveValue(step,ctx);
+      if (Object.hasOwn(step, 'model')) detail.model = normalizeAutomationModelId(detail.model);
+      const receipt = await options.sessionAction(op, detail); ctx.vars.session = receipt; return receipt;
     }
     if (op === 'session.wait') { if (typeof options.sessionAction !== 'function') throw new Error('会话能力不可用'); return options.sessionAction(op, {...resolveValue(step,ctx),receipt:resolveValue(step.receipt,ctx)||ctx.vars.session}); }
     if (op === 'session.sendCurrent') {

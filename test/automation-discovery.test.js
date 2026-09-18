@@ -184,9 +184,9 @@ test('automation UI preloads discovery and exposes fuzzy task search and import'
   assert.doesNotMatch(source, /wbs-auto-discovery-stars/);
 });
 
-test('daemon no longer seeds or prompts for the check-in task', () => {
+test('daemon includes a disabled check-in preset without a risk prompt', () => {
   const daemon = fs.readFileSync(path.join(__dirname, '../scripts/daemon.js'), 'utf8');
   const inject = fs.readFileSync(path.join(__dirname, '../scripts/inject.js'), 'utf8');
-  assert.doesNotMatch(daemon, /installBuiltinTask\([^\n]+daily-account-checkin\.json/);
+  assert.match(daemon, /daily-account-checkin\.json/);
   assert.doesNotMatch(inject, /showCheckinRiskOnOpen/);
 });

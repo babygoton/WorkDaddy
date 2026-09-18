@@ -128,7 +128,7 @@ if [ "${WALLPAPER_COUNT:-0}" -le 0 ]; then
   echo "错误：内置官方壁纸为空：$BUILTIN_SRC/wallpapers" >&2
   exit 2
 fi
-echo "==> 内置资产来源: $BUILTIN_SRC（${WALLPAPER_COUNT} 张壁纸 + 主题）"
+echo "==> 内置资产来源: ${BUILTIN_SRC}（${WALLPAPER_COUNT} 张壁纸 + 主题）"
 WALLPAPER_OVERRIDE="$DIR/scripts/builtin-overrides/wallpaper-06.webp"
 
 # 3) 打包：顶层只保留免安装启动入口和便携标记；安装请使用 Setup.exe。

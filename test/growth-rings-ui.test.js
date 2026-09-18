@@ -96,7 +96,8 @@ test('hover refreshes one account in place and exposes loading, timestamp, and r
   assert.match(popoverSource, /task\.guide/);
   assert.match(popoverSource, /<label>进度<\/label>/);
   assert.match(popoverSource, /task\.tag/);
-  assert.match(popoverSource, /一键去完成/);
+  assert.match(popoverSource, /data-wbs-growth-official>去完成<\/button>/);
+  assert.doesNotMatch(popoverSource, /acceptAllButton|hasUnaccepted/);
   assert.match(popoverSource, /展开已领取/);
   assert.match(popoverSource, /收起已领取/);
   assert.match(inject, /state\.dailyClaimedExpanded/);
@@ -147,32 +148,81 @@ test('growth primary is green in light and blue-purple in dark, cyber, and glass
   assert.match(inject, /\.wbs-growth-tier b\{[^}]*color:var\(--wb-color-text-secondary/);
 });
 
-test('growth plan exposes guarded blind-box and lottery actions with loading and reward toasts', () => {
-  assert.match(inject, /state\.dailyGrowthActionRunning/);
-  assert.match(inject, /data-wbs-growth-action="gacha"/);
-  assert.match(inject, /data-wbs-growth-action="lottery"/);
-  assert.match(inject, /\/api\/growth\/buddy\/open/);
-  assert.match(inject, /\/api\/growth\/lottery\/draw/);
-  assert.match(inject, /开启中/);
-  assert.match(inject, /抽奖中/);
-  assert.match(inject, /toast\(response\.reward \|\| fallback/);
-  assert.match(daemon, /p === '\/api\/growth\/buddy\/open'/);
-  assert.match(daemon, /p === '\/api\/growth\/lottery\/draw'/);
-  assert.match(daemon, /openBuddyBlindBox\(token/);
-  assert.match(daemon, /drawGrowthLottery\(token/);
-  assert.match(daemon, /Number\(action\.count\) > 0/);
+test('growth actions open the official center and never write through local growth routes', async () => {
+  assert.match(inject, /https:\/\/www\.workbuddy\.cn\/profile\/growth-center/);
+  assert.match(inject, /data-wbs-growth-official/);
+  assert.match(inject, /api\('\/api\/open-url'/);
+  assert.match(inject, /\/api\/growth\/daily-progress/);
+  const source = inject.match(/function openOfficialGrowthCenter\(\) \{[\s\S]*?\n    \}/);
+  assert.ok(source);
+  const calls = [];
+  const open = Function('api', 'toast', 'root', source[0] + '\nreturn openOfficialGrowthCenter;')(
+    (route, options) => { calls.push({ route, options }); return Promise.resolve(); },
+    () => assert.fail('opening the official site should not toast success'),
+    {}
+  );
+  open();
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].route, '/api/open-url');
+  assert.deepEqual(JSON.parse(calls[0].options.body), { url: 'https://www.workbuddy.cn/profile/growth-center' });
+  await Promise.resolve();
+  for (const suffix of ['tasks/accept', 'tasks/accept-all', 'buddy/first', 'buddy/travel/claim', 'buddy/select', 'buddy/travel/depart', 'buddy/open', 'lottery/draw']) {
+    assert.doesNotMatch(inject, new RegExp('/api/growth/' + suffix));
+    assert.doesNotMatch(daemon, new RegExp("p === '/api/growth/" + suffix + "'"));
+  }
 });
 
-test('locked Buddy offers a guarded first-unlock action in the growth popover', () => {
-  assert.match(inject, /data-wbs-buddy-unlock/);
-  assert.match(inject, /解锁 Buddy/);
-  assert.match(inject, /解锁中/);
-  assert.match(inject, /\/api\/growth\/buddy\/first/);
-  assert.match(inject, /state\.dailyBuddyUnlocking/);
-  assert.match(daemon, /p === '\/api\/growth\/buddy\/first'/);
-  assert.match(daemon, /claimFirstBuddy\(token/);
-  assert.match(daemon, /first\.state !== 'completed'/);
-  assert.match(daemon, /before\.cat\.state !== 'unknown'/);
+test('growth window buttons use the live current account and leave other accounts untouched', async () => {
+  const guardSource = inject.match(/function confirmCurrentGrowthAccount\(uid\) \{[\s\S]*?\n    \}/);
+  assert.ok(guardSource);
+  const calls = [], toasts = [];
+  let current = 'a';
+  const guard = Function('api', 'toast', 'root', guardSource[0] + '\nreturn confirmCurrentGrowthAccount;')(
+    route => { calls.push(route); return Promise.resolve({current: {uid: current}}); },
+    message => toasts.push(message), {}
+  );
+  assert.equal(await guard('a'), true);
+  assert.equal(await guard('b'), false);
+  current = null;
+  assert.equal(await guard('a'), false);
+  assert.deepEqual(calls, ['/api/accounts', '/api/accounts', '/api/accounts']);
+  assert.deepEqual(toasts, ['请先切换到该账号再操作', '请先切换到该账号再操作']);
+  const handler = inject.slice(inject.indexOf("listen(popup, 'click', function (event) {", inject.indexOf('function setupDailyProgressPopover()')),
+    inject.indexOf("listen(window, 'resize'", inject.indexOf('function setupDailyProgressPopover()')));
+  assert.match(handler, /confirmCurrentGrowthAccount\(uid\)\.then\(function \(isCurrent\) \{/);
+  assert.match(handler, /if \(!isCurrent\) return;/);
+  assert.ok(handler.indexOf('if (!isCurrent) return;') < handler.indexOf("button.hasAttribute('data-wbs-claimed-toggle')"));
+  assert.ok(handler.indexOf('if (!isCurrent) return;') < handler.indexOf('openOfficialGrowthCenter()'));
+  const listeners = {};
+  const popup = {contains: () => true, querySelector: () => ({scrollTop: 0}), scrollTop: 0};
+  const state = {dailyClaimedExpanded: {b: false}};
+  let allowed = false;
+  let opened = 0;
+  const context = {
+    popup, state,
+    activeRing: {getAttribute: () => 'b'},
+    listen: (_node, type, listener) => { listeners[type] = listener; },
+    confirmCurrentGrowthAccount: () => Promise.resolve(allowed),
+    openOfficialGrowthCenter: () => { opened++; },
+    refreshDailyProgressPopover: () => {},
+  };
+  const vm = require('node:vm');
+  vm.runInNewContext(handler, context);
+  const click = attribute => listeners.click({
+    target: {closest: () => ({disabled: false, hasAttribute: name => name === attribute})},
+    preventDefault() {}, stopPropagation() {},
+  });
+  click('data-wbs-growth-official');
+  click('data-wbs-claimed-toggle');
+  await Promise.resolve();
+  assert.equal(opened, 0);
+  assert.equal(state.dailyClaimedExpanded.b, false);
+  allowed = true;
+  click('data-wbs-growth-official');
+  click('data-wbs-claimed-toggle');
+  await Promise.resolve();
+  assert.equal(opened, 1);
+  assert.equal(state.dailyClaimedExpanded.b, true);
 });
 
 test('usage modal renders restrained primary line and top-to-bottom area gradient', () => {
@@ -187,30 +237,14 @@ test('usage modal renders restrained primary line and top-to-bottom area gradien
   assert.doesNotMatch(inject, /wbs-usage-accent/);
 });
 
-test('growth details offer one guarded batch action and keep claimed rows inside the scroll list', () => {
-  assert.match(inject, /state\.dailyTasksAccepting/);
-  assert.match(inject, /data-wbs-growth-accept-all/);
-  assert.match(inject, /一键去完成/);
-  assert.match(inject, /接取中/);
-  assert.match(inject, /wbs-growth-task-action-spinner/);
-  assert.match(inject, /\/api\/growth\/tasks\/accept-all/);
-  assert.match(inject, /body: JSON\.stringify\(\{ uid: uid \}\)/);
-  assert.match(inject, /if \(state\.dailyTasksAccepting\[uid\]\) return/);
-  assert.match(inject, /account\.dailyProgress = response\.progress/);
-  assert.match(inject, /toast\(response\.accepted \? '已接取 '/);
-  assert.match(inject, /data-wbs-growth-accept="/);
-  assert.match(inject, /data-wbs-growth-accept-all/);
+test('growth details link unfinished tasks to the official center and keep claimed rows inside the scroll list', () => {
   assert.match(inject, /task\.state === 'not_accepted' && taskCode/);
-  assert.match(inject, /: '去完成'/);
+  assert.match(inject, /data-wbs-growth-official>去完成<\/button>/);
   assert.match(inject, /visibleTasks\.map\(renderGrowthTask\)\.join\(''\) \+ claimedToggle \+/);
   assert.doesNotMatch(inject, /<\/div>' \+ claimedToggle \+ '<\/div>'/);
   assert.match(inject, /\.wbs-growth-task-action\{[^}]*min-width:/);
   assert.match(inject, /\.wbs-growth-task-action:focus-visible/);
   assert.match(inject, /\.wbs-growth-task-action\[disabled\]/);
-  assert.match(daemon, /p === '\/api\/growth\/tasks\/accept-all'/);
-  assert.match(daemon, /task\.state === 'not_accepted' && task\.taskCode/);
-  assert.match(daemon, /acceptGrowthTasks\(token, taskCodes\.slice\(offset, offset \+ 20\)/);
-  assert.match(daemon, /dailyProgressCache\.clear\(uid\)/);
 });
 
 test('daily labels share a black light treatment and one glass dark treatment', () => {
@@ -219,40 +253,17 @@ test('daily labels share a black light treatment and one glass dark treatment', 
   assert.match(inject, /backdrop-filter:blur\(12px\)/);
 });
 
-test('travel requires a current Buddy and provides a selection action instead of a broken depart button', () => {
+test('travel selection links to the official center', () => {
   assert.match(inject, /cat\.state === 'needs_selection'/);
-  assert.match(inject, /data-wbs-buddy-choice/);
-  assert.match(inject, /data-wbs-buddy-select/);
-  assert.match(inject, /\/api\/growth\/buddy\/select/);
-  assert.match(daemon, /p === '\/api\/growth\/buddy\/select'/);
-  assert.match(daemon, /cat\.activeBuddy !== true/);
-  assert.match(daemon, /selectCurrentBuddy\(token/);
+  assert.match(inject, /去官网选择 Buddy/);
 });
 
-test('arrived Buddy gifts can be claimed once with a stable loading button', () => {
-  assert.match(inject, /state\.dailyTravelClaiming/);
-  assert.match(inject, /data-wbs-travel-claim/);
-  assert.match(inject, /领取中/);
-  assert.match(inject, /claimBuddyTravelReward/);
-  assert.match(inject, /\/api\/growth\/buddy\/travel\/claim/);
-  assert.match(inject, /body: JSON\.stringify\(\{ uid: uid \}\)/);
-  assert.match(inject, /if \(state\.dailyTravelClaiming\[uid\]\) return/);
-  assert.match(inject, /account\.dailyProgress = response\.progress/);
-  assert.match(inject, /toast\('旅行礼物已领取'/);
-  assert.match(daemon, /p === '\/api\/growth\/buddy\/travel\/claim'/);
-  assert.match(daemon, /claimBuddyTravelReward\(token/);
-  assert.match(daemon, /cat\.state !== 'arrived'/);
+test('arrived Buddy gifts link to the official center', () => {
+  assert.match(inject, /去官网领取/);
 });
 
-test('idle Buddy can be departed once with loading and refreshed status', () => {
-  assert.match(inject, /state\.dailyTravelDeparting/);
-  assert.match(inject, /data-wbs-travel-depart/);
-  assert.match(inject, /派出中/);
-  assert.match(inject, /departBuddyTravel/);
-  assert.match(inject, /\/api\/growth\/buddy\/travel\/depart/);
-  assert.match(daemon, /p === '\/api\/growth\/buddy\/travel\/depart'/);
-  assert.match(daemon, /departBuddyTravel\(token/);
-  assert.match(daemon, /cat\.state !== 'idle'/);
+test('idle Buddy travel links to the official center', () => {
+  assert.match(inject, /去官网派出/);
 });
 
 test('travel countdown formats a live arrival time without dropping hours or zero padding', () => {

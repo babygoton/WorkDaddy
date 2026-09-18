@@ -118,7 +118,6 @@ const {
   checkinDisplayValue,
   getAccountOrder,
   setAccountOrder,
-  setAccountSettings,
 } = require('./lib.js');
 const { createThirdPartyImport } = require('./third-party-models.js');
 const { extractCreditSegments, sortCreditSegments, mergeCreditSegments, parseEnterpriseUsage, ENTERPRISE_EDITIONS } = require('./credit-segments.js');
@@ -136,16 +135,8 @@ const {
 } = require('./token-refresh.js');
 const { fetchGrowthTodayActive, activateGrowthAccount, fetchGrowthStreak, createGrowthStreakCache } = require('./growth-active.js');
 const {
-  acceptGrowthTasks,
-  claimBuddyTravelReward,
-  claimFirstBuddy,
   createDailyProgressCache,
-  departBuddyTravel,
-  drawGrowthLottery,
   fetchDailyProgress,
-  openBuddyBlindBox,
-  selectCurrentBuddy,
-  summarizeGrowthActionReward,
 } = require('./growth-daily.js');
 const {
   captureException,
@@ -197,12 +188,13 @@ const {
 } = require('./automation.js');
 
 const { assertAccountRequestUrl, createTaskState, cancellableWait, createRendererGate, probeSessionReceipt, receiptComplete } = require('./automation-runtime.js');
+const { normalizeAutomationModelId, selectAutomationModel, verifyAutomationModel, restoreNewTaskModelPreference } = require('./automation-model.js');
 const acquireAutomationRenderer = createRendererGate();
 const acquireAutomationInput = createRendererGate();
 let automationInputActive = false;
 
 const { previewPackage, PACKAGE_FORMAT_VERSION } = require('./automation-packages.js');
-const { exportTasks, previewImport, importTasks, readTransferBody } = require('./automation-transfer.js');
+const { exportTasks, importTasks, readTransferBody } = require('./automation-transfer.js');
 const { createAutomationDiscovery } = require('./automation-discovery.js');
 
 const { createAutomationNotifier } = require('./toast-options.js');
@@ -383,8 +375,8 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 // 1.2.52：成长任务支持在悬浮层内直接接取，并在完成后同步最新任务状态。
 // 1.2.55：成长弹窗支持开启盲盒与抽奖并提示奖励，收敛成长/用量统计 primary 色使用。
 // 1.2.56：成长任务补齐说明与标签、已领取折叠、Buddy 派出，并把用量柱状图改为面积折线图。
-const DAEMON_VERSION = '1.2.65';
-const DAEMON_BUILD_ID = 'release-1.2.65-20260918-linux-portable';
+const DAEMON_VERSION = '1.2.70';
+const DAEMON_BUILD_ID = 'release-1.2.70-20260918-automation-model-id';
 const usageReporter = createUsageReporter({ profile: PROFILE.id, version: DAEMON_VERSION });
 configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const automationDiscovery = createAutomationDiscovery({
@@ -3114,7 +3106,7 @@ async function automationHttpRequest(request, account) {
     return { ok: response.ok, status: response.status, headers: { 'content-type': response.headers.get('content-type') || '' }, text, json: jsonBody };
   } catch (e) { if (request.isCancelled && request.isCancelled()) throw new Error('任务已停止'); if (e && e.name === 'AbortError') throw new Error('HTTP 请求超时'); throw new Error(e && e.message === 'HTTP 响应超过 1 MiB' ? e.message : 'HTTP 请求失败'); } finally { clearTimeout(timer); clearInterval(cancelTimer); }
 }
-function automationPublicRun(run) { return { id: run.id, taskId: run.taskId, status: run.status, phase: run.phase || 'executing', startedAt: run.startedAt, finishedAt: run.finishedAt || 0, error: run.error || '', logs: run.logs.slice(-80), result: run.result || null }; }
+function automationPublicRun(run) { return { id: run.id, taskId: run.taskId, status: run.status, phase: run.phase || 'executing', startedAt: run.startedAt, finishedAt: run.finishedAt || 0, error: run.error || '', logs: run.logs, result: run.result || null }; }
 
 // 自动化运行前收拢 WorkDaddy 面板「窗口」，避免其 contenteditable/悬浮层与 WorkBuddy 原生
 // composer 抢焦点或遮挡，导致任务把提示词键入到 WorkDaddy 面板输入框 / 点不到官方发送按钮
@@ -3231,7 +3223,6 @@ function startAutomationRun(task, event = null) {
   log('[automation-focus-diagnostics] automation:start ' + JSON.stringify({ runId: id, taskId: task.id, source: event && event.source || '', account: event && event.account || null, cdpTargetUrl: cdp.targetUrl, cdpTargetTitle: cdp.targetTitle }));
   const appendRunLog = (message) => {
     run.logs.push({ at: Date.now(), message: String(message || '').slice(0, 300) });
-    if (run.logs.length > 200) run.logs.splice(0, run.logs.length - 200);
   };
   automationRuns.set(id, run);
   run.wasPanelOpen = false;
@@ -3294,6 +3285,7 @@ function startAutomationRun(task, event = null) {
     }
     const accountUid = (currentAccount() || {}).uid;
     if (!accountUid) throw new Error('没有可用账号');
+    const modelId = detail.model === undefined ? null : normalizeAutomationModelId(detail.model);
     if (op === 'session.create') await withInput(() => ensureAutomationNewTask({ guard: () => {
       if (isCancelled() || (currentAccount() || {}).uid !== accountUid) throw new Error('发送前账号或运行状态已变化');
     } }));
@@ -3304,25 +3296,62 @@ function startAutomationRun(task, event = null) {
       // The common sender checks the exact editor immediately before typing.
       // New Task surface discovery cannot identify a conversation composer.
     }
-    if (isCancelled() || (currentAccount() || {}).uid !== accountUid) throw new Error('发送前账号或运行状态已变化');
-    await withInput(() => acSendPhrase(String(detail.message || ''), { requireEmpty: true, isCancelled, guard: async () => {
-      if (isCancelled() || (currentAccount() || {}).uid !== accountUid) throw new Error('账号或运行状态已变化，停止发送');
-      const selected = await readSession();
-      if (op === 'session.send' ? !selected || selected.conversationId !== detail.conversationId : selected && (!before || selected.conversationId !== before.conversationId)) throw new Error('会话已变化，停止发送');
-    } }));
-    // Do not retry an unconfirmed send: it may already have reached WorkBuddy.
-    const end = Date.now() + 12000;
-    while (Date.now() < end) {
-      if ((currentAccount() || {}).uid !== accountUid) throw new Error('发送后账号已变化，请检查会话；不会自动重发');
-      const snapshot = await readSession();
-      if (snapshot && snapshot.userMessageId && (!before || snapshot.conversationId !== before.conversationId || snapshot.userMessageId !== before.userMessageId)) {
-        if (op === 'session.send' && snapshot.conversationId !== detail.conversationId) throw new Error('发送后会话发生变化，请检查发送结果');
-        lastReceipt = {ok:true,accountUid,conversationId:snapshot.conversationId,userMessageId:snapshot.userMessageId,requestId:snapshot.requestId,baselineAssistantId:before && before.conversationId===snapshot.conversationId ? before.assistantId : ''};
-        return lastReceipt;
+    let modelSelection = null;
+    try {
+      if (modelId) {
+        modelSelection = await withInput(() => selectAutomationModelById(modelId,
+          op === 'session.send' ? { conversationId: detail.conversationId } : { accountUid }));
+        appendRunLog('session:model:confirmed');
       }
-      await cancellableWait(100,isCancelled);
+      if (isCancelled() || (currentAccount() || {}).uid !== accountUid) throw new Error('发送前账号或运行状态已变化');
+      await withInput(() => acSendPhrase(String(detail.message || ''), { requireEmpty: true, isCancelled, guard: async () => {
+        if (isCancelled() || (currentAccount() || {}).uid !== accountUid) throw new Error('账号或运行状态已变化，停止发送');
+        const selected = await readSession();
+        if (op === 'session.send' ? !selected || selected.conversationId !== detail.conversationId : selected && (!before || selected.conversationId !== before.conversationId)) throw new Error('会话已变化，停止发送');
+        if (modelId) await confirmAutomationModel(modelId, { displayName: modelSelection.displayName,
+          ...(op === 'session.send' ? { conversationId: detail.conversationId } : { accountUid }) });
+      } }));
+      // Do not retry an unconfirmed send: it may already have reached WorkBuddy.
+      const end = Date.now() + 12000;
+      while (Date.now() < end) {
+        if ((currentAccount() || {}).uid !== accountUid) throw new Error('发送后账号已变化，请检查会话；不会自动重发');
+        const snapshot = await readSession();
+        if (snapshot && snapshot.userMessageId && (!before || snapshot.conversationId !== before.conversationId || snapshot.userMessageId !== before.userMessageId)) {
+          if (op === 'session.send' && snapshot.conversationId !== detail.conversationId) throw new Error('发送后会话发生变化，请检查发送结果');
+          if (modelId && op === 'session.create') {
+            let confirmed = false;
+            for (let attempt = 0; attempt < 20 && !confirmed; attempt++) {
+              try { await confirmAutomationModel(modelId, { conversationId: snapshot.conversationId }); confirmed = true; }
+              catch (_) { await cancellableWait(150, isCancelled); }
+            }
+            if (!confirmed) throw new Error('消息已发送但新会话模型未确认，请检查 WorkBuddy；不会自动重发');
+          }
+          lastReceipt = {ok:true,accountUid,conversationId:snapshot.conversationId,userMessageId:snapshot.userMessageId,requestId:snapshot.requestId,baselineAssistantId:before && before.conversationId===snapshot.conversationId ? before.assistantId : ''};
+          if (modelId) lastReceipt.model = modelId;
+          return lastReceipt;
+        }
+        await cancellableWait(100,isCancelled);
+      }
+      throw new Error('未确认会话发送回执，请检查 WorkBuddy；不会自动重发');
+    } finally {
+      if (op === 'session.create' && modelSelection && modelSelection.changed) {
+        try {
+          const surface = await readAutomationAgentSurface(false).catch(() => null);
+          if (surface && surface.newTaskReady && (currentAccount() || {}).uid === accountUid) {
+            await withInput(async () => {
+              try {
+                await confirmAutomationModel(modelId, { accountUid, displayName: modelSelection.displayName });
+                await selectAutomationModelById(modelSelection.previousModel, { accountUid });
+              } catch (_) { /* A changed surface or user selection must not be overwritten. */ }
+            }, true);
+          }
+          const restored = await restoreAutomationNewTaskPreference(modelSelection);
+          if (!restored.restored) appendRunLog('session:model:preference-restore-skipped');
+        } catch (error) {
+          appendRunLog('session:model:preference-restore-failed:' + String(error && error.message || error).slice(0, 120));
+        }
+      }
     }
-    throw new Error('未确认会话发送回执，请检查 WorkBuddy；不会自动重发');
   };
   // Compatibility aliases retain the historical New Task send behavior.
   const sessionSendCurrent = async message => sessionAction('session.create',{message});
@@ -5442,6 +5471,35 @@ async function acSendPhrase(text, options = {}) {
   return sendStashToComposer({ content: { text: message, items: [] }, ...options });
 }
 
+async function selectAutomationModelById(model, options) {
+  const response = await cdpSend('Runtime.evaluate', {
+    expression: '(' + selectAutomationModel.toString() + ')(' + JSON.stringify({ model, ...options }) + ')',
+    awaitPromise: true, returnByValue: true,
+  });
+  if (response && response.exceptionDetails) {
+    const description = response.exceptionDetails.exception && response.exceptionDetails.exception.description || response.exceptionDetails.text || '未知错误';
+    throw new Error('选择会话模型失败：' + String(description).split('\n')[0].slice(0, 240));
+  }
+  if (!response || !response.result || !response.result.value) throw new Error('选择会话模型未返回确认');
+  return response.result.value;
+}
+
+async function confirmAutomationModel(model, options) {
+  const response = await cdpSend('Runtime.evaluate', {
+    expression: '(' + verifyAutomationModel.toString() + ')(' + JSON.stringify({ model, ...options }) + ')',
+    returnByValue: true,
+  });
+  if (!response || !response.result || response.result.value !== true) throw new Error('会话模型已变化，停止发送');
+}
+
+async function restoreAutomationNewTaskPreference(selection) {
+  const response = await cdpSend('Runtime.evaluate', {
+    expression: '(' + restoreNewTaskModelPreference.toString() + ')(' + JSON.stringify(selection) + ')',
+    returnByValue: true,
+  });
+  return response && response.result && response.result.value || { restored: false };
+}
+
 function automationAgentSurfaceExpression(focusComposer) {
   return `(function(){
     function visible(el){if(!el||el.closest('.wbs-root'))return false;var r=el.getBoundingClientRect();var s=getComputedStyle(el);return r.width>0&&r.height>0&&s.display!=='none'&&s.visibility!=='hidden'}
@@ -7198,12 +7256,9 @@ function handleApi(req, res) {
       .catch(error => json(res, 400, { ok: false, error: error.message }));
   }
 
-  if (req.method === 'POST' && ['/api/automations/export', '/api/automations/import/preview', '/api/automations/import'].includes(p)) {
+  if (req.method === 'POST' && p === '/api/automations/export') {
     return readTransferBody(req).then(body => {
-      const runtime = { version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform };
-      if (p === '/api/automations/export') return exportTasks(readAutomations(DATA_DIR), body && body.ids);
-      if (p === '/api/automations/import/preview') return previewImport(body, readAutomations(DATA_DIR), runtime);
-      return importTasks(DATA_DIR, body, runtime);
+      return exportTasks(readAutomations(DATA_DIR), body && body.ids);
     }).then(result => json(res, 200, { ok: true, ...result }))
       .catch(error => json(res, 400, { ok: false, error: error.message }));
   }
@@ -7282,8 +7337,10 @@ function handleApi(req, res) {
     const imported = importAgentInbox(DATA_DIR, { profileId: PROFILE.id });
     imported.forEach((item) => log(`[automation-agent] request=${item.requestId} ${item.ok ? 'imported=' + item.taskId : 'rejected=' + item.error}`));
     const tasks = readAutomations(DATA_DIR);
+    let builtinMarkers = {};
+    try { builtinMarkers = JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'automation-builtins.json'), 'utf8')) || {}; } catch (_) {}
     const runs = Array.from(automationRuns.values()).slice(-50).map(automationPublicRun);
-    return json(res, 200, { ok: true, tasks: tasks.map((task) => ({ ...task, manualRunnable: canManuallyRunTask(task), compatible: isTaskCompatible(task) })), runs });
+    return json(res, 200, { ok: true, tasks: tasks.map((task) => ({ ...task, manualRunnable: canManuallyRunTask(task), compatible: isTaskCompatible(task), builtinManaged: builtinMarkers[task.id] === true || builtinMarkers[task.id] && builtinMarkers[task.id].managed === true })), runs });
   }
 
   if (req.method === 'POST' && p === '/api/automations/logs/clear') {
@@ -7755,13 +7812,6 @@ function handleApi(req, res) {
     });
   }
 
-  if (req.method === 'POST' && p === '/api/accounts/settings') {
-    return readBody(req).then((body) => {
-      try { return json(res, 200, { ok: true, accountOrder: setAccountSettings(DATA_DIR, body) }); }
-      catch (error) { return json(res, 400, { ok: false, error: error.message }); }
-    });
-  }
-
   if (req.method === 'GET' && p === '/api/accounts') {
     const accounts = listAccounts(DATA_DIR);
     const cache = loadCheckinCache();
@@ -7975,291 +8025,6 @@ function handleApi(req, res) {
       };
       await Promise.all(Array.from({ length: Math.min(3, requested.length) }, worker));
       return json(res, 200, { ok: true, results });
-    });
-  }
-
-  if (req.method === 'POST' && p === '/api/growth/tasks/accept-all') {
-    return readBody(req).then(async (body) => {
-      if (PROFILE.capabilities.growthDaily !== true) return json(res, 400, { ok: false, error: '当前客户端不支持成长任务' });
-      const uid = String(body && body.uid || '').trim();
-      if (!/^[A-Za-z0-9_-]{1,128}$/.test(uid)) return json(res, 400, { ok: false, error: 'uid 格式无效' });
-      if (!listAccounts(DATA_DIR).some((account) => String(account.uid) === uid)) return json(res, 404, { ok: false, error: '账号不存在' });
-      const file = accountBackupFile(uid);
-      if (!fs.existsSync(file)) return json(res, 404, { ok: false, error: '账号备份不存在' });
-      let accepted = 0;
-      try {
-        const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
-        const auth = raw && raw.auth || {};
-        const token = auth.accessToken || auth.access_token || auth.token;
-        if (!token) return json(res, 400, { ok: false, error: '备份中无 accessToken' });
-
-        const before = await dailyProgressCache.get(uid, { force: true });
-        if (!before || before.status !== 'ready') throw new Error('未能读取最新成长任务状态');
-        const taskCodes = [...new Set((before.growth && before.growth.tasks || [])
-          .filter((task) => task && task.state === 'not_accepted' && task.taskCode)
-          .map((task) => task.taskCode))];
-        for (let offset = 0; offset < taskCodes.length; offset += 20) {
-          await acceptGrowthTasks(token, taskCodes.slice(offset, offset + 20), { apiHost: PROFILE.apiHost });
-          accepted += Math.min(20, taskCodes.length - offset);
-        }
-        dailyProgressCache.clear(uid);
-        const progress = await dailyProgressCache.get(uid, { force: true });
-        if (accepted && progress && progress.growth && Array.isArray(progress.growth.tasks)) {
-          for (const task of progress.growth.tasks) {
-            if (task && task.state === 'not_accepted' && taskCodes.includes(task.taskCode)) task.state = 'in_progress';
-          }
-        }
-        const streak = await growthStreakCache.get(uid);
-        return json(res, 200, { ok: true, accepted, progress: { uid, ...progress, streak } });
-      } catch (error) {
-        dailyProgressCache.clear(uid);
-        log(`[growth-daily] 批量接取任务失败 (${accepted} 已接取): ${String(error && error.message || error).slice(0, 160)}`);
-        return json(res, 502, { ok: false, error: accepted ? `已接取 ${accepted} 个任务，后续接取失败，请刷新后重试` : (error.message || '接取任务失败') });
-      }
-    });
-  }
-
-  if (req.method === 'POST' && p === '/api/growth/tasks/accept') {
-    return readBody(req).then(async (body) => {
-      if (PROFILE.capabilities.growthDaily !== true) return json(res, 400, { ok: false, error: '当前客户端不支持成长任务' });
-      const uid = String(body && body.uid || '').trim();
-      const taskCode = String(body && body.taskCode || '').trim();
-      if (!/^[A-Za-z0-9_-]{1,128}$/.test(uid)) return json(res, 400, { ok: false, error: 'uid 格式无效' });
-      if (!/^[A-Za-z0-9_.-]{1,96}$/.test(taskCode)) return json(res, 400, { ok: false, error: '任务码无效' });
-      const accounts = listAccounts(DATA_DIR);
-      if (!accounts.some((account) => String(account.uid) === uid)) return json(res, 404, { ok: false, error: '账号不存在' });
-      try {
-        const file = accountBackupFile(uid);
-        if (!fs.existsSync(file)) return json(res, 404, { ok: false, error: '账号备份不存在' });
-        const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
-        const auth = raw && raw.auth || {};
-        const token = auth.accessToken || auth.access_token || auth.token;
-        if (!token) return json(res, 400, { ok: false, error: '备份中无 accessToken' });
-
-        const before = await dailyProgressCache.get(uid, { force: true });
-        const task = before && before.growth && Array.isArray(before.growth.tasks)
-          ? before.growth.tasks.find((item) => item && item.taskCode === taskCode) : null;
-        if (!task) return json(res, 404, { ok: false, error: '当前成长计划中未找到该任务' });
-
-        let accepted = false;
-        let progress = before;
-        if (task.state === 'not_accepted') {
-          await acceptGrowthTasks(token, [taskCode], { apiHost: PROFILE.apiHost });
-          accepted = true;
-          dailyProgressCache.clear(uid);
-          progress = await dailyProgressCache.get(uid, { force: true });
-          const refreshedTask = progress && progress.growth && Array.isArray(progress.growth.tasks)
-            ? progress.growth.tasks.find((item) => item && item.taskCode === taskCode) : null;
-          // 官方状态偶尔存在短暂延迟，但接取接口已成功时不让按钮退回可点状态。
-          if (refreshedTask && refreshedTask.state === 'not_accepted') refreshedTask.state = 'in_progress';
-        }
-        const streak = await growthStreakCache.get(uid);
-        return json(res, 200, { ok: true, accepted, alreadyAccepted: !accepted, progress: { uid, ...progress, streak } });
-      } catch (error) {
-        log(`[growth-daily] 接取任务 ${taskCode} 失败: ${String(error && error.message || error).slice(0, 160)}`);
-        return json(res, 502, { ok: false, error: error.message || '接取任务失败' });
-      }
-    });
-  }
-
-  if (req.method === 'POST' && p === '/api/growth/buddy/first') {
-    return readBody(req).then(async (body) => {
-      if (PROFILE.capabilities.growthDaily !== true) return json(res, 400, { ok: false, error: '当前客户端不支持 Buddy 解锁' });
-      const uid = String(body && body.uid || '').trim();
-      if (!/^[A-Za-z0-9_-]{1,128}$/.test(uid)) return json(res, 400, { ok: false, error: 'uid 格式无效' });
-      if (!listAccounts(DATA_DIR).some((account) => String(account.uid) === uid)) return json(res, 404, { ok: false, error: '账号不存在' });
-      try {
-        const file = accountBackupFile(uid);
-        if (!fs.existsSync(file)) return json(res, 404, { ok: false, error: '账号备份不存在' });
-        const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
-        const auth = raw && raw.auth || {};
-        const token = auth.accessToken || auth.access_token || auth.token;
-        if (!token) return json(res, 400, { ok: false, error: '备份中无 accessToken' });
-
-        const before = await dailyProgressCache.get(uid, { force: true });
-        if (!before || before.status !== 'ready') throw new Error('未能读取最新成长计划状态');
-        if (before.cat && before.cat.state !== 'unknown' && before.cat.available === true) {
-          const streak = await growthStreakCache.get(uid);
-          return json(res, 200, { ok: true, alreadyUnlocked: true, progress: { uid, ...before, streak } });
-        }
-        const first = (before.growth && before.growth.tasks || []).find((task) => task && task.taskCode === 'first_buddy');
-        if (!first || first.state !== 'completed') return json(res, 409, { ok: false, error: '请先完成新手任务，再解锁 Buddy' });
-
-        await claimFirstBuddy(token, { apiHost: PROFILE.apiHost });
-        dailyProgressCache.clear(uid);
-        const progress = await dailyProgressCache.get(uid, { force: true });
-        const streak = await growthStreakCache.get(uid);
-        return json(res, 200, { ok: true, progress: { uid, ...progress, streak } });
-      } catch (error) {
-        dailyProgressCache.clear(uid);
-        log(`[growth-daily] 解锁 Buddy 失败: ${String(error && error.message || error).slice(0, 160)}`);
-        const agreementRequired = /协议|agreement|consent/i.test(String(error && error.message || ''));
-        return json(res, 502, { ok: false, error: agreementRequired ? '请先在 WorkBuddy 成长计划页面同意 Buddy 协议，再回来解锁' : error.message || '解锁 Buddy 失败' });
-      }
-    });
-  }
-
-  if (req.method === 'POST' && p === '/api/growth/buddy/travel/claim') {
-    return readBody(req).then(async (body) => {
-      if (PROFILE.capabilities.growthDaily !== true) return json(res, 400, { ok: false, error: '当前客户端不支持 Buddy 旅行' });
-      const uid = String(body && body.uid || '').trim();
-      if (!/^[A-Za-z0-9_-]{1,128}$/.test(uid)) return json(res, 400, { ok: false, error: 'uid 格式无效' });
-      const accounts = listAccounts(DATA_DIR);
-      if (!accounts.some((account) => String(account.uid) === uid)) return json(res, 404, { ok: false, error: '账号不存在' });
-      try {
-        const file = accountBackupFile(uid);
-        if (!fs.existsSync(file)) return json(res, 404, { ok: false, error: '账号备份不存在' });
-        const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
-        const auth = raw && raw.auth || {};
-        const token = auth.accessToken || auth.access_token || auth.token;
-        if (!token) return json(res, 400, { ok: false, error: '备份中无 accessToken' });
-
-        const before = await dailyProgressCache.get(uid, { force: true });
-        const cat = before && before.cat || {};
-        if (cat.state !== 'arrived') return json(res, 409, { ok: false, error: '当前没有待领取的旅行礼物' });
-
-        await claimBuddyTravelReward(token, { apiHost: PROFILE.apiHost });
-        dailyProgressCache.clear(uid);
-        const progress = await dailyProgressCache.get(uid, { force: true });
-        const streak = await growthStreakCache.get(uid);
-        return json(res, 200, { ok: true, progress: { uid, ...progress, streak } });
-      } catch (error) {
-        log(`[growth-daily] 领取 Buddy 旅行礼物失败: ${String(error && error.message || error).slice(0, 160)}`);
-        return json(res, 502, { ok: false, error: error.message || '领取旅行礼物失败' });
-      }
-    });
-  }
-
-  if (req.method === 'POST' && p === '/api/growth/buddy/select') {
-    return readBody(req).then(async (body) => {
-      if (PROFILE.capabilities.growthDaily !== true) return json(res, 400, { ok: false, error: '当前客户端不支持 Buddy 选择' });
-      const uid = String(body && body.uid || '').trim();
-      const idText = String(body && body.instanceId || '').trim();
-      const instanceId = Number(idText);
-      if (!/^[A-Za-z0-9_-]{1,128}$/.test(uid)) return json(res, 400, { ok: false, error: 'uid 格式无效' });
-      if (!/^[1-9][0-9]*$/.test(idText) || !Number.isSafeInteger(instanceId)) return json(res, 400, { ok: false, error: 'Buddy 编号无效' });
-      if (!listAccounts(DATA_DIR).some((account) => String(account.uid) === uid)) return json(res, 404, { ok: false, error: '账号不存在' });
-      try {
-        const file = accountBackupFile(uid);
-        if (!fs.existsSync(file)) return json(res, 404, { ok: false, error: '账号备份不存在' });
-        const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
-        const auth = raw && raw.auth || {};
-        const token = auth.accessToken || auth.access_token || auth.token;
-        if (!token) return json(res, 400, { ok: false, error: '备份中无 accessToken' });
-        const before = await dailyProgressCache.get(uid, { force: true });
-        const cat = before && before.cat || {};
-        if (cat.state !== 'needs_selection' || !Array.isArray(cat.buddies) || !cat.buddies.some((buddy) => buddy.instanceId === instanceId)) {
-          return json(res, 409, { ok: false, error: '请重新选择该账号拥有的 Buddy' });
-        }
-        await selectCurrentBuddy(token, instanceId, { apiHost: PROFILE.apiHost });
-        dailyProgressCache.clear(uid);
-        const progress = await dailyProgressCache.get(uid, { force: true });
-        const streak = await growthStreakCache.get(uid);
-        return json(res, 200, { ok: true, progress: { uid, ...progress, streak } });
-      } catch (error) {
-        log(`[growth-daily] 选择当前 Buddy 失败: ${String(error && error.message || error).slice(0, 160)}`);
-        return json(res, 502, { ok: false, error: error.message || '选择 Buddy 失败' });
-      }
-    });
-  }
-
-  if (req.method === 'POST' && p === '/api/growth/buddy/travel/depart') {
-    return readBody(req).then(async (body) => {
-      if (PROFILE.capabilities.growthDaily !== true) return json(res, 400, { ok: false, error: '当前客户端不支持 Buddy 旅行' });
-      const uid = String(body && body.uid || '').trim();
-      if (!/^[A-Za-z0-9_-]{1,128}$/.test(uid)) return json(res, 400, { ok: false, error: 'uid 格式无效' });
-      const accounts = listAccounts(DATA_DIR);
-      if (!accounts.some((account) => String(account.uid) === uid)) return json(res, 404, { ok: false, error: '账号不存在' });
-      try {
-        const file = accountBackupFile(uid);
-        if (!fs.existsSync(file)) return json(res, 404, { ok: false, error: '账号备份不存在' });
-        const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
-        const auth = raw && raw.auth || {};
-        const token = auth.accessToken || auth.access_token || auth.token;
-        if (!token) return json(res, 400, { ok: false, error: '备份中无 accessToken' });
-
-        const before = await dailyProgressCache.get(uid, { force: true });
-        const cat = before && before.cat || {};
-        if (cat.state !== 'idle' || cat.activeBuddy !== true || cat.dailyLimitReached || cat.available === false) {
-          return json(res, 409, { ok: false, error: cat.state === 'needs_selection' || cat.activeBuddy !== true ? '请先选择当前 Buddy，再派出旅行' : 'Buddy 当前不能派出旅行' });
-        }
-
-        await departBuddyTravel(token, { apiHost: PROFILE.apiHost });
-        dailyProgressCache.clear(uid);
-        const progress = await dailyProgressCache.get(uid, { force: true });
-        const streak = await growthStreakCache.get(uid);
-        return json(res, 200, { ok: true, progress: { uid, ...progress, streak } });
-      } catch (error) {
-        dailyProgressCache.clear(uid);
-        log(`[growth-daily] 派出 Buddy 旅行失败: ${String(error && error.message || error).slice(0, 160)}`);
-        return json(res, 502, { ok: false, error: /no active buddy/i.test(String(error && error.message || '')) ? '请先选择当前 Buddy，再派出旅行' : error.message || '派出 Buddy 旅行失败' });
-      }
-    });
-  }
-
-  if (req.method === 'POST' && p === '/api/growth/buddy/open') {
-    return readBody(req).then(async (body) => {
-      if (PROFILE.capabilities.growthDaily !== true) return json(res, 400, { ok: false, error: '当前客户端不支持开启盲盒' });
-      const uid = String(body && body.uid || '').trim();
-      if (!/^[A-Za-z0-9_-]{1,128}$/.test(uid)) return json(res, 400, { ok: false, error: 'uid 格式无效' });
-      const accounts = listAccounts(DATA_DIR);
-      if (!accounts.some((account) => String(account.uid) === uid)) return json(res, 404, { ok: false, error: '账号不存在' });
-      try {
-        const file = accountBackupFile(uid);
-        if (!fs.existsSync(file)) return json(res, 404, { ok: false, error: '账号备份不存在' });
-        const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
-        const auth = raw && raw.auth || {};
-        const token = auth.accessToken || auth.access_token || auth.token;
-        if (!token) return json(res, 400, { ok: false, error: '备份中无 accessToken' });
-        const before = await dailyProgressCache.get(uid, { force: true });
-        const action = before && before.actions && before.actions.gacha || {};
-        if (!(Number(action.count) > 0)) return json(res, 409, { ok: false, error: '当前没有可开启的盲盒' });
-        const result = await openBuddyBlindBox(token, { apiHost: PROFILE.apiHost });
-        dailyProgressCache.clear(uid);
-        const progress = await dailyProgressCache.get(uid, { force: true });
-        const streak = await growthStreakCache.get(uid);
-        return json(res, 200, {
-          ok: true,
-          reward: `获得：${summarizeGrowthActionReward('gacha', result)}`,
-          progress: { uid, ...progress, streak },
-        });
-      } catch (error) {
-        log(`[growth-daily] 开启盲盒失败: ${String(error && error.message || error).slice(0, 160)}`);
-        return json(res, 502, { ok: false, error: error.message || '开启盲盒失败' });
-      }
-    });
-  }
-
-  if (req.method === 'POST' && p === '/api/growth/lottery/draw') {
-    return readBody(req).then(async (body) => {
-      if (PROFILE.capabilities.growthDaily !== true) return json(res, 400, { ok: false, error: '当前客户端不支持抽奖' });
-      const uid = String(body && body.uid || '').trim();
-      if (!/^[A-Za-z0-9_-]{1,128}$/.test(uid)) return json(res, 400, { ok: false, error: 'uid 格式无效' });
-      const accounts = listAccounts(DATA_DIR);
-      if (!accounts.some((account) => String(account.uid) === uid)) return json(res, 404, { ok: false, error: '账号不存在' });
-      try {
-        const file = accountBackupFile(uid);
-        if (!fs.existsSync(file)) return json(res, 404, { ok: false, error: '账号备份不存在' });
-        const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
-        const auth = raw && raw.auth || {};
-        const token = auth.accessToken || auth.access_token || auth.token;
-        if (!token) return json(res, 400, { ok: false, error: '备份中无 accessToken' });
-        const before = await dailyProgressCache.get(uid, { force: true });
-        const action = before && before.actions && before.actions.lottery || {};
-        if (!(Number(action.count) > 0)) return json(res, 409, { ok: false, error: '当前没有可用抽奖次数' });
-        const result = await drawGrowthLottery(token, { apiHost: PROFILE.apiHost });
-        dailyProgressCache.clear(uid);
-        const progress = await dailyProgressCache.get(uid, { force: true });
-        const streak = await growthStreakCache.get(uid);
-        return json(res, 200, {
-          ok: true,
-          reward: `获得：${summarizeGrowthActionReward('lottery', result)}`,
-          progress: { uid, ...progress, streak },
-        });
-      } catch (error) {
-        log(`[growth-daily] 抽奖失败: ${String(error && error.message || error).slice(0, 160)}`);
-        return json(res, 502, { ok: false, error: error.message || '抽奖失败' });
-      }
     });
   }
 
@@ -10020,7 +9785,7 @@ log(`登录信息文件: ${currentAuthFile() || '(未唯一确认)'}`);
 log(`备份目录: ${DATA_DIR}`);
 updateDebug('daemon-start', { authFile: currentAuthFile(), dataDir: DATA_DIR, appPath: IS_WIN ? WORKDADDY_DIR_WIN : macWorkDaddyAppPath(), apiPort: UI_PORT_BASE });
 
-for (const preset of ['close-buddy-popups.json', ...(PROFILE.capabilities.accounts ? ['keep-accounts-active.json'] : [])]) {
+for (const preset of ['close-buddy-popups.json', ...(PROFILE.capabilities.accounts ? ['keep-accounts-active.json'] : []), ...(PROFILE.id === 'workbuddy-cn' ? ['buddy-travel.json', 'daily-account-checkin.json'] : [])]) {
   try {
     const result = installBuiltinTask(DATA_DIR, path.join(__dirname, 'builtin/automations', preset));
     if (result && result.status === 'upgraded') log(`[automation] 内置任务已升级: ${preset} (revision ${result.revision})`);

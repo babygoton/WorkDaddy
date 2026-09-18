@@ -97,13 +97,14 @@ test('task cards render triggers separately, show start only for manual tasks, a
   assert.equal(list.scrollTop,37);
 });
 
-test('only the two bundled automation ids render a built-in badge and omit the editor save action',()=>{
+test('managed builtins remain protected without a visible badge while imported tasks stay editable',()=>{
   const helperStart=ui.indexOf('  function wbsIsBuiltinAutomation(');
   const helperEnd=ui.indexOf('  function wbsBuiltinAutomationText(',helperStart);
   assert.ok(helperStart>0&&helperEnd>helperStart);
   const ctx={};vm.createContext(ctx);vm.runInContext(ui.slice(helperStart,helperEnd),ctx);
-  for(const id of ['buddy-fuel-station-close-on-account-switch','keep-accounts-active-1-plus-1']){
-    assert.equal(ctx.wbsIsBuiltinAutomation({id}),true);
+  for(const id of ['buddy-fuel-station-close-on-account-switch','keep-accounts-active-1-plus-1','daily-growth-and-buddy']){
+    assert.equal(ctx.wbsIsBuiltinAutomation({id,builtinManaged:true}),true);
+    assert.equal(ctx.wbsIsBuiltinAutomation({id,builtinManaged:false}),false);
   }
   assert.equal(ctx.wbsIsBuiltinAutomation({id:'daily-account-checkin'}),false);
   assert.equal(ctx.wbsIsBuiltinAutomation({id:'user-created'}),false);
@@ -112,12 +113,12 @@ test('only the two bundled automation ids render a built-in badge and omit the e
   const paneStart=ui.indexOf('    function buildAutomationPane()');
   const paneEnd=ui.indexOf('    // ===== 会话 pane',paneStart);
   const pane=ui.slice(paneStart,paneEnd);
-  assert.match(pane,/wbs-auto-builtin-badge[^<]*>内置<\/span>/);
-  assert.match(pane,/check \+ builtinBadge \+ '<div class="wbs-auto-name"/);
+  assert.doesNotMatch(pane,/wbs-auto-builtin-badge|builtinBadge/);
+  assert.match(pane,/check \+ '<div class="wbs-auto-name"/);
   assert.match(pane,/wbsIsBuiltinAutomation\(task\) \? '' : '<button class="wbs-modal-btn wbs-modal-ok" type="button" id="wbs-auto-save">保存<\/button>'/);
   assert.match(pane,/if \(saveButton\) saveButton\.addEventListener\('click', saveEditor\)/);
   assert.match(ui,/'内置': 'Built-in'/);
-  assert.match(ui,/\.wbs-auto-builtin-badge\{[^}]*border-radius:999px[^}]*var\(--wb-/);
+  assert.doesNotMatch(ui,/\.wbs-auto-builtin-badge\{/);
 });
 
 test('scrollable automation list never shrinks cards and clips their descriptions or footers',()=>{

@@ -737,7 +737,17 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
   var WBS_LANGUAGE_KEY = 'workdaddy.ui.language';
   var WBS_ACCOUNT_MASK_KEY = 'workdaddy.account.mask.' + PROFILE_ID;
   var WBS_I18N_EN = {
-    ' 分支到新会话': ' Start a new conversation here', '账号设置': 'Account settings', '排序方式': 'Sort by', '会话结束时提醒切换账号': 'Suggest switching accounts when a reply finishes', '账号备注': 'Account notes', '的备注': ' note', '例如：公司邮箱注册': 'For example: company email', '无效的账号备注设置': 'Invalid account note settings', '保存账号设置失败': 'Failed to save account settings',
+    '派猫猫旅行': 'Send Buddy traveling',
+    '自动选择已拥有的 Buddy，派出旅行并领取旅行礼物。未领养 Buddy 的账号需先在官网同意协议并解锁，此任务会跳过。需要 WorkDaddy 1.2.66 或更新版本。': 'Select an owned Buddy, send it traveling, and claim travel gifts. Accounts without an adopted Buddy are skipped until the agreement is accepted and Buddy is unlocked on the official site. Requires WorkDaddy 1.2.66 or later.',
+    '账号 {account}：开始检查猫猫旅行': 'Account {account}: Checking Buddy travel', '当前 Buddy 查询失败': 'Could not load current Buddy', 'Buddy 列表查询失败': 'Could not load Buddy list',
+    '账号 {account}：尚未领养 Buddy，跳过旅行；请先在官网同意领养协议并解锁': 'Account {account}: No adopted Buddy. Accept the agreement and unlock Buddy on the official site first.',
+    '选择当前 Buddy 失败': 'Could not select current Buddy', '账号 {account}：已选择拥有的 Buddy': 'Account {account}: Selected an owned Buddy', '账号 {account}：Buddy 查询或选择失败：{reason}': 'Account {account}: Buddy lookup or selection failed: {reason}',
+    'Buddy 旅行状态查询失败': 'Could not load Buddy travel status', '账号 {account}：当前旅行状态 {state}': 'Account {account}: Current travel status {state}', '旅行礼物领取失败': 'Could not claim travel gift',
+    '账号 {account}：旅行礼物领取成功': 'Account {account}: Travel gift claimed', '领取后旅行状态查询失败': 'Could not load travel status after claim', '账号 {account}：今日旅行次数已用完': 'Account {account}: No travel attempts left today',
+    '派出前当前 Buddy 查询失败': 'Could not load current Buddy before departure', '旅行地点查询失败': 'Could not load travel destinations', 'Buddy 派出失败': 'Buddy departure failed',
+    '账号 {account}：Buddy 已派出旅行': 'Account {account}: Buddy departed', '账号 {account}：暂无可用旅行地点': 'Account {account}: No travel destinations available', '账号 {account}：尚未选择 Buddy，暂不派出': 'Account {account}: No Buddy selected; skipping departure',
+    '账号 {account}：今天已经处理过旅行，跳过': 'Account {account}: Travel already handled today; skipping', '账号 {account}：旅行处理失败：{reason}': 'Account {account}: Travel failed: {reason}', '部分账号 Buddy 操作失败，请查看运行记录': 'Some Buddy actions failed. Check the run log.',
+    ' 分支到新会话': ' Start a new conversation here', '账号设置': 'Account settings', '排序方式': 'Sort by', '积分不足时的账号切换建议': 'Suggest switching accounts when credits run low',
     '查询失败，请重新选择时间重试': 'Query failed. Select a time range to retry.',
     '查询已中断，请重新选择时间重试': 'Query interrupted. Select a time range to retry.',
     '无法读取查询进度，请重新选择时间重试': 'Could not read progress. Select a time range to retry.',
@@ -807,6 +817,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '无法关闭面板，请重试': 'Could not close the panel. Please try again.',
     '正在输入或切换账号，请稍后打开面板': 'Typing or switching accounts. Please open the panel in a moment.',
     "逐账号例行发送固定提示词消息": "Send a fixed prompt with each account",
+    "依次切换所有账号，使用 Deepseek-V4.1-Flash 新建会话发送 1+1=，按会话回执等待回复完成，最后恢复开始时的账号。": "Switch through all accounts, send 1+1= in a new conversation using Deepseek-V4.1-Flash, wait for each reply, then restore the starting account.",
     "依次切换所有账号，新建会话发送 1+1=，按会话回执等待回复完成，最后恢复开始时的账号。": "Switch through all accounts, send 1+1= in a new conversation, wait for each reply to finish, then restore the starting account.",
     "依次切换所有账号，等待当前会话输入框出现后发送 1+1=，等待回复完成，最后恢复开始时的账号。": "Switch through all accounts, wait for the composer, send 1+1=, wait for each reply to finish, then restore the starting account.",
     "页面就绪后自动关闭首页弹窗": "Close home popups when the page is ready",
@@ -814,6 +825,8 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     "页面就绪后立即检查首页弹窗与运营位，每 300 毫秒补查，持续约 30 秒；重新出现的弹窗继续关闭，快速切换账号时重新检测新页面。": "Check home popups and promotional slots every 300 ms for about 30 seconds. Close any that reappear and restart detection after account switches.",
     "所有账号已按序处理完毕，已恢复开始时的账号": "All accounts have been processed. The starting account has been restored.",
     "存在账号未完成处理，已尝试恢复开始时的账号": "Some accounts could not be processed. An attempt was made to restore the starting account.",
+    "循环账号静默签到": "Check in across accounts without switching",
+    "使用各账号 token 签到，不切换当前账号；跳过今日已签到账号。每小时、客户端加载和打开面板时检查。": "Check in using each account's token without switching accounts. Skip accounts already checked in today. Check hourly, when the client loads, and when the panel opens.",
     "该账号签到未成功，请检查登录状态或签到活动": "Check-in failed for this account. Check its login status and check-in availability.",
     "识别到 Buddy 加油站弹窗，已关闭": "Buddy Fuel Station popup detected and closed.",
     "已关闭相关玩法推荐，今日不再展示": "Related playbook recommendations dismissed for today.",
@@ -828,12 +841,13 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '已归来，等待领取奖励': 'Returned; reward pending', '待领取礼物': 'Gift pending', '成长计划': 'Growth plan', '解锁 Buddy 后可使用': 'Available after unlocking a Buddy',
     '成长任务明细': 'Growth task details', '未识别任务': 'Unknown task', '未接取': 'Not accepted', '进行中': 'In progress', '一键去完成': 'Start all tasks', '接取中': 'Starting', '任务已接取': 'Task started', '已接取 ': 'Started ', ' 个任务': ' tasks', '没有待接取的任务': 'No tasks to start', '接取任务失败': 'Could not start task', '接取后未读取到最新状态': 'Could not load the latest task status', '领取后未读取到最新状态': 'Could not load the latest Buddy status', '旅行礼物已领取': 'Travel gift claimed', '领取旅行礼物失败': 'Could not claim the travel gift', '派出后未读取到最新状态': 'Could not load the latest Buddy status', 'Buddy 已派出': 'Buddy departed', '派出 Buddy 旅行失败': 'Could not depart Buddy', '派出中': 'Departing', '派出': 'Depart', '盲盒已开启': 'Blind box opened', '抽奖完成': 'Draw completed', '操作后未读取到最新状态': 'Could not load the latest growth status', '开启盲盒失败': 'Could not open the blind box', '抽奖失败': 'Draw failed', '开启中': 'Opening', '抽奖中': 'Drawing', '抽奖': 'Draw', '无奖励信息': 'No reward details', '领取中': 'Claiming', '领取': 'Claim', '进度': 'Progress', '截止': 'Deadline', '奖励': 'Rewards', '长期有效': 'No deadline', '以活动页面说明为准': 'Follow the activity page instructions', ' 能量': ' Energy', '展开已领取': 'Show claimed', '收起已领取': 'Hide claimed',
     '去完成': 'Start', '未选择当前 Buddy': 'No current Buddy selected', 'Buddy 未选择': 'Buddy not selected', '选择 Buddy': 'Choose Buddy', '设为当前': 'Set as current', '选择中': 'Selecting', 'Buddy 已设为当前': 'Buddy is now current', '选择后未读取到最新状态': 'Could not load the current Buddy', '请先选择当前 Buddy，再派出旅行': 'Choose a current Buddy before departure', 'Buddy 编号无效': 'Invalid Buddy ID', '当前客户端不支持 Buddy 选择': 'Buddy selection is unavailable in this client', '请重新选择该账号拥有的 Buddy': 'Select a Buddy owned by this account', '选择 Buddy 失败': 'Could not select Buddy',
+    '无法打开官方成长中心': 'Could not open the official growth center', '请先切换到该账号再操作': 'Switch to this account first', '无法确认当前登录账号': 'Could not verify the current account', '去官网接取': 'Open official site to accept', '去官网开启': 'Open official site to open', '去官网抽奖': 'Open official site to draw', '去官网解锁 Buddy': 'Open official site to unlock Buddy', '去官网领取': 'Open official site to claim', '去官网派出': 'Open official site to depart', '去官网选择 Buddy': 'Open official site to choose Buddy',
     '正在刷新成长计划与 Buddy 旅行状态…': 'Refreshing the growth plan and Buddy travel status…', '刷新失败，移开后再次悬浮即可重试': 'Refresh failed. Move away and hover again to retry.', '本次刷新失败，当前展示上次结果': 'Refresh failed. Showing the previous result.',
     ' 待领取': ' pending', 'Buddy 旅行': 'Buddy travel', '开启盲盒': 'Open blind box', '待抽奖': 'Draw chances', '未派出': 'Not departed', '刷新于 ': 'Refreshed at ', '尚未刷新': 'Not refreshed', '连续登录 ': 'Current streak ', '连续登录读取中': 'Loading streak', '连续登录读取失败': 'Streak unavailable', '补登卡': 'Makeup cards', ' 张': '', '入门档': 'Starter', '进阶档': 'Advanced', '巅峰档': 'Peak', '还差 ': '', ' 天': ' days remaining', '可领取': 'Available', '每日积分趋势': 'Daily Credits trend', '每日 Token 趋势': 'Daily Token trend',
     '账号': 'Accounts', '主题': 'Theme', '会话': 'Sessions', '模型': 'Models', '增强': 'Enhance', '自动化': 'Automation', '电脑': 'Computer', '关于': 'About', '设置': 'Settings',
-    '导出': 'Export', '导入': 'Import', '删除': 'Delete', '编辑': 'Edit', '保存': 'Save', '内置': 'Built-in', '取消': 'Cancel', '确定': 'Confirm', '确认': 'Confirm', '复制': 'Copy', '切换': 'Switch', '启用': 'Enable', '停用': 'Disable', '停止': 'Stop', '立即运行': 'Run now', '新建任务': 'New task', '刷新': 'Refresh', '步骤 JSON': 'Steps JSON', '任务说明': 'Task description', '任务名称': 'Task name', '调度': 'Schedule', '手动运行': 'Manual', '手动': 'Manual', '每小时': 'Hourly', '每天': 'Daily', '选择任务': 'Select tasks', '查看接口': 'View capabilities', '拾取元素': 'Pick element', '复制 XPath': 'Copy XPath', '运行中': 'Running', '已成功': 'Succeeded', '失败': 'Failed', '未运行': 'Not run', '页面加载完成': 'Page loaded', '账号切换完成': 'Account switched', '新自动化任务': 'New automation task', '任务已保存': 'Task saved', '任务已开始运行': 'Task started', '步骤 JSON 格式无效': 'Invalid steps JSON', '步骤 JSON 必须是数组': 'Steps JSON must be an array', '查看接口说明': 'View interface docs', '自动化接口协议': 'Automation interface protocol', '复制全部': 'Copy all', '接口协议已复制': 'Interface protocol copied', '暂无自动化任务，点击“新建任务”开始。': 'No automation tasks yet. Click “New task” to start.', '编辑任务': 'Edit task', '触发方式': 'Trigger', '插入点击步骤': 'Insert click step', 'XPath 已复制': 'XPath copied', '点击步骤已插入': 'Click step inserted', '请先拾取元素': 'Pick an element first', '加载自动化失败': 'Failed to load automations', '读取接口失败': 'Failed to read interfaces', '批量操作失败': 'Batch operation failed', '删除失败': 'Delete failed', '确认删除该任务？': 'Delete this task?', '执行': 'Apply', '已拾取': 'Picked', '运行失败': 'Run failed', '（副本）': ' (copy)', '查看提示词': 'View prompt', '交给 WorkBuddy 创建': 'Ask WorkBuddy to create', '正在打开新任务…': 'Opening a new task…', '已创建新会话，WorkBuddy 完成后任务会自动出现': 'New session created. The task will appear after WorkBuddy finishes.', 'WorkBuddy 创建失败': 'WorkBuddy creation failed', '加载示例失败': 'Failed to load examples', '暂无示例': 'No examples available', '运行日志': 'Run logs', '暂无运行日志': 'No run logs yet', '开始时间': 'Started', '结束时间': 'Finished', '捕获错误': 'Caught error', '暂无执行日志': 'No execution log entries', '执行日志': 'Execution log', '尚未结束': 'Still running',
+    '导出': 'Export', '导入': 'Import', '删除': 'Delete', '编辑': 'Edit', '保存': 'Save', '内置': 'Built-in', '取消': 'Cancel', '确定': 'Confirm', '确认': 'Confirm', '复制': 'Copy', '切换': 'Switch', '启用': 'Enable', '停用': 'Disable', '停止': 'Stop', '立即运行': 'Run now', '新建任务': 'New task', '刷新': 'Refresh', '步骤 JSON': 'Steps JSON', '任务说明': 'Task description', '任务名称': 'Task name', '调度': 'Schedule', '手动运行': 'Manual', '手动': 'Manual', '每小时': 'Hourly', '每天': 'Daily', '选择任务': 'Select tasks', '查看接口': 'View capabilities', '拾取元素': 'Pick element', '复制 XPath': 'Copy XPath', '运行中': 'Running', '已成功': 'Succeeded', '失败': 'Failed', '未运行': 'Not run', '页面加载完成': 'Page loaded', '账号切换完成': 'Account switched', '新自动化任务': 'New automation task', '任务已保存': 'Task saved', '任务已开始运行': 'Task started', '步骤 JSON 格式无效': 'Invalid steps JSON', '步骤 JSON 必须是数组': 'Steps JSON must be an array', '查看接口说明': 'View interface docs', '自动化接口协议': 'Automation interface protocol', '复制全部': 'Copy all', '接口协议已复制': 'Interface protocol copied', '暂无自动化任务': 'No automations yet', '编辑任务': 'Edit task', '触发方式': 'Trigger', '插入点击步骤': 'Insert click step', 'XPath 已复制': 'XPath copied', '点击步骤已插入': 'Click step inserted', '请先拾取元素': 'Pick an element first', '加载自动化失败': 'Failed to load automations', '读取接口失败': 'Failed to read interfaces', '批量操作失败': 'Batch operation failed', '删除失败': 'Delete failed', '确认删除该任务？': 'Delete this task?', '执行': 'Apply', '已拾取': 'Picked', '运行失败': 'Run failed', '（副本）': ' (copy)', '查看提示词': 'View prompt', '交给 WorkBuddy 创建': 'Ask WorkBuddy to create', '正在打开新任务…': 'Opening a new task…', '已创建新会话，WorkBuddy 完成后任务会自动出现': 'New session created. The task will appear after WorkBuddy finishes.', 'WorkBuddy 创建失败': 'WorkBuddy creation failed', '加载示例失败': 'Failed to load examples', '暂无示例': 'No examples available', '运行日志': 'Run logs', '暂无运行日志': 'No run logs yet', '开始时间': 'Started', '结束时间': 'Finished', '捕获错误': 'Caught error', '暂无执行日志': 'No execution log entries', '执行日志': 'Execution log', '尚未结束': 'Still running',
     '暂存提示词': 'Stash prompt', '暂存': 'Stashed', '引用文本': 'Quote text', '快捷短语': 'Quick phrases', '点击后发送': 'Send on click', '编辑 →': 'Edit →', '新增': 'Add', '批量操作': 'Batch actions', '批量管理': 'Batch manage', '全选': 'Select all', '取消全选': 'Deselect all', '已选 0': 'Selected 0',
-    '分支到新会话': 'Start a new conversation here', '从这里开始新会话': 'Start a new conversation here', '复制到这条回复为止的聊天内容，在当前工作区继续聊；原会话不变。': 'Copy the conversation up to this reply into a new conversation in the current workspace. The original stays unchanged.', '会复制这条回复及之前的聊天内容，在当前工作区新建会话；原会话不会改变。': 'Copy this reply and earlier messages into a new conversation in the current workspace. The original stays unchanged.', '正在创建分支会话…': 'Creating branch session…', '分支会话已创建，正在打开…': 'Branch created. Opening…', '分支会话已创建，但无法自动打开，请在会话列表中查找。': 'Branch created but could not open automatically. Check the sessions list.', '新会话未出现在列表中，请在会话列表中查找。': 'The new session is not listed yet. Check the sessions list.', '无法确认所选消息的分支位置，请稍后重试': 'Cannot confirm this reply position. Try again shortly.', '分支失败: ': 'Branch failed: ',
+    '分支到新会话': 'Start a new conversation here', '从这里开始新会话': 'Start a new conversation here', '复制到这条回复为止的聊天内容，在当前工作区继续聊；原会话不变。': 'Copy the conversation up to this reply into a new conversation in the current workspace. The original stays unchanged.', '正在创建分支会话…': 'Creating branch session…', '分支会话已创建，正在打开…': 'Branch created. Opening…', '分支会话已创建，但无法自动打开，请在会话列表中查找。': 'Branch created but could not open automatically. Check the sessions list.', '新会话未出现在列表中，请在会话列表中查找。': 'The new session is not listed yet. Check the sessions list.', '无法确认所选消息的分支位置，请稍后重试': 'Cannot confirm this reply position. Try again shortly.', '分支失败: ': 'Branch failed: ',
     '账号汇总': 'Account summary', '账号数': 'Accounts', '总积分': 'Total credits', '手机': 'Phone', '有效期至': 'Expires', '当前使用中': 'Currently active', '隐藏敏感信息': 'Mask sensitive info', '显示明文': 'Show plaintext', '登录新账号': 'Log in a new account', '没有可导出的账号备份': 'No account backups to export', '还没有备份账号。打开/登录一次 WorkBuddy 后会自动备份，稍后再来查看。': 'No account backups yet. Open or log in to WorkBuddy once and check again later.',
     '语言': 'Language', '中文': 'Chinese', '英语': 'English', 'English': 'English', '跟随系统': 'Follow system', '设置语言': 'Language', '首次打开时自动跟随系统语言；未匹配时使用英语。': 'The first launch follows your system language. English is used when no match is found.', '语言设置已更新': 'Language updated',
     '默认': 'Default', 'WorkDaddy 主题': 'WorkDaddy theme', '毛玻璃': 'Frosted glass', '护眼绿': 'Eye-care green', '赛博紫': 'Cyber purple', '主题外观': 'Theme appearance', '壁纸': 'Wallpaper', '头像': 'Avatar', '自定义壁纸': 'Custom wallpaper', '背景蒙版': 'Background overlay', '背景毛玻璃': 'Background blur', '恢复默认': 'Restore default', '恢复官方头像': 'Restore official avatar',
@@ -930,6 +944,13 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '悬停预览，点击或拖动快速定位消息。': 'Hover to preview; click or drag to jump to a message.',
     '选中会话消息文字后，一键插入输入框。': 'After selecting session message text, insert it into the composer with one click.',
     '发送后不会自动删除。': 'Not deleted automatically after sending.', '需要我决策时弹窗确认（全局生效）': 'Ask me with a dialog when my decision is needed (applies globally)',
+    '自动化接口协议 V2': 'Automation interface protocol V2',
+    '检测到会话异常中断，自动让它继续': 'Detected an interrupted session; letting it continue automatically.',
+    '暂存想法择机发送，发送后自动删除': 'Stashed thoughts send at an opportunity, then are deleted automatically.',
+    '悬停预览，点击或拖动快速定位消息': 'Hover to preview; click or drag to jump to a message.',
+    '复制到这条回复为止的聊天内容，在当前工作区继续聊；原会话不变': 'Copy the conversation up to this reply into a new conversation in the current workspace. The original stays unchanged.',
+    '选中会话消息文字后，一键插入输入框': 'After selecting session message text, insert it into the composer with one click.',
+    '发送后不会自动删除': 'Not deleted automatically after sending.',
     '开启后 AI 可直接读写工作区外的文件（包括文稿、下载目录、配置），不再逐一确认': 'When enabled, the AI can directly read/write files outside the workspace (documents, Downloads, config) without confirming each time',
     '开启后批量删除不再弹确认；为防误删，所有删除强制先进废纸篓/回收站': 'Bulk delete skips dialogs; to prevent mistakes, all deletes go to Trash first',
     '开启后 wsl、reg、sc、schtasks 等系统管理工具直接运行，不再确认': 'System admin tools like wsl, reg, sc, schtasks run directly without confirmation',
@@ -1264,10 +1285,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
   }
 
   function wbsIsBuiltinAutomation(task) {
-    return !!task && [
-      'buddy-fuel-station-close-on-account-switch',
-      'keep-accounts-active-1-plus-1'
-    ].indexOf(task.id) >= 0;
+    return !!task && task.builtinManaged === true;
   }
 
   function wbsBuiltinAutomationText(task, field) {
@@ -1277,6 +1295,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
           "逐账号例行发送固定提示词消息"
         ],
         "description": [
+          "依次切换所有账号，使用 Deepseek-V4.1-Flash 新建会话发送 1+1=，按会话回执等待回复完成，最后恢复开始时的账号。",
           "依次切换所有账号，新建会话发送 1+1=，按会话回执等待回复完成，最后恢复开始时的账号。",
           "依次切换所有账号，等待当前会话输入框出现后发送 1+1=，等待回复完成，最后恢复开始时的账号。"
         ]
@@ -1289,6 +1308,14 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
           "页面就绪后立即检查三类弹窗，每 300 毫秒补查，持续约 30 秒；重新出现的弹窗继续关闭，快速切换账号时重新检测新页面。",
           "页面就绪后立即检查首页弹窗与运营位，每 300 毫秒补查，持续约 30 秒；重新出现的弹窗继续关闭，快速切换账号时重新检测新页面。"
         ]
+      },
+      "daily-growth-and-buddy": {
+        "name": ["派猫猫旅行"],
+        "description": ["自动选择已拥有的 Buddy，派出旅行并领取旅行礼物。未领养 Buddy 的账号需先在官网同意协议并解锁，此任务会跳过。需要 WorkDaddy 1.2.66 或更新版本。"]
+      },
+      "daily-account-checkin": {
+        "name": ["循环账号静默签到"],
+        "description": ["使用各账号 token 签到，不切换当前账号；跳过今日已签到账号。每小时、客户端加载和打开面板时检查。"]
       }
     };
     var values = task && defaults[task.id] && defaults[task.id][field];
@@ -1333,7 +1360,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
 
   var accountMaskEnabled = false;
   try { accountMaskEnabled = localStorage.getItem(WBS_ACCOUNT_MASK_KEY) === '1'; } catch (_) {}
-  var state = { accounts: [], current: null, open: false, batchRunning: false, creditRunId: 0, creditRefreshGeneration: {}, activityRunId: 0, dailyProgressRunId: 0, dailyProgressForceNext: false, dailyProgressRefreshing: {}, dailyProgressRefreshErrors: {}, dailyTaskAccepting: {}, dailyTasksAccepting: {}, dailyTravelClaiming: {}, dailyTravelDeparting: {}, dailyBuddyUnlocking: {}, dailyBuddySelecting: {}, dailyBuddyChoice: {}, dailyClaimedExpanded: {}, dailyGrowthActionRunning: {}, creditRemaining: 0, creditSummaryValue: null, mask: accountMaskEnabled, rotationNotice: null, rotationPromptDay: '' };
+  var state = { accounts: [], current: null, open: false, batchRunning: false, creditRunId: 0, creditRefreshGeneration: {}, activityRunId: 0, dailyProgressRunId: 0, dailyProgressForceNext: false, dailyProgressRefreshing: {}, dailyProgressRefreshErrors: {}, dailyClaimedExpanded: {}, creditRemaining: 0, creditSummaryValue: null, mask: accountMaskEnabled, rotationNotice: null, rotationPromptDay: '' };
   var currentBuild = null;
   // 当前注入的 daemon 版本号（由 daemon.js 注入时把 __WBS_VERSION__ 替换为 DAEMON_VERSION）
   // 「关于」tab 直接展示，升级 daemon 后这里自动同步
@@ -2182,7 +2209,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     }
     function applyInjectedI18n() {
       applyI18n(root);
-      var nodes = document.querySelectorAll('.wbs-stash-inline,.wbs-selection-quote-btn,.wbs-queue-tag,.wbs-message-nav-root,.wbs-fork-button,#wbs-auto-inspector,#wbs-auto-inspect-tip');
+      var nodes = document.querySelectorAll('.wbs-stash-inline,.wbs-selection-quote-btn,.wbs-queue-tag,.wbs-message-nav-root,.wbs-fork-button,#wbs-fork-tooltip,#wbs-auto-inspector,#wbs-auto-inspect-tip');
       for (var i = 0; i < nodes.length; i++) applyI18n(nodes[i]);
     }
     window.__wbsSetLanguage = setLanguage;
@@ -3584,7 +3611,8 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     var forkTooltip = el('span', 'wbs-telemetry-tooltip wbs-fork-tooltip');
     forkTooltip.id = 'wbs-fork-tooltip';
     forkTooltip.setAttribute('role', 'tooltip');
-    forkTooltip.textContent = '会复制这条回复及之前的聊天内容，在当前工作区新建会话；原会话不会改变。';
+    forkTooltip.appendChild(el('span', 'wbs-fork-tooltip-title', '分支到新会话'));
+    forkTooltip.appendChild(el('span', 'wbs-fork-tooltip-description', '复制到这条回复为止的聊天内容，在当前工作区继续聊；原会话不变。'));
     document.body.appendChild(forkTooltip);
     applyI18n(forkTooltip);
     function hideForkTooltip() { forkTooltip.classList.remove('is-visible'); }
@@ -4845,7 +4873,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
 
     var rotationReminderKey = 'workdaddy.account.rotationReminder.' + PROFILE_ID;
     function rotationReminderEnabled() {
-      try { return localStorage.getItem(rotationReminderKey) === '1'; } catch (_) { return false; }
+      try { return localStorage.getItem(rotationReminderKey) !== '0'; } catch (_) { return true; }
     }
     // 账号 pane 初始化：顶部 导出/导入 工具栏 + 列表容器 + 底部退出登录按钮（原 foot 的 logout 迁移到账号 tab）
     if (accountsPane) {
@@ -4901,19 +4929,13 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         '<label><input type="radio" name="wbs-account-order" value="fixed">固定顺序</label></div>' +
         '<div data-fixed-order>' +
         '<div class="wbs-account-order-list" role="list" aria-label="固定账号顺序"></div></div>' +
-        '<label class="wbs-account-settings-toggle"><span>会话结束时提醒切换账号</span><span class="wbs-switch"><input type="checkbox" data-rotation-reminder><span class="wbs-switch-slider"></span></span></label>' +
-        '<div class="wbs-account-settings-section">账号备注</div><div class="wbs-account-notes"></div>' +
+        '<label class="wbs-account-settings-toggle"><span>积分不足时的账号切换建议</span><span class="wbs-switch"><input type="checkbox" data-rotation-reminder><span class="wbs-switch-slider"></span></span></label>' +
         '<div class="wbs-password-error" role="alert"></div><div class="wbs-modal-actions">' +
         '<button class="wbs-modal-btn" type="button" data-order-cancel>取消</button>' +
         '<button class="wbs-modal-btn wbs-modal-ok" type="button" data-order-save>保存</button></div></div>';
       panel.appendChild(mask);
       var list = mask.querySelector('.wbs-account-order-list');
-      var notesList = mask.querySelector('.wbs-account-notes');
       mask.querySelector('[data-rotation-reminder]').checked = rotationReminderEnabled();
-      notesList.innerHTML = ordered.map(function (a) {
-        return '<label class="wbs-account-note-row"><span data-wbs-i18n-skip>' + esc(a.nickname || '未命名') + '</span>' +
-          '<input type="text" maxlength="160" data-note-uid="' + escAttr(a.uid) + '" value="' + escAttr(a.note || '') + '" placeholder="例如：公司邮箱注册" aria-label="' + escAttr((a.nickname || '未命名') + '的备注') + '"></label>';
-      }).join('') || '<div class="wbs-empty">暂无账号</div>';
       var busy = false, dragged = null;
       function close() {
         if (busy) return;
@@ -4990,27 +5012,24 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       mask.querySelector('[data-order-cancel]').addEventListener('click', close);
       mask.querySelector('[data-order-save]').addEventListener('click', function () {
         if (busy) return;
-        var notes = Object.create(null);
-        notesList.querySelectorAll('[data-note-uid]').forEach(function (input) { notes[input.dataset.noteUid] = input.value.trim(); });
         var reminder = mask.querySelector('[data-rotation-reminder]').checked;
         busy = true;
         mask.querySelectorAll('button,input').forEach(function (node) { node.disabled = true; });
         mask.querySelector('[data-order-save]').textContent = '保存中…';
-        api('/api/accounts/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: mode, uids: ordered.map(function (a) { return a.uid; }), notes: notes }) })
+        api('/api/accounts/order', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: mode, uids: ordered.map(function (a) { return a.uid; }) }) })
           .then(function (result) {
             state.accountOrder = result.accountOrder;
             var ranks = new Map(); ordered.forEach(function (a, index) { ranks.set(a.uid, index + 1); });
-            state.accounts.forEach(function (a) { a.sort = ranks.get(a.uid) || 0; if (Object.prototype.hasOwnProperty.call(notes, a.uid)) a.note = notes[a.uid]; });
+            state.accounts.forEach(function (a) { a.sort = ranks.get(a.uid) || 0; });
             try { localStorage.setItem(rotationReminderKey, reminder ? '1' : '0'); } catch (_) {}
             if (!reminder) closeRotationNotice();
             sortAccountsByCreditExpiry(); reorderAccountCards();
-            applyAccountMask();
             busy = false; close();
           }).catch(function (error) {
             busy = false;
             mask.querySelectorAll('button,input').forEach(function (node) { node.disabled = false; });
             mask.querySelector('[data-order-save]').textContent = '保存';
-            mask.querySelector('[role="alert"]').textContent = error.message || '保存账号设置失败';
+            mask.querySelector('[role="alert"]').textContent = error.message || '保存排序失败';
           });
       });
       drawRows(); syncMode();
@@ -5062,205 +5081,21 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       registerDisposer(function () { hide(); popup.remove(); });
     }
 
-    function acceptGrowthTask(uid, taskCode) {
-      uid = String(uid || '').trim();
-      taskCode = String(taskCode || '').trim();
-      if (!uid || !taskCode) return Promise.resolve();
-      var key = uid + ':' + taskCode;
-      if (state.dailyTaskAccepting[key]) return state.dailyTaskAccepting[key];
-      if (state.dailyTasksAccepting[uid]) return Promise.resolve();
-      state.dailyTaskAccepting[key] = true;
-      if (refreshDailyProgressPopover) refreshDailyProgressPopover(uid);
-      var request = api('/api/growth/tasks/accept', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ uid: uid, taskCode: taskCode }),
-      }).then(function (response) {
-        if (!response || !response.progress || response.progress.status !== 'ready') throw new Error('接取后未读取到最新状态');
-        var account = state.accounts.filter(function (item) { return String(item.uid) === uid; })[0];
-        if (account) account.dailyProgress = response.progress;
-        updateDailyProgressCells();
-        toast(response.accepted ? '任务已接取' : '没有待接取的任务', false, root);
-      }).catch(function (error) {
-        toast((error && error.message) || '接取任务失败', true, root);
-      }).finally(function () {
-        delete state.dailyTaskAccepting[key];
-        if (alive && refreshDailyProgressPopover) refreshDailyProgressPopover(uid);
-      });
-      state.dailyTaskAccepting[key] = request;
-      return request;
+    function openOfficialGrowthCenter() {
+      api('/api/open-url', { method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ url: 'https://www.workbuddy.cn/profile/growth-center' })
+      }).catch(function (error) { toast(error.message || '无法打开官方成长中心', true, root); });
     }
 
-    function acceptAllGrowthTasks(uid) {
-      uid = String(uid || '').trim();
-      if (!uid) return Promise.resolve();
-      if (state.dailyTasksAccepting[uid]) return state.dailyTasksAccepting[uid];
-      if (Object.keys(state.dailyTaskAccepting).some(function (key) { return key.indexOf(uid + ':') === 0; })) return Promise.resolve();
-      state.dailyTasksAccepting[uid] = true;
-      if (refreshDailyProgressPopover) refreshDailyProgressPopover(uid);
-      var request = api('/api/growth/tasks/accept-all', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ uid: uid }),
-      }).then(function (response) {
-        if (!response || !response.progress || response.progress.status !== 'ready') throw new Error('接取后未读取到最新状态');
-        var account = state.accounts.filter(function (item) { return String(item.uid) === uid; })[0];
-        if (account) account.dailyProgress = response.progress;
-        updateDailyProgressCells();
-        toast(response.accepted ? '已接取 ' + response.accepted + ' 个任务' : '没有待接取的任务', false, root);
-      }).catch(function (error) {
-        toast((error && error.message) || '接取任务失败', true, root);
-      }).finally(function () {
-        delete state.dailyTasksAccepting[uid];
-        if (!alive) return;
-        if (refreshDailyProgressPopover) refreshDailyProgressPopover(uid);
+    function confirmCurrentGrowthAccount(uid) {
+      return api('/api/accounts').then(function (data) {
+        if (data && data.current && String(data.current.uid) === String(uid)) return true;
+        toast('请先切换到该账号再操作', true, root);
+        return false;
+      }).catch(function () {
+        toast('无法确认当前登录账号', true, root);
+        return false;
       });
-      state.dailyTasksAccepting[uid] = request;
-      return request;
-    }
-
-    function unlockFirstBuddy(uid) {
-      uid = String(uid || '').trim();
-      if (!uid) return Promise.resolve();
-      if (state.dailyBuddyUnlocking[uid]) return state.dailyBuddyUnlocking[uid];
-      state.dailyBuddyUnlocking[uid] = true;
-      if (refreshDailyProgressPopover) refreshDailyProgressPopover(uid);
-      var request = api('/api/growth/buddy/first', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ uid: uid }),
-      }).then(function (response) {
-        if (!response || response.ok !== true) throw new Error('解锁 Buddy 失败');
-        if (!response.alreadyUnlocked) refreshCreditForAccount(uid);
-        if (!response || !response.progress || response.progress.status !== 'ready') throw new Error('解锁后未读取到最新状态');
-        var account = state.accounts.filter(function (item) { return String(item.uid) === uid; })[0];
-        if (account) account.dailyProgress = response.progress;
-        updateDailyProgressCells();
-        toast(response.alreadyUnlocked ? 'Buddy 已解锁' : 'Buddy 解锁成功', false, root);
-      }).catch(function (error) {
-        toast((error && error.message) || '解锁 Buddy 失败', true, root);
-      }).finally(function () {
-        delete state.dailyBuddyUnlocking[uid];
-        if (alive && refreshDailyProgressPopover) refreshDailyProgressPopover(uid);
-      });
-      state.dailyBuddyUnlocking[uid] = request;
-      return request;
-    }
-
-    function claimBuddyTravelReward(uid) {
-      uid = String(uid || '').trim();
-      if (!uid) return Promise.resolve();
-      if (state.dailyTravelClaiming[uid]) return state.dailyTravelClaiming[uid];
-      state.dailyTravelClaiming[uid] = true;
-      if (refreshDailyProgressPopover) refreshDailyProgressPopover(uid);
-      var request = api('/api/growth/buddy/travel/claim', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ uid: uid }),
-      }).then(function (response) {
-        if (!response || response.ok !== true) throw new Error('领取旅行礼物失败');
-        refreshCreditForAccount(uid);
-        if (!response || !response.progress || response.progress.status !== 'ready') throw new Error('领取后未读取到最新状态');
-        var account = state.accounts.filter(function (item) { return String(item.uid) === uid; })[0];
-        if (account) account.dailyProgress = response.progress;
-        updateDailyProgressCells();
-        toast('旅行礼物已领取', false, root);
-      }).catch(function (error) {
-        toast((error && error.message) || '领取旅行礼物失败', true, root);
-      }).finally(function () {
-        delete state.dailyTravelClaiming[uid];
-        if (!alive) return;
-        if (refreshDailyProgressPopover) refreshDailyProgressPopover(uid);
-      });
-      state.dailyTravelClaiming[uid] = request;
-      return request;
-    }
-
-    function selectBuddyForTravel(uid, instanceId) {
-      uid = String(uid || '').trim();
-      instanceId = Number(instanceId);
-      if (!uid || !Number.isSafeInteger(instanceId) || instanceId <= 0) return Promise.resolve();
-      if (state.dailyBuddySelecting[uid]) return state.dailyBuddySelecting[uid];
-      state.dailyBuddySelecting[uid] = true;
-      if (refreshDailyProgressPopover) refreshDailyProgressPopover(uid);
-      var request = api('/api/growth/buddy/select', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ uid: uid, instanceId: instanceId }),
-      }).then(function (response) {
-        if (!response || !response.progress || response.progress.status !== 'ready') throw new Error('选择后未读取到最新状态');
-        var account = state.accounts.filter(function (item) { return String(item.uid) === uid; })[0];
-        if (account) account.dailyProgress = response.progress;
-        updateDailyProgressCells();
-        toast('Buddy 已设为当前', false, root);
-      }).catch(function (error) {
-        toast((error && error.message) || '选择 Buddy 失败', true, root);
-      }).finally(function () {
-        delete state.dailyBuddySelecting[uid];
-        if (alive && refreshDailyProgressPopover) refreshDailyProgressPopover(uid);
-      });
-      state.dailyBuddySelecting[uid] = request;
-      return request;
-    }
-
-    function departBuddyTravel(uid) {
-      uid = String(uid || '').trim();
-      if (!uid) return Promise.resolve();
-      if (state.dailyTravelDeparting[uid]) return state.dailyTravelDeparting[uid];
-      state.dailyTravelDeparting[uid] = true;
-      if (refreshDailyProgressPopover) refreshDailyProgressPopover(uid);
-      var request = api('/api/growth/buddy/travel/depart', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ uid: uid }),
-      }).then(function (response) {
-        if (!response || !response.progress || response.progress.status !== 'ready') throw new Error('派出后未读取到最新状态');
-        var account = state.accounts.filter(function (item) { return String(item.uid) === uid; })[0];
-        if (account) account.dailyProgress = response.progress;
-        updateDailyProgressCells();
-        toast('Buddy 已派出', false, root);
-      }).catch(function (error) {
-        toast((error && error.message) || '派出 Buddy 旅行失败', true, root);
-      }).finally(function () {
-        delete state.dailyTravelDeparting[uid];
-        if (!alive) return;
-        if (refreshDailyProgressPopover) refreshDailyProgressPopover(uid);
-      });
-      state.dailyTravelDeparting[uid] = request;
-      return request;
-    }
-
-    function runGrowthPlanAction(uid, kind) {
-      uid = String(uid || '').trim();
-      kind = kind === 'gacha' ? 'gacha' : kind === 'lottery' ? 'lottery' : '';
-      if (!uid || !kind) return Promise.resolve();
-      var key = uid + ':' + kind;
-      if (state.dailyGrowthActionRunning[key]) return state.dailyGrowthActionRunning[key];
-      var endpoint = kind === 'gacha' ? '/api/growth/buddy/open' : '/api/growth/lottery/draw';
-      var fallback = kind === 'gacha' ? '盲盒已开启' : '抽奖完成';
-      state.dailyGrowthActionRunning[key] = true;
-      if (refreshDailyProgressPopover) refreshDailyProgressPopover(uid);
-      var request = api(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ uid: uid }),
-      }).then(function (response) {
-        if (!response || response.ok !== true) throw new Error(kind === 'gacha' ? '开启盲盒失败' : '抽奖失败');
-        refreshCreditForAccount(uid);
-        if (!response || !response.progress || response.progress.status !== 'ready') throw new Error('操作后未读取到最新状态');
-        var account = state.accounts.filter(function (item) { return String(item.uid) === uid; })[0];
-        if (account) account.dailyProgress = response.progress;
-        updateDailyProgressCells();
-        toast(response.reward || fallback, false, root);
-      }).catch(function (error) {
-        toast((error && error.message) || (kind === 'gacha' ? '开启盲盒失败' : '抽奖失败'), true, root);
-      }).finally(function () {
-        delete state.dailyGrowthActionRunning[key];
-        if (!alive) return;
-        if (refreshDailyProgressPopover) refreshDailyProgressPopover(uid);
-      });
-      state.dailyGrowthActionRunning[key] = request;
-      return request;
     }
 
     function setupDailyProgressPopover() {
@@ -5361,35 +5196,26 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       listen(popup, 'mouseleave', function () { dailyPopoverHovered = false; deferHide(); });
       listen(popup, 'pointerdown', function (event) { event.stopPropagation(); });
       listen(popup, 'click', function (event) {
-        var button = event.target && event.target.closest ? event.target.closest('[data-wbs-growth-accept-all],[data-wbs-growth-accept],[data-wbs-buddy-unlock],[data-wbs-buddy-select],[data-wbs-travel-claim],[data-wbs-travel-depart],[data-wbs-growth-action],[data-wbs-claimed-toggle]') : null;
+        var button = event.target && event.target.closest ? event.target.closest('[data-wbs-growth-official],[data-wbs-claimed-toggle]') : null;
         if (!button || !popup.contains(button)) return;
         event.preventDefault();
         event.stopPropagation();
         if (!activeRing || button.disabled) return;
         var uid = activeRing.getAttribute('data-uid');
-        if (button.hasAttribute('data-wbs-claimed-toggle')) {
-          var popupScrollTop = popup.scrollTop;
-          var listScrollTop = popup.querySelector('.wbs-growth-task-list') && popup.querySelector('.wbs-growth-task-list').scrollTop;
-          state.dailyClaimedExpanded[uid] = !state.dailyClaimedExpanded[uid];
-          refreshDailyProgressPopover(uid);
-          var nextList = popup.querySelector('.wbs-growth-task-list');
-          if (nextList) nextList.scrollTop = listScrollTop || 0;
-          popup.scrollTop = popupScrollTop;
-        }
-        else if (button.hasAttribute('data-wbs-buddy-unlock')) unlockFirstBuddy(uid);
-        else if (button.hasAttribute('data-wbs-travel-claim')) claimBuddyTravelReward(uid);
-        else if (button.hasAttribute('data-wbs-travel-depart')) departBuddyTravel(uid);
-        else if (button.hasAttribute('data-wbs-buddy-select')) {
-          var choice = popup.querySelector('[data-wbs-buddy-choice]');
-          if (choice) selectBuddyForTravel(uid, choice.value);
-        }
-        else if (button.hasAttribute('data-wbs-growth-action')) runGrowthPlanAction(uid, button.getAttribute('data-wbs-growth-action'));
-        else if (button.hasAttribute('data-wbs-growth-accept-all')) acceptAllGrowthTasks(uid);
-        else if (button.hasAttribute('data-wbs-growth-accept')) acceptGrowthTask(uid, button.getAttribute('data-wbs-growth-accept'));
-      });
-      listen(popup, 'change', function (event) {
-        if (!activeRing || !event.target || !event.target.hasAttribute('data-wbs-buddy-choice')) return;
-        state.dailyBuddyChoice[activeRing.getAttribute('data-uid')] = event.target.value;
+        confirmCurrentGrowthAccount(uid).then(function (isCurrent) {
+          if (!isCurrent) return;
+          if (button.hasAttribute('data-wbs-claimed-toggle')) {
+            if (!activeRing || activeRing.getAttribute('data-uid') !== uid) return;
+            var popupScrollTop = popup.scrollTop;
+            var listScrollTop = popup.querySelector('.wbs-growth-task-list') && popup.querySelector('.wbs-growth-task-list').scrollTop;
+            state.dailyClaimedExpanded[uid] = !state.dailyClaimedExpanded[uid];
+            refreshDailyProgressPopover(uid);
+            var nextList = popup.querySelector('.wbs-growth-task-list');
+            if (nextList) nextList.scrollTop = listScrollTop || 0;
+            popup.scrollTop = popupScrollTop;
+          }
+          else if (button.hasAttribute('data-wbs-growth-official')) openOfficialGrowthCenter();
+        });
       });
       listen(window, 'resize', function () { hide(true); });
       listen(accountsPane, 'scroll', function () { hide(true); }, true);
@@ -6245,7 +6071,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         if (count) count.textContent = automationState.tasks.length ? String(automationState.tasks.length) : '';
         var scrollTop = list.scrollTop;
         list.innerHTML = '';
-        if (!automationState.tasks.length) { list.innerHTML = '<div class="wbs-auto-empty">暂无自动化任务，点击“新建任务”开始。</div>'; syncBatchControls(); return; }
+        if (!automationState.tasks.length) { list.innerHTML = '<div class="wbs-auto-empty">暂无自动化任务</div>'; syncBatchControls(); return; }
         automationState.tasks.forEach(function (task) {
           var row = document.createElement('div'); row.className = 'wbs-auto-row'; row.setAttribute('data-task-id', task.id);
           var run = runFor(task.id);
@@ -6261,10 +6087,9 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
           var active = running || stopping;
           var check = automationState.batchMode ? '<label class="wbs-auto-check"><input type="checkbox" data-auto-select="' + escAttr(task.id) + '"' + (automationState.selected[task.id] ? ' checked' : '') + '><span></span></label>' : '';
           var stateClass = active ? 'running' : !task.enabled && !task.manualRunnable ? 'off' : 'idle';
-          var builtinBadge = wbsIsBuiltinAutomation(task) ? '<span class="wbs-auto-builtin-badge">内置</span>' : '';
           var action = running ? '<button type="button" class="wbs-auto-icon is-running' + (stopping ? ' is-stopping' : '') + '" data-auto-stop="' + escAttr(run.id) + '" title="' + (stopping ? '正在停止…' : '停止本次执行') + '" aria-label="' + (stopping ? '正在停止…' : '停止本次执行') + '" aria-busy="true"' + (stopping ? ' disabled' : '') + '>' + (stopping ? AUTO_STOPPING_SVG : AUTO_STOP_SVG) + '</button>'
             : task.manualRunnable ? '<button type="button" class="wbs-auto-icon" data-auto-run="' + escAttr(task.id) + '" title="立即运行" aria-label="立即运行">' + MODEL_ENABLE_SVG + '</button>' : '';
-          row.innerHTML = '<div class="wbs-auto-row-head">' + check + builtinBadge + '<div class="wbs-auto-name"' + (wbsBuiltinAutomationText(task, 'name') ? '' : ' data-wbs-i18n-skip="1"') + ' title="' + escAttr(task.name) + '">' + esc(task.name) + '</div>' +
+          row.innerHTML = '<div class="wbs-auto-row-head">' + check + '<div class="wbs-auto-name"' + (wbsBuiltinAutomationText(task, 'name') ? '' : ' data-wbs-i18n-skip="1"') + ' title="' + escAttr(task.name) + '">' + esc(task.name) + '</div>' +
             '<label class="wbs-switch wbs-auto-enabled" title="' + (task.manualRunnable ? '手动任务无需自动触发' : '启用自动触发') + '"' + (task.manualRunnable || task.compatible === false ? ' hidden' : '') + '><input type="checkbox" data-auto-enabled="' + escAttr(task.id) + '" aria-label="启用自动触发"' + (task.enabled ? ' checked' : '') + '><span class="wbs-switch-slider"></span></label></div>' +
             (task.description ? '<div class="wbs-auto-description"' + (wbsBuiltinAutomationText(task, 'description') ? '' : ' data-wbs-i18n-skip="1"') + ' title="' + escAttr(task.description) + '">' + esc(task.description) + '</div>' : '') +
             '<div class="wbs-auto-row-foot"><div class="wbs-auto-details"><div class="wbs-auto-triggers" aria-label="触发方式">' + triggerBadgesHtml(task) + '</div><div class="wbs-auto-state-line"><span class="wbs-auto-state ' + stateClass + '">' + esc(taskStatusLabel(task, run, stopping)) + '</span>' +
@@ -6411,8 +6236,6 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         if (button) { button.disabled = true; button.classList.add('is-loading'); button.querySelector('span').textContent = '正在发现…'; }
         return preloadAutomationDiscovery().then(function (result) {
           automationState.discovery = result;
-          var version = automationPane.querySelector('#wbs-auto-api-version');
-          if (version) version.textContent = 'API V' + result.schemaVersion;
           return result;
         }).catch(function (error) {
           automationState.discoveryError = error.message || '公开任务加载失败';
@@ -6645,74 +6468,12 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
           toast('任务导出成功', false, root);
         }).catch(function (error) { toast(error.message || '导出失败', true, root); }).finally(function () { automationState.exporting = false; syncBatchControls(); });
       }
-      function importIssueLabel(entry) {
-        if (entry.existing) return '已存在，将跳过';
-        if (entry.compatible) return '可导入';
-        var codes = (entry.issues || []).map(function (issue) { return issue.code; });
-        if (codes.indexOf('input_required') >= 0) return '缺少必填参数';
-        if (codes.indexOf('workdaddy_version') >= 0) return '需要更新 WorkDaddy';
-        if (codes.indexOf('profile') >= 0 || codes.indexOf('platform') >= 0) return '不支持当前客户端或系统';
-        if (codes.indexOf('invalid_document') >= 0) return '文件不是自动化任务 JSON';
-        return '任务格式或能力不受支持';
-      }
-      function showTaskImport(payload, filename, preview) {
-        closePanelModal((panel || root).querySelector('#wbs-auto-import-mask'));
-        var mask = document.createElement('div'); mask.id = 'wbs-auto-import-mask'; mask.className = 'wbs-modal-mask wbs-modal-mask-panel wbs-auto-dialog-mask';
-        mask.innerHTML = '<div class="wbs-modal wbs-auto-import-modal" role="dialog" aria-modal="true" aria-labelledby="wbs-auto-import-title"><div class="wbs-modal-title" id="wbs-auto-import-title">导入任务</div><div class="wbs-auto-import-file" data-wbs-i18n-skip="1"></div><p class="wbs-auto-agent-intro">导入后保持停用，可在任务列表中启用。相同 ID 的任务会跳过。</p><div class="wbs-auto-import-list"></div><div class="wbs-auto-import-error" role="alert"></div><div class="wbs-modal-actions"><span class="wbs-auto-import-count"></span><button class="wbs-modal-btn" data-auto-close type="button">取消</button><button class="wbs-modal-btn wbs-modal-ok" data-auto-import-confirm type="button">导入</button></div></div>';
-        mask.querySelector('.wbs-auto-import-file').textContent = filename;
-        var list = mask.querySelector('.wbs-auto-import-list');
-        preview.entries.forEach(function (entry) {
-          var row = document.createElement('label'); row.className = 'wbs-auto-import-item';
-          var available = entry.compatible && !entry.existing;
-          row.innerHTML = '<span class="wbs-auto-check"><input type="checkbox" data-import-key="' + escAttr(entry.key) + '"' + (available ? ' checked' : ' disabled') + '></span><span class="wbs-auto-import-info"><span class="wbs-auto-import-name" data-wbs-i18n-skip="1"></span><span class="wbs-auto-import-status"></span></span>';
-          row.querySelector('.wbs-auto-import-name').textContent = entry.name;
-          row.querySelector('.wbs-auto-import-status').textContent = importIssueLabel(entry);
-          list.appendChild(row);
-        });
-        mountAutomationModal(mask);
-        var confirm = mask.querySelector('[data-auto-import-confirm]'), error = mask.querySelector('.wbs-auto-import-error');
-        function selected() { return Array.from(list.querySelectorAll('input:checked:not(:disabled)')).map(function (input) { return input.dataset.importKey; }); }
-        function syncSelection() { var count = selected().length; confirm.disabled = !count; mask.querySelector('.wbs-auto-import-count').textContent = WBS_LANGUAGE === 'en' ? 'Selected ' + count : '已选 ' + count; }
-        list.addEventListener('change', syncSelection); syncSelection();
-        confirm.addEventListener('click', function () {
-          var keys = selected(); if (!keys.length) return;
-          confirm.disabled = true; confirm.textContent = WBS_LANGUAGE === 'en' ? 'Importing…' : '导入中…'; error.textContent = '';
-          list.querySelectorAll('input').forEach(function (input) { input.disabled = true; });
-          api('/api/automations/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(Object.assign({}, payload, { selected: keys })) }).then(function (result) {
-            closePanelModal(mask);
-            toast(WBS_LANGUAGE === 'en' ? 'Imported ' + result.imported + ' task(s)' + (result.skipped ? '; skipped ' + result.skipped : '') : '已导入 ' + result.imported + ' 个任务' + (result.skipped ? '，跳过 ' + result.skipped + ' 个' : ''), false, root);
-            return load();
-          }).catch(function (err) {
-            error.textContent = err.message || '导入失败';
-            preview.entries.forEach(function (entry) { list.querySelector('[data-import-key="' + entry.key + '"]').disabled = !entry.compatible || entry.existing; });
-            confirm.textContent = WBS_LANGUAGE === 'en' ? 'Import' : '导入'; syncSelection();
-          });
-        });
-      }
-      function readAutomationImport(event) {
-        var file = event.target.files && event.target.files[0]; event.target.value = '';
-        if (!file) return;
-        if (file.size > 8 * 1024 * 1024) { toast('任务文件不能超过 8 MiB', true, root); return; }
-        var button = automationPane.querySelector('#wbs-auto-import'); button.disabled = true;
-        var reader = new FileReader();
-        reader.onerror = function () { button.disabled = false; toast('读取文件失败', true, root); };
-        reader.onload = function () {
-          var payload = { content: String(reader.result || '').split(',')[1] || '', encoding: 'base64' };
-          api('/api/automations/import/preview', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }).then(function (preview) {
-            showTaskImport(payload, file.name, preview);
-          }).catch(function (err) { toast(err.message || '导入失败', true, root); }).finally(function () { button.disabled = false; });
-        };
-        reader.readAsDataURL(file);
-      }
       function startPicker() {
         if (typeof window.__wbsStartAutomationPicker === 'function') window.__wbsStartAutomationPicker();
         else toast('元素拾取器尚未加载', true, root);
       }
-      automationPane.innerHTML = '<div class="wbs-pcard wbs-auto-card"><div class="wbs-auto-toolbar"><div class="wbs-pcard-title">自动化<span class="wbs-pcard-sub" id="wbs-auto-count"></span><span class="wbs-auto-api-version" id="wbs-auto-api-version"></span></div><button type="button" class="wbs-auto-textbtn" id="wbs-auto-cap">查看接口说明</button><div class="wbs-auto-toolbar-actions"><div class="wbs-auto-normal-actions" id="wbs-auto-normal-actions"><button class="wbs-sess-bbtn wbs-auto-pick-btn is-loading" type="button" id="wbs-auto-discover" disabled>' + AUTO_DISCOVER_SVG + '<span>正在发现…</span></button><button class="wbs-sess-bbtn wbs-auto-pick-btn" type="button" id="wbs-auto-pick">' + AUTO_PICK_SVG + '<span>拾取元素</span></button><button class="wbs-sess-bbtn" type="button" id="wbs-auto-create">让 WorkBuddy 帮我创建</button><button class="wbs-sess-bbtn" type="button" id="wbs-auto-new">新建任务</button><button class="wbs-sess-bbtn" type="button" id="wbs-auto-import" title="选择 JSON 或 ZIP 任务文件">' + IMPORT_ICON + '<span>导入</span></button><input type="file" id="wbs-auto-import-file" accept=".json,.zip,application/json,application/zip" hidden><button class="wbs-sess-bbtn" type="button" id="wbs-auto-batch">批量操作</button></div><div class="wbs-auto-batch-actions" id="wbs-auto-batch-actions" style="display:none"><span class="wbs-auto-batch-count" id="wbs-auto-batch-count">已选 0</span><button class="wbs-sess-bbtn" type="button" id="wbs-auto-select-all">全选</button><button class="wbs-sess-bbtn" type="button" id="wbs-auto-export" disabled>' + EXPORT_ICON + '<span>导出</span></button><button class="wbs-sess-bbtn wbs-sess-delbtn" type="button" id="wbs-auto-batch-apply">' + TRASH_SVG + '<span>删除选中</span></button><button class="wbs-sess-bbtn" type="button" id="wbs-auto-batch-cancel">取消</button></div></div></div><div class="wbs-auto-list" id="wbs-auto-list"></div></div>';
-      automationPane.querySelector('#wbs-auto-import').addEventListener('click', function () { automationPane.querySelector('#wbs-auto-import-file').click(); });
-      automationPane.querySelector('#wbs-auto-import-file').addEventListener('change', readAutomationImport);
+      automationPane.innerHTML = '<div class="wbs-pcard wbs-auto-card"><div class="wbs-auto-toolbar"><div class="wbs-pcard-title">自动化<span class="wbs-pcard-sub" id="wbs-auto-count"></span></div><button type="button" class="wbs-auto-textbtn" id="wbs-auto-cap">自动化接口协议 V2</button><div class="wbs-auto-toolbar-actions"><div class="wbs-auto-normal-actions" id="wbs-auto-normal-actions"><button class="wbs-sess-bbtn wbs-auto-pick-btn is-loading" type="button" id="wbs-auto-discover" disabled>' + AUTO_DISCOVER_SVG + '<span>正在发现…</span></button><button class="wbs-sess-bbtn wbs-auto-pick-btn" type="button" id="wbs-auto-pick">' + AUTO_PICK_SVG + '<span>拾取元素</span></button><div class="wbs-auto-right-actions"><button class="wbs-sess-bbtn" type="button" id="wbs-auto-create">让 WorkBuddy 帮我创建</button><button class="wbs-sess-bbtn" type="button" id="wbs-auto-batch">批量操作</button></div></div><div class="wbs-auto-batch-actions" id="wbs-auto-batch-actions" style="display:none"><span class="wbs-auto-batch-count" id="wbs-auto-batch-count">已选 0</span><button class="wbs-sess-bbtn" type="button" id="wbs-auto-select-all">全选</button><button class="wbs-sess-bbtn" type="button" id="wbs-auto-export" disabled>' + EXPORT_ICON + '<span>导出</span></button><button class="wbs-sess-bbtn wbs-sess-delbtn" type="button" id="wbs-auto-batch-apply">' + TRASH_SVG + '<span>删除选中</span></button><button class="wbs-sess-bbtn" type="button" id="wbs-auto-batch-cancel">取消</button></div></div></div><div class="wbs-auto-list" id="wbs-auto-list"></div></div>';
       automationPane.querySelector('#wbs-auto-export').addEventListener('click', exportAutomationTasks);
-      automationPane.querySelector('#wbs-auto-new').addEventListener('click', function () { showEditor(defaultTask()); });
       automationPane.querySelector('#wbs-auto-pick').addEventListener('click', startPicker);
       automationPane.querySelector('#wbs-auto-cap').addEventListener('click', showCapabilities);
       automationPane.querySelector('#wbs-auto-create').addEventListener('click', showExamples);
@@ -6776,10 +6537,6 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       load();
       loadAgentInfo();
       loadAutomationDiscovery();
-      api('/api/automations/capabilities').then(function (result) {
-        var version = automationPane.querySelector('#wbs-auto-api-version');
-        if (version && result.schemaVersion) version.textContent = 'API V' + result.schemaVersion;
-      }).catch(function () {});
       automationState.pollTimer = setInterval(load, 2500);
     }
 
@@ -8174,32 +7931,32 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         '<div class="wbs-pcard-title">会话<span class="wbs-pcard-sub" id="wbs-ac-status"></span></div>' +
         '<div class="wbs-nd-row" id="wbs-ac-row">' +
         '<span class="wbs-nd-title">继续异常中断会话</span>' +
-        '<span class="wbs-nd-hint">检测到会话异常中断，自动让它继续。</span>' +
+        '<span class="wbs-nd-hint">检测到会话异常中断，自动让它继续</span>' +
         '<label class="wbs-switch"><input type="checkbox" id="wbs-ac-switch"><span class="wbs-switch-slider"></span></label>' +
         '</div>' +
         '<div class="wbs-nd-row">' +
         '<span class="wbs-nd-title">暂存提示词</span>' +
-        '<span class="wbs-nd-hint">暂存想法择机发送，发送后自动删除。</span>' +
+        '<span class="wbs-nd-hint">暂存想法择机发送，发送后自动删除</span>' +
         '<label class="wbs-switch"><input type="checkbox" id="wbs-sess-stash"><span class="wbs-switch-slider"></span></label>' +
         '</div>' +
         '<div class="wbs-nd-row">' +
         '<span class="wbs-nd-title">会话消息索引</span>' +
-        '<span class="wbs-nd-hint">悬停预览，点击或拖动快速定位消息。</span>' +
+        '<span class="wbs-nd-hint">悬停预览，点击或拖动快速定位消息</span>' +
         '<label class="wbs-switch" title="在会话左侧显示消息索引"><input type="checkbox" id="wbs-sess-message-nav"><span class="wbs-switch-slider"></span></label>' +
         '</div>' +
         '<div class="wbs-nd-row">' +
         '<span class="wbs-nd-title">分支到新会话</span>' +
-        '<span class="wbs-nd-hint">复制到这条回复为止的聊天内容，在当前工作区继续聊；原会话不变。</span>' +
+        '<span class="wbs-nd-hint">复制到这条回复为止的聊天内容，在当前工作区继续聊；原会话不变</span>' +
         '<label class="wbs-switch"><input type="checkbox" id="wbs-sess-fork" aria-label="分支到新会话"><span class="wbs-switch-slider"></span></label>' +
         '</div>' +
         '<div class="wbs-nd-row">' +
         '<span class="wbs-nd-title">引用消息文本</span>' +
-        '<span class="wbs-nd-hint">选中会话消息文字后，一键插入输入框。</span>' +
+        '<span class="wbs-nd-hint">选中会话消息文字后，一键插入输入框</span>' +
         '<label class="wbs-switch" title="选中会话消息中的文字后显示引用按钮"><input type="checkbox" id="wbs-sess-selection-quote"><span class="wbs-switch-slider"></span></label>' +
         '</div>' +
         '<div class="wbs-nd-row">' +
         '<span class="wbs-nd-title">快捷短语</span>' +
-        '<span class="wbs-nd-hint">发送后不会自动删除。</span>' +
+        '<span class="wbs-nd-hint">发送后不会自动删除</span>' +
         '<label class="wbs-switch"><input type="checkbox" id="wbs-sess-phrase"><span class="wbs-switch-slider"></span></label>' +
         '</div>' +
         '<div class="wbs-qp-area" id="wbs-qp-area" style="display:none">' +
@@ -12697,11 +12454,8 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         var target = Math.max(1, Number(task.target) || 1);
         var stateName = growthTaskState(task);
         var taskCode = String(task.taskCode || '');
-        var accepting = !!state.dailyTaskAccepting[uid + ':' + taskCode];
         var stateControl = task.state === 'not_accepted' && taskCode
-          ? '<button type="button" class="wbs-growth-task-action" data-wbs-growth-accept="' + escAttr(taskCode) + '"' +
-            (accepting || state.dailyTasksAccepting[uid] ? ' disabled' : '') + (accepting ? ' aria-busy="true"' : '') + '>' +
-            (accepting ? '<i class="wbs-growth-task-action-spinner" aria-hidden="true"></i><span>接取中</span>' : '去完成') + '</button>'
+          ? '<button type="button" class="wbs-growth-task-action" data-wbs-growth-official>去完成</button>'
           : '<b>' + esc(stateName) + '</b>';
         var taskTag = task.tag ? '<span class="wbs-growth-task-tag">' + esc(task.tag) + '</span>' : '';
         var guide = task.guide ? '<div class="wbs-growth-task-guide">' + esc(task.guide) + '</div>' : '';
@@ -12714,26 +12468,14 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       };
       var claimedToggle = claimedTasks.length ? '<button type="button" class="wbs-growth-claimed-toggle" data-wbs-claimed-toggle aria-expanded="' + claimedExpanded + '"><span>' +
         (claimedExpanded ? '收起已领取' : '展开已领取') + '</span><em> · ' + claimedTasks.length + '</em></button>' : '';
-      var hasUnaccepted = visibleTasks.some(function (task) { return task && task.state === 'not_accepted' && task.taskCode; });
-      var acceptingAll = !!state.dailyTasksAccepting[uid];
-      var acceptingOne = Object.keys(state.dailyTaskAccepting).some(function (key) { return key.indexOf(uid + ':') === 0; });
-      var acceptAllButton = hasUnaccepted || acceptingAll ? '<button type="button" class="wbs-growth-task-action" data-wbs-growth-accept-all' +
-        (acceptingAll || acceptingOne ? ' disabled' : '') + (acceptingAll ? ' aria-busy="true"' : '') + '>' +
-        (acceptingAll ? '<i class="wbs-growth-task-action-spinner" aria-hidden="true"></i><span>接取中</span>' : '一键去完成') + '</button>' : '';
       var taskListHtml = '<div class="wbs-growth-task-section">' +
-        '<div class="wbs-growth-task-head"><span><i class="growth" aria-hidden="true"></i>成长任务</span><em>' + (Number(growth.completed) || 0) + ' / ' + (Number(growth.total) || growthTasks.length) + '</em>' + acceptAllButton + '</div>' +
+        '<div class="wbs-growth-task-head"><span><i class="growth" aria-hidden="true"></i>成长任务</span><em>' + (Number(growth.completed) || 0) + ' / ' + (Number(growth.total) || growthTasks.length) + '</em></div>' +
         '<div class="wbs-growth-task-list">' + visibleTasks.map(renderGrowthTask).join('') + claimedToggle +
         (claimedExpanded ? claimedTasks.map(renderGrowthTask).join('') : '') + '</div></div>';
-      var gachaRunning = !!state.dailyGrowthActionRunning[uid + ':gacha'];
-      var lotteryRunning = !!state.dailyGrowthActionRunning[uid + ':lottery'];
       var gachaButton = Number(gacha.count) > 0
-        ? '<button type="button" class="wbs-growth-task-action wbs-daily-action-button" data-wbs-growth-action="gacha"' +
-          (gachaRunning ? ' disabled aria-busy="true"' : '') + '>' +
-          (gachaRunning ? '<i class="wbs-growth-task-action-spinner" aria-hidden="true"></i><span>开启中</span>' : '开启') + '</button>' : '';
+        ? '<button type="button" class="wbs-growth-task-action wbs-daily-action-button" data-wbs-growth-official>去官网开启</button>' : '';
       var lotteryButton = Number(lottery.count) > 0
-        ? '<button type="button" class="wbs-growth-task-action wbs-daily-action-button" data-wbs-growth-action="lottery"' +
-          (lotteryRunning ? ' disabled aria-busy="true"' : '') + '>' +
-          (lotteryRunning ? '<i class="wbs-growth-task-action-spinner" aria-hidden="true"></i><span>抽奖中</span>' : '抽奖') + '</button>' : '';
+        ? '<button type="button" class="wbs-growth-task-action wbs-daily-action-button" data-wbs-growth-official>去官网抽奖</button>' : '';
       var actionHtml = '<div class="wbs-daily-actions">' +
         '<div class="wbs-daily-action"><span>开启盲盒</span><b>' + esc(actionCount(gacha)) + '</b>' + gachaButton + '</div>' +
         '<div class="wbs-daily-action"><span>待抽奖</span><b>' + esc(actionCount(lottery)) + '</b>' + lotteryButton + '</div>' +
@@ -12757,32 +12499,17 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         (makeupCards === null ? '' : '<em>补登卡 ' + makeupCards + ' 张</em>') + '</div>' + tierHtml + '</div>';
       var countdownAt = cat.state === 'traveling' && Number(cat.arriveAt) > 0 ? Number(cat.arriveAt) : null;
       var countdownAttr = countdownAt ? ' data-wbs-travel-countdown="' + countdownAt + '"' : '';
-      var travelClaiming = !!state.dailyTravelClaiming[uid];
-      var buddyUnlocking = !!state.dailyBuddyUnlocking[uid];
       var buddyUnlockButton = cat.state === 'locked'
-        ? '<button type="button" class="wbs-growth-task-action" data-wbs-buddy-unlock' +
-          (buddyUnlocking ? ' disabled aria-busy="true"' : '') + '>' +
-          (buddyUnlocking ? '<i class="wbs-growth-task-action-spinner" aria-hidden="true"></i><span>解锁中</span>' : '解锁 Buddy') + '</button>'
+        ? '<button type="button" class="wbs-growth-task-action" data-wbs-growth-official>去官网解锁 Buddy</button>'
         : '';
       var travelClaimButton = cat.state === 'arrived'
-        ? '<button type="button" class="wbs-growth-task-action wbs-travel-claim" data-wbs-travel-claim' +
-          (travelClaiming ? ' disabled aria-busy="true"' : '') + '>' +
-          (travelClaiming ? '<i class="wbs-growth-task-action-spinner" aria-hidden="true"></i><span>领取中</span>' : '领取') + '</button>'
+        ? '<button type="button" class="wbs-growth-task-action wbs-travel-claim" data-wbs-growth-official>去官网领取</button>'
         : '';
-      var travelDeparting = !!state.dailyTravelDeparting[uid];
       var travelDepartButton = cat.state === 'idle' && cat.activeBuddy === true && !cat.dailyLimitReached && cat.available !== false
-        ? '<button type="button" class="wbs-growth-task-action wbs-travel-depart" data-wbs-travel-depart' +
-          (travelDeparting ? ' disabled aria-busy="true"' : '') + '>' +
-          (travelDeparting ? '<i class="wbs-growth-task-action-spinner" aria-hidden="true"></i><span>派出中</span>' : '派出') + '</button>'
+        ? '<button type="button" class="wbs-growth-task-action wbs-travel-depart" data-wbs-growth-official>去官网派出</button>'
         : '';
-      var buddySelecting = !!state.dailyBuddySelecting[uid];
-      var buddyChoice = String(state.dailyBuddyChoice[uid] || '');
-      var buddyPicker = cat.state === 'needs_selection' && Array.isArray(cat.buddies) && cat.buddies.length
-        ? '<div class="wbs-buddy-picker"><label>选择 Buddy<select data-wbs-buddy-choice aria-label="选择 Buddy"' + (buddySelecting ? ' disabled' : '') + '>' + cat.buddies.map(function (buddy, index) {
-          return '<option value="' + escAttr(buddy.instanceId) + '"' + (buddyChoice === String(buddy.instanceId) || !buddyChoice && index === 0 ? ' selected' : '') + '>' + esc(buddy.name || 'Buddy') + '</option>';
-        }).join('') + '</select></label><button type="button" class="wbs-growth-task-action" data-wbs-buddy-select' +
-          (buddySelecting ? ' disabled aria-busy="true"' : '') + '>' +
-          (buddySelecting ? '<i class="wbs-growth-task-action-spinner" aria-hidden="true"></i><span>选择中</span>' : '设为当前') + '</button></div>'
+      var buddyPicker = cat.state === 'needs_selection'
+        ? '<div class="wbs-buddy-picker"><button type="button" class="wbs-growth-task-action" data-wbs-growth-official>去官网选择 Buddy</button></div>'
         : '';
       return head +
         taskListHtml +
@@ -12972,7 +12699,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         var idVal = state.mask ? maskAccountId(rawId) : rawId;
         card.innerHTML =
           '<div class="wbs-info">' +
-          '<div class="wbs-row1"><div class="wbs-name-group"><span class="wbs-name">' + esc(nameVal) + '</span><span class="wbs-account-note"' + (state.mask || !a.note ? ' hidden' : '') + '>' + (state.mask ? '' : esc(a.note || '')) + '</span>' + badge + dailyRingsHtml(a) + checkinBadge + invalidAuthBadge + '</div>' + ops + '</div>' +
+          '<div class="wbs-row1"><div class="wbs-name-group"><span class="wbs-name">' + esc(nameVal) + '</span>' + badge + dailyRingsHtml(a) + checkinBadge + invalidAuthBadge + '</div>' + ops + '</div>' +
           '<div class="wbs-meta wbs-secondary-row">' +
           '<div class="wbs-mi wbs-phone-cell' + (isUinMode ? ' wbs-uin-cell' : '') + '"><span class="wbs-lbl">' + idLbl + '</span><span class="wbs-val">' + esc(idVal) + '</span></div>' +
           '<div class="wbs-mi wbs-token-cell"><span class="wbs-lbl">有效期至</span><span class="wbs-val' + (ts.warn ? ' wbs-warn' : '') + '">' + esc(ts.label) + '</span></div>' +
@@ -13103,8 +12830,6 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         if (!account) continue;
         var nameEl = cards[c].querySelector('.wbs-name');
         if (nameEl) nameEl.textContent = state.mask ? maskAccountName(account.nickname || '(未命名)') : (account.nickname || '(未命名)');
-        var noteEl = cards[c].querySelector('.wbs-account-note');
-        if (noteEl) { noteEl.textContent = state.mask ? '' : (account.note || ''); noteEl.hidden = state.mask || !account.note; }
         var valEl = cards[c].querySelector('.wbs-phone-cell .wbs-val');
         if (valEl) {
           var raw = account.phone ? account.phone : (account.uin ? account.uin : '-');
@@ -13940,11 +13665,11 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '.wbs-status-popover.is-passive{pointer-events:none}.wbs-status-popover[hidden]{display:none!important}.wbs-daily-popover-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:9px}.wbs-daily-popover-head strong{font-size:13px;font-weight:700;white-space:nowrap}.wbs-daily-popover-head span{color:var(--wb-icon-tertiary,#7c818b);font-size:10px;font-variant-numeric:tabular-nums}.wbs-daily-refresh-time{display:inline-flex;align-items:center;gap:5px;white-space:nowrap}',
     '.wbs-daily-refresh-spinner{width:9px;height:9px;box-sizing:border-box;border:1.5px solid color-mix(in srgb,var(--wbs-ring-growth) 25%,transparent);border-top-color:var(--wbs-ring-growth);border-radius:50%;animation:wbs-daily-spin .72s linear infinite}@keyframes wbs-daily-spin{to{transform:rotate(360deg)}}',
     '.wbs-daily-detail{display:grid;grid-template-columns:8px 72px minmax(0,1fr);align-items:center;gap:7px;min-height:31px;margin-top:5px;padding:0 9px;border:1px solid var(--wb-border-subtle,rgba(20,24,32,.1));border-radius:8px;background:color-mix(in srgb,var(--wb-bg-secondary,#f6f7f8) 72%,transparent)}',
-    '.wbs-daily-detail i,.wbs-credit-tip-value i{display:block;width:8px;height:8px;border-radius:50%;background:currentColor;box-shadow:0 0 0 2px color-mix(in srgb,currentColor 17%,transparent)}.wbs-daily-detail i.growth{color:var(--wbs-ring-growth)}.wbs-daily-detail i.cat{color:var(--wbs-ring-cat)}.wbs-daily-detail i.credit{color:var(--wbs-tip-credit)}.wbs-daily-detail>span{color:var(--wb-color-text-secondary,#5f6368);white-space:nowrap}.wbs-daily-detail b{min-width:0;text-align:right;font-size:11px;font-weight:650;overflow-wrap:anywhere}.wbs-daily-detail.cat-row b{white-space:nowrap;font-variant-numeric:tabular-nums}.wbs-daily-cat-value{display:flex;min-width:0;align-items:center;justify-content:flex-end;gap:8px}.wbs-travel-claim{flex:0 0 60px}',
-    '.wbs-daily-detail i,.wbs-credit-tip-value i{display:block;width:8px;height:8px;border-radius:50%;background:currentColor;box-shadow:0 0 0 2px color-mix(in srgb,currentColor 17%,transparent)}.wbs-daily-detail i.growth{color:var(--wbs-ring-growth)}.wbs-daily-detail i.cat{color:var(--wbs-ring-cat)}.wbs-daily-detail i.credit{color:var(--wbs-tip-credit)}.wbs-daily-detail>span{color:var(--wb-color-text-secondary,#5f6368);white-space:nowrap}.wbs-daily-detail b{min-width:0;text-align:right;font-size:11px;font-weight:650;overflow-wrap:anywhere}.wbs-daily-detail.cat-row b{white-space:nowrap;font-variant-numeric:tabular-nums}.wbs-daily-cat-value{display:flex;min-width:0;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:8px}.wbs-daily-cat-value>b{white-space:normal!important}.wbs-travel-claim{flex:0 0 60px}',
+    '.wbs-daily-detail i,.wbs-credit-tip-value i{display:block;width:8px;height:8px;border-radius:50%;background:currentColor;box-shadow:0 0 0 2px color-mix(in srgb,currentColor 17%,transparent)}.wbs-daily-detail i.growth{color:var(--wbs-ring-growth)}.wbs-daily-detail i.cat{color:var(--wbs-ring-cat)}.wbs-daily-detail i.credit{color:var(--wbs-tip-credit)}.wbs-daily-detail>span{color:var(--wb-color-text-secondary,#5f6368);white-space:nowrap}.wbs-daily-detail b{min-width:0;text-align:right;font-size:11px;font-weight:650;overflow-wrap:anywhere}.wbs-daily-detail.cat-row b{white-space:nowrap;font-variant-numeric:tabular-nums}.wbs-daily-cat-value{display:flex;min-width:0;align-items:center;justify-content:flex-end;gap:8px}.wbs-travel-claim{flex:0 0 auto}',
+    '.wbs-daily-detail i,.wbs-credit-tip-value i{display:block;width:8px;height:8px;border-radius:50%;background:currentColor;box-shadow:0 0 0 2px color-mix(in srgb,currentColor 17%,transparent)}.wbs-daily-detail i.growth{color:var(--wbs-ring-growth)}.wbs-daily-detail i.cat{color:var(--wbs-ring-cat)}.wbs-daily-detail i.credit{color:var(--wbs-tip-credit)}.wbs-daily-detail>span{color:var(--wb-color-text-secondary,#5f6368);white-space:nowrap}.wbs-daily-detail b{min-width:0;text-align:right;font-size:11px;font-weight:650;overflow-wrap:anywhere}.wbs-daily-detail.cat-row b{white-space:nowrap;font-variant-numeric:tabular-nums}.wbs-daily-cat-value{display:flex;min-width:0;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:8px}.wbs-daily-cat-value>b{white-space:normal!important}.wbs-travel-claim{flex:0 0 auto}',
     '.wbs-growth-task-section{margin:7px 0 9px;padding:9px 10px 7px;border:1px solid var(--wb-border-subtle,rgba(20,24,32,.1));border-radius:9px;background:color-mix(in srgb,var(--wb-bg-secondary,#f6f7f8) 38%,var(--wb-bg-popover,#fff))}.wbs-growth-task-head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding-bottom:5px}.wbs-growth-task-head span{font-size:10.5px;font-weight:650;color:var(--wb-color-text-secondary,#5f6368)}.wbs-growth-task-head em{font-size:10px;font-style:normal;color:var(--wbs-ring-growth);font-variant-numeric:tabular-nums}.wbs-growth-task-list{max-height:360px;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:none}.wbs-growth-task-row{padding:9px 0;border-top:1px solid color-mix(in srgb,var(--wb-border-subtle,rgba(20,24,32,.1)) 72%,transparent);font-size:10.5px}.wbs-growth-task-row:first-child{border-top:0}.wbs-growth-task-title{display:grid;grid-template-columns:6px minmax(0,1fr) 42px 62px;align-items:center;gap:7px;min-height:22px}.wbs-growth-task-title>i{width:6px;height:6px;border-radius:50%;background:var(--wb-border-default,var(--wb-bg-tertiary,#d9dadd))}.wbs-growth-task-row.is-completed .wbs-growth-task-title>i,.wbs-growth-task-row.is-claimed .wbs-growth-task-title>i{background:var(--wbs-ring-growth)}.wbs-growth-task-title>span{min-width:0;color:var(--wb-color-text-primary,#1f1f1f);font-weight:620;line-height:1.4;overflow-wrap:anywhere}.wbs-growth-task-title>em{font-style:normal;text-align:right;color:var(--wb-icon-tertiary,#7c818b);font-variant-numeric:tabular-nums;white-space:nowrap}.wbs-growth-task-state{display:flex;min-width:62px;align-items:center;justify-content:flex-end}.wbs-growth-task-title b{text-align:right;color:var(--wb-color-text-secondary,#5f6368);font-size:10px;font-weight:600;white-space:nowrap}.wbs-growth-task-row.is-completed .wbs-growth-task-title b,.wbs-growth-task-row.is-claimed .wbs-growth-task-title b{color:var(--wbs-ring-growth)}.wbs-growth-task-action{display:inline-flex;min-width:60px;height:22px;box-sizing:border-box;align-items:center;justify-content:center;gap:4px;padding:0 7px;border:1px solid color-mix(in srgb,var(--wbs-ring-growth) 28%,var(--wb-border-subtle,transparent));border-radius:6px;background:var(--wbs-primary-soft);color:var(--wbs-ring-growth);font:600 10px/1 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;white-space:nowrap;cursor:pointer;transition:background-color .16s,border-color .16s,box-shadow .16s}.wbs-growth-task-action:hover:not([disabled]){background:var(--wbs-primary-soft-hover);border-color:color-mix(in srgb,var(--wbs-ring-growth) 42%,var(--wb-border-subtle,transparent))}.wbs-growth-task-action:focus-visible{outline:0;box-shadow:0 0 0 2px color-mix(in srgb,var(--wbs-ring-growth) 34%,transparent)}.wbs-growth-task-action[disabled]{opacity:.72;cursor:default}.wbs-growth-task-action-spinner{width:9px;height:9px;box-sizing:border-box;border:1.5px solid color-mix(in srgb,currentColor 28%,transparent);border-top-color:currentColor;border-radius:50%;animation:wbs-daily-spin .72s linear infinite}.wbs-growth-task-meta{display:flex;align-items:flex-start;gap:16px;margin:5px 0 0 13px;color:var(--wb-color-text-secondary,#5f6368);font-size:10px}.wbs-growth-task-meta>span{display:flex;min-width:0;align-items:flex-start;gap:6px;overflow-wrap:anywhere}.wbs-growth-task-meta>span:last-child{flex:1}.wbs-growth-task-meta label{flex:0 0 auto;color:var(--wb-icon-tertiary,#7c818b);font-size:10px;white-space:nowrap}.wbs-growth-reward-tags{display:flex;min-width:0;flex-wrap:wrap;gap:4px}.wbs-growth-reward-tag{display:inline-flex;align-items:center;min-height:16px;box-sizing:border-box;padding:1px 5px;border:1px solid var(--wb-border-subtle,rgba(20,24,32,.1));border-radius:999px;background:color-mix(in srgb,var(--wb-bg-tertiary,#f2f3f4) 72%,transparent);color:var(--wb-color-text-secondary,#5f6368);font-size:9px;font-weight:500;line-height:1.2;white-space:nowrap}.wbs-growth-reward-tag.is-empty{color:var(--wb-icon-tertiary,#7c818b)}',
-    '.wbs-growth-task-head>span{display:inline-flex;align-items:center;gap:7px}.wbs-growth-task-head i.growth{width:8px;height:8px;flex:none;border-radius:50%;background:var(--wbs-ring-growth);box-shadow:0 0 0 2px color-mix(in srgb,var(--wbs-ring-growth) 17%,transparent)}.wbs-growth-task-head em{color:var(--wb-icon-tertiary,#7c818b)}.wbs-growth-task-title{grid-template-columns:6px minmax(0,1fr) auto 78px}.wbs-growth-task-title>span{font-size:11px}.wbs-growth-task-tag{display:inline-flex!important;min-height:17px;box-sizing:border-box;align-items:center;padding:1px 6px;border:1px solid var(--wb-border-subtle,rgba(20,24,32,.1));border-radius:999px;background:color-mix(in srgb,var(--wb-bg-tertiary,#f2f3f4) 72%,transparent);color:var(--wb-color-text-secondary,#5f6368)!important;font-size:9px!important;font-weight:550!important;white-space:nowrap}.wbs-growth-task-state{grid-column:4;min-width:78px}.wbs-growth-task-action{min-width:74px}.wbs-growth-task-guide{margin:4px 78px 0 13px;color:var(--wb-color-text-secondary,#5f6368);font-size:10px;line-height:1.5;overflow-wrap:anywhere}.wbs-growth-task-meta{flex-wrap:wrap;gap:5px 14px;margin-top:6px}.wbs-growth-task-meta>span:last-child{flex:0 1 auto}.wbs-growth-task-reward{flex:1 1 150px!important}.wbs-growth-task-progress{font-variant-numeric:tabular-nums}.wbs-growth-reward-tag{opacity:.76}.wbs-growth-claimed-toggle{display:flex;width:100%;align-items:center;justify-content:center;margin:3px 0 0;padding:6px 0 2px;border:0;border-top:1px solid color-mix(in srgb,var(--wb-border-subtle,rgba(20,24,32,.1)) 72%,transparent);background:transparent;color:var(--wb-icon-secondary,#667085);font:600 10px/1.4 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;cursor:pointer}.wbs-growth-claimed-toggle em{font-style:normal;font-weight:500;color:var(--wb-icon-tertiary,#7c818b)}.wbs-growth-claimed-toggle:hover{color:var(--wb-color-text-primary,#1f1f1f)}.wbs-growth-claimed-toggle:focus-visible{outline:2px solid color-mix(in srgb,var(--wbs-primary) 40%,transparent);outline-offset:2px}',
-    '.wbs-buddy-picker{display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:8px;padding:7px 9px 2px;font-size:10.5px;color:var(--wb-color-text-secondary,#5f6368)}.wbs-buddy-picker label{display:inline-flex;align-items:center;gap:7px;min-width:0}.wbs-buddy-picker select{max-width:200px;min-width:100px;height:25px;padding:0 6px;border:1px solid var(--wb-border-default,#d9dadd);border-radius:6px;background:var(--wb-bg-popover,#fff);color:var(--wb-color-text-primary,#1f1f1f);font:inherit;cursor:pointer}.wbs-buddy-picker select:focus-visible{outline:2px solid var(--wbs-primary);outline-offset:2px}',
+    '.wbs-growth-task-head>span{display:inline-flex;align-items:center;gap:7px}.wbs-growth-task-head i.growth{width:8px;height:8px;flex:none;border-radius:50%;background:var(--wbs-ring-growth);box-shadow:0 0 0 2px color-mix(in srgb,var(--wbs-ring-growth) 17%,transparent)}.wbs-growth-task-head em{color:var(--wb-icon-tertiary,#7c818b)}.wbs-growth-task-title{grid-template-columns:6px minmax(0,1fr) auto minmax(78px,auto)}.wbs-growth-task-title>span{font-size:11px}.wbs-growth-task-tag{display:inline-flex!important;min-height:17px;box-sizing:border-box;align-items:center;padding:1px 6px;border:1px solid var(--wb-border-subtle,rgba(20,24,32,.1));border-radius:999px;background:color-mix(in srgb,var(--wb-bg-tertiary,#f2f3f4) 72%,transparent);color:var(--wb-color-text-secondary,#5f6368)!important;font-size:9px!important;font-weight:550!important;white-space:nowrap}.wbs-growth-task-state{grid-column:4;min-width:78px}.wbs-growth-task-action{min-width:74px}.wbs-growth-task-guide{margin:4px 78px 0 13px;color:var(--wb-color-text-secondary,#5f6368);font-size:10px;line-height:1.5;overflow-wrap:anywhere}.wbs-growth-task-meta{flex-wrap:wrap;gap:5px 14px;margin-top:6px}.wbs-growth-task-meta>span:last-child{flex:0 1 auto}.wbs-growth-task-reward{flex:1 1 150px!important}.wbs-growth-task-progress{font-variant-numeric:tabular-nums}.wbs-growth-reward-tag{opacity:.76}.wbs-growth-claimed-toggle{display:flex;width:100%;align-items:center;justify-content:center;margin:3px 0 0;padding:6px 0 2px;border:0;border-top:1px solid color-mix(in srgb,var(--wb-border-subtle,rgba(20,24,32,.1)) 72%,transparent);background:transparent;color:var(--wb-icon-secondary,#667085);font:600 10px/1.4 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;cursor:pointer}.wbs-growth-claimed-toggle em{font-style:normal;font-weight:500;color:var(--wb-icon-tertiary,#7c818b)}.wbs-growth-claimed-toggle:hover{color:var(--wb-color-text-primary,#1f1f1f)}.wbs-growth-claimed-toggle:focus-visible{outline:2px solid color-mix(in srgb,var(--wbs-primary) 40%,transparent);outline-offset:2px}',
+    '.wbs-buddy-picker{display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:8px;padding:7px 9px 2px;font-size:10.5px;color:var(--wb-color-text-secondary,#5f6368)}',
     '.wbs-daily-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px;margin-top:4px}.wbs-daily-action{display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:center;gap:7px;min-height:29px;padding:3px 5px 3px 8px;border:1px solid var(--wb-border-subtle,rgba(20,24,32,.1));border-radius:7px;background:color-mix(in srgb,var(--wb-bg-secondary,#f6f7f8) 72%,transparent)}.wbs-daily-action span{min-width:0;color:var(--wb-color-text-secondary,#5f6368);white-space:nowrap}.wbs-daily-action b{color:var(--wb-color-text-primary,#1f1f1f);font-size:11px;font-weight:650;white-space:nowrap}.wbs-daily-action-button{min-width:46px}',
     '.wbs-growth-rewards{margin-top:8px;padding:8px;border:1px solid var(--wb-border-subtle,rgba(20,24,32,.1));border-radius:8px;background:color-mix(in srgb,var(--wb-bg-secondary,#f6f7f8) 46%,transparent)}.wbs-growth-rewards-head,.wbs-growth-tier{display:grid;align-items:center;column-gap:8px}.wbs-growth-rewards-head{grid-template-columns:minmax(0,1fr) auto;padding-bottom:6px;border-bottom:1px solid var(--wb-border-subtle,rgba(20,24,32,.1))}.wbs-growth-rewards-head span{font-weight:650;white-space:nowrap}.wbs-growth-rewards-head em{font-size:10px;font-style:normal;color:var(--wb-icon-tertiary,#7c818b);white-space:nowrap}.wbs-growth-tier{grid-template-columns:52px 38px minmax(0,1fr);min-height:24px;color:var(--wb-color-text-secondary,#5f6368);font-size:10.5px}.wbs-growth-tier span,.wbs-growth-tier em,.wbs-growth-tier b{white-space:nowrap}.wbs-growth-tier em{font-style:normal;color:var(--wb-icon-tertiary,#7c818b)}.wbs-growth-tier b{text-align:right;color:var(--wb-color-text-secondary,#5f6368);font-weight:650}.wbs-growth-tier.is-claimed b{color:var(--wb-icon-tertiary,#7c818b)}',
     '.wbs-status-popover button:not([disabled]){cursor:pointer}',
@@ -14160,21 +13885,20 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '.wbs-pcard-sub{font-size:11px;color:var(--wb-icon-tertiary,#999);font-weight:400}',
     '.wbs-auto-card{display:flex;flex:1;flex-direction:column;min-height:0;margin-bottom:0}',
     '.wbs-auto-toolbar{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:6px;flex-shrink:0}.wbs-auto-toolbar .wbs-pcard-title{margin-bottom:0}.wbs-auto-toolbar>.wbs-auto-toolbar-actions{flex-basis:100%;justify-content:flex-start}.wbs-auto-toolbar .wbs-sess-bbtn{font-size:11px;padding:5px 8px}',
-    '.wbs-auto-toolbar-actions,.wbs-auto-editor-actions,.wbs-auto-normal-actions,.wbs-auto-batch-actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap}.wbs-auto-toolbar-actions{justify-content:flex-end}.wbs-auto-log-head-actions{display:flex;align-items:center;gap:8px}',
+    '.wbs-auto-toolbar-actions,.wbs-auto-editor-actions,.wbs-auto-normal-actions,.wbs-auto-batch-actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap}.wbs-auto-toolbar-actions{justify-content:flex-end}.wbs-auto-normal-actions{width:100%;min-width:0}.wbs-auto-right-actions{display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:6px;max-width:100%;margin-left:auto}.wbs-auto-log-head-actions{display:flex;align-items:center;gap:8px}',
     '.wbs-auto-normal-actions .wbs-auto-pick-btn{border-color:var(--wb-button-primary-bg,#1f1f1f);background:var(--wb-button-primary-bg,#1f1f1f);color:var(--wb-button-primary-fg,#fff)}.wbs-auto-normal-actions .wbs-auto-pick-btn:hover,.wbs-auto-normal-actions .wbs-auto-pick-btn:focus-visible{background:var(--wb-button-primary-hover-bg,var(--wb-button-primary-bg,#1f1f1f));color:var(--wb-button-primary-fg,#fff)}',
     '.wbs-auto-list{display:flex;flex:1;min-height:0;flex-direction:column;gap:5px;overflow:auto;padding-right:2px;margin-top:10px}',
     '.wbs-auto-row{display:flex;flex:0 0 auto;flex-direction:column;align-items:stretch;gap:7px;min-height:48px;padding:10px;border:1px solid var(--wb-border-subtle,#ececec);border-radius:9px;background:color-mix(in srgb,var(--wb-bg-secondary,#fff) 22%,transparent)}',
     '.wbs-auto-row-head{display:flex;align-items:center;gap:8px;min-width:0}.wbs-auto-enabled{flex-shrink:0}.wbs-auto-enabled[hidden]{display:none!important}.wbs-auto-description{color:var(--wb-color-text-secondary,#666);font-size:11px;line-height:1.5;overflow-wrap:anywhere;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}.wbs-auto-row-foot{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:end;gap:10px}.wbs-auto-details{min-width:0}.wbs-auto-triggers{display:flex;flex-wrap:wrap;gap:4px}.wbs-auto-trigger-chip{display:inline-flex;max-width:100%;padding:2px 6px;border:1px solid var(--wb-border-subtle,#e7e7e7);border-radius:6px;background:var(--wb-bg-tertiary,#f5f5f5);color:var(--wb-color-text-secondary,#666);font-size:10px;line-height:1.4;overflow-wrap:anywhere}.wbs-auto-state-line{display:flex;align-items:center;flex-wrap:wrap;gap:4px 8px;min-height:16px;margin-top:5px;color:var(--wb-icon-tertiary,#888);font-size:10px}.wbs-auto-state{display:inline-flex;align-items:center;gap:4px}.wbs-auto-state:before{content:"";width:4px;height:4px;flex:0 0 4px;border-radius:50%;background:currentColor}.wbs-auto-state.running{color:var(--wb-button-primary-bg,#1f1f1f)}.wbs-auto-state.off{opacity:.65}.wbs-auto-last-run.failed{color:var(--wb-color-text-primary,#222)}.wbs-auto-icon:focus-visible{outline:2px solid var(--wb-button-primary-bg,#1f1f1f);outline-offset:1px}',
     '.wbs-auto-row:hover{background:var(--wb-bg-hover,#f5f5f5)}',
     '.wbs-auto-check{display:flex;align-items:center;justify-content:center;flex:0 0 20px;cursor:pointer}.wbs-auto-check input{accent-color:var(--wb-button-primary-bg,#1f1f1f)}',
-    '.wbs-auto-main{min-width:0;flex:1}.wbs-auto-builtin-badge{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;min-height:18px;padding:1px 6px;box-sizing:border-box;border:1px solid var(--wb-border-default,#d8d8d8);border-radius:999px;background:var(--wb-bg-tertiary,#f5f5f5);color:var(--wb-color-text-secondary,#666);font-size:10px;font-weight:500;line-height:1}.wbs-auto-name{display:block;flex:1;min-width:0;font-size:12px;font-weight:650;color:var(--wb-color-text-primary,#1f1f1f);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+    '.wbs-auto-main{min-width:0;flex:1}.wbs-auto-name{display:block;flex:1;min-width:0;font-size:12px;font-weight:650;color:var(--wb-color-text-primary,#1f1f1f);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
     '.wbs-auto-status{flex:0 0 auto;padding:2px 6px;border-radius:999px;font-size:10px;font-weight:500}.wbs-auto-status.on{color:#1b7f56;background:rgba(46,190,126,.14)}.wbs-auto-status.off{color:var(--wb-icon-tertiary,#888);background:var(--wb-bg-tertiary,#f1f1f1)}',
     '.wbs-auto-meta{margin-top:3px;color:var(--wb-icon-tertiary,#999);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
     '.wbs-auto-enabled{flex:0 0 auto;margin-left:4px}.wbs-auto-actions{display:flex;gap:2px;flex:0 0 auto}.wbs-auto-icon{display:inline-flex;align-items:center;justify-content:center;width:27px;height:27px;padding:0;border:0;border-radius:7px;background:transparent;color:var(--wb-icon-secondary,#666);cursor:pointer;line-height:27px}.wbs-auto-icon svg{width:15px;height:15px;display:block;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round}.wbs-auto-icon:hover,.wbs-auto-icon:focus-visible{background:var(--wb-bg-hover,#f0f0f0);color:var(--wb-color-text-primary,#1f1f1f);outline:none}.wbs-auto-icon.danger:hover{color:#d04a4a}.wbs-auto-icon.is-running,.wbs-auto-icon.is-running:hover{opacity:1;filter:none;background:transparent;color:var(--wb-icon-secondary,#666);cursor:pointer}.wbs-auto-icon:disabled{opacity:.45;cursor:wait}',
     '.wbs-auto-icon.is-stopping,.wbs-auto-icon.is-stopping:hover{opacity:.5;background:transparent;color:var(--wb-icon-secondary,#999);cursor:wait}.wbs-auto-icon.is-stopping svg{fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round}.wbs-auto-icon.is-stopping .wbs-auto-stopping-svg{transform-origin:center;animation:wbs-auto-spin .9s linear infinite}@keyframes wbs-auto-spin{to{transform:rotate(360deg)}}',
     '.wbs-auto-empty{padding:18px 8px;text-align:center;color:var(--wb-icon-tertiary,#999);font-size:12px}',
     '.wbs-auto-cap-link{display:flex;justify-content:flex-end;margin-top:7px}.wbs-auto-textbtn{padding:3px 4px;border:0;background:transparent;color:var(--wb-color-text-secondary,#666);font:inherit;font-size:11px;cursor:pointer}.wbs-auto-textbtn:hover{color:var(--wb-color-text-primary,#1f1f1f);text-decoration:underline}',
-    '.wbs-modal.wbs-auto-import-modal{width:calc(100% - 24px);max-width:480px;max-height:min(560px,calc(100% - 28px));display:flex;flex-direction:column;box-sizing:border-box}.wbs-auto-import-file{color:var(--wb-color-text-secondary,#666);font-size:11px;overflow-wrap:anywhere;margin-bottom:8px}.wbs-auto-import-list{min-height:0;overflow:auto;flex:1;scrollbar-width:thin;scrollbar-color:var(--wb-border-default,#bbb) transparent;border:1px solid var(--wb-border-subtle,#e5e5e5);border-radius:9px}.wbs-auto-import-item{display:flex;align-items:center;gap:10px;padding:10px 12px;cursor:pointer}.wbs-auto-import-item+.wbs-auto-import-item{border-top:1px solid var(--wb-border-subtle,#e5e5e5)}.wbs-auto-import-item:has(input:disabled){cursor:default}.wbs-auto-import-item:hover{background:var(--wb-bg-tertiary,#f5f5f5)}.wbs-auto-import-info{display:flex;flex-direction:column;gap:3px;min-width:0}.wbs-auto-import-name{font-size:12px;color:var(--wb-color-text-primary,#222);overflow-wrap:anywhere}.wbs-auto-import-status,.wbs-auto-import-count{font-size:11px;color:var(--wb-color-text-secondary,#666)}.wbs-auto-import-count{margin-right:auto}.wbs-auto-import-error{font-size:11px;color:var(--wb-status-error,var(--wb-color-text-primary,#1f1f1f));overflow-wrap:anywhere;margin-top:8px}.wbs-auto-import-modal .wbs-modal-actions{flex-shrink:0}.wbs-auto-import-item input:disabled{opacity:.4}',
     '#wbs-auto-discover.is-loading svg{animation:wbs-auto-discover-pulse 1s ease-in-out infinite}@keyframes wbs-auto-discover-pulse{50%{opacity:.35}}#wbs-auto-discover:disabled{cursor:wait;opacity:.68}',
     '.wbs-modal.wbs-auto-discovery-modal{display:grid;grid-template-rows:auto auto minmax(0,1fr);gap:9px;width:calc(100% - 24px);max-width:620px;height:min(560px,calc(100% - 28px));box-sizing:border-box;overflow:hidden}.wbs-auto-discovery-note{margin-top:3px;color:var(--wb-color-text-secondary,#666);font-size:11px;line-height:1.45}.wbs-auto-discovery-search{box-sizing:border-box;width:100%;height:32px;padding:6px 10px;border:1px solid var(--wb-border-default,#ddd);border-radius:8px;background:var(--wb-bg-popover,#fff);color:var(--wb-color-text-primary,#1f1f1f);font:inherit;font-size:12px;outline:none}.wbs-auto-discovery-search:focus{border-color:var(--wb-button-primary-bg,#1f1f1f);box-shadow:0 0 0 2px color-mix(in srgb,var(--wb-button-primary-bg,#1f1f1f) 18%,transparent)}.wbs-auto-discovery-search::placeholder{color:var(--wb-icon-tertiary,#888)}',
     '.wbs-auto-discovery-list{display:flex;min-height:0;flex-direction:column;gap:6px;overflow:auto;padding-right:2px}.wbs-auto-discovery-empty{display:flex;min-height:160px;align-items:center;justify-content:center;color:var(--wb-icon-tertiary,#888);font-size:12px}.wbs-auto-discovery-item{display:flex;flex:0 0 auto;flex-direction:column;gap:6px;padding:9px 10px;border:1px solid var(--wb-border-subtle,#e5e5e5);border-radius:9px;background:color-mix(in srgb,var(--wb-bg-secondary,#fff) 24%,transparent)}.wbs-auto-discovery-head{display:flex;align-items:flex-start;gap:8px}.wbs-auto-discovery-name{min-width:0;flex:1;color:var(--wb-color-text-primary,#1f1f1f);font-size:12px;font-weight:650;line-height:1.4;overflow-wrap:anywhere}.wbs-auto-discovery-version{flex:0 0 auto;padding:2px 6px;border:1px solid var(--wb-border-default,#ddd);border-radius:6px;background:var(--wb-bg-tertiary,#f5f5f5);color:var(--wb-color-text-secondary,#666);font-size:10px;font-weight:600;white-space:nowrap}.wbs-auto-discovery-description{color:var(--wb-color-text-secondary,#666);font-size:11px;line-height:1.45;overflow-wrap:anywhere}.wbs-auto-discovery-foot{display:flex;align-items:flex-end;gap:8px}.wbs-auto-sources{display:flex;min-width:0;flex:1;flex-wrap:wrap;gap:4px}.wbs-auto-source{max-width:100%;padding:3px 6px;border:1px solid var(--wb-border-subtle,#ddd);border-radius:6px;background:var(--wb-bg-tertiary,#f5f5f5);color:var(--wb-color-text-secondary,#666);font:inherit;font-size:10px;line-height:1.3;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.wbs-auto-source:hover,.wbs-auto-source:focus-visible{border-color:var(--wb-border-strong,#bbb);color:var(--wb-color-text-primary,#1f1f1f);outline:none}.wbs-auto-discovery-foot>.wbs-modal-btn{flex:0 0 auto;min-width:48px;padding:5px 9px}.wbs-auto-discovery-foot>.wbs-modal-btn:disabled{opacity:.45;cursor:not-allowed}',
@@ -14463,6 +14187,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '.wbs-telemetry-tooltip{position:absolute;z-index:20;left:0;top:calc(100% + 7px);width:245px;padding:7px 9px;border:1px solid var(--wb-border-default,rgba(0,0,0,.14));border-radius:7px;background:var(--wb-bg-primary,#fff);box-shadow:0 6px 18px rgba(0,0,0,.14);color:var(--wb-color-text-primary,#1f1f1f);font-size:11px;font-weight:400;line-height:1.5;white-space:normal;opacity:0;visibility:hidden;pointer-events:none;transform:translateY(-2px);transition:opacity .12s,transform .12s,visibility .12s}',
     '.wbs-telemetry-help:hover .wbs-telemetry-tooltip,.wbs-telemetry-help:focus .wbs-telemetry-tooltip{opacity:1;visibility:visible;transform:translateY(0)}',
     '.wbs-fork-tooltip{position:fixed;z-index:2147483647;box-sizing:border-box;width:max-content;max-width:min(255px,calc(100vw - 16px));transform:none;overflow-wrap:anywhere;white-space:normal}.wbs-fork-tooltip.is-visible{opacity:1;visibility:visible;transform:none}',
+    '.wbs-fork-tooltip-title{display:block;font-size:14px;font-weight:600;line-height:1.35}.wbs-fork-tooltip-description{display:block;margin-top:3px;font-size:11px;line-height:1.5}',
     'html.cb-dark .wbs-fork-tooltip,html[data-theme="dark"] .wbs-fork-tooltip,body[data-vscode-theme-name*="dark" i] .wbs-fork-tooltip{background:var(--wb-bg-popover,#202126);color:var(--wb-color-text-primary,#f2f3f5);border-color:var(--wb-border-default,rgba(255,255,255,.16));box-shadow:0 6px 18px rgba(0,0,0,.4)}',
     '.wbs-telemetry-switch{flex:0 0 36px}',
     '.wbs-telemetry-status{margin-top:5px;font-size:10.5px;color:var(--wb-button-primary-bg,#1f1f1f);font-weight:600}',
@@ -14550,12 +14275,10 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '.wbs-account-order-modal{box-sizing:border-box;width:360px;max-width:calc(100% - 28px);max-height:calc(100% - 28px);display:flex;flex-direction:column;overflow:auto}',
     '.wbs-account-settings-section{font-size:11px;font-weight:600;color:var(--wb-color-text-secondary,#666);margin:8px 0 6px}',
     '.wbs-account-settings-toggle{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:12px 0 6px;padding:10px 0;border-top:1px solid var(--wb-border-subtle,#eee);border-bottom:1px solid var(--wb-border-subtle,#eee);font-size:12px;cursor:pointer}.wbs-account-settings-toggle>span:first-child{min-width:0;line-height:1.4}',
-    '.wbs-account-notes{display:flex;flex-direction:column;gap:7px;max-height:min(180px,27vh);overflow-y:auto;overscroll-behavior:contain;margin-bottom:12px}.wbs-account-note-row{display:grid;grid-template-columns:minmax(0,90px) minmax(0,1fr);align-items:center;gap:8px;font-size:11px}.wbs-account-note-row span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.wbs-account-note-row input{box-sizing:border-box;width:100%;min-width:0;padding:6px 8px;border:1px solid var(--wb-border-default,#ddd);border-radius:7px;background:var(--wb-bg-primary,#fff);color:var(--wb-color-text-primary,#1f1f1f);font:inherit}.wbs-account-note-row input::placeholder{color:var(--wb-color-text-tertiary,#999)}',
     '.wbs-account-order-modes{display:flex;flex-wrap:wrap;gap:10px 16px;font-size:12px}.wbs-account-order-modes label{display:flex;align-items:center;gap:5px;cursor:pointer}.wbs-account-order-modes input{margin:0;accent-color:var(--wb-button-primary-bg)}',
 
     '.wbs-account-order-list{margin-top:12px;max-height:min(280px,40vh);overflow:auto;overscroll-behavior:contain;display:flex;flex-direction:column;gap:5px}',
     '.wbs-account-order-row{display:flex;align-items:center;gap:8px;min-height:34px;padding:3px 8px;border:1px solid var(--wb-border-subtle);border-radius:8px;background:var(--wb-bg-secondary);font-size:12px}.wbs-account-order-row>span{flex:1;min-width:0;overflow-wrap:anywhere}.wbs-account-order-row button{cursor:grab}.wbs-account-order-row.dragging{opacity:.45}.wbs-account-order-row.drop-target{border-color:var(--wb-accent-blue);background:var(--wb-bg-hover)}',
-    '.wbs-account-note{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10.5px;color:var(--wb-color-text-secondary,#666)}.wbs-account-note[hidden]{display:none}',
     '.wbs-account-order-modal :is(button,input):focus-visible{outline:2px solid var(--wb-accent-blue);outline-offset:2px}.wbs-account-order-modal button:disabled{opacity:.5;cursor:default}',
     '.wbs-credit-summary-popover{position:fixed;z-index:2147483647;box-sizing:border-box;width:300px;max-width:calc(100vw - 16px);padding:12px;background:var(--wb-bg-popover,var(--wb-bg-primary));color:var(--wb-color-text-primary);border:1px solid var(--wb-border-default);border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,.18);font:12px/1.5 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;overflow:auto;overscroll-behavior:contain;pointer-events:auto}',
     '.wbs-credit-summary-head{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:10px}.wbs-credit-summary-head strong{font-size:13px}.wbs-credit-summary-head span,.wbs-credit-summary-foot{font-size:10px;color:var(--wb-color-text-secondary)}',
@@ -14620,7 +14343,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     'html.cb-dark #wbs-token-stats-modal,html[data-theme="dark"] #wbs-token-stats-modal,body[data-vscode-theme-name*="dark" i] #wbs-token-stats-modal{color-scheme:dark;background:rgba(0,0,0,.56)}#wbs-token-stats-modal .wbs-token-stats-modal{box-sizing:border-box}.wbs-token-stats-modal{position:relative}.wbs-credit-stats-toolbar{display:flex;gap:8px;align-items:center;justify-content:space-between;flex-wrap:wrap;font-size:11px;color:var(--wb-icon-secondary,#667085)}.wbs-token-stats-grid.wbs-credit-stats-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.wbs-credit-chart{height:176px}.wbs-credit-sync{height:auto;min-height:28px;white-space:normal}.wbs-credit-sync-overlay{position:absolute;inset:0;z-index:5;display:flex;align-items:center;justify-content:center;padding:16px;background:color-mix(in srgb,var(--wb-bg-popover,#fff) 84%,transparent);backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);border-radius:inherit;pointer-events:auto}.wbs-credit-sync-overlay[hidden],[data-credit-result][hidden],[data-usage-pane][hidden]{display:none!important}.wbs-credit-sync-progress{display:flex;flex-direction:column;align-items:stretch;gap:12px;width:min(100%,340px);font-size:12px;line-height:1.6;overflow-wrap:anywhere;color:var(--wb-color-text-primary,#1f1f1f)}.wbs-credit-sync-progress>span{color:var(--wb-icon-secondary,#667085)}.wbs-credit-sync-progress progress{width:100%;height:8px;accent-color:var(--wb-button-primary-bg,#1f1f1f)}.wbs-credit-sync-progress button{align-self:center}.wbs-usage-tabs button:focus-visible,.wbs-credit-sync:focus-visible{outline:2px solid var(--wb-color-text-primary,#1f1f1f);outline-offset:2px}',
     '@media(max-width:700px){.wbs-usage-modal-mask{padding:12px}.wbs-usage-columns{grid-template-columns:1fr}.wbs-token-stats-modal{width:calc(100vw - 24px);max-width:calc(100vw - 24px);height:calc(100vh - 24px);max-height:calc(100vh - 24px)}.wbs-token-stats-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}',
     '@media(max-width:620px){.wbs-usage-header{padding:14px 14px 0}.wbs-usage-scroll{padding:4px 14px 14px}.wbs-token-stats-modal>.wbs-modal-actions{padding:10px 14px}.wbs-trend-controls{flex-direction:column}.wbs-trend-legend{width:100%;flex:none}.wbs-usage-segment button{min-width:0}}',
-    '.wbs-auto-api-version{display:inline-block;margin-left:7px;color:var(--wb-color-text-secondary,#666);font-size:10px;font-weight:500;vertical-align:middle}.wbs-modal.wbs-auto-discovery-modal{display:flex;flex-direction:column;width:min(980px,calc(100vw - 48px));max-width:calc(100vw - 48px);height:min(84vh,800px);max-height:calc(100vh - 48px);gap:0;padding:0;border:1px solid var(--wb-border-default,rgba(20,24,32,.14));border-radius:16px;box-shadow:0 24px 80px rgba(15,18,24,.22)}.wbs-auto-discovery-header{padding-bottom:14px}.wbs-auto-discovery-header .wbs-auto-modal-head{align-items:center;flex-wrap:wrap}.wbs-auto-discovery-head-actions{display:flex;align-items:center;gap:10px}.wbs-auto-discovery-header .wbs-auto-textbtn{white-space:normal;text-align:right}.wbs-auto-discovery-list{flex:1;gap:8px;padding-top:14px;scrollbar-width:thin;overscroll-behavior:contain}.wbs-auto-discovery-item{padding:13px 14px}.wbs-auto-discovery-pagination{display:flex;align-items:center;justify-content:flex-end;gap:8px;margin:0}.wbs-auto-discovery-total{margin-right:auto;font-size:11px;color:var(--wb-color-text-secondary,#666)}.wbs-auto-discovery-page{min-width:36px;text-align:center;font-size:11px;font-variant-numeric:tabular-nums;color:var(--wb-color-text-secondary,#666)}.wbs-auto-discovery-pagination .wbs-modal-btn{min-width:54px;margin:0}.wbs-auto-discovery-pagination .wbs-modal-btn:disabled{opacity:.45;cursor:not-allowed}.wbs-auto-discovery-pagination .wbs-modal-btn:focus-visible,.wbs-auto-discovery-header button:focus-visible{outline:2px solid var(--wb-button-primary-bg,#1f1f1f);outline-offset:2px}',
+    '.wbs-modal.wbs-auto-discovery-modal{display:flex;flex-direction:column;width:min(980px,calc(100vw - 48px));max-width:calc(100vw - 48px);height:min(84vh,800px);max-height:calc(100vh - 48px);gap:0;padding:0;border:1px solid var(--wb-border-default,rgba(20,24,32,.14));border-radius:16px;box-shadow:0 24px 80px rgba(15,18,24,.22)}.wbs-auto-discovery-header{padding-bottom:14px}.wbs-auto-discovery-header .wbs-auto-modal-head{align-items:center;flex-wrap:wrap}.wbs-auto-discovery-head-actions{display:flex;align-items:center;gap:10px}.wbs-auto-discovery-header .wbs-auto-textbtn{white-space:normal;text-align:right}.wbs-auto-discovery-list{flex:1;gap:8px;padding-top:14px;scrollbar-width:thin;overscroll-behavior:contain}.wbs-auto-discovery-item{padding:13px 14px}.wbs-auto-discovery-pagination{display:flex;align-items:center;justify-content:flex-end;gap:8px;margin:0}.wbs-auto-discovery-total{margin-right:auto;font-size:11px;color:var(--wb-color-text-secondary,#666)}.wbs-auto-discovery-page{min-width:36px;text-align:center;font-size:11px;font-variant-numeric:tabular-nums;color:var(--wb-color-text-secondary,#666)}.wbs-auto-discovery-pagination .wbs-modal-btn{min-width:54px;margin:0}.wbs-auto-discovery-pagination .wbs-modal-btn:disabled{opacity:.45;cursor:not-allowed}.wbs-auto-discovery-pagination .wbs-modal-btn:focus-visible,.wbs-auto-discovery-header button:focus-visible{outline:2px solid var(--wb-button-primary-bg,#1f1f1f);outline-offset:2px}',
     '.wbs-modal.wbs-auto-guide-modal{box-sizing:border-box;width:min(520px,calc(100vw - 32px));max-width:calc(100vw - 32px);max-height:calc(100vh - 32px);overflow:auto;padding:18px 20px}.wbs-auto-guide-body{font-size:12px;line-height:1.65;color:var(--wb-color-text-secondary,#666);overflow-wrap:anywhere}.wbs-auto-guide-body p{margin:0 0 10px}.wbs-auto-guide-body .wbs-auto-textbtn{padding:0;color:var(--wb-color-text-primary,#1f1f1f);text-decoration:underline;overflow-wrap:anywhere;text-align:left}.wbs-auto-guide-modal .wbs-modal-actions{margin-top:12px}.wbs-auto-guide-body .wbs-auto-textbtn:focus-visible{outline:2px solid var(--wb-button-primary-bg,#1f1f1f);outline-offset:2px}',
     'html.cb-dark #wbs-auto-discovery-mask,html[data-theme="dark"] #wbs-auto-discovery-mask,body[data-vscode-theme-name*="dark" i] #wbs-auto-discovery-mask,html.cb-dark #wbs-auto-discovery-guide,html[data-theme="dark"] #wbs-auto-discovery-guide,body[data-vscode-theme-name*="dark" i] #wbs-auto-discovery-guide{color-scheme:dark;background:rgba(0,0,0,.56)}html.cb-dark .wbs-auto-discovery-version,html[data-theme="dark"] .wbs-auto-discovery-version,body[data-vscode-theme-name*="dark" i] .wbs-auto-discovery-version{border-color:var(--wb-border-subtle,rgba(255,255,255,.18));background:var(--wb-bg-tertiary,#303137);color:var(--wb-color-text-secondary,#d0d0d5)}',
     '@media(max-width:700px){.wbs-modal.wbs-auto-discovery-modal{width:calc(100vw - 24px);max-width:calc(100vw - 24px);height:calc(100vh - 24px);max-height:calc(100vh - 24px)}}@media(max-width:620px){.wbs-auto-discovery-header{padding-bottom:12px}.wbs-auto-discovery-pagination{gap:5px;flex-wrap:wrap}.wbs-auto-discovery-pagination .wbs-modal-btn{min-width:45px;padding:6px}.wbs-auto-discovery-total{flex-basis:100%}}',

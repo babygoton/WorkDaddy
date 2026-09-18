@@ -194,7 +194,7 @@ test('injected navigation rail is theme-aware, glassy, accessible, and profile a
   const phraseSwitch = inject.indexOf('id="wbs-sess-phrase"');
   assert.ok(stashSwitch >= 0 && navigationSwitch > stashSwitch && phraseSwitch > navigationSwitch);
   assert.match(inject, /会话消息索引/);
-  assert.match(inject, /悬停预览，点击或拖动快速定位消息。/);
+  assert.match(inject, /<span class="wbs-nd-hint">悬停预览，点击或拖动快速定位消息<\/span>/);
 });
 
 test('floating robot keeps the website shell and upright eyes', () => {

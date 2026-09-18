@@ -12,6 +12,7 @@ WorkDaddy.app
 /release/**/*.zip
 /release/**/*.pkg
 /release/**/*.tar.gz
+/release/**/*.deb
 
 # 本地运行数据与日志
 *.log

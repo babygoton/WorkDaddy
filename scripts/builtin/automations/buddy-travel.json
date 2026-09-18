@@ -1,0 +1,263 @@
+{
+  "schemaVersion": 2,
+  "id": "daily-growth-and-buddy",
+  "name": "派猫猫旅行",
+  "description": "自动选择已拥有的 Buddy，派出旅行并领取旅行礼物。未领养 Buddy 的账号需先在官网同意协议并解锁，此任务会跳过。需要 WorkDaddy 1.2.66 或更新版本。",
+  "enabled": false,
+  "concurrency": { "policy": "skip" },
+  "trigger": {
+    "type": "clientLoaded",
+    "types": ["clientLoaded", "panelOpened"],
+    "oncePerNavigation": false
+  },
+  "schedule": { "type": "interval", "minutes": 10 },
+  "variables": {},
+  "steps": [
+    {
+      "op": "account.forEach",
+      "accounts": "all",
+      "switch": false,
+      "steps": [
+        { "op": "vars.set", "key": "buddySelected", "value": false },
+        { "op": "vars.set", "key": "skipTravel", "value": false },
+        { "op": "log.write", "message": "账号 {account}：开始检查猫猫旅行", "params": { "account": "{{account.uid}}" } },
+        {
+          "op": "logic.catch",
+          "steps": [
+            {
+              "op": "http.requestAsAccount",
+              "method": "GET",
+              "url": "https://www.workbuddy.cn/activity/growth/buddy/info",
+              "timeoutMs": 15000,
+              "throwOnHttpError": true,
+              "saveAs": "buddyInfo"
+            },
+            {
+              "op": "logic.assert",
+              "condition": { "left": "{{vars.buddyInfo.json.code}}", "operator": "equals", "right": 0 },
+              "message": "当前 Buddy 查询失败"
+            },
+            {
+              "op": "http.requestAsAccount",
+              "method": "GET",
+              "url": "https://www.workbuddy.cn/activity/growth/buddy/list",
+              "timeoutMs": 15000,
+              "throwOnHttpError": true,
+              "saveAs": "buddyList"
+            },
+            {
+              "op": "logic.assert",
+              "condition": { "left": "{{vars.buddyList.json.code}}", "operator": "equals", "right": 0 },
+              "message": "Buddy 列表查询失败"
+            },
+            {
+              "op": "logic.if",
+              "condition": { "left": "{{vars.buddyInfo.json.data.buddy}}", "operator": "falsy" },
+              "then": [
+                {
+                  "op": "logic.if",
+                  "condition": { "left": "{{vars.buddyList.json.data.buddies.length}}", "operator": "equals", "right": 0 },
+                  "then": [
+                    { "op": "log.write", "message": "账号 {account}：尚未领养 Buddy，跳过旅行；请先在官网同意领养协议并解锁", "params": { "account": "{{account.uid}}" } },
+                    { "op": "vars.set", "key": "skipTravel", "value": true }
+                  ]
+                },
+                {
+                  "op": "logic.forEach",
+                  "items": "{{vars.buddyList.json.data.buddies}}",
+                  "steps": [
+                    {
+                      "op": "logic.if",
+                      "condition": { "left": "{{vars.buddySelected}}", "operator": "falsy" },
+                      "then": [
+                        {
+                          "op": "logic.if",
+                          "condition": { "left": "{{vars.item.instance_id}}", "operator": "matches", "right": "^[1-9][0-9]{0,14}$" },
+                          "then": [
+                            {
+                              "op": "value.number",
+                              "operator": "add",
+                              "values": ["{{vars.item.instance_id}}", 0],
+                              "saveAs": "selectedBuddyId"
+                            },
+                            {
+                              "op": "http.requestAsAccount",
+                              "method": "POST",
+                              "url": "https://www.workbuddy.cn/activity/growth/buddy/switch",
+                              "body": { "instance_id": "{{vars.selectedBuddyId}}" },
+                              "timeoutMs": 15000,
+                              "throwOnHttpError": true,
+                              "saveAs": "actionResult"
+                            },
+                            {
+                              "op": "logic.assert",
+                              "condition": { "left": "{{vars.actionResult.json.code}}", "operator": "equals", "right": 0 },
+                              "message": "选择当前 Buddy 失败"
+                            },
+                            { "op": "vars.set", "key": "buddySelected", "value": true },
+                            { "op": "log.write", "message": "账号 {account}：已选择拥有的 Buddy", "params": { "account": "{{account.uid}}" } }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "onError": [
+            { "op": "log.write", "message": "账号 {account}：Buddy 查询或选择失败：{reason}", "params": { "account": "{{account.uid}}", "reason": "{{vars.error.message}}" } },
+            { "op": "vars.set", "key": "hadError", "value": true }
+          ]
+        },
+        {
+          "op": "logic.catch",
+          "steps": [
+            {
+              "op": "logic.if",
+              "condition": { "left": "{{vars.skipTravel}}", "operator": "falsy" },
+              "then": [
+            { "op": "state.get", "scope": "account", "key": "catSettledDay", "saveAs": "catSettledDay" },
+            {
+              "op": "logic.if",
+              "condition": { "left": "{{vars.catSettledDay}}", "operator": "notEquals", "right": "{{runtime.time.localDate}}" },
+              "then": [
+                {
+                  "op": "http.requestAsAccount",
+                  "method": "GET",
+                  "url": "https://www.workbuddy.cn/activity/growth/buddy/travel/status",
+                  "timeoutMs": 15000,
+                  "throwOnHttpError": true,
+                  "saveAs": "catStatus"
+                },
+                {
+                  "op": "logic.assert",
+                  "condition": { "left": "{{vars.catStatus.json.code}}", "operator": "equals", "right": 0 },
+                  "message": "Buddy 旅行状态查询失败"
+                },
+                { "op": "log.write", "message": "账号 {account}：当前旅行状态 {state}", "params": { "account": "{{account.uid}}", "state": "{{vars.catStatus.json.data.state}}" } },
+                {
+                  "op": "logic.if",
+                  "condition": { "left": "{{vars.catStatus.json.data.state}}", "operator": "equals", "right": "arrived" },
+                  "then": [
+                    {
+                      "op": "http.requestAsAccount",
+                      "method": "POST",
+                      "url": "https://www.workbuddy.cn/activity/growth/buddy/travel/claim",
+                      "body": {},
+                      "timeoutMs": 15000,
+                      "throwOnHttpError": true,
+                      "saveAs": "actionResult"
+                    },
+                    {
+                      "op": "logic.assert",
+                      "condition": { "left": "{{vars.actionResult.json.code}}", "operator": "equals", "right": 0 },
+                      "message": "旅行礼物领取失败"
+                    },
+                    { "op": "log.write", "message": "账号 {account}：旅行礼物领取成功", "params": { "account": "{{account.uid}}" } },
+                    {
+                      "op": "http.requestAsAccount",
+                      "method": "GET",
+                      "url": "https://www.workbuddy.cn/activity/growth/buddy/travel/status",
+                      "timeoutMs": 15000,
+                      "throwOnHttpError": true,
+                      "saveAs": "catStatus"
+                    },
+                    {
+                      "op": "logic.assert",
+                      "condition": { "left": "{{vars.catStatus.json.code}}", "operator": "equals", "right": 0 },
+                      "message": "领取后旅行状态查询失败"
+                    }
+                  ]
+                },
+                {
+                  "op": "logic.if",
+                  "condition": { "left": "{{vars.catStatus.json.data.state}}", "operator": "equals", "right": "idle" },
+                  "then": [
+                    {
+                      "op": "logic.if",
+                      "condition": { "left": "{{vars.catStatus.json.data.daily_limit_reached}}", "operator": "equals", "right": true },
+                      "then": [
+                        { "op": "state.set", "scope": "account", "key": "catSettledDay", "value": "{{runtime.time.localDate}}" },
+                        { "op": "log.write", "message": "账号 {account}：今日旅行次数已用完", "params": { "account": "{{account.uid}}" } }
+                      ],
+                      "else": [
+                        {
+                          "op": "http.requestAsAccount",
+                          "method": "GET",
+                          "url": "https://www.workbuddy.cn/activity/growth/buddy/info",
+                          "timeoutMs": 15000,
+                          "throwOnHttpError": true,
+                          "saveAs": "buddyInfo"
+                        },
+                        {
+                          "op": "logic.assert",
+                          "condition": { "left": "{{vars.buddyInfo.json.code}}", "operator": "equals", "right": 0 },
+                          "message": "派出前当前 Buddy 查询失败"
+                        },
+                        {
+                          "op": "logic.if",
+                          "condition": { "left": "{{vars.buddyInfo.json.data.buddy}}", "operator": "truthy" },
+                          "then": [
+                            {
+                              "op": "http.requestAsAccount",
+                              "method": "GET",
+                              "url": "https://www.workbuddy.cn/v2/activity/growth/buddy/travel/config",
+                              "timeoutMs": 15000,
+                              "throwOnHttpError": true,
+                              "saveAs": "catConfig"
+                            },
+                            {
+                              "op": "logic.assert",
+                              "condition": { "left": "{{vars.catConfig.json.code}}", "operator": "equals", "right": 0 },
+                              "message": "旅行地点查询失败"
+                            },
+                            {
+                              "op": "logic.if",
+                              "condition": { "left": "{{vars.catConfig.json.data.locations.length}}", "operator": "gt", "right": 0 },
+                              "then": [
+                                {
+                                  "op": "http.requestAsAccount",
+                                  "method": "POST",
+                                  "url": "https://www.workbuddy.cn/v2/activity/growth/buddy/travel/depart",
+                                  "body": { "location_id": "{{vars.catConfig.json.data.locations.0.id}}" },
+                                  "timeoutMs": 15000,
+                                  "throwOnHttpError": true,
+                                  "saveAs": "actionResult"
+                                },
+                                {
+                                  "op": "logic.assert",
+                                  "condition": { "left": "{{vars.actionResult.json.code}}", "operator": "equals", "right": 0 },
+                                  "message": "Buddy 派出失败"
+                                },
+                                { "op": "log.write", "message": "账号 {account}：Buddy 已派出旅行", "params": { "account": "{{account.uid}}" } }
+                              ],
+                              "else": [{ "op": "log.write", "message": "账号 {account}：暂无可用旅行地点", "params": { "account": "{{account.uid}}" } }]
+                            }
+                          ],
+                          "else": [{ "op": "log.write", "message": "账号 {account}：尚未选择 Buddy，暂不派出", "params": { "account": "{{account.uid}}" } }]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ],
+              "else": [{ "op": "log.write", "message": "账号 {account}：今天已经处理过旅行，跳过", "params": { "account": "{{account.uid}}" } }]
+            }
+              ]
+            }
+          ],
+          "onError": [
+            { "op": "log.write", "message": "账号 {account}：旅行处理失败：{reason}", "params": { "account": "{{account.uid}}", "reason": "{{vars.error.message}}" } },
+            { "op": "vars.set", "key": "hadError", "value": true }
+          ]
+        }
+      ]
+    },
+    {
+      "op": "logic.assert",
+      "condition": { "left": "{{vars.hadError}}", "operator": "falsy" },
+      "message": "部分账号 Buddy 操作失败，请查看运行记录"
+    }
+  ]
+}

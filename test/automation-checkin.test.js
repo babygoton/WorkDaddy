@@ -137,7 +137,7 @@ test('automation editor assigns remaining height to the code field without an ou
   assert.doesNotMatch(rules,/height:calc\(100% - 164px\)|min-height:190px/);
 });
 
-test('fresh CN and AI profiles receive only the two owned presets without reinstalling deleted tasks', () => {
+test('fresh CN receives Buddy travel and check-in disabled while AI keeps the two existing presets', () => {
   const init = source.slice(source.indexOf("for (const preset of ['close-buddy-popups.json'"), source.indexOf('\nrestoreSleepMode();'));
   const { PROFILES } = require('../scripts/profiles');
   for (const id of ['workbuddy-cn', 'workbuddy-ai']) {
@@ -145,7 +145,12 @@ test('fresh CN and AI profiles receive only the two owned presets without reinst
     try {
       const context = { PROFILE: PROFILES[id], DATA_DIR: dir, path, __dirname: path.join(__dirname, '../scripts'), installBuiltinTask: automation.installBuiltinTask, log() {} };
       vm.runInNewContext(init, context);
-      assert.deepEqual(automation.readAutomations(dir).map(t => t.id).sort(), ['buddy-fuel-station-close-on-account-switch', 'keep-accounts-active-1-plus-1']);
+      assert.deepEqual(automation.readAutomations(dir).map(t => t.id).sort(), id === 'workbuddy-cn'
+        ? ['buddy-fuel-station-close-on-account-switch', 'daily-account-checkin', 'daily-growth-and-buddy', 'keep-accounts-active-1-plus-1']
+        : ['buddy-fuel-station-close-on-account-switch', 'keep-accounts-active-1-plus-1']);
+      if (id === 'workbuddy-cn') for (const taskId of ['daily-growth-and-buddy', 'daily-account-checkin']) {
+        assert.equal(automation.readAutomations(dir).find(t => t.id === taskId).enabled, false);
+      }
       automation.writeAutomations(dir, []);
       vm.runInNewContext(init, context);
       assert.equal(automation.readAutomations(dir).length, 0);

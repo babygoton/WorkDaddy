@@ -128,8 +128,11 @@ test('enhancement switch and assistant footer control remain opt-out and accessi
   assert.match(injectSource, /\.conversation-finished-footer/);
   assert.match(injectSource, /wbs-fork-button/);
   assert.match(injectSource, /wbs-telemetry-tooltip wbs-fork-tooltip/);
-  assert.match(injectSource, /会复制这条回复及之前的聊天内容，在当前工作区新建会话；原会话不会改变。/);
-  assert.match(injectSource, /复制到这条回复为止的聊天内容，在当前工作区继续聊；原会话不变。/);
+  assert.match(injectSource, /el\('span', 'wbs-fork-tooltip-title', '分支到新会话'\)/);
+  assert.match(injectSource, /el\('span', 'wbs-fork-tooltip-description', '复制到这条回复为止的聊天内容，在当前工作区继续聊；原会话不变。'\)/);
+  assert.match(injectSource, /\.wbs-fork-tooltip-title\{display:block;font-size:14px;font-weight:600/);
+  assert.match(injectSource, /\.wbs-fork-tooltip-description\{display:block/);
+  assert.match(injectSource, /\.wbs-fork-button,#wbs-fork-tooltip/);
   assert.match(injectSource, /conversation\.closest\('\.cr-message-list'\)/);
   assert.match(injectSource, /findMessageNavigationAdapter\(document, \{/);
   assert.match(daemonSource, /p === '\/api\/sessions\/fork'/);

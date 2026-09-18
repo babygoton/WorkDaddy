@@ -64,24 +64,27 @@ test('file request reader bounds payloads and rejects malformed JSON',async()=>{
  const bad=new PassThrough(),invalid=readTransferBody(bad);bad.end('{');await assert.rejects(invalid,/编码/);
  const large=new PassThrough(),oversize=readTransferBody(large);large.end(Buffer.alloc(12*1024*1024+1));await assert.rejects(oversize,/8 MiB/);
 });
-test('transfer endpoints preserve atomic import and remain separate from task execution routes',async()=>{
+test('transfer endpoint exports but cannot import local files',async()=>{
  const source=fs.readFileSync(path.join(__dirname,'../scripts/daemon.js'),'utf8');
- const begin=source.indexOf("  if (req.method === 'POST' && ['/api/automations/export'");
+ const begin=source.indexOf("  if (req.method === 'POST' && p === '/api/automations/export')");
  const end=source.indexOf("  if (req.method === 'POST' && p === '/api/automations/packages/preview')",begin);
- const route=new Function('req','p','res','readTransferBody','exportTasks','previewImport','importTasks','readAutomations','DATA_DIR','DAEMON_VERSION','PROFILE','json',source.slice(begin,end));
+ assert.ok(begin>=0&&end>begin);
+ const route=new Function('req','p','res','readTransferBody','exportTasks','readAutomations','DATA_DIR','json',source.slice(begin,end));
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'wd-transfer-route-'));
- const call=(p,body)=>route({method:'POST'},p,{},async()=>body,exportTasks,previewImport,importTasks,readAutomations,dir,runtime.version,{id:runtime.profileId},(_,status,data)=>({status,...data}));
+ const call=(p,body)=>route({method:'POST'},p,{},async()=>body,exportTasks,readAutomations,dir,(_,status,data)=>({status,...data}));
  try{
   writeAutomations(dir,[task()]);
+  const before=fs.readFileSync(path.join(dir,'automations.json'));
   const file=await call('/api/automations/export',{ids:['one']});assert.equal(file.status,200);
-  const preview=await call('/api/automations/import/preview',input(file));assert.equal(preview.executed,false);assert.equal(preview.entries[0].existing,true);
-  const saved=await call('/api/automations/import',{...input(file),selected:['0']});assert.equal(saved.imported,0);assert.equal(saved.skipped,1);
+  assert.equal(await call('/api/automations/import/preview',input(file)),undefined);
+  assert.equal(await call('/api/automations/import',{...input(file),selected:['0']}),undefined);
+  assert.deepEqual(fs.readFileSync(path.join(dir,'automations.json')),before);
   const invalid=await call('/api/automations/export',{ids:['missing']});assert.equal(invalid.status,400);
  }finally{fs.rmSync(dir,{recursive:true,force:true});}
 });
-test('import dialog preserves user-authored names in English and overrides generic modal width',()=>{
+test('automation page offers only Gitee discovery for importing tasks',()=>{
  const source=fs.readFileSync(path.join(__dirname,'../scripts/inject.js'),'utf8');
- assert.match(source,/class="wbs-auto-import-name" data-wbs-i18n-skip="1"/);
- assert.match(source,/class="wbs-auto-import-file" data-wbs-i18n-skip="1"/);
- assert.match(source,/\.wbs-modal\.wbs-auto-import-modal\{width:calc\(100% - 24px\);max-width:480px/);
+ assert.match(source, /\/api\/automations\/discovery\/import/);
+ assert.match(source, /id="wbs-auto-discover"/);
+ assert.doesNotMatch(source, /wbs-auto-import-file|\/api\/automations\/import\/preview|\/api\/automations\/import'/);
 });

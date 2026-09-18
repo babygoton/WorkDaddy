@@ -15,20 +15,10 @@ function section(start, end) {
   return source.slice(from, to);
 }
 
-test('only successful growth reward actions request fresh credits for their account', () => {
-  const actions = section('    function unlockFirstBuddy(uid)', '    function setupDailyProgressPopover()');
-  for (const [start, end] of [
-    ['function unlockFirstBuddy(uid)', 'function claimBuddyTravelReward(uid)'],
-    ['function claimBuddyTravelReward(uid)', 'function selectBuddyForTravel(uid, instanceId)'],
-    ['function runGrowthPlanAction(uid, kind)', 'function setupDailyProgressPopover()'],
-  ]) {
-    const action = actions.slice(actions.indexOf(start), actions.indexOf(end, actions.indexOf(start)));
-    assert.match(action, /\.then\(function \(response\) \{[\s\S]*if \(!response \|\| response\.ok !== true\) throw[\s\S]*refreshCreditForAccount\(uid\)/);
-    assert.doesNotMatch(action.slice(action.indexOf('.catch(function (error)')), /refreshCreditForAccount\(uid\)/);
-  }
-  const select = section('    function selectBuddyForTravel(uid, instanceId)', '    function departBuddyTravel(uid)');
-  const depart = section('    function departBuddyTravel(uid)', '    function runGrowthPlanAction(uid, kind)');
-  assert.doesNotMatch(select + depart, /refreshCreditForAccount\(uid\)/);
+test('growth action links never claim rewards or refresh credits locally', () => {
+  const actions = section('    function openOfficialGrowthCenter()', '    function setupDailyProgressPopover()');
+  assert.match(actions, /https:\/\/www\.workbuddy\.cn\/profile\/growth-center/);
+  assert.doesNotMatch(actions, /refreshCreditForAccount|\/api\/growth\//);
 });
 
 test('a reward refresh updates one credit cell and ignores older batch results', async () => {

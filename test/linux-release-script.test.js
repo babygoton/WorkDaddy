@@ -12,6 +12,10 @@ const script = path.join(root, 'scripts', 'build-linux-deb.sh');
 test('Linux release builds a versioned, self-contained Debian package without root install hooks', () => {
   const source = fs.readFileSync(script, 'utf8');
   assert.match(source, /dpkg-deb --build --root-owner-group/);
+  assert.match(source, /CROSS_PACKAGE=1/);
+  assert.match(source, /tarfile\.open\(control, 'w:xz'\)/);
+  assert.match(source, /tarfile\.open\(data, 'w:xz'\)/);
+  assert.match(source, /node != b'\\x7fELF\\x02'/);
   assert.match(source, /node-v22\.23\.1-linux-x64\.tar\.xz/);
   assert.match(source, /9749e988f437343b7fa832c69ded82a312e41a03116d766797ac14f6f9eee578/);
   assert.match(source, /ws-8\.18\.3\.tgz/);
@@ -67,4 +71,19 @@ test('built Linux package has matching metadata and payload', { skip: process.pl
     fs.rmSync(extracted, { recursive: true, force: true });
   }
   assert.match(path.basename(deb), new RegExp(version.stdout.trim().replace(/\./g, '\\.') + '_amd64\\.deb$'));
+});
+
+test('cross-built Debian archive exposes standard member names and control metadata', { skip: !process.env.WORKDADDY_LINUX_DEB }, () => {
+  const deb = process.env.WORKDADDY_LINUX_DEB;
+  const members = spawnSync('ar', ['-t', deb], { encoding: 'utf8' });
+  assert.equal(members.status, 0, members.stderr);
+  assert.deepEqual(members.stdout.trim().split('\n'), ['debian-binary', 'control.tar.xz', 'data.tar.xz']);
+  const control = spawnSync('ar', ['-p', deb, 'control.tar.xz']);
+  assert.equal(control.status, 0, String(control.stderr));
+  const metadata = spawnSync('tar', ['-xOJf', '-', './control'], { input: control.stdout, encoding: 'utf8' });
+  assert.equal(metadata.status, 0, metadata.stderr);
+  const version = path.basename(deb).match(/^WorkDaddy_(\d+\.\d+\.\d+)_amd64\.deb$/)?.[1];
+  assert.ok(version);
+  assert.ok(metadata.stdout.split('\n').includes(`Version: ${version}`));
+  assert.match(metadata.stdout, /^Architecture: amd64$/m);
 });
