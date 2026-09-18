@@ -14,15 +14,31 @@ function jwt(issuer) {
 
 function fixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'workdaddy-auth-'));
-  // lib.js 按平台定位 auth 目录：macOS 用 ~/Library/Application Support，
-  // Windows 用 %LOCALAPPDATA%；必须按平台建隔离目录，否则会扫到本机真实账号文件。
-  const authDir = os.platform() === 'win32'
+  // lib.js / profiles.js 按平台定位 auth 目录：
+  //   macOS  ~/Library/Application Support
+  //   Windows %LOCALAPPDATA%
+  //   Linux  $XDG_DATA_HOME (~/.local/share)
+  // 必须按平台建隔离目录（并在 run() 里同步导出 XDG 变量），否则会扫到本机真实账号文件。
+  const platform = os.platform();
+  const authDir = platform === 'win32'
     ? path.join(root, 'AppData', 'Local', 'CodeBuddyExtension', 'Data', 'Public', 'auth')
-    : path.join(root, 'Library', 'Application Support', 'CodeBuddyExtension', 'Data', 'Public', 'auth');
+    : platform === 'linux'
+      ? path.join(root, '.local', 'share', 'CodeBuddyExtension', 'Data', 'Public', 'auth')
+      : path.join(root, 'Library', 'Application Support', 'CodeBuddyExtension', 'Data', 'Public', 'auth');
   const dataDir = path.join(root, 'WorkDaddy');
   fs.mkdirSync(authDir, { recursive: true });
   return { root, authDir, dataDir };
 }
+
+/** 平台默认的 WorkDaddy 备份目录（legacy 迁移只在「数据目录 == 平台默认目录」时生效）。 */
+function platformDataDir(root) {
+  if (os.platform() === 'win32') return path.join(root, 'AppData', 'Roaming', 'WorkDaddy');
+  if (os.platform() === 'linux') return path.join(root, '.config', 'WorkDaddy');
+  return path.join(root, 'Library', 'Application Support', 'WorkDaddy');
+}
+
+/** 旧版 HelloBuddy 目录仅存在于 macOS 历史版本，legacy 迁移相关用例在非 macOS 跳过。 */
+const skipUnlessMac = { skip: os.platform() !== 'darwin' };
 
 function auth(uid, issuer, lastLogin = false) {
   return {
@@ -39,6 +55,8 @@ function run(root, dataDir, code, profile = 'workbuddy-cn') {
       ...process.env,
       HOME: root,
       LOCALAPPDATA: path.join(root, 'AppData', 'Local'),
+      XDG_DATA_HOME: path.join(root, '.local', 'share'),
+      XDG_CONFIG_HOME: path.join(root, '.config'),
       WBSWITCH_PROFILE: profile,
       WBSWITCH_DATA_DIR: dataDir,
     },
@@ -130,10 +148,9 @@ test('explicit WBSWITCH_AUTH_FILE keeps the legacy single-file behavior', () => 
   }
 });
 
-test('deleting a migrated account also removes the legacy source so it stays deleted after restart', () => {
-  if (os.platform() === 'win32') return;
+test('deleting a migrated account also removes the legacy source so it stays deleted after restart', skipUnlessMac, () => {
   const f = fixture();
-  const dataDir = path.join(f.root, 'Library', 'Application Support', 'WorkDaddy');
+  const dataDir = platformDataDir(f.root);
   const legacyDir = path.join(f.root, 'Library', 'Application Support', 'HelloBuddy');
   try {
     const legacyAccounts = path.join(legacyDir, 'accounts');
