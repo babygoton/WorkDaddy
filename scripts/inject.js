@@ -2220,6 +2220,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         popover.setAttribute('role', 'tooltip');
         popover.appendChild(el('div', 'wbs-session-usage-detail-title', '本会话用量明细'));
         popover.appendChild(el('div', 'wbs-session-usage-detail-total'));
+        popover.appendChild(el('div', 'wbs-session-usage-detail-note', '提示：部分会话尚未完成，当前 Token 和积分仅按已完成用量统计，最终数据可能存在偏差。'));
         var detailHead = el('div', 'wbs-session-usage-detail-head');
         detailHead.appendChild(el('span', '', '模型'));
         detailHead.appendChild(el('span', '', '调用'));
@@ -9328,6 +9329,14 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
 
     function setOpen(open, options) {
       if (open && typeof closeRotationNotice === 'function') closeRotationNotice();
+      if (open) {
+        // 打开 WorkDaddy 面板时，复制会话进度提示会遮挡面板入口区域，立即收起并停止后续轮询。
+        closeSessionCopyNotice();
+        if (state.sessionCopyNoticePollTimer) {
+          clearTimeout(state.sessionCopyNoticePollTimer);
+          state.sessionCopyNoticePollTimer = null;
+        }
+      }
       if (open && window.__wbsAutomationInputActive) {
         toast('正在输入或切换账号，请稍后打开面板', false, root);
         return;
@@ -13282,6 +13291,14 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       state.sessionCopyNoticePollTimer = null;
       var endpoint = jobId ? '/api/sessions/auto-copy/status?id=' + encodeURIComponent(jobId) : '/api/sessions/auto-copy/active';
       api(endpoint).then(function (result) {
+        if (state.open) {
+          closeSessionCopyNotice();
+          if (state.sessionCopyNoticePollTimer) {
+            clearTimeout(state.sessionCopyNoticePollTimer);
+            state.sessionCopyNoticePollTimer = null;
+          }
+          return;
+        }
         var job = result && result.job;
         if (!job) {
           // Account switching reloads the renderer before the daemon enqueues
@@ -13306,6 +13323,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
           setBuildTimeout(refresh, 900);
         }
       }).catch(function () {
+        if (state.open) return;
         state.sessionCopyNoticePollTimer = setBuildTimeout(function () { pollSessionCopyNotice(jobId, accountName); }, 1200);
       });
     }
@@ -14222,8 +14240,9 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '.wbs-session-usage-loading{color:var(--wb-icon-secondary,#667085);font-weight:400}',
     '.wbs-session-usage-popover{position:fixed;z-index:21;width:min(390px,calc(100vw - 16px));box-sizing:border-box;padding:10px 12px;border:0;border-radius:8px;background:color-mix(in srgb,var(--wb-bg-popover,#fff) 90%,transparent);color:var(--wb-color-text-primary,#1f1f1f);box-shadow:0 6px 18px rgba(20,24,32,.16);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);opacity:0;pointer-events:none;transform:translateY(4px);transition:opacity .14s ease,transform .14s ease}',
     '.wbs-session-usage-popover.is-visible{opacity:1;pointer-events:auto;transform:translateY(0)}',
-    '.wbs-session-usage-detail-title{font-size:16px;font-weight:700;line-height:1.4}',
+    '.wbs-session-usage-detail-title{font-size:14px;font-weight:700;line-height:1.4}',
     '.wbs-session-usage-detail-total{margin-top:4px;color:var(--wb-color-text-secondary,#5f6368);font-size:12.5px;font-variant-numeric:tabular-nums}',
+    '.wbs-session-usage-detail-note{margin-top:6px;color:var(--wb-color-text-secondary,#5f6368);font-size:11px;line-height:1.45}',
     '.wbs-session-usage-detail-head,.wbs-session-usage-detail-row{display:grid;grid-template-columns:minmax(0,1fr) 42px 58px 48px;gap:7px;align-items:center}',
     '.wbs-session-usage-detail-head{margin-top:10px;padding:6px 0;border-top:1px solid var(--wb-border-subtle,#eee);border-bottom:1px solid var(--wb-border-subtle,#eee);color:var(--wb-color-text-secondary,#5f6368);font-size:12px}',
     '.wbs-session-usage-detail-head span,.wbs-session-usage-detail-row span{text-align:left}',
