@@ -256,6 +256,20 @@ test('native lifecycle can recover a missing watchdog PID only from a unique dae
   assert.match(stop, /watchdog\.pid[\s\S]*无法证明当前 daemon 的唯一 watchdog[\s\S]*return exitIdentityMismatch/);
 });
 
+test('native lifecycle can stop a verified same-profile portable daemon during install', () => {
+  const source = read('scripts/windows-native/main.go');
+  assert.match(source, /func authenticatedDaemonStatus\(profile string\)/);
+  assert.match(source, /status\.Profile\.ID != profile/);
+  assert.match(source, /status\.DataDir/);
+  assert.match(source, /listenerPID != status\.PID/);
+  assert.match(source, /func adoptVerifiedLifecycleNode\(/);
+  assert.match(source, /statusNode := filepath\.Join\(status\.AppDir, "scripts", "runtime", "node", "node\.exe"\)/);
+  const stopStart = source.indexOf('func stopLifecycle(');
+  const stopEnd = source.indexOf('\nfunc appendLog(', stopStart);
+  assert.ok(stopStart >= 0 && stopEnd > stopStart);
+  assert.match(source.slice(stopStart, stopEnd), /adoptVerifiedLifecycleNode\(profile, appDir, daemonPID, watchdogPID\)/);
+});
+
 test('installer lifecycle cleanup releases only the exact installed native launcher', () => {
   const source = read('scripts/windows-native/main.go');
   const stopStart = source.indexOf('func stopInstalledLauncher(');

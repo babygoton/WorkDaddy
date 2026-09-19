@@ -30,7 +30,7 @@ const MAX_ANCHOR = 100000;
 const TITLE_LIMIT = 60;
 const DEFAULT_SUFFIX = '（分支）';
 // harness 注入块的起始标记：这类 user 记录不是用户真说的话
-const INJECTED_PREFIX = /^\s*<(cb_summary|system-reminder|additional_data|identity_context)/;
+const INJECTED_PREFIX = /^\s*<(cb_summary|system-reminder|additional_data|identity_context|task-notification)/;
 // 锚点只计这两种角色的消息
 const ANCHOR_ROLES = new Set(['user', 'assistant']);
 
@@ -190,21 +190,44 @@ function planForkAtMessage(text, selection) {
   const roles = selection && selection.roles;
   const index = selection && selection.messageIndex;
   const finishedAt = selection && selection.finishedAt;
-  if (typeof roles !== 'string' || !/^[ua]{1,10000}$/.test(roles) ||
+  if (typeof roles !== 'string' || !/^(?:ua){1,5000}$/.test(roles) ||
       !Number.isInteger(index) || index < 0 || index >= roles.length ||
       !Number.isSafeInteger(finishedAt) || finishedAt <= 0) {
     return invalid('分支消息参数无效');
   }
   const parsed = parseRecords(text);
   if (parsed.skipped) return invalid('会话记录正在写入或包含损坏的行，请稍后重试');
+  if (index % 2 !== 1) return invalid('无法确认所选消息的分支位置');
+
+  // The renderer may hide task-notification user records and merge consecutive
+  // assistant records from one streamed turn. The alternating visible role
+  // shape guards the selection, while finishedAt identifies the exact JSONL
+  // assistant record without assuming the two representations have the same
+  // number of records.
   const messages = parsed.records.map((entry, recordIndex) => ({
     recordIndex, value: entry.value,
   })).filter((entry) => entry.value && entry.value.type === 'message' &&
     ANCHOR_ROLES.has(entry.value.role));
-  if (messages.map((entry) => entry.value.role === 'user' ? 'u' : 'a').join('') !== roles) {
-    return invalid('会话消息已变化，请重新打开后再试');
+  const assistantMessages = messages.filter((entry) => entry.value.role === 'assistant');
+  const rawRoles = messages.map((entry) => entry.value.role === 'user' ? 'u' : 'a').join('');
+  let selected;
+  if (rawRoles === roles) {
+    // In the compact representation, messageIndex identifies the assistant
+    // ordinal directly. Preserve the timestamp tolerance, but do not fall
+    // through to a different assistant if this record is malformed.
+    selected = assistantMessages[Math.floor(index / 2)];
+  } else {
+    // In streamed files, the same visible assistant can span several JSONL
+    // records. The completion timestamp is the stable cross-representation key.
+    selected = assistantMessages.find((entry) => Number(entry.value.timestamp) === finishedAt);
   }
-  const selected = messages[index];
+  if (!selected && rawRoles !== roles) {
+    selected = assistantMessages
+      .filter((entry) => Number.isSafeInteger(Number(entry.value.timestamp)) && Number(entry.value.timestamp) > 0)
+      .map((entry) => ({ entry, distance: Math.abs(Number(entry.value.timestamp) - finishedAt) }))
+      .filter((item) => item.distance <= 30000)
+      .sort((a, b) => a.distance - b.distance)[0]?.entry;
+  }
   const recordedAt = selected && selected.value.timestamp;
   if (!selected || selected.value.role !== 'assistant' ||
       !Number.isSafeInteger(recordedAt) || recordedAt <= 0 ||

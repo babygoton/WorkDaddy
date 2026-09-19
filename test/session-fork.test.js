@@ -75,6 +75,7 @@ test('buildAnchors numbers only user/assistant messages and skips harness inject
 test('userQueryText drops injection-only records and keeps plain user text', () => {
   assert.equal(userQueryText({ content: [{ type: 'text', text: '<cb_summary>总结</cb_summary>' }] }), '');
   assert.equal(userQueryText({ content: [{ type: 'text', text: '<additional_data>上下文</additional_data>' }] }), '');
+  assert.equal(userQueryText({ content: [{ type: 'text', text: '<task-notification>后台任务完成</task-notification>' }] }), '');
   assert.equal(userQueryText({ content: [{ type: 'text', text: '普通一句话' }] }), '普通一句话');
   assert.equal(userQueryText({ content: [] }), '');
   assert.equal(userQueryText(null), '');
@@ -172,6 +173,26 @@ test('renderer message position forks only when roles and completion time match 
   assert.equal(planForkAtMessage(text, { ...choice, finishedAt: T0 + 120000 }).ok, false);
   assert.equal(planForkAtMessage(toText(records.map((record, i) => i === 1 ? { ...record, timestamp: 'invalid' } : record)), choice).ok, false);
   assert.equal(planForkAtMessage(text + '{bad\n', choice).ok, false);
+});
+
+test('renderer fork matching ignores task notifications and groups streamed assistant records', () => {
+  const records = [
+    { type: 'message', role: 'user', timestamp: T0, content: [{ type: 'text', text: '<system-reminder><user_query>问题一</user_query></system-reminder>' }] },
+    { type: 'message', role: 'assistant', timestamp: T0 + 1000, content: [{ type: 'text', text: '正在处理。' }] },
+    { type: 'message', role: 'assistant', timestamp: T0 + 2000, content: [{ type: 'text', text: '处理完成。' }] },
+    { type: 'message', role: 'user', timestamp: T0 + 2500, content: [{ type: 'text', text: '<task-notification>后台任务完成</task-notification>' }] },
+    { type: 'message', role: 'user', timestamp: T0 + 3000, content: [{ type: 'text', text: '<system-reminder><user_query>问题二</user_query></system-reminder>' }] },
+    { type: 'message', role: 'assistant', timestamp: T0 + 4000, content: [{ type: 'text', text: '第二个回答。' }] },
+  ];
+  const result = planForkAtMessage(toText(records), {
+    messageIndex: 1,
+    roles: 'uaua',
+    finishedAt: T0 + 2000,
+  });
+  assert.equal(result.ok, true);
+  assert.deepEqual(parseRecords(result.text).records.map((item) => item.value.role), ['user', 'assistant', 'assistant']);
+  assert.match(result.text, /处理完成/);
+  assert.doesNotMatch(result.text, /问题二|第二个回答/);
 });
 
 test('describeAnchor renders a one-line anchor summary', () => {

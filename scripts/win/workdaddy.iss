@@ -778,7 +778,7 @@ var
   Description: TNewStaticText;
   ContinueButton, CancelButton: TNewButton;
 begin
-  Dialog := CreateCustomForm();
+  Dialog := CreateCustomForm(ScaleX(500), ScaleY(265), False, False);
   try
     Dialog.Caption := '管理员会话兼容安装';
     Dialog.ClientWidth := ScaleX(500);

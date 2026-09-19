@@ -122,6 +122,7 @@ type daemonStatus struct {
 	PID       int    `json:"pid"`
 	Privilege string `json:"privilege"`
 	DataDir   string `json:"dataDir"`
+	AppDir    string `json:"appDir"`
 	Profile   struct {
 		ID string `json:"id"`
 	} `json:"profile"`
@@ -964,6 +965,7 @@ func stopLifecycle(profile, appDir string, elevated bool) int {
 		return exitIdentityMismatch
 	}
 	daemonPID := readLockPID(filepath.Join(dir, ".daemon.lock"))
+	expectedNode = adoptVerifiedLifecycleNode(profile, appDir, daemonPID, watchdogPID)
 	if !watchdogPresent && daemonPID > 0 {
 		records, enumerateErr := enumerateProcesses()
 		if enumerateErr != nil {
@@ -1128,6 +1130,73 @@ func fetchDaemonStatus(port int, token string) (*daemonStatus, error) {
 		return nil, errors.New("status endpoint returned invalid JSON")
 	}
 	return &status, nil
+}
+
+// authenticatedDaemonStatus proves that a listener belongs to this profile's
+// daemon. It is used during upgrades when the current lifecycle was started
+// from a portable directory different from the installer target directory.
+func authenticatedDaemonStatus(profile string) (*daemonStatus, error) {
+	dir, err := dataDir(profile)
+	if err != nil {
+		return nil, err
+	}
+	tokenData, err := os.ReadFile(filepath.Join(dir, ".api-token"))
+	if err != nil {
+		return nil, errors.New("当前 profile 缺少本地 API 身份凭证")
+	}
+	token := strings.TrimSpace(string(tokenData))
+	if len(token) != 64 {
+		return nil, errors.New("当前 profile 的本地 API 身份凭证无效")
+	}
+	ports := profileUiPorts(profile)
+	if persisted := persistedUiPort(profile, dir); persisted > 0 {
+		ports = append([]int{persisted}, ports...)
+	}
+	expectedDataDir := strings.TrimRight(filepath.Clean(dir), `\/`)
+	for _, port := range ports {
+		status, fetchErr := fetchDaemonStatus(port, token)
+		if fetchErr != nil || !status.OK || status.PID <= 0 ||
+			status.Profile.ID != profile || strings.TrimSpace(status.DataDir) == "" ||
+			strings.TrimSpace(status.AppDir) == "" {
+			continue
+		}
+		actualDataDir := strings.TrimRight(filepath.Clean(status.DataDir), `\/`)
+		if !strings.EqualFold(actualDataDir, expectedDataDir) {
+			continue
+		}
+		listenerPID, listenErr := listenerPidOnPort(port)
+		if listenErr != nil || listenerPID != status.PID {
+			continue
+		}
+		return status, nil
+	}
+	return nil, errors.New("无法通过本地身份凭证确认正在运行的本 profile 生命周期")
+}
+
+// adoptVerifiedLifecycleNode allows an installer to stop a same-profile
+// portable lifecycle when its app directory differs from the new install
+// target. The authenticated daemon status binds the alternate node path to
+// the current profile and data directory; without that proof, the original
+// target path remains mandatory and the helper fails closed.
+func adoptVerifiedLifecycleNode(profile, appDir string, daemonPID, watchdogPID int) string {
+	expectedNode := filepath.Join(appDir, "scripts", "runtime", "node", "node.exe")
+	if daemonPID <= 0 || watchdogPID <= 0 {
+		return expectedNode
+	}
+	actualDaemon := queryProcessPath(uint32(daemonPID))
+	actualWatchdog := queryProcessPath(uint32(watchdogPID))
+	if actualDaemon == "" || !samePath(actualDaemon, actualWatchdog) || samePath(actualDaemon, expectedNode) {
+		return expectedNode
+	}
+	status, err := authenticatedDaemonStatus(profile)
+	if err != nil || status.PID != daemonPID {
+		return expectedNode
+	}
+	statusNode := filepath.Join(status.AppDir, "scripts", "runtime", "node", "node.exe")
+	if !samePath(statusNode, actualDaemon) {
+		return expectedNode
+	}
+	return actualDaemon
 }
 
 // authenticatedElevatedDaemonStatus proves that the running daemon for this

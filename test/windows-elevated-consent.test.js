@@ -11,6 +11,7 @@ const read = (name) => fs.readFileSync(path.join(__dirname, '..', name), 'utf8')
 test('installer obtains explicit consent before cleanup and enables subsequent shortcut launches', () => {
   const src = read('scripts/win/workdaddy.iss');
   assert.match(src, /--desktop-token-status/);
+  assert.match(src, /CreateCustomForm\(ScaleX\(500\), ScaleY\(265\), False, False\)/);
   assert.match(src, /Caption := '我已了解风险，继续安装'/);
   assert.match(src, /Button\.Default := False/);
   assert.match(src, /CancelButton\.Default := True/);
