@@ -13,6 +13,11 @@ WorkDaddy.app
 /release/**/*.pkg
 /release/**/*.tar.gz
 
+# Linux 构建产物（staging 目录、发布子目录与 deb 包）
+/WorkDaddy-linux/
+/release/linux/
+*.deb
+
 # 本地运行数据与日志
 *.log
 daemon.log

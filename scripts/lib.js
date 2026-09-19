@@ -19,16 +19,25 @@ const crypto = require('crypto');
 const { getProfile, profileDataDir, sharedDataDir } = require('./profiles.js');
 
 const IS_WIN = process.platform === 'win32';
+const IS_LINUX = process.platform === 'linux';
+// Linux：Electron userData 遵循 XDG，落在 $XDG_DATA_HOME（默认 ~/.local/share）
+const linuxDataHome = () => process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share');
 
 const PLATFORM_DATA_DIR = IS_WIN
   ? path.join(
       process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'),
       'WorkDaddy'
     )
-  : path.join(os.homedir(), 'Library', 'Application Support', 'WorkDaddy');
+  : IS_LINUX
+    ? path.join(linuxDataHome(), 'WorkDaddy')
+    : path.join(os.homedir(), 'Library', 'Application Support', 'WorkDaddy');
+// HelloBuddy 是旧版目录名：macOS 在 ~/Library/Application Support，
+// Linux 无历史版本（保持与 XDG 一致的形状即可），Windows 不使用。
 const LEGACY_DATA_DIR = IS_WIN
   ? null
-  : path.join(os.homedir(), 'Library', 'Application Support', 'HelloBuddy');
+  : IS_LINUX
+    ? path.join(linuxDataHome(), 'HelloBuddy')
+    : path.join(os.homedir(), 'Library', 'Application Support', 'HelloBuddy');
 
 function samePath(a, b) {
   return !!a && !!b && path.resolve(a) === path.resolve(b);
@@ -40,22 +49,28 @@ function isLegacyDataDir(dataDir) {
 
 // macOS: ~/Library/Application Support/CodeBuddyExtension/Data/Public/auth/workbuddy-desktop.info
 // Windows: %LOCALAPPDATA%\CodeBuddyExtension\Data\Public\auth\workbuddy-desktop.info（真机已确认）
+// Linux: $XDG_DATA_HOME/CodeBuddyExtension/Data/Public/auth/workbuddy-desktop.info（本机实测已确认）
 const ACTIVE_PROFILE = getProfile();
+const defaultAuthFile = () => {
+  if (IS_WIN) {
+    return path.join(
+      process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'),
+      'CodeBuddyExtension', 'Data', 'Public', 'auth', 'workbuddy-desktop.info'
+    );
+  }
+  if (IS_LINUX) {
+    return path.join(
+      linuxDataHome(), 'CodeBuddyExtension', 'Data', 'Public', 'auth', 'workbuddy-desktop.info'
+    );
+  }
+  return path.join(
+    os.homedir(),
+    'Library/Application Support/CodeBuddyExtension/Data/Public/auth/workbuddy-desktop.info'
+  );
+};
 const AUTH_FILE = process.env.WBSWITCH_AUTH_FILE !== undefined
   ? process.env.WBSWITCH_AUTH_FILE
-  : (ACTIVE_PROFILE.authFile === null ? null : (ACTIVE_PROFILE.authFile || (IS_WIN
-    ? path.join(
-        process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'),
-        'CodeBuddyExtension',
-        'Data',
-        'Public',
-        'auth',
-        'workbuddy-desktop.info'
-      )
-    : path.join(
-        os.homedir(),
-        'Library/Application Support/CodeBuddyExtension/Data/Public/auth/workbuddy-desktop.info'
-      ))));
+  : (ACTIVE_PROFILE.authFile === null ? null : (ACTIVE_PROFILE.authFile || defaultAuthFile()));
 
 const LOGOUT_MARKER = `${AUTH_FILE}.logged-out`;
 const EXPLICIT_AUTH_FILE = process.env.WBSWITCH_AUTH_FILE !== undefined;

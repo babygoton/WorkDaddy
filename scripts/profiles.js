@@ -7,9 +7,17 @@ const { readWorkBuddyTarget } = require('./workbuddy-target.js');
 
 const home = os.homedir();
 const IS_WIN = process.platform === 'win32';
+const IS_LINUX = process.platform === 'linux';
+// Linux 移植：Electron 在 Linux 上遵循 XDG 规范，userData 落在
+// $XDG_DATA_HOME（默认 ~/.local/share），而不是 macOS 的 ~/Library/Application Support
+// 或 Windows 的 %APPDATA%。本机实测 WorkBuddy Linux 版的 auth 文件位于
+// ~/.local/share/CodeBuddyExtension/Data/Public/auth/workbuddy-desktop.info
+const linuxDataHome = () => process.env.XDG_DATA_HOME || path.join(home, '.local', 'share');
 const appSupport = IS_WIN
   ? (process.env.APPDATA || path.join(home, 'AppData', 'Roaming'))
-  : path.join(home, 'Library', 'Application Support');
+  : IS_LINUX
+    ? linuxDataHome()
+    : path.join(home, 'Library', 'Application Support');
 const localSupport = IS_WIN
   ? (process.env.LOCALAPPDATA || path.join(home, 'AppData', 'Local'))
   : appSupport;
@@ -17,10 +25,14 @@ const extensionAuth = path.join(localSupport, 'CodeBuddyExtension', 'Data', 'Pub
 // Windows 可执行名与安装目录名不完全一致（AI 国际版 exe 为 WorkBuddyAI.exe，无空格；
 // win-launcher 进程枚举与 PR#8 实机已确认）。winExec 缺省时用安装目录同名 .exe，找不到时
 // win-launcher 仍有进程/注册表兜底。
-const appPath = (name, winExec, winDir) =>
+const appPath = (name, winExec, winDir, linuxExec, linuxDir) =>
   IS_WIN
     ? path.join(localSupport, 'Programs', winDir || name, winExec || `${winDir || name}.exe`)
-    : `/Applications/${name}.app`;
+    : IS_LINUX
+      // Linux：官方 deb/rpm 把客户端装在 /opt/<安装目录>/<可执行文件>。
+      // 本机实测国内版为 /opt/WorkBuddy/workbuddy（/usr/bin/workbuddy 是软链）。
+      ? path.join('/opt', linuxDir || name, linuxExec || 'workbuddy')
+      : `/Applications/${name}.app`;
 
 function sharedDataDir() {
   return path.join(appSupport, 'WorkDaddy');
@@ -42,7 +54,7 @@ const PROFILES = {
   'workbuddy-ai': {
     id: 'workbuddy-ai', name: 'WorkBuddy AI', appName: 'WorkDaddy AI', region: 'intl', kind: 'workbuddy', mode: 'agents',
     // Windows 安装目录无空格：%LOCALAPPDATA%\Programs\WorkBuddyAI\WorkBuddyAI.exe（PR#8 实机确认）
-    appPath: appPath('WorkBuddy AI', 'WorkBuddyAI.exe', 'WorkBuddyAI'),
+    appPath: appPath('WorkBuddy AI', 'WorkBuddyAI.exe', 'WorkBuddyAI', 'workbuddy-ai', 'WorkBuddyAI'),
     dataRoot: path.join(home, '.workbuddy-ai'),
     authFile: path.join(extensionAuth, 'workbuddy-desktop-ai.info'),
     sessionDb: path.join(home, '.workbuddy-ai', 'workbuddy.db'),
@@ -55,7 +67,7 @@ const PROFILES = {
   },
   'codebuddy-cn': {
     id: 'codebuddy-cn', name: 'CodeBuddy CN', region: 'cn', kind: 'codebuddy', mode: 'auto',
-    appPath: appPath('CodeBuddy CN'),
+    appPath: appPath('CodeBuddy CN', null, null, 'codebuddy', 'CodeBuddyCN'),
     dataRoot: path.join(appSupport, 'CodeBuddy CN'),
     authFile: null,
     sessionDb: path.join(appSupport, 'CodeBuddy CN', 'codebuddy-sessions.vscdb'),
@@ -66,7 +78,7 @@ const PROFILES = {
   },
   'codebuddy-intl': {
     id: 'codebuddy-intl', name: 'CodeBuddy', region: 'intl', kind: 'codebuddy', mode: 'auto',
-    appPath: appPath('CodeBuddy'),
+    appPath: appPath('CodeBuddy', null, null, 'codebuddy', 'CodeBuddy'),
     dataRoot: path.join(appSupport, 'CodeBuddy'),
     authFile: null,
     sessionDb: path.join(appSupport, 'CodeBuddy', 'codebuddy-sessions.vscdb'),
