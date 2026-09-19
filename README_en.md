@@ -37,11 +37,12 @@ It injects UI components into the running WorkBuddy renderer without patching or
 - **Daily credits:** daily check-in automation is disabled by default. On the first panel opening, a risk notice lets you enable the task or cancel. Either choice is saved locally and dismisses future notices; you can later enable or disable the task under Automations.
 - **Token and credit usage pages:** review daily token and credit consumption, filter by account, and view usage rankings by model and account.
 - **Credit-aware account suggestions:** when an account is running low on credits, WorkDaddy suggests another account you can use.
-- **Automation tasks:** describe what you need and let WorkBuddy create a task, or edit the steps yourself. Supports manual, event, and scheduled triggers, run logs, stopping tasks, and JSON / ZIP import/export.
+- **Automation tasks:** discover and import tasks from public GitHub and Gitee repositories, or describe what you need and let WorkBuddy create a task. Supports manual, event, and scheduled triggers, run logs, stopping tasks, and JSON / ZIP export.
 - **Quiet approval mode:** automatically handle supported permission prompts while you are away.
 - **Stash prompts:** send drafts to WorkBuddy's pending message queue while preserving images, files, and quotes for later use.
 - **Themes:** use the built-in frosted-glass theme, preset wallpapers, or your own backgrounds.
 - **Session migration:** copy sessions between accounts automatically or manually and continue working where you left off.
+- **Session branching:** once enabled under Enhance, any reply can start a new conversation that keeps the chat up to that reply, while the original conversation stays untouched.
 - **Model tools:** manage and switch models more easily, including multiple configurations with the same model name.
 - **Sleep control:** keep the computer awake while AI tasks run, then allow normal sleep when they finish.
 - **Auto-continue:** automatically continue tasks interrupted by network fluctuations, timeouts, or similar failures.
@@ -159,8 +160,8 @@ Click the robot button in the lower-right corner of WorkBuddy and choose a tab:
 | **Theme**      | Switch between the default and WorkDaddy themes, choose or upload wallpapers, change avatars, and adjust blur and background overlays     |
 | **Sessions**   | Filter by account and date, copy or delete in bulk, and configure automatic session or workspace copying when switching accounts          |
 | **Models**     | Manage current and alternative models, including backups, copying, editing, enabling, connectivity tests, and bulk deletion               |
-| **Enhance**    | Configure quiet approvals, auto-continue, prompt stashing, and quick phrases                                                              |
-| **Automation** | Create and manage tasks, configure event or scheduled triggers, inspect run logs, stop running tasks, and import/export JSON or ZIP files |
+| **Enhance**    | Configure quiet approvals, auto-continue, session branching, prompt stashing, and quick phrases                                                              |
+| **Automation** | Discover and import tasks from public repositories, create and manage tasks, configure event or scheduled triggers, inspect run logs, stop running tasks, and export JSON or ZIP files |
 | **Computer**   | Allow or prevent sleep, or restore normal sleep after all AI tasks finish                                                                 |
 | **About**      | View version and project information, check for and install updates, and control redacted error diagnostics                               |
 | **Settings**   | Choose Chinese or English; the first launch follows the system language and falls back to English                                         |
@@ -171,13 +172,24 @@ Click the robot button in the lower-right corner of WorkBuddy and choose a tab:
 
 Save repetitive actions as tasks: daily check-ins, account credit queries, conditional reminders, or sending a message in a specific conversation and waiting for a reply.
 
-1. Open **Automation** and use **Quick create** to choose an example, or **Create with WorkBuddy** to describe what you need. WorkBuddy generates the task in a new conversation and adds it to the list when finished. You can also use **New task** to edit the step JSON yourself; **View capabilities** lists the currently supported operations.
+1. Open **Automation** and use **Discover tasks** to browse tasks published in public repositories, or **Create with WorkBuddy** to describe what you need. WorkBuddy generates the task in a new conversation and adds it to the list when finished. You can also use **New task** to edit the step JSON yourself; **View capabilities** lists the currently supported operations.
 2. Choose a trigger: run manually, or respond to events such as client loading, panel opening, page readiness, and account switching. Schedules support intervals, daily, weekly, monthly, and a specific date and time.
 3. Enable, disable, edit, or copy tasks from the list. Manual tasks can run immediately; event and scheduled tasks run according to their configuration. Stop a running task when needed and inspect **Run logs** for results and failed steps.
 
-**Import and export:** choose **Import**, select a JSON or ZIP file, preview it, and select the tasks to import. Imported tasks remain disabled, existing tasks with the same ID are not overwritten, and incompatible tasks show the reason. Use bulk actions to select tasks for export: one task produces a JSON file, while multiple tasks produce a ZIP for backup or sharing.
+**Import and export:** import tasks from public repositories through **Discover tasks**. Imported tasks remain disabled, existing tasks with the same ID are not overwritten, and incompatible tasks show the reason. Use bulk actions to select tasks for export: one task produces a JSON file, while multiple tasks produce a ZIP for backup or sharing.
 
-Task definitions are stored locally and executed by the WorkDaddy daemon. Scheduled and event triggers require the daemon to remain running; steps that interact with a page also require the corresponding WorkBuddy client to be available. Task exports exclude account backups and run logs. Local file import/export is supported; an online task marketplace and automatic task updates are not yet available.
+Task definitions are stored locally and executed by the WorkDaddy daemon. Scheduled and event triggers require the daemon to remain running; steps that interact with a page also require the corresponding WorkBuddy client to be available. Task exports exclude account backups and run logs. The Automation page does not import local JSON or ZIP files.
+
+#### Submit public tasks
+
+**Discover tasks** lists tasks from public GitHub and Gitee repositories. See [`babygoton/workdaddy-official-plugin`](https://github.com/babygoton/workdaddy-official-plugin) for the recommended layout:
+
+1. Clone the example repository and remove the sample tasks you do not need.
+2. Put your task JSON files in the `tasks/` directory (up to 1 MiB per file, up to 200 tasks per repository).
+3. Commit and push to GitHub or Gitee.
+4. Add the keyword `WorkDaddyAutomationRepository` to the repository description.
+
+Repositories that follow this convention appear in **Discover tasks** after the next refresh (search results are cached for 10 minutes). Importing only reads the file and runs compatibility checks; imported tasks stay disabled and existing tasks with the same ID are not overwritten.
 
 ### Move accounts to another computer
 
