@@ -28,6 +28,7 @@ const path = require('path');
 const os = require('os');
 const crypto = require('crypto');
 const net = require('net');
+const sessionSync = require('./session-sync.js');
 const { spawn, spawnSync } = require('child_process');
 const {
   assertSameProcessIdentity,
@@ -91,7 +92,6 @@ const {
   getAutoCopySession,
   getAutoCopySessionMembers,
   getAutoCopySessionMemberRecords,
-  selectLatestAutoCopyMember,
   ensureAutoCopySessions,
   ensureAutoCopySession,
   normalizeAutoCopyLineages,
@@ -376,8 +376,8 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 // 1.2.52：成长任务支持在悬浮层内直接接取，并在完成后同步最新任务状态。
 // 1.2.55：成长弹窗支持开启盲盒与抽奖并提示奖励，收敛成长/用量统计 primary 色使用。
 // 1.2.56：成长任务补齐说明与标签、已领取折叠、Buddy 派出，并把用量柱状图改为面积折线图。
-const DAEMON_VERSION = '1.2.76';
-const DAEMON_BUILD_ID = 'release-1.2.76-20260919-session-fork-stream-alignment-fix';
+const DAEMON_VERSION = '1.2.83';
+const DAEMON_BUILD_ID = 'release-1.2.83-20260919-switch-without-session-activity-gate';
 const usageReporter = createUsageReporter({ profile: PROFILE.id, version: DAEMON_VERSION });
 configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const automationDiscovery = createAutomationDiscovery({
@@ -3180,6 +3180,26 @@ async function automationNotifyToast(detail) {
   if (response.exceptionDetails || !response.result || !response.result.value || !response.result.value.ok) throw new Error('WorkBuddy 通知组件未就绪');
   return response.result.value;
 }
+let accountSwitchInProgress = false;
+async function assertSessionSyncIdle() {
+  if (PROFILE.kind !== 'workbuddy') return;
+  if (!cdp.connected) throw new Error('无法确认会话状态，请连接 WorkBuddy 后重试');
+  const result = await cdpSend('Runtime.evaluate', {
+    expression: "typeof window.__wbsAnySessionBusy === 'function' ? window.__wbsAnySessionBusy() : null",
+    returnByValue: true,
+  });
+  const busy = result && result.result && result.result.value;
+  if (result.exceptionDetails || typeof busy !== 'boolean') throw new Error('无法确认会话状态，请等待面板加载后重试');
+  if (busy) throw new Error('当前账号有会话仍在运行，请等待完成或停止后再同步');
+}
+
+async function assertAccountSwitchIdle() {
+  if (accountSwitchInProgress) throw new Error('账号正在切换，请稍后重试');
+  if (autoCopyWorkerRunning || autoCopyQueue.length || sessionCopyLocks.size) throw new Error('会话同步尚未完成，请稍后切换账号');
+  accountSwitchInProgress = true;
+  return () => { accountSwitchInProgress = false; };
+}
+
 let automationAccountSwitchTail = Promise.resolve();
 function automationSwitchAccount(account) {
   const target = account && typeof account === 'object' ? account : { uid: String(account || '').trim() };
@@ -3188,6 +3208,7 @@ function automationSwitchAccount(account) {
     if (!uid) throw new Error('账号切换缺少 uid');
     const active = currentAccount();
     if (active && active.uid === uid) return { ok: true, uid, switched: false };
+    const releaseAccountSwitch = await assertAccountSwitchIdle();
     const releaseRendererReload = beginRendererReloadPriority();
     try {
       const acct = switchTo(DATA_DIR, uid, log);
@@ -3198,12 +3219,18 @@ function automationSwitchAccount(account) {
         pendingAutomationAccountSwitch = null;
         dispatchAutomationEvent('pageReady', { navigationSerial: mainFrameNavigationSerial, source: 'automation-account-switch', account: switchEvent.account });
       }
+      const sourceUid = String(active && active.uid || '');
+      const rules = sourceUid ? getAutoCopyRules(DATA_DIR, sourceUid) : {};
+      if (rules.allSessions || (rules.sessionIds || []).length || (rules.workspaces || []).length) {
+        startAutoCopyJob(sourceUid, uid, [], { sourceName: active.nickname, targetName: acct.nickname });
+      }
       return { ok: true, uid: acct.uid, nickname: acct.nickname, switched: true };
     } catch (error) {
       pendingAutomationAccountSwitch = null;
       throw error;
     } finally {
       releaseRendererReload();
+      releaseAccountSwitch();
     }
   });
   automationAccountSwitchTail = run.catch(() => {});
@@ -4075,102 +4102,13 @@ function sessionContentMtime(wbHome, sessionId) {
   return latest;
 }
 
-// Reconcile every live member of a shared lineage.  A switch can arrive after
-// either account has received new messages, so the active account is not a
-// reliable source of truth; choose the freshest on-disk snapshot first.
+// Yield between session pairs so renderer reloads and UI events can complete.
 async function yieldAutoCopyToRenderer() {
   await new Promise((resolve) => setImmediate(resolve));
   const reloadPriority = rendererReloadPriorityPromise;
   if (reloadPriority) await reloadPriority;
   const pending = pendingReloadInjection;
   if (pending && !pending.settled) await pending.ready;
-}
-
-async function syncAutoCopyLineage(lineageId, targetUid) {
-  if (!lineageId || PROFILE.kind !== 'workbuddy') return { members: 0, synced: 0, failedFiles: 0, targetIds: [], targetPresent: false };
-  const records = getAutoCopySessionMemberRecords(DATA_DIR, lineageId);
-  if (!records.length) return { members: 0, synced: 0, failedFiles: 0, targetIds: [], targetPresent: false };
-  const targetMapping = typeof getAutoCopyMapping === 'function'
-    ? getAutoCopyMapping(DATA_DIR, lineageId, targetUid)
-    : null;
-  const baselineAt = Number(targetMapping && targetMapping.updatedAt) || 0;
-  const live = [];
-  for (const member of records) {
-    await yieldAutoCopyToRenderer();
-    const rows = await sqliteQuery(
-      'SELECT ' + SESSION_COPY_COLUMNS.join(',') + ' FROM sessions WHERE id = ? AND user_id = ? AND deleted_at IS NULL LIMIT 1;',
-      [member.id, member.uid]
-    );
-    if (!rows.length) continue;
-    live.push(Object.assign({}, member, {
-      row: rows[0],
-      contentMtime: sessionContentMtime(PROFILE.dataRoot, member.id),
-      updatedAt: Number(rows[0].updated_at || rows[0].last_activity_at || rows[0].created_at || 0),
-    }));
-  }
-  const targetIds = live.map((member) => member.id);
-  const targetPresent = targetUid === undefined || live.some((member) => member.uid === String(targetUid || '').trim());
-  if (live.length < 2) return { members: live.length, synced: 0, failedFiles: 0, targetIds, targetPresent };
-  // Once a lineage has been synchronized, a changed file on each side means
-  // both accounts wrote new content since the last common snapshot. Do not
-  // pick one side by mtime and silently overwrite the other; surface a
-  // conflict for the user after the progress bar completes.
-  const changedSinceBaseline = baselineAt > 0
-    ? live.filter((member) => Number(member.contentMtime || 0) > baselineAt)
-    : [];
-  if (changedSinceBaseline.length >= 2) {
-    return {
-      members: live.length,
-      synced: 0,
-      failedFiles: 0,
-      targetIds,
-      targetPresent,
-      conflict: true,
-      conflicts: 1,
-    };
-  }
-  // The lineage already has the target member and neither side changed since
-  // the last successful sync. Avoid a full overwrite of an unchanged session.
-  if (targetPresent && baselineAt > 0 && changedSinceBaseline.length === 0) {
-    return { members: live.length, synced: 0, failedFiles: 0, targetIds, targetPresent, unchanged: true };
-  }
-  const latest = selectLatestAutoCopyMember(live);
-  if (!latest) return { members: live.length, synced: 0, failedFiles: 0, targetIds, targetPresent };
-  const sourceRow = latest.row;
-  let synced = 0;
-  const ownerIds = records.map((member) => member.id);
-  // 旧版副本可能仍挂着最初源会话的 owner；也修复作为最新来源的副本自身。
-  const repairedSource = await copySessionFiles(PROFILE.dataRoot, latest.id, latest.id, ownerIds);
-  let failedFiles = repairedSource.failed;
-  for (const target of live) {
-    if (target.id === latest.id) continue;
-    await yieldAutoCopyToRenderer();
-    const files = await copySessionFiles(PROFILE.dataRoot, latest.id, target.id, ownerIds);
-    synced++;
-    failedFiles += files.failed;
-    try {
-      await sqliteRun(
-        'UPDATE sessions SET title = ?, custom_title = ?, status = ?, updated_at = ?, last_activity_at = ? WHERE id = ? AND user_id = ? AND deleted_at IS NULL;',
-        [sourceRow.title || '', sourceRow.custom_title || '', sourceRow.status || 'Pending',
-          Number(sourceRow.updated_at || Date.now()), Number(sourceRow.last_activity_at || sourceRow.updated_at || Date.now()),
-          target.id, target.uid]
-      );
-    } catch (error) {
-      log(`[sessions-auto-copy] 同步会话元数据失败 ${target.uid}/${target.id}: ${error.message}`);
-    }
-  }
-  if (!failedFiles && targetUid !== undefined && typeof setAutoCopyMapping === 'function') {
-    const targetMember = live.find((member) => member.uid === String(targetUid || '').trim());
-    if (targetMember) {
-      setAutoCopyMapping(DATA_DIR, lineageId, targetUid, {
-        ...(targetMapping || {}),
-        targetId: targetMember.id,
-        status: 'copied',
-        failedFiles: 0,
-      });
-    }
-  }
-  return { members: live.length, synced, failedFiles, sourceId: latest.id, targetIds, targetPresent };
 }
 
 const MAX_SESSION_EXPORT_FILES = 20000;
@@ -4438,128 +4376,102 @@ async function importSessionArchives(payload, targetUid, staged = false) {
 
 async function copySessionRecord(src, targetUid, options = {}) {
   const sourceUid = String(options.sourceUid || src.user_id || '').trim();
-  const auto = !!options.auto;
-  const wbHome = PROFILE.dataRoot;
-  let lineageId = options.lineageId || null;
-  const sourceLineage = sourceUid ? getAutoCopySession(DATA_DIR, sourceUid, src.id) : { lineageId: null, enabled: false };
-  if (!lineageId && sourceLineage.enabled) lineageId = sourceLineage.lineageId;
-  if (auto && sourceUid && !lineageId) lineageId = ensureAutoCopySession(DATA_DIR, sourceUid, src.id);
+  targetUid = String(targetUid || '').trim();
+  if (!sourceUid || !targetUid || sourceUid === targetUid) return { status: 'skipped', sourceId: src.id, targetId: src.id };
+  // Provenance, not matching titles/timestamps, identifies an existing copy.
+  const lineageId = options.lineageId || getAutoCopySession(DATA_DIR, sourceUid, src.id).lineageId ||
+    ensureAutoCopySession(DATA_DIR, sourceUid, src.id, { enabled: false });
   const perform = async () => {
-  let ownerIds = lineageId ? getAutoCopySessionMemberRecords(DATA_DIR, lineageId).map((member) => member.id) : [];
-  if (sourceUid && lineageId) {
+    await yieldAutoCopyToRenderer();
+    const readRow = async (id, uid) => (await sqliteQuery(
+      'SELECT ' + SESSION_COPY_COLUMNS.join(',') + ' FROM sessions WHERE id = ? AND user_id = ? AND deleted_at IS NULL LIMIT 1;', [id, uid]
+    ))[0];
+    const sourceRow = await readRow(src.id, sourceUid);
+    if (!sourceRow) throw new Error('源会话已变化，请重试');
     const mapping = getAutoCopyMapping(DATA_DIR, lineageId, targetUid);
-    if (mapping && mapping.targetId) {
-      const existing = await sqliteQuery(
-        'SELECT id, user_id FROM sessions WHERE id = ? AND deleted_at IS NULL LIMIT 1;',
-        [mapping.targetId]
-      );
-      if (existing.length && String(existing[0].user_id || '') === String(targetUid)) {
-        const files = await copySessionFiles(wbHome, src.id, mapping.targetId, ownerIds);
-        addAutoCopySessionMember(DATA_DIR, lineageId, targetUid, mapping.targetId);
-        setAutoCopyMapping(DATA_DIR, lineageId, targetUid, {
-          targetId: mapping.targetId,
-          status: files.failed ? 'partial' : 'copied',
-          failedFiles: files.failed,
-        });
-        return { status: files.failed ? 'partial' : 'skipped', sourceId: src.id, targetId: mapping.targetId, failedFiles: files.failed };
-      }
-      deleteAutoCopyMapping(DATA_DIR, lineageId, targetUid);
+    const ids = new Set(getAutoCopySessionMembers(DATA_DIR, lineageId, targetUid));
+    if (mapping && mapping.targetId) ids.add(mapping.targetId);
+    const candidates = [];
+    for (const id of ids) {
+      const row = await readRow(id, targetUid);
+      if (row) candidates.push(row);
     }
-
-    // A stale/missing mapping used to cause a fresh INSERT even when this
-    // lineage already contained a target session.  That produced one duplicate
-    // session on every account switch after the mapping was lost.  Treat the
-    // lineage members as the authoritative fallback and choose a stable
-    // canonical row when old data contains more than one member for the uid.
-    const memberIds = getAutoCopySessionMembers(DATA_DIR, lineageId, targetUid)
-      .filter((id) => String(id) !== String(src.id));
-    if (memberIds.length) {
-      const candidates = [];
-      for (let index = 0; index < memberIds.length; index++) {
-        const rows = await sqliteQuery(
-          'SELECT id, user_id, created_at, updated_at FROM sessions WHERE id = ? AND deleted_at IS NULL LIMIT 1;',
-          [memberIds[index]]
-        );
-        if (rows.length && String(rows[0].user_id || '') === String(targetUid)) {
-          candidates.push(Object.assign({ memberIndex: index }, rows[0]));
+    const targetIds = candidates.length ? candidates.map(row => row.id) : [crypto.randomUUID()];
+    const aliases = getAutoCopySessionMemberRecords(DATA_DIR, lineageId).map(member => member.id).concat(targetIds);
+    let left = sessionSync.readSnapshot(PROFILE.dataRoot, sourceRow.id, aliases);
+    const selection = await sessionSync.selectTargetSnapshot(left, targetIds, async id => {
+      await yieldAutoCopyToRenderer();
+      return sessionSync.readSnapshot(PROFILE.dataRoot, id, aliases);
+    }, mapping && mapping.targetId);
+    // A divergent source still needs to reach the destination. Publish it as
+    // a new physical session in the same lineage, so later scans find it by
+    // content and do not create another copy on every switch.
+    const branched = selection.comparison.kind === 'conflict';
+    const targetId = branched ? crypto.randomUUID() : selection.targetId;
+    if (branched) aliases.push(targetId);
+    const existing = candidates.find(row => row.id === targetId) || null;
+    let right = sessionSync.readSnapshot(PROFILE.dataRoot, targetId, aliases);
+    // Selection may have yielded while inspecting other legacy copies.
+    // Require the chosen complete snapshot to remain the same before writing.
+    if (!branched && selection.snapshot.records && sessionSync.compareSnapshots(selection.snapshot, right).kind !== 'equal') {
+      throw new Error('会话记录正在变化，请稍后重试');
+    }
+    const comparison = sessionSync.compareSnapshots(left, right);
+    if (comparison.kind === 'conflict') throw new Error('会话记录正在变化，请稍后重试');
+    let changed = false;
+    const update = async (from, to, fromRow, toRow, missingOnly = false) => {
+      await yieldAutoCopyToRenderer();
+      const verifyRows = async () => {
+        await assertSessionSyncIdle();
+        const freshSource = await readRow(fromRow.id, fromRow.user_id);
+        const freshTarget = toRow ? await readRow(toRow.id, toRow.user_id) : null;
+        if (JSON.stringify(freshSource) !== JSON.stringify(fromRow) || (toRow && JSON.stringify(freshTarget) !== JSON.stringify(toRow))) {
+          throw new Error('会话记录正在变化，请稍后重试');
         }
-      }
-      candidates.sort((a, b) => {
-        const created = Number(a.created_at || 0) - Number(b.created_at || 0);
-        if (created) return created;
-        const updated = Number(a.updated_at || 0) - Number(b.updated_at || 0);
-        if (updated) return updated;
-        return a.memberIndex - b.memberIndex;
+      };
+      await sessionSync.applySnapshot(from, to, {
+        backupRoot: path.join(DATA_DIR, 'session-sync-backups'), metadata: toRow,
+        missingOnly, guard: verifyRows,
+        commit: async verifyPublished => {
+          await verifyRows();
+          verifyPublished();
+          if (!toRow) {
+            // Reserve provenance before the row becomes visible, so a crash
+            // after insertion cannot create an untracked duplicate on retry.
+            addAutoCopySessionMember(DATA_DIR, lineageId, targetUid, targetId, { branchCopy: branched });
+            await insertCopiedSession(fromRow, targetUid, targetId);
+          }
+          else if (!missingOnly) await sqliteRun(
+            'UPDATE sessions SET title = ?, custom_title = ?, status = ?, updated_at = ?, last_activity_at = ? WHERE id = ? AND user_id = ? AND deleted_at IS NULL;',
+            [fromRow.title || '', fromRow.custom_title || '', fromRow.status || 'Pending',
+              Number(fromRow.updated_at || 0), Number(fromRow.last_activity_at || fromRow.updated_at || 0), toRow.id, toRow.user_id]
+          );
+        },
       });
-      if (candidates.length) {
-        const canonicalId = candidates[0].id;
-        const files = await copySessionFiles(wbHome, src.id, canonicalId, ownerIds);
-        addAutoCopySessionMember(DATA_DIR, lineageId, targetUid, canonicalId);
-        setAutoCopyMapping(DATA_DIR, lineageId, targetUid, {
-          targetId: canonicalId,
-          status: files.failed ? 'partial' : 'copied',
-          failedFiles: files.failed,
-        });
-        return { status: files.failed ? 'partial' : 'skipped', sourceId: src.id, targetId: canonicalId, failedFiles: files.failed };
+      changed = true;
+    };
+    if (comparison.kind === 'left-extends') await update(left, right, sourceRow, existing);
+    else if (comparison.kind === 'right-extends') await update(right, left, existing, sourceRow);
+    else if (comparison.kind === 'repair') {
+      if (comparison.missingRight) await update(left, right, sourceRow, existing, true);
+      if (comparison.missingLeft) {
+        // Re-read after the first repair, so race detection uses current bytes.
+        left = sessionSync.readSnapshot(PROFILE.dataRoot, sourceRow.id, aliases);
+        right = sessionSync.readSnapshot(PROFILE.dataRoot, targetId, aliases);
+        await update(right, left, existing, sourceRow, true);
       }
     }
-  }
-
-  // Older metadata can lose or split the target member registration. Copies
-  // retain the source creation time and workspace, so adopt the existing row
-  // and repair its lineage before considering a new INSERT.
-  if (lineageId && src && Number(src.created_at || 0)) {
-    const candidates = await sqliteQuery(
-      'SELECT id, cwd, updated_at FROM sessions WHERE user_id = ? AND created_at = ? AND deleted_at IS NULL ORDER BY updated_at, id LIMIT 6;',
-      [targetUid, Number(src.created_at)]
-    );
-    const sourceWorkspace = canonicalWorkspace(src.cwd);
-    const targetRules = getAutoCopyRules(DATA_DIR, targetUid);
-    const adopted = candidates.find((row) => String(row.id || '') !== String(src.id)
-      && canonicalWorkspace(row.cwd) === sourceWorkspace);
-    if (adopted) {
-      const adoptedId = String(adopted.id);
-      const otherLineageId = String((targetRules.allLineages || {})[adoptedId] || '').trim();
-      if (otherLineageId && otherLineageId !== lineageId) {
-        const merged = mergeAutoCopyLineages(DATA_DIR, lineageId, otherLineageId);
-        if (merged.ok) lineageId = otherLineageId;
-      }
-      ownerIds = getAutoCopySessionMemberRecords(DATA_DIR, lineageId).map((member) => member.id);
-      const files = await copySessionFiles(wbHome, src.id, adoptedId, ownerIds);
-      addAutoCopySessionMember(DATA_DIR, lineageId, targetUid, adoptedId);
-      setAutoCopyMapping(DATA_DIR, lineageId, targetUid, {
-        targetId: adoptedId,
-        status: files.failed ? 'partial' : 'copied',
-        failedFiles: files.failed,
-      });
-      log(`[sessions-auto-copy] 已认领目标账号中的同源会话 ${adoptedId.slice(0, 8)}，未新建重复副本`);
-      return { status: files.failed ? 'partial' : 'skipped', sourceId: src.id, targetId: adoptedId, failedFiles: files.failed };
-    }
-  }
-
-  const newId = crypto.randomUUID();
-  await insertCopiedSession(src, targetUid, newId);
-  const files = await copySessionFiles(wbHome, src.id, newId, ownerIds);
-  if (lineageId) {
-    addAutoCopySessionMember(DATA_DIR, lineageId, targetUid, newId);
-    setAutoCopyMapping(DATA_DIR, lineageId, targetUid, {
-      targetId: newId,
-      status: files.failed ? 'partial' : 'copied',
-      failedFiles: files.failed,
-    });
-  }
-  return { status: files.failed ? 'partial' : 'copied', sourceId: src.id, targetId: newId, failedFiles: files.failed };
+    if (!getAutoCopySessionMembers(DATA_DIR, lineageId, targetUid).includes(targetId)) addAutoCopySessionMember(DATA_DIR, lineageId, targetUid, targetId);
+    if (changed || !mapping || mapping.targetId !== targetId) setAutoCopyMapping(DATA_DIR, lineageId, targetUid, { targetId, status: 'copied', failedFiles: 0 });
+    return { status: changed ? 'copied' : 'skipped', sourceId: src.id, targetId, branched: branched && changed, failedFiles: 0 };
   };
-  if (!lineageId) return perform();
-  const lockKey = JSON.stringify([lineageId, String(targetUid || '')]);
+  // One lineage lock also serializes manual copy and reverse-direction updates.
+  const lockKey = lineageId;
   const previous = sessionCopyLocks.get(lockKey) || Promise.resolve();
   const current = previous.catch(() => {}).then(perform);
   sessionCopyLocks.set(lockKey, current);
-  try {
-    return await current;
-  } finally {
-    if (sessionCopyLocks.get(lockKey) === current) sessionCopyLocks.delete(lockKey);
-  }
+  try { return await current; }
+  finally { if (sessionCopyLocks.get(lockKey) === current) sessionCopyLocks.delete(lockKey); }
 }
 
 async function buildAutoCopyPlan(sourceUid, targetUid) {
@@ -4575,8 +4487,7 @@ async function buildAutoCopyPlan(sourceUid, targetUid) {
     [source]
   );
   const workspaceSet = new Set(rules.workspaces.map(canonicalWorkspace));
-  const selectedRows = dedupeAutoCopySessionRows(rows, { [source]: rules.allLineages })
-    .filter((row) => isAutoCopySessionSelected(rules, row));
+  const selectedRows = rows.filter((row) => isAutoCopySessionSelected(rules, row));
   // Full-copy and workspace matches need stable hidden lineages for idempotent
   // repeated switches. Prepare the whole batch with one metadata write.
   const lineageSessionIds = selectedRows
@@ -4698,37 +4609,11 @@ function startAutoCopyJob(sourceUid, targetUid, plan, labels) {
       };
       await yieldAutoCopyToRenderer();
       try {
-        let result;
-        if (src.lineageId) {
-          // If the target already belongs to this lineage, reconcile all
-          // members before/after the switch instead of blindly overwriting it
-          // from the account that happened to be active most recently.
-          const synced = await syncAutoCopyLineage(src.lineageId, targetUid);
-          if (synced.conflict) {
-            result = { status: 'conflict', conflicts: synced.conflicts || 1, failedFiles: 0 };
-          } else if (synced.targetPresent) {
-            result = {
-              status: synced.failedFiles ? 'partial' : (synced.synced ? 'copied' : 'skipped'),
-              failedFiles: synced.failedFiles,
-            };
-          } else {
-            result = await copySessionRecord(src, targetUid, {
-              sourceUid,
-              lineageId: src.lineageId,
-              auto: true,
-            });
-            const synced = await syncAutoCopyLineage(src.lineageId, targetUid);
-            if (synced.conflict) result.status = 'conflict';
-            result.conflicts = synced.conflicts || 0;
-            result.failedFiles = (result.failedFiles || 0) + synced.failedFiles;
-            if (synced.failedFiles) result.status = 'partial';
-          }
-        } else {
-          result = await copySessionRecord(src, targetUid, { sourceUid, auto: true });
-        }
+        const result = await copySessionRecord(src, targetUid, { sourceUid, lineageId: src.lineageId, auto: true });
         detail.status = result.status === 'partial' ? 'partial'
           : result.status === 'conflict' ? 'conflict'
           : result.status === 'skipped' ? 'skipped' : 'copied';
+        detail.branched = result.branched === true;
         detail.failedFiles = Number(result.failedFiles) || 0;
         detail.conflicts = Number(result.conflicts) || 0;
         if (result.status === 'skipped') job.skipped++;
@@ -8532,11 +8417,11 @@ function handleApi(req, res) {
           const owner = String(row.user_id || '').trim();
           if (!owner || rulesByUid[owner]) return;
           const rules = getAutoCopyRules(DATA_DIR, owner);
-          rulesByUid[owner] = { allSessions: rules.allSessions, sessions: new Set(rules.sessionIds), workspaces: new Set(rules.workspaces), lineages: rules.allLineages };
+          rulesByUid[owner] = { allSessions: rules.allSessions, sessions: new Set(rules.sessionIds), workspaces: new Set(rules.workspaces), lineages: rules.allLineages, branches: new Set(rules.branchSessionIds || []) };
         });
-        const lineagesByUid = {};
-        Object.keys(rulesByUid).forEach((owner) => { lineagesByUid[owner] = rulesByUid[owner].lineages; });
-        const sessions = dedupeAutoCopySessionRows(rows, lineagesByUid).map((row) => {
+        const lineagesByUid = {}, branchesByUid = {};
+        Object.keys(rulesByUid).forEach((owner) => { lineagesByUid[owner] = rulesByUid[owner].lineages; branchesByUid[owner] = rulesByUid[owner].branches; });
+        const sessions = dedupeAutoCopySessionRows(rows, lineagesByUid, branchesByUid).map((row) => {
           const rules = rulesByUid[String(row.user_id || '').trim()] || { sessions: new Set(), workspaces: new Set() };
           return Object.assign({}, row, {
             autoCopySession: rules.sessions.has(String(row.id)),
@@ -8546,7 +8431,7 @@ function handleApi(req, res) {
         const currentRules = uid
           ? (rulesByUid[uid] || (() => {
               const rules = getAutoCopyRules(DATA_DIR, uid);
-              return { allSessions: rules.allSessions, sessions: new Set(rules.sessionIds), workspaces: new Set(rules.workspaces), lineages: rules.allLineages };
+              return { allSessions: rules.allSessions, sessions: new Set(rules.sessionIds), workspaces: new Set(rules.workspaces), lineages: rules.allLineages, branches: new Set(rules.branchSessionIds || []) };
             })())
           : null;
         return json(res, 200, {
@@ -8781,6 +8666,11 @@ function handleApi(req, res) {
     const job = autoCopyJobs.get(url.searchParams.get('id') || '');
     return job ? json(res, 200, { ok: true, job: publicAutoCopyJob(job) }) : json(res, 404, { ok: false, error: '自动复制任务不存在' });
   }
+  // Old injected panels may still call this route. Never restore the former
+  // baseline-clearing overwrite behavior, even with a stale UI.
+  if (req.method === 'POST' && p === '/api/sessions/auto-copy/reset') {
+    return json(res, 410, { ok: false, error: '会话已分叉，已保留双方内容；不再支持重置后覆盖' });
+  }
   // 当前任务或刚完成的任务：renderer 重载后仍可恢复复制进度。
   if (req.method === 'GET' && p === '/api/sessions/auto-copy/active') {
     return json(res, 200, { ok: true, job: publicAutoCopyJob(activeAutoCopyJob()) });
@@ -8881,12 +8771,14 @@ function handleApi(req, res) {
           ids
         );
         if (!srcRows.length) return json(res, 404, { ok: false, error: '源会话不存在' });
-        let copied = 0;
+        let copied = 0, skipped = 0, conflicts = 0;
         for (const src of srcRows) {
-          await copySessionRecord(src, targetUid);
-          copied++;
+          const result = await copySessionRecord(src, targetUid);
+          if (result.status === 'conflict') conflicts++;
+          else if (result.status === 'skipped') skipped++;
+          else copied++;
         }
-        return json(res, 200, { ok: true, copied, targetUid });
+        return json(res, 200, { ok: true, copied, skipped, conflicts, targetUid });
       } catch (e) {
         return json(res, 500, { ok: false, error: e.message });
       }
@@ -9492,9 +9384,11 @@ function handleApi(req, res) {
       const uid = (body.uid || '').trim();
       if (!uid) return json(res, 400, { ok: false, error: '缺少 uid' });
       const releaseRendererReload = body.reload ? beginRendererReloadPriority() : null;
+      let releaseAccountSwitch = null;
       try {
         // 只记录源账号；自动复制队列会在 renderer 刷新并完成组件注入后重新规划。
         // 不在这里预规划，否则大量会话的同步 SQLite/文件扫描会让切换界面长时间无响应。
+        releaseAccountSwitch = await assertAccountSwitchIdle();
         const sourceAccount = currentAccount() || {};
         const sourceUid = String(sourceAccount.uid || '').trim();
         const acct = switchTo(DATA_DIR, uid, log);
@@ -9572,6 +9466,7 @@ function handleApi(req, res) {
         return json(res, 500, { ok: false, error: e.message });
       } finally {
         if (releaseRendererReload) releaseRendererReload();
+        if (releaseAccountSwitch) releaseAccountSwitch();
       }
     });
   }

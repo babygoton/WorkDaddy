@@ -798,6 +798,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     try { delete window.__wbsThemeAudit; } catch (e) { window.__wbsThemeAudit = null; }
     // 队列 adapter 缓存必须一并清除：旧 shim（包装方法齐全但指向失效/错误对象）若不删，
     // findWbsAdapter 的缓存校验会直接复用旧 shim，导致「修好代码重注入后仍跑旧逻辑」。
+    try { delete window.__wbsAnySessionBusy; } catch (_) { window.__wbsAnySessionBusy = null; }
     try { delete window.__wbsAdapter; } catch (e) { window.__wbsAdapter = null; }
   })();
   // ===== 顶部红色角标已移除（用户要求）；仅保留 console 标记 =====
@@ -824,6 +825,37 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
   var WBS_LANGUAGE_KEY = 'workdaddy.ui.language';
   var WBS_ACCOUNT_MASK_KEY = 'workdaddy.account.mask.' + PROFILE_ID;
   var WBS_I18N_EN = {
+    '未同步': 'Not synced', '分叉会话尚未同步，请重试': 'The branched session has not been synced. Try again',
+    '已复制分叉副本，原会话已保留': 'Branch copied as a separate session; the original was preserved',
+    '账号正在切换，请稍后重试': 'Account switching is in progress. Try again later',
+    '无法确认会话状态，请连接 WorkBuddy 后重试': 'Cannot check session status. Connect WorkBuddy and try again',
+    '无法确认会话状态，请等待面板加载后重试': 'Cannot check session status. Wait for the panel to load and try again',
+    '当前账号有会话仍在运行，请等待完成或停止后再同步': 'This account has running sessions. Wait for them to finish or stop them before syncing',
+    '会话同步尚未完成，请稍后切换账号': 'Session sync is still in progress. Switch accounts after it finishes',
+    '源会话已变化，请重试': 'The source session changed. Try again',
+    '目标账号存在多个同源副本，已保留全部内容': 'The target account has multiple copies of this session. All content was preserved',
+    '会话记录正在变化，请稍后重试': 'Session records are changing. Try again later',
+    '会话已分叉，已保留双方内容；不再支持重置后覆盖': 'Both branches were preserved. Resetting to overwrite is no longer supported',
+    '无效的会话文件路径': 'Invalid session file path',
+    '会话文件包含符号链接，未同步': 'Session files contain a symbolic link. Sync was skipped',
+    '无效的会话标识': 'Invalid session identifier',
+    '会话目录包含符号链接，未同步': 'The session directory is a symbolic link. Sync was skipped',
+    '会话文件无法读取': 'Cannot read session files',
+    '会话文件类型不受支持': 'Unsupported session file type',
+    '会话文件过大，未自动同步': 'Session files exceed the sync limit. Automatic sync was skipped',
+    '会话文件正在变化，请稍后重试': 'Session files are changing. Try again later',
+    '会话产物索引损坏，未同步': 'The session artifact index is corrupt. Sync was skipped',
+    '会话消息文件不唯一，未同步': 'Multiple message files found for this session. Sync was skipped',
+    '会话消息文件为空，未同步': 'The session message file is empty. Sync was skipped',
+    '会话消息文件未写完或已损坏，未同步': 'The session message file is incomplete or corrupt. Sync was skipped',
+    '会话消息格式不受支持，未同步': 'Unsupported session message format. Sync was skipped',
+    '会话消息文件没有消息，未同步': 'No messages found in the session file. Sync was skipped',
+    '双方会话消息文件均缺失，未同步': 'Both session message files are missing. Sync was skipped',
+    '会话消息缺失且附属文件不一致，未覆盖': 'Messages are missing and supporting files differ. No content was overwritten',
+    '无效的会话同步目标': 'Invalid session sync target',
+    '目标会话正在变化，已停止同步': 'The target session is changing. Sync was stopped',
+    '源会话正在变化，已停止同步': 'The source session is changing. Sync was stopped',
+    '会话文件校验失败': 'Session file verification failed',
     '派猫猫旅行': 'Send Buddy traveling',
     '自动选择已拥有的 Buddy，派出旅行并领取旅行礼物。未领养 Buddy 的账号需先在官网同意协议并解锁，此任务会跳过。需要 WorkDaddy 1.2.66 或更新版本。': 'Select an owned Buddy, send it traveling, and claim travel gifts. Accounts without an adopted Buddy are skipped until the agreement is accepted and Buddy is unlocked on the official site. Requires WorkDaddy 1.2.66 or later.',
     '账号 {account}：开始检查猫猫旅行': 'Account {account}: Checking Buddy travel', '当前 Buddy 查询失败': 'Could not load current Buddy', 'Buddy 列表查询失败': 'Could not load Buddy list',
@@ -986,8 +1018,8 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '连接新服务…': 'Connecting to service…', '等待中': 'Waiting', '运行中': 'Running', '空闲': 'Idle', '已中断': 'Interrupted', '已停止': 'Stopped', '未确认': 'Unconfirmed', '等待确认': 'Waiting for confirmation', '等待新回复': 'Waiting for a new reply', '等待会话': 'Waiting for session', '等待允许': 'Waiting for approval', '整理中': 'Organizing', '恢复中': 'Restoring', '即将完成…': 'Finishing…', '已继续': 'Continued', '检测到会话异常中断，即将自动发送「': 'An interrupted session was detected. Sending “', '自动发送失败，请手动点击发送': 'Automatic send failed. Please click Send manually', '底层发送失败，请手动发送': 'Underlying send failed. Please send manually',
     '导入中…': 'Importing…', ' 个任务': ' task(s)', '导入任务': 'Import tasks', '导出任务': 'Export tasks', '请先勾选要导出的任务': 'Select tasks to export first', '选择 JSON 或 ZIP 任务文件': 'Choose a JSON or ZIP task file', '读取任务文件…': 'Reading task file…', '任务导出成功': 'Tasks exported', '导入失败': 'Import failed', '导出失败': 'Export failed', '可导入': 'Ready to import', '已存在，将跳过': 'Already exists; skipped', '不兼容，无法导入': 'Incompatible; cannot import', '导入后保持停用，可在任务列表中启用。相同 ID 的任务会跳过。': 'Imported tasks stay disabled until you enable them. Existing task IDs are skipped.', '任务文件不能超过 8 MiB': 'Task files must not exceed 8 MiB', '缺少必填参数': 'Required inputs are missing', '需要更新 WorkDaddy': 'Requires a newer WorkDaddy version', '不支持当前客户端或系统': 'Unsupported client or platform', '文件不是自动化任务 JSON': 'Not an automation task JSON file', '任务格式或能力不受支持': 'Unsupported task format or capabilities',
     '发现更多自动化任务': 'Discover more automations', '正在发现…': 'Discovering…', '搜索任务名称': 'Search task names', '没有匹配的任务': 'No matching tasks', '暂未发现公开任务': 'No public tasks found', '公开任务加载失败': 'Could not load public tasks', '这些任务来自互联网公开仓库，均为第三方内容，与 WorkDaddy 无归属关系。导入后默认停用，请先安全评估再启用。': 'These tasks come from public repositories and are third-party content unaffiliated with WorkDaddy. Imported tasks stay disabled; review them before enabling.', '部分来源暂时无法访问，当前显示上次缓存的结果。': 'Some sources are unavailable. Showing cached results.', '暂无说明': 'No description', '不兼容': 'Incompatible', '无法打开仓库': 'Could not open repository', '任务已导入，启用后生效': 'Task imported. Enable it to run.', '任务已存在，未重复导入': 'Task already exists and was not imported again.', '我也要出现在这里': 'Publish my tasks', '提交公开任务': 'Publish public tasks', '收录 GitHub 和 Gitee 公开仓库。参考': 'Public GitHub and Gitee repositories are indexed. See', '将任务 JSON 放在 tasks/ 目录，并在仓库描述中加入 WorkDaddyAutomationRepository。': 'Put task JSON files in tasks/ and add WorkDaddyAutomationRepository to the repository description.', '查看示例仓库': 'View example repository', '上一页': 'Previous', '下一页': 'Next', ' · 匹配 ': ' · Matches ', '安全评估': 'Safety review', '评估中…': 'Reviewing…', '安全评估会话已创建': 'Safety review session created', '安全评估失败': 'Safety review failed', '会话创建失败': 'Could not create the session', '无法读取评估状态': 'Could not read review status', '未返回安全评估运行记录': 'No safety review run was returned', '无法创建会话': 'Could not create a session', '评估会话仍在创建，请稍后查看 WorkBuddy': 'The review session is still being created. Check WorkBuddy shortly.',
-    '会话同步完成': 'Session sync complete', '会话同步完成，发现冲突': 'Session sync complete with conflicts', '会话同步完成，部分项目失败': 'Session sync complete with some failures', '会话同步等待中': 'Session sync waiting', '正在同步会话': 'Syncing session', '会话同步失败': 'Session sync failed', '同步等待中': 'Sync waiting', '同步失败': 'Sync failed', '同步': 'Sync', '已同步': 'Synced', ' · 新同步': ' · Newly synced ', ' · 有': ' · ', ' 项需要留意': ' item(s) need attention', ' · 请稍后重试': ' · Try again later', '会话同步进度': 'Session sync progress', ' 个会话两边都修改过，未覆盖任何一边': ' session(s) were changed on both sides; neither side was overwritten', '其他账号': 'Other account', '同步完成': 'Sync complete', '同步完成，发现冲突': 'Sync complete with conflicts', '同步完成，部分失败': 'Sync complete with some failures', '正在把已标记的会话同步到「': 'Syncing marked sessions to “', ' 个未变化会话': ' unchanged session(s)', '同步任务未完成，请稍后重试': 'Sync did not finish. Try again later',
-    ' · 跳过': ' · Skipped', ' · 冲突': ' · Conflicts', '成功': 'Succeeded', '跳过': 'Skipped', '已跳过': 'Skipped', '部分失败': 'Partial failure', '冲突': 'Conflict', '处理中': 'Processing', '两边都修改过，未覆盖': 'Changed on both sides; neither side was overwritten', '部分文件失败': 'Some files failed', '当前任务未记录逐项明细。': 'No per-session details were recorded for this task.', '会话同步明细': 'Session sync details', '会话同步结果筛选': 'Filter session sync results', '当前分类没有会话。': 'No sessions in this category.', '正在把已标记的会话从「': 'Syncing marked sessions from “', '」同步到「': '” to “', '查看明细': 'View details', ' 个候选会话': ' candidate session(s)', ' 秒后自动关闭': ' seconds until automatic close',
+    '会话同步完成': 'Session sync complete', '会话同步完成，已保留分叉': 'Session sync complete with conflicts', '会话同步完成，部分项目失败': 'Session sync complete with some failures', '会话同步等待中': 'Session sync waiting', '正在同步会话': 'Syncing session', '会话同步失败': 'Session sync failed', '同步等待中': 'Sync waiting', '同步失败': 'Sync failed', '同步': 'Sync', '已同步': 'Synced', ' · 新同步': ' · Newly synced ', ' · 有': ' · ', ' 项需要留意': ' item(s) need attention', ' · 请稍后重试': ' · Try again later', '会话同步进度': 'Session sync progress', ' 个会话已分叉，已保留双方内容': ' session(s) were changed on both sides; neither side was overwritten', '其他账号': 'Other account', '同步完成': 'Sync complete', '同步完成，已保留分叉': 'Sync complete with conflicts', '同步完成，部分失败': 'Sync complete with some failures', '正在把已标记的会话同步到「': 'Syncing marked sessions to “', ' 个未变化会话': ' unchanged session(s)', '同步任务未完成，请稍后重试': 'Sync did not finish. Try again later',
+    ' · 跳过': ' · Skipped', ' · 分叉': ' · Conflicts', '成功': 'Succeeded', '跳过': 'Skipped', '已跳过': 'Skipped', '部分失败': 'Partial failure', '分叉': 'Conflict', '处理中': 'Processing', '会话已分叉，已保留双方内容': 'Changed on both sides; neither side was overwritten', '部分文件失败': 'Some files failed', '当前任务未记录逐项明细。': 'No per-session details were recorded for this task.', '会话同步明细': 'Session sync details', '会话同步结果筛选': 'Filter session sync results', '当前分类没有会话。': 'No sessions in this category.', '正在把已标记的会话从「': 'Syncing marked sessions from “', '」同步到「': '” to “', '查看明细': 'View details', ' 个候选会话': ' candidate session(s)', ' 秒后自动关闭': ' seconds until automatic close',
     '收录 GitHub 和 Gitee 公开仓库。参考 ': 'Public GitHub and Gitee repositories are indexed. See ', '。': '.', '克隆示例仓库：': 'Clone the example repository: ', '删除 ': 'Delete ', ' 目录中不需要的示例任务。': ' directory tasks you do not need.', '把你的自动化任务 JSON 放进 ': 'Put your automation task JSON in ', ' 目录。': ' directory.', '提交改动并推送到 GitHub 或 Gitee。': 'Commit and push changes to GitHub or Gitee.', '在仓库简介中加入关键词 ': 'Add the keyword ',
     '导出账号': 'Export accounts', '导入账号': 'Import accounts', '导出会话': 'Export sessions', '导入会话': 'Import sessions', '导出快捷短语': 'Export quick phrases', '导入快捷短语': 'Import quick phrases', '同步选中到其他账号': 'Sync selected to another account', '删除选中': 'Delete selected', '操作会话': 'Session actions', '连通测试': 'Test connection', '编辑模型': 'Edit model', '模型已保存': 'Model saved', '模型已启用': 'Model enabled', '模型已复制': 'Model copied', '模型配置已共用': 'Model configuration shared', '当前模型': 'Current model', '备选模型': 'Backup models', '模型加载失败：': 'Failed to load models: ', '保存模型失败：': 'Failed to save model: ', '删除当前模型失败：': 'Failed to delete current model: ', '启用模型失败：': 'Failed to enable model: ', '连通测试失败：': 'Connection test failed: ',
     '选择要查看的账号': 'Choose an account to view', '选择账号并输入密码后导出备份': 'Choose accounts and enter a password to export backups', '从加密导出文件导入账号备份': 'Import account backups from an encrypted export', '使用密码导出选中会话': 'Export selected sessions with a password', '使用密码导出选中快捷短语': 'Export selected quick phrases with a password', '从加密文件导入会话': 'Import sessions from an encrypted file', '从加密文件导入快捷短语': 'Import quick phrases from an encrypted file', '仅支持 PNG / JPG / WebP': 'PNG / JPG / WebP only', '点击或拖拽上传壁纸': 'Click or drag to upload a wallpaper', '点击选择图片，或拖拽到此处': 'Click to choose an image, or drag it here', '支持 PNG / JPG / WebP，自动压缩；可添加多张': 'PNG / JPG / WebP supported; images are compressed automatically',
@@ -7064,12 +7096,12 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       var total = Math.max(0, Number(job.total) || 0);
       var processed = Math.min(total, Math.max(0, Number(job.processed) || 0));
       var percent = total ? Math.round(processed / total * 100) : (active ? 0 : 100);
-      var title = job.status === 'queued' ? '会话同步等待中' : job.status === 'running' ? '正在同步会话' : job.status === 'done' ? '会话同步完成' : job.status === 'conflict' ? '会话同步完成，发现冲突' : job.status === 'partial' ? '会话同步完成，部分项目失败' : '会话同步失败';
+      var title = job.status === 'queued' ? '会话同步等待中' : job.status === 'running' ? '正在同步会话' : job.status === 'done' ? '会话同步完成' : job.status === 'conflict' ? '会话同步完成，已保留分叉' : job.status === 'partial' ? '会话同步完成，部分项目失败' : '会话同步失败';
       var route = sessionCopyAccountLabel(job.sourceUid, job.sourceName) + ' → ' + sessionCopyAccountLabel(job.targetUid, job.targetName);
       var detail = route;
       if (active && job.currentLabel) detail += ' · ' + job.currentLabel;
       else if (job.status === 'done') detail += ' · 新同步 ' + (Number(job.copied) || 0) + '，已存在 ' + (Number(job.skipped) || 0);
-      else if (job.status === 'conflict') detail += ' · ' + (Number(job.conflicts) || 1) + ' 个会话两边都修改过，未覆盖任何一边';
+      else if (job.status === 'conflict') detail += ' · ' + (Number(job.conflicts) || 1) + ' 个会话已分叉，已保留双方内容';
       else if (job.status === 'partial') detail += ' · 有 ' + ((Number(job.failed) || 0) + (Number(job.partial) || 0)) + ' 项需要留意';
       else if (job.status === 'error') detail += ' · 请稍后重试';
       box.className = 'wbs-sess-copy-progress is-' + String(job.status || 'running');
@@ -7737,8 +7769,8 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
             body: JSON.stringify({ ids: ids, targetUid: sel.value }),
-          }).then(function () {
-            toast('已同步 ' + ids.length + ' 个会话', false, root);
+          }).then(function (result) {
+            toast(sessionCopySummaryText(result), false, root);
             showSessModal(false);
             loadSessions();
           }).catch(function (e) {
@@ -9331,7 +9363,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       if (open && typeof closeRotationNotice === 'function') closeRotationNotice();
       if (open) {
         // 打开 WorkDaddy 面板时，复制会话进度提示会遮挡面板入口区域，立即收起并停止后续轮询。
-        closeSessionCopyNotice();
+        if (typeof closeSessionCopyNotice === 'function') closeSessionCopyNotice();
         if (state.sessionCopyNoticePollTimer) {
           clearTimeout(state.sessionCopyNoticePollTimer);
           state.sessionCopyNoticePollTimer = null;
@@ -12589,6 +12621,9 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       if (discoverSleepSessionBusy()) return true;
       return !!isSessionBusy(null).busy;
     }
+    var sessionBusyProbe = function () { return alive ? isAnySessionBusy() : null; };
+    window.__wbsAnySessionBusy = sessionBusyProbe;
+    registerDisposer(function () { if (window.__wbsAnySessionBusy === sessionBusyProbe) delete window.__wbsAnySessionBusy; });
     function startUntilDoneCheck() {
       if (sleepUntilDoneCheck) return;
       sleepUntilDoneSession = null;
@@ -13139,7 +13174,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
 
     function sessionCopySummaryText(job) {
       return '同步 ' + (Number(job && job.copied) || 0) + ' · 跳过 ' + (Number(job && job.skipped) || 0) +
-        ' · 失败 ' + sessionCopyFailedItems(job) + ' · 冲突 ' + (Number(job && job.conflicts) || 0);
+        ' · 失败 ' + (sessionCopyFailedItems(job) + (Number(job && job.conflicts) || 0));
     }
 
     function showSessionCopyDetails(job) {
@@ -13149,12 +13184,11 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       mask.className = 'wbs-modal-mask wbs-session-copy-details-modal';
       mask.setAttribute('role', 'presentation');
       var details = Array.isArray(job.details) ? job.details : [];
-      var statusLabels = { copied: '已同步', skipped: '已跳过', partial: '部分失败', failed: '失败', conflict: '冲突', running: '处理中' };
+      var statusLabels = { copied: '已同步', skipped: '已跳过', partial: '部分失败', failed: '失败', conflict: '未同步', running: '处理中' };
       var tabDefs = [
         { id: 'copied', label: '成功', count: details.filter(function (item) { return item && item.status === 'copied'; }).length },
         { id: 'skipped', label: '跳过', count: details.filter(function (item) { return item && item.status === 'skipped'; }).length },
-        { id: 'conflict', label: '冲突', count: details.filter(function (item) { return item && item.status === 'conflict'; }).length },
-        { id: 'failed', label: '失败', count: details.filter(function (item) { return item && (item.status === 'failed' || item.status === 'partial'); }).length },
+        { id: 'failed', label: '失败', count: details.filter(function (item) { return item && (item.status === 'failed' || item.status === 'partial' || item.status === 'conflict'); }).length },
       ];
       mask.innerHTML = '<div class="wbs-modal wbs-session-copy-details" role="dialog" aria-modal="true" aria-labelledby="wbs-session-copy-details-title">' +
         '<div class="wbs-auto-modal-head"><div><div class="wbs-modal-title" id="wbs-session-copy-details-title">会话同步明细</div><div class="wbs-session-copy-details-summary"></div></div>' +
@@ -13171,11 +13205,11 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       var renderTab = function (tabId) {
         var filtered = details.filter(function (item) {
           var status = String(item && item.status || 'running');
-          return tabId === 'failed' ? (status === 'failed' || status === 'partial') : status === tabId;
+          return tabId === 'failed' ? (status === 'failed' || status === 'partial' || status === 'conflict') : status === tabId;
         });
         var rows = filtered.map(function (item) {
           var status = String(item && item.status || 'running');
-          var note = status === 'conflict' ? '两边都修改过，未覆盖' : status === 'partial' ? '部分文件失败' : (item && item.error ? item.error : '');
+          var note = status === 'copied' && item && item.branched ? '已复制分叉副本，原会话已保留' : status === 'conflict' ? '分叉会话尚未同步，请重试' : status === 'partial' ? '部分文件失败' : (item && item.error ? item.error : '');
           return '<div class="wbs-session-copy-detail-row is-' + escAttr(status) + '">' +
             '<span class="wbs-session-copy-detail-status">' + esc(statusLabels[status] || status) + '</span>' +
             '<span class="wbs-session-copy-detail-label" title="' + escAttr(item && item.label || '') + '">' + esc(item && item.label || '未命名会话') + '</span>' +
@@ -13254,7 +13288,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       var total = Math.max(0, Number(job.total) || 0);
       var processed = Math.min(total, Math.max(0, Number(job.processed) || 0));
       var percent = total ? Math.round(processed / total * 100) : (active ? 0 : 100);
-      var title = job.status === 'queued' ? '同步等待中' : active ? '正在同步会话' : job.status === 'done' ? '同步完成' : job.status === 'conflict' ? '同步完成，发现冲突' : job.status === 'partial' ? '同步完成，部分失败' : '同步失败';
+      var title = job.status === 'queued' ? '同步等待中' : active ? '正在同步会话' : job.status === 'done' ? '同步完成' : job.status === 'conflict' ? '同步完成，已保留分叉' : job.status === 'partial' ? '同步完成，部分失败' : '同步失败';
       var sourceLabel = sessionCopyAccountLabel(job.sourceUid, job.sourceName);
       var targetLabel = accountName || sessionCopyAccountLabel(job.targetUid, job.targetName);
       var status = active ? '正在把已标记的会话从「' + sourceLabel + '」同步到「' + targetLabel + '」' :
@@ -13275,14 +13309,14 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       placeSessionCopyNotice();
       if (!active && !notice.closeScheduled) {
         notice.closeScheduled = true;
-        var remaining = 10;
+        var remaining = 5;
         var countdown = node.querySelector('.wbs-session-copy-countdown');
         countdown.textContent = remaining + ' 秒后自动关闭';
         notice.countdownTimer = setInterval(function () {
           remaining--;
           if (remaining > 0) countdown.textContent = remaining + ' 秒后自动关闭';
         }, 1000);
-        notice.timer = setBuildTimeout(closeSessionCopyNotice, 10000);
+        notice.timer = setBuildTimeout(closeSessionCopyNotice, 5000);
       }
     }
 
@@ -15079,11 +15113,12 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '.wbs-session-copy-fill{display:block;width:0;height:100%;border-radius:inherit;background:var(--wb-button-primary-bg,#1f1f1f);transition:width .25s ease}',
     '.wbs-session-copy-status{min-height:16px;margin-top:7px;color:var(--wb-color-text-secondary,#667085);font-size:10.5px;line-height:1.45;overflow-wrap:anywhere}',
     '.wbs-session-copy-summary{margin-top:3px;color:var(--wb-color-text-primary,#1f1f1f);font-size:10.5px;line-height:1.45;font-variant-numeric:tabular-nums}',
-    '.wbs-session-copy-actions{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:8px}',
+    '.wbs-session-copy-actions{display:flex;align-items:center;justify-content:flex-start;gap:8px;margin-top:8px}',
     '.wbs-session-copy-details-btn{min-height:26px;padding:4px 9px;border:1px solid var(--wb-border-default,#d7dbe0);border-radius:7px;background:var(--wb-bg-hover,#f5f6f8);color:var(--wb-color-text-primary,#1f1f1f);font:inherit;font-size:10.5px;cursor:pointer}',
     '.wbs-session-copy-details-btn:hover{background:var(--wb-bg-active,#e9edf2)}',
     '.wbs-session-copy-details-btn:focus-visible{outline:2px solid var(--wb-accent-blue,#4f86ff);outline-offset:1px}',
-    '.wbs-session-copy-countdown{color:var(--wb-color-text-secondary,#667085);font-size:10px;white-space:nowrap}',
+    '.wbs-session-copy-countdown{margin-left:auto;color:var(--wb-color-text-secondary,#667085);font-size:10px;white-space:nowrap}',
+    ':is(html.cb-dark,html[data-theme="dark"],body[data-vscode-theme-name*="dark" i]) .wbs-session-copy-count,:is(html.cb-dark,html[data-theme="dark"],body[data-vscode-theme-name*="dark" i]) .wbs-session-copy-countdown{color:var(--wb-color-text-secondary,#b9bdc7)}:is(html.cb-dark,html[data-theme="dark"],body[data-vscode-theme-name*="dark" i]) .wbs-session-copy-details-btn{border-color:var(--wb-border-default,#4b4e56);background:var(--wb-bg-hover,#34363b);color:var(--wb-color-text-primary,#f2f3f5)}:is(html.cb-dark,html[data-theme="dark"],body[data-vscode-theme-name*="dark" i]) .wbs-session-copy-details-btn:hover{background:var(--wb-bg-active,#41444b)}:is(html.cb-dark,html[data-theme="dark"],body[data-vscode-theme-name*="dark" i]) .wbs-session-copy-notice.is-conflict .wbs-session-copy-icon{color:var(--wb-color-text-warning,#e4b36a)}',
     '.wbs-modal.wbs-session-copy-details{display:grid;grid-template-rows:auto auto minmax(0,1fr) auto;width:min(620px,calc(100vw - 28px));height:min(620px,calc(100vh - 28px));box-sizing:border-box;overflow:hidden}',
     '.wbs-session-copy-details-summary{margin-top:4px;color:var(--wb-color-text-secondary,#667085);font-size:11px;font-variant-numeric:tabular-nums}',
     '.wbs-session-copy-detail-tabs{margin-top:12px;margin-bottom:0}.wbs-session-copy-detail-tabs .wbs-model-tab{font-size:12px}',
@@ -15092,7 +15127,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '.wbs-session-copy-detail-row:last-child{border-bottom:0}',
     '.wbs-session-copy-detail-status{font-weight:650;color:var(--wb-color-text-secondary,#667085)}',
     '.wbs-session-copy-detail-label{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--wb-color-text-primary,#1f1f1f)}',
-    '.wbs-session-copy-detail-note{min-width:0;overflow:hidden;color:var(--wb-color-text-secondary,#667085);text-overflow:ellipsis;white-space:nowrap}',
+    '.wbs-session-copy-detail-note{min-width:0;color:var(--wb-color-text-secondary,#667085);overflow-wrap:anywhere;white-space:normal}',
     '.wbs-session-copy-detail-row.is-copied .wbs-session-copy-detail-status{color:#238a5b}.wbs-session-copy-detail-row.is-conflict .wbs-session-copy-detail-status{color:#a55f09}.wbs-session-copy-detail-row.is-failed .wbs-session-copy-detail-status,.wbs-session-copy-detail-row.is-partial .wbs-session-copy-detail-status{color:#b05d18}',
     '.wbs-session-copy-detail-empty{padding:28px 14px;text-align:center;color:var(--wb-color-text-secondary,#667085);font-size:11px}',
     '.wbs-session-copy-notice.is-done .wbs-session-copy-icon{background:color-mix(in srgb,#2e9b68 15%,transparent);color:#238a5b}.wbs-session-copy-notice.is-done .wbs-session-copy-fill{background:#2e9b68}',

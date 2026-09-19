@@ -14,6 +14,7 @@ const vm = require('node:vm');
 const inject = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'inject.js'), 'utf8');
 const automationPicker = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'automation-picker.js'), 'utf8');
 const daemon = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'daemon.js'), 'utf8');
+const sessionSync = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'session-sync.js'), 'utf8');
 const lib = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'lib.js'), 'utf8');
 
 // ---- 工具：提取字典 + 翻译函数并构造可执行翻译器 ----
@@ -129,7 +130,7 @@ test('every user-facing Chinese literal in daemon.js (non-log) is covered', () =
 test('lib.js account-flow errors (surface as toasts) translate without Chinese residue', () => {
   const t = buildTranslator();
   const missed = [];
-  for (const lit of chineseLiterals(stripComments(lib))) {
+  for (const lit of chineseLiterals(stripComments(lib + sessionSync))) {
     if (LOG_LIKE.test(lit)) continue;
     if (FRAGMENT_LIKE.test(lit)) continue;
     const out = t(lit, 'en');
