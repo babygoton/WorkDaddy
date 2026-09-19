@@ -15,10 +15,13 @@ function jwt(issuer) {
 function fixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'workdaddy-auth-'));
   // lib.js 按平台定位 auth 目录：macOS 用 ~/Library/Application Support，
-  // Windows 用 %LOCALAPPDATA%；必须按平台建隔离目录，否则会扫到本机真实账号文件。
+  // Windows 用 %LOCALAPPDATA%，Linux 用 $XDG_DATA_HOME（默认 ~/.local/share）；
+  // 必须按平台建隔离目录，否则会扫到本机真实账号文件。
   const authDir = os.platform() === 'win32'
     ? path.join(root, 'AppData', 'Local', 'CodeBuddyExtension', 'Data', 'Public', 'auth')
-    : path.join(root, 'Library', 'Application Support', 'CodeBuddyExtension', 'Data', 'Public', 'auth');
+    : os.platform() === 'linux'
+      ? path.join(root, '.local', 'share', 'CodeBuddyExtension', 'Data', 'Public', 'auth')
+      : path.join(root, 'Library', 'Application Support', 'CodeBuddyExtension', 'Data', 'Public', 'auth');
   const dataDir = path.join(root, 'WorkDaddy');
   fs.mkdirSync(authDir, { recursive: true });
   return { root, authDir, dataDir };
@@ -39,6 +42,8 @@ function run(root, dataDir, code, profile = 'workbuddy-cn') {
       ...process.env,
       HOME: root,
       LOCALAPPDATA: path.join(root, 'AppData', 'Local'),
+      // Linux：显式指向 fixture 根目录，避免继承宿主环境的真实 XDG_DATA_HOME
+      XDG_DATA_HOME: path.join(root, '.local', 'share'),
       WBSWITCH_PROFILE: profile,
       WBSWITCH_DATA_DIR: dataDir,
     },
@@ -133,8 +138,11 @@ test('explicit WBSWITCH_AUTH_FILE keeps the legacy single-file behavior', () => 
 test('deleting a migrated account also removes the legacy source so it stays deleted after restart', () => {
   if (os.platform() === 'win32') return;
   const f = fixture();
-  const dataDir = path.join(f.root, 'Library', 'Application Support', 'WorkDaddy');
-  const legacyDir = path.join(f.root, 'Library', 'Application Support', 'HelloBuddy');
+  const supportDir = os.platform() === 'linux'
+    ? path.join(f.root, '.local', 'share')
+    : path.join(f.root, 'Library', 'Application Support');
+  const dataDir = path.join(supportDir, 'WorkDaddy');
+  const legacyDir = path.join(supportDir, 'HelloBuddy');
   try {
     const legacyAccounts = path.join(legacyDir, 'accounts');
     fs.mkdirSync(path.join(legacyAccounts), { recursive: true });
