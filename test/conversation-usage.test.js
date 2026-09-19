@@ -59,6 +59,8 @@ test('conversation usage UI uses a body-fixed mount, bottom spacer and message s
   assert.match(source, /var canScroll = maxScroll > 1/);
   assert.match(source, /var atBottom = canScroll && maxScroll - scrollElement\.scrollTop <= 4/);
   assert.match(source, /cr-message-list__bottom-mask/);
+  assert.match(source, /var anchorBottom = anchorRect && anchorRect\.bottom/);
+  assert.match(source, /window\.innerHeight - anchorBottom/);
   assert.match(source, /positionConversationUsage\(\);[\s\S]{0,120}updateConversationUsageScrollState\(\)/);
   assert.match(source, /wbs-session-usage-summary\.is-hidden/);
   assert.doesNotMatch(source, /conversation-finished-footer[\s\S]{0,120}usage/);

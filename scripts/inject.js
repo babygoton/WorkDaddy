@@ -2118,14 +2118,14 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       var bottomMask = document.querySelector('.cr-message-list__bottom-mask');
       var maskRect = bottomMask && bottomMask.getBoundingClientRect();
       var anchorRect = maskRect && maskRect.width > 0 && maskRect.height > 0 ? maskRect : inputRect;
-      var anchorTop = anchorRect && anchorRect.top > 0 ? anchorRect.top : (viewportRect && viewportRect.bottom) || window.innerHeight;
+      var anchorBottom = anchorRect && anchorRect.bottom > 0 ? anchorRect.bottom : (viewportRect && viewportRect.bottom) || window.innerHeight;
       var left = anchorRect && anchorRect.width > 0 ? anchorRect.left : contentRect.left;
       var maxWidth = anchorRect && anchorRect.width > 0 ? anchorRect.width : contentRect.width;
       left = Math.max(8, left);
       summary.style.left = Math.round(left) + 'px';
       summary.style.width = 'max-content';
       summary.style.maxWidth = Math.round(Math.min(maxWidth, window.innerWidth - left - 8)) + 'px';
-      summary.style.bottom = Math.round(Math.max(0, window.innerHeight - anchorTop)) + 'px';
+      summary.style.bottom = Math.round(Math.max(0, window.innerHeight - anchorBottom)) + 'px';
       if (conversationUsage.spacer && conversationUsage.spacer.parentNode) {
         conversationUsage.spacer.style.height = Math.ceil(summary.getBoundingClientRect().height || 34) + 'px';
       }
