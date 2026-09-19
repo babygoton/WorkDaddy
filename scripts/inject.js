@@ -2037,6 +2037,13 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       popoverTimer: null,
       observer: null,
       state: null,
+      // 性能缓存：避免 800ms 轮询反复全量扫描/强制布局
+      ctrlCacheId: null,
+      ctrlCache: null,
+      ctrlScanTick: 0,
+      geoEls: null,
+      lastWrite: null,
+      lastSig: '',
     };
     var CONVERSATION_USAGE_ENABLED_KEY = 'workdaddy.session.conversationUsageEnabled';
     var conversationUsageEnabled = true;
@@ -2075,11 +2082,24 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     }
     function usageController(id) {
       if (!WBS_COMPAT || typeof WBS_COMPAT.findConversationControllers !== 'function') return null;
+      var key = String(id || '');
+      // 缓存命中：同会话且 controller 仍有效时跳过全文档 React 扫描（每 12 tick 强制重扫兜底）
+      conversationUsage.ctrlScanTick++;
+      var cached = conversationUsage.ctrlCache;
+      if (cached && conversationUsage.ctrlCacheId === key && cached.messageStore && conversationUsage.ctrlScanTick % 12 !== 0) {
+        return cached;
+      }
       var controllers = [];
       try { controllers = WBS_COMPAT.findConversationControllers(document) || []; } catch (_) {}
       for (var i = 0; i < controllers.length; i++) {
-        if (!id || String(controllers[i].conversationId || '') === String(id)) return controllers[i];
+        if (!id || String(controllers[i].conversationId || '') === String(id)) {
+          conversationUsage.ctrlCache = controllers[i];
+          conversationUsage.ctrlCacheId = String(controllers[i].conversationId || '');
+          return controllers[i];
+        }
       }
+      conversationUsage.ctrlCache = null;
+      conversationUsage.ctrlCacheId = null;
       return null;
     }
     function hideUsagePopover() {
@@ -2162,23 +2182,50 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       if (!summary || !surface || !conversationUsageEnabled) return;
       var contentRect = surface.content.getBoundingClientRect();
       if (!contentRect || contentRect.width <= 0) return;
-      var inputArea = document.querySelector('.conversation-input-area,.conversation-input,.cr-input-box');
-      var inputRect = inputArea && inputArea.getBoundingClientRect();
-      var viewport = surface.content.closest('.cr-message-list-viewport');
-      var viewportRect = viewport && viewport.getBoundingClientRect();
-      var bottomMask = document.querySelector('.cr-message-list__bottom-mask');
-      var maskRect = bottomMask && bottomMask.getBoundingClientRect();
+      // 元素引用缓存（断连才重新 querySelector）
+      var geo = conversationUsage.geoEls;
+      if (!geo || !geo.inputArea || !document.contains(geo.inputArea) || (geo.bottomMask && !document.contains(geo.bottomMask)) || (geo.viewport && !document.contains(geo.viewport))) {
+        geo = {
+          inputArea: document.querySelector('.conversation-input-area,.conversation-input,.cr-input-box'),
+          viewport: surface.content.closest('.cr-message-list-viewport'),
+          bottomMask: document.querySelector('.cr-message-list__bottom-mask'),
+        };
+        conversationUsage.geoEls = geo;
+      }
+      var inputRect = geo.inputArea && geo.inputArea.getBoundingClientRect();
+      var viewportRect = geo.viewport && geo.viewport.getBoundingClientRect();
+      var maskRect = geo.bottomMask && geo.bottomMask.getBoundingClientRect();
       var anchorRect = maskRect && maskRect.width > 0 && maskRect.height > 0 ? maskRect : inputRect;
       var anchorBottom = anchorRect && anchorRect.bottom > 0 ? anchorRect.bottom : (viewportRect && viewportRect.bottom) || window.innerHeight;
       var left = anchorRect && anchorRect.width > 0 ? anchorRect.left : contentRect.left;
       var maxWidth = anchorRect && anchorRect.width > 0 ? anchorRect.width : contentRect.width;
       left = Math.max(8, left);
-      summary.style.left = Math.round(left) + 'px';
+      var write = {
+        left: Math.round(left),
+        maxWidth: Math.round(Math.min(maxWidth, window.innerWidth - left - 8)),
+        bottom: Math.round(Math.max(0, window.innerHeight - anchorBottom)),
+      };
+      var last = conversationUsage.lastWrite;
+      // 几何未变化时跳过样式写入，避免每次都触发 style invalidation
+      if (last && last.left === write.left && last.maxWidth === write.maxWidth && last.bottom === write.bottom) {
+        if (conversationUsage.spacer && conversationUsage.spacer.parentNode) {
+          var sh = Math.ceil(summary.getBoundingClientRect().height || 34);
+          if (last.spacerH !== sh) {
+            conversationUsage.spacer.style.height = sh + 'px';
+            last.spacerH = sh;
+          }
+        }
+        return;
+      }
+      conversationUsage.lastWrite = write;
+      summary.style.left = write.left + 'px';
       summary.style.width = 'max-content';
-      summary.style.maxWidth = Math.round(Math.min(maxWidth, window.innerWidth - left - 8)) + 'px';
-      summary.style.bottom = Math.round(Math.max(0, window.innerHeight - anchorBottom)) + 'px';
+      summary.style.maxWidth = write.maxWidth + 'px';
+      summary.style.bottom = write.bottom + 'px';
       if (conversationUsage.spacer && conversationUsage.spacer.parentNode) {
-        conversationUsage.spacer.style.height = Math.ceil(summary.getBoundingClientRect().height || 34) + 'px';
+        var sh2 = Math.ceil(summary.getBoundingClientRect().height || 34);
+        conversationUsage.spacer.style.height = sh2 + 'px';
+        write.spacerH = sh2;
       }
     }
     function showUsagePopover() {
@@ -2296,9 +2343,27 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         document.body.appendChild(conversationUsage.summary);
       }
     }
+    // 变更签名：流式期间 store 频繁触发，只有消息数/末条状态变化才重算（800ms tick 与 subscribe 共用）
+    function usageSignature(messages) {
+      if (!Array.isArray(messages) || !messages.length) return '0';
+      var last = messages[messages.length - 1] || {};
+      var usage = last.usage || {};
+      return messages.length + '|' + (last.id || '') + '|' + (last.complete ? 1 : 0) + '|' +
+        (usage.total_tokens != null ? usage.total_tokens : (usage.totalTokens != null ? usage.totalTokens : ''));
+    }
+    function maybeRenderUsage(messages) {
+      var sig = usageSignature(messages);
+      if (sig === conversationUsage.lastSig) return;
+      conversationUsage.lastSig = sig;
+      renderConversationUsage(collectConversationUsage(messages));
+    }
     function bindUsageController(controller) {
       if (conversationUsage.controller === controller) {
-        if (controller && controller.messageStore) renderConversationUsage(collectConversationUsage(controller.messageStore.getState().messages));
+        if (controller && controller.messageStore) {
+          var cur = null;
+          try { cur = controller.messageStore.getState(); } catch (_) { cur = null; }
+          maybeRenderUsage(cur && cur.messages);
+        }
         return;
       }
       if (conversationUsage.unsubscribe) {
@@ -2306,15 +2371,25 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         conversationUsage.unsubscribe = null;
       }
       conversationUsage.controller = controller || null;
+      conversationUsage.lastSig = '';
       renderConversationUsage(null);
       if (!controller || !controller.messageStore) return;
       var store = controller.messageStore;
+      var refreshScheduled = false;
       function refresh(state) {
         if (conversationUsage.controller !== controller) return;
-        if (!state || !Array.isArray(state.messages)) {
-          try { state = store.getState(); } catch (_) { state = null; }
-        }
-        renderConversationUsage(collectConversationUsage(state && state.messages));
+        if (refreshScheduled) return;
+        refreshScheduled = true;
+        var raf = window.requestAnimationFrame || function (cb) { return window.setTimeout(cb, 16); };
+        raf(function () {
+          refreshScheduled = false;
+          if (conversationUsage.controller !== controller) return;
+          var s = state;
+          if (!s || !Array.isArray(s.messages)) {
+            try { s = store.getState(); } catch (_) { s = null; }
+          }
+          maybeRenderUsage(s && s.messages);
+        });
       }
       try { conversationUsage.unsubscribe = store.subscribe(refresh); } catch (_) { conversationUsage.unsubscribe = null; }
       try { refresh(store.getState()); } catch (_) {}
@@ -2357,10 +2432,17 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       positionUsagePopover();
       updateConversationUsageScrollState();
     });
-    listen(window, 'scroll', function () {
-      positionConversationUsage();
-      if (conversationUsage.popover && conversationUsage.popover.classList.contains('is-visible')) positionUsagePopover();
-    }, true);
+    var usagePosFrame = null;
+    function scheduleUsageReposition() {
+      if (usagePosFrame != null) return;
+      var raf = window.requestAnimationFrame || function (cb) { return window.setTimeout(cb, 16); };
+      usagePosFrame = raf(function () {
+        usagePosFrame = null;
+        positionConversationUsage();
+        if (conversationUsage.popover && conversationUsage.popover.classList.contains('is-visible')) positionUsagePopover();
+      });
+    }
+    listen(window, 'scroll', scheduleUsageReposition, true);
     setBuildInterval(syncConversationUsage, 800);
     setBuildTimeout(syncConversationUsage, 120);
     registerDisposer(function () {
