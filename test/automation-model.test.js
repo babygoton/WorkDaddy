@@ -159,7 +159,7 @@ test('daemon selects and checks the model before sending, and ships the renderer
   assert.ok(selectAt > 0 && sendAt > selectAt);
   assert.match(daemon, /if \(modelId\) await confirmAutomationModel\(modelId/);
   assert.match(daemon, /restoreAutomationNewTaskPreference\(modelSelection\)/);
-  assert.match(daemon, /const DAEMON_VERSION = '1\.2\.74'/);
+  assert.match(daemon, /const DAEMON_VERSION = '1\.2\.76'/);
   const staging = fs.readFileSync(path.join(__dirname, '../scripts/build-mac-dmg.sh'), 'utf8');
   assert.match(staging, /automation-model\.js/);
 });

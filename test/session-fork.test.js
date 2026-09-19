@@ -168,11 +168,30 @@ test('renderer message position forks only when roles and completion time match 
   assert.equal(result.drop, 2);
   assert.deepEqual(parseRecords(result.text).records.map((item) => item.value.role), ['user', 'assistant']);
   assert.equal(planForkAtMessage(text, { ...choice, roles: 'auua' }).ok, false);
-  assert.equal(planForkAtMessage(text, { ...choice, roles: 'uaa' }).ok, false);
+  assert.equal(planForkAtMessage(text, { ...choice, roles: 'uaua', messageIndex: 0 }).ok, false);
   assert.equal(planForkAtMessage(text, { ...choice, messageIndex: 2 }).ok, false);
   assert.equal(planForkAtMessage(text, { ...choice, finishedAt: T0 + 120000 }).ok, false);
   assert.equal(planForkAtMessage(toText(records.map((record, i) => i === 1 ? { ...record, timestamp: 'invalid' } : record)), choice).ok, false);
   assert.equal(planForkAtMessage(text + '{bad\n', choice).ok, false);
+});
+
+test('renderer message position accepts consecutive assistant stream records', () => {
+  const records = [
+    { type: 'message', role: 'user', timestamp: T0, content: [{ type: 'text', text: '问题一' }] },
+    { type: 'message', role: 'assistant', timestamp: T0 + 1000, content: [{ type: 'text', text: '回答一' }] },
+    { type: 'message', role: 'user', timestamp: T0 + 2000, content: [{ type: 'text', text: '问题二' }] },
+    { type: 'message', role: 'assistant', timestamp: T0 + 3000, content: [{ type: 'text', text: '回答二的开头' }] },
+    { type: 'message', role: 'assistant', timestamp: T0 + 4000, content: [{ type: 'text', text: '回答二的结尾' }] },
+    { type: 'message', role: 'user', timestamp: T0 + 5000, content: [{ type: 'text', text: '问题三' }] },
+    { type: 'message', role: 'assistant', timestamp: T0 + 6000, content: [{ type: 'text', text: '回答三' }] },
+  ];
+  const result = planForkAtMessage(toText(records), {
+    messageIndex: 6,
+    roles: 'uauaaua',
+    finishedAt: T0 + 6000,
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.drop, 0);
 });
 
 test('renderer fork matching ignores task notifications and groups streamed assistant records', () => {

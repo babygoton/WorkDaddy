@@ -376,8 +376,8 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 // 1.2.52：成长任务支持在悬浮层内直接接取，并在完成后同步最新任务状态。
 // 1.2.55：成长弹窗支持开启盲盒与抽奖并提示奖励，收敛成长/用量统计 primary 色使用。
 // 1.2.56：成长任务补齐说明与标签、已领取折叠、Buddy 派出，并把用量柱状图改为面积折线图。
-const DAEMON_VERSION = '1.2.75';
-const DAEMON_BUILD_ID = 'release-1.2.75-20260919-session-fork-stream-alignment';
+const DAEMON_VERSION = '1.2.76';
+const DAEMON_BUILD_ID = 'release-1.2.76-20260919-session-fork-stream-alignment-fix';
 const usageReporter = createUsageReporter({ profile: PROFILE.id, version: DAEMON_VERSION });
 configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const automationDiscovery = createAutomationDiscovery({

@@ -190,20 +190,20 @@ function planForkAtMessage(text, selection) {
   const roles = selection && selection.roles;
   const index = selection && selection.messageIndex;
   const finishedAt = selection && selection.finishedAt;
-  if (typeof roles !== 'string' || !/^(?:ua){1,5000}$/.test(roles) ||
+  if (typeof roles !== 'string' || !/^[ua]{2,10000}$/.test(roles) ||
+      roles[0] !== 'u' || roles[roles.length - 1] !== 'a' ||
       !Number.isInteger(index) || index < 0 || index >= roles.length ||
+      roles[index] !== 'a' ||
       !Number.isSafeInteger(finishedAt) || finishedAt <= 0) {
     return invalid('分支消息参数无效');
   }
   const parsed = parseRecords(text);
   if (parsed.skipped) return invalid('会话记录正在写入或包含损坏的行，请稍后重试');
-  if (index % 2 !== 1) return invalid('无法确认所选消息的分支位置');
 
   // The renderer may hide task-notification user records and merge consecutive
-  // assistant records from one streamed turn. The alternating visible role
-  // shape guards the selection, while finishedAt identifies the exact JSONL
-  // assistant record without assuming the two representations have the same
-  // number of records.
+  // assistant records from one streamed turn. The selected role guards the
+  // index, while finishedAt identifies the exact JSONL assistant record without
+  // assuming the two representations have the same number of records.
   const messages = parsed.records.map((entry, recordIndex) => ({
     recordIndex, value: entry.value,
   })).filter((entry) => entry.value && entry.value.type === 'message' &&
@@ -212,10 +212,10 @@ function planForkAtMessage(text, selection) {
   const rawRoles = messages.map((entry) => entry.value.role === 'user' ? 'u' : 'a').join('');
   let selected;
   if (rawRoles === roles) {
-    // In the compact representation, messageIndex identifies the assistant
-    // ordinal directly. Preserve the timestamp tolerance, but do not fall
-    // through to a different assistant if this record is malformed.
-    selected = assistantMessages[Math.floor(index / 2)];
+    // When both sides expose the same record shape, messageIndex is the
+    // renderer message position. This also handles consecutive assistant
+    // records emitted by streamed replies.
+    selected = messages[index];
   } else {
     // In streamed files, the same visible assistant can span several JSONL
     // records. The completion timestamp is the stable cross-representation key.
