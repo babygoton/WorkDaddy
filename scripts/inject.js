@@ -13,6 +13,90 @@
  * 与后端通信：fetch 本地 daemon（__WBS_API__ 占位符在注入时替换为实际地址）
  * 幂等：window.__wbsWidget 防重复注入；document.body 未就绪时等待 DOMContentLoaded。
  */
+function collectConversationUsage(messages) {
+  var source = Array.isArray(messages) ? messages : [];
+  var byRequest = Object.create(null);
+  var order = [];
+  function finite(value) {
+    var number = Number(value);
+    return isFinite(number) && number >= 0 ? number : null;
+  }
+  function keyFor(message, index) {
+    var extra = message && message.extra || {};
+    return String(extra.conversationRequestId || message.requestId || message.id || ('message:' + index));
+  }
+  function isTerminal(message) {
+    var extra = message && message.extra || {};
+    return message && (message.complete === true || extra.isRequestTerminal === true || extra.isEnd === true || message.isEnd === true) &&
+      (!Object.prototype.hasOwnProperty.call(extra, 'isRequestTerminal') || extra.isRequestTerminal === true);
+  }
+  for (var i = 0; i < source.length; i++) {
+    var message = source[i];
+    var usage = message && message.usage;
+    if (!usage || !isTerminal(message)) continue;
+    var key = keyFor(message, i);
+    var existing = byRequest[key];
+    if (existing) {
+      // Streaming updates may leave more than one terminal snapshot. Keep the
+      // latest, richest snapshot for this request instead of adding it twice.
+      var existingScore = (finite(existing.usage.lastTokens) || 0) + (finite(existing.usage.outputTokens) || 0);
+      var nextScore = (finite(usage.lastTokens) || 0) + (finite(usage.outputTokens) || 0);
+      if (nextScore >= existingScore) existing.message = message;
+      continue;
+    }
+    byRequest[key] = { message: message, usage: usage };
+    order.push(key);
+  }
+
+  var models = Object.create(null);
+  var records = [];
+  var totalInputTokens = 0;
+  var totalOutputTokens = 0;
+  var totalTokens = 0;
+  var totalCredit = 0;
+  var creditKnown = true;
+  for (var j = 0; j < order.length; j++) {
+    var item = byRequest[order[j]];
+    var message = item.message;
+    var usage = message.usage || {};
+    var extra = message.extra || {};
+    var input = finite(usage.inputTokens);
+    var output = finite(usage.outputTokens);
+    var last = finite(usage.lastTokens);
+    var hasInputOutput = input !== null || output !== null;
+    input = input || 0;
+    output = output || 0;
+    var tokens = hasInputOutput ? input + output : (last || 0);
+    if (tokens === 0 && last !== null && last > 0) tokens = last;
+    var credit = finite(usage.credit);
+    var modelId = String(extra.modelId || usage.modelId || message.modelId || 'unknown-model');
+    var modelName = String(extra.modelName || usage.modelName || extra.model || message.modelName || modelId || '未知模型');
+    var record = { modelId: modelId, modelName: modelName, inputTokens: input, outputTokens: output, tokens: tokens, credit: credit };
+    records.push(record);
+    if (!models[modelId]) models[modelId] = { modelId: modelId, modelName: modelName, calls: 0, inputTokens: 0, outputTokens: 0, tokens: 0, credit: 0, creditKnown: true };
+    var model = models[modelId];
+    model.calls++;
+    model.inputTokens += input;
+    model.outputTokens += output;
+    model.tokens += tokens;
+    if (credit === null) { model.creditKnown = false; creditKnown = false; }
+    else { model.credit += credit; totalCredit += credit; }
+    totalInputTokens += input;
+    totalOutputTokens += output;
+    totalTokens += tokens;
+  }
+  return {
+    records: records,
+    models: Object.keys(models).map(function (id) { return models[id]; }),
+    calls: records.length,
+    inputTokens: totalInputTokens,
+    outputTokens: totalOutputTokens,
+    tokens: totalTokens,
+    credit: totalCredit,
+    creditKnown: creditKnown,
+  };
+}
+
 // Activity signals contain no key, text, target or pointer coordinates.
 function createUsageActivity(options) {
   var doc = options.document, win = options.window;
@@ -653,6 +737,7 @@ function createSessionMonitorRegistry(options) {
 
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
+    collectConversationUsage: collectConversationUsage,
     createUsageActivity: createUsageActivity,
     createBuildLifecycle: createBuildLifecycle,
     createBrandClickAction: createBrandClickAction,
@@ -699,6 +784,8 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     for (var j = 0; j < ss.length; j++) ss[j].remove();
     var dbg = document.querySelectorAll('#wbs-diag-badge, #wbs-debug-panel');
     for (var k = 0; k < dbg.length; k++) dbg[k].remove();
+    var usageSummaryNodes = document.querySelectorAll('#wbs-session-usage-summary, #wbs-session-usage-popover');
+    for (var us = 0; us < usageSummaryNodes.length; us++) usageSummaryNodes[us].remove();
     // 销毁所有历史 build：置 alive=false、断开全部 observer/事件监听。
     // 关键：旧 build 的 observer 若不销毁，DOM 一变就会把旧的 stashBtn 重新设为可见（用户"始终看到按钮"的根因）。
     var builds = window.__wbsBuilds || [];
@@ -1181,7 +1268,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '面板入口：': 'Panel entry:', '右下角机器人按钮': 'Bottom-right robot button', '已连接': 'Connected', '未连接': 'Not connected',
     'Token 用量': 'Token usage', '正在读取统计…': 'Loading statistics…', '搜索': 'Search', '重置': 'Reset', '调用': 'Calls', '输入': 'Input', '输出': 'Output', '导入方式': 'Import method', '复制提示词': 'Copy prompt', '导入 WorkDaddy 加密文件': 'Import WorkDaddy encrypted file', '导入 WorkDaddy 导出的账号备份，选择文件后输入导出密码。': 'Import an account backup exported by WorkDaddy, then enter its export password.', '导入 JSON 文件': 'Import JSON file', '可以导入其他工具导出的明文账号。请先让 WorkBuddy 按指定格式整理，再选择生成的 JSON 文件。': 'Import plain-text accounts exported by another tool. Ask WorkBuddy to convert them to the required format, then choose the generated JSON file.', '把其他工具导出的账号文本发给 WorkBuddy，让它只输出符合 WorkDaddy 格式的 JSON，然后复制保存为文件。': 'Send the account text exported by another tool to WorkBuddy. Ask it to output only WorkDaddy-compatible JSON, then save it as a file.', '提示词已复制': 'Prompt copied', '选择文件': 'Choose file',
     '缓存读取': 'Cache read', '缓存写入': 'Cache write',
-    ' 个文件，解析失败': ' files, parse failures', ' 行': ' lines', '暂无可统计的 Token 用量': 'No Token usage found',
+    ' 个文件，解析失败': ' files, parse failures', ' 行': ' lines', '暂无可统计的 Token 用量': 'No Token usage found', '会话用量': 'Conversation usage', '本会话用量': 'This conversation usage', '本会话用量明细': 'Conversation usage details', '暂无已完成用量': 'No completed usage yet', '读取中…': 'Loading…', '未知模型': 'Unknown model', '总计': 'Total', '在会话底部显示 Token、积分和模型汇总': 'Show Token, credits and model summary at the bottom of conversations',
     '当前积分段已用完': 'The current credit segment is used up', '积分将在': ' credits expire in', '到期': ' expires', '要切换账号吗？': 'Switch account?', '可以切换到账号': 'Can switch to account', '检测到积分到期时间最临近的账号': 'The account with the nearest credit expiry is', '积分将于': ' credits expire within', '内过期': '', '较长时间': 'a long time', ' 小时 ': ' hr ', ' 分': ' min',
     '切换到此账号': 'Switch to this account', '今天不再提醒': 'Do not remind me again today', '关闭': 'Close',
     '切换中…': 'Switching…', 'Token 用量统计': 'Token usage statistics', ' 分钟后': ' minutes', ' 小时后': ' hours', ' 天后': ' days',
@@ -1884,6 +1971,353 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       target.addEventListener(type, handler, options);
       registerDisposer(function () { target.removeEventListener(type, handler, options); });
     }
+
+    // 会话底部用量汇总：数据来自官方 ConversationController 的 messageStore，
+    // DOM 只负责找到稳定的挂载点，不读取官方 footer 文案。
+    var conversationUsage = {
+      surface: null,
+      controller: null,
+      unsubscribe: null,
+      summary: null,
+      popover: null,
+      spacer: null,
+      scrollElement: null,
+      scrollFrame: null,
+      visible: false,
+      popoverTimer: null,
+      observer: null,
+      state: null,
+    };
+    var CONVERSATION_USAGE_ENABLED_KEY = 'workdaddy.session.conversationUsageEnabled';
+    var conversationUsageEnabled = true;
+    try { conversationUsageEnabled = localStorage.getItem(CONVERSATION_USAGE_ENABLED_KEY) !== '0'; } catch (_) {}
+    function usageNumber(value) {
+      var number = Number(value);
+      return isFinite(number) && number >= 0 ? number : 0;
+    }
+    function formatUsageTokens(value) {
+      value = usageNumber(value);
+      if (value >= 1000000000) return (value / 1000000000).toFixed(1).replace(/\.0$/, '') + 'B';
+      if (value >= 1000000) return (value / 1000000).toFixed(1).replace(/\.0$/, '') + 'M';
+      if (value >= 1000) return (value / 1000).toFixed(1).replace(/\.0$/, '') + 'K';
+      return String(Math.round(value));
+    }
+    function formatUsageCredit(value, known) {
+      if (!known) return '—';
+      return usageNumber(value).toFixed(2).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1');
+    }
+    function usageSurface() {
+      var selectedId = '';
+      try { selectedId = String(WBS_COMPAT.getSelectedConversationId(document) || ''); } catch (_) {}
+      var docs = document.querySelectorAll('.cr-document[data-root-id]');
+      var fallback = null;
+      for (var i = 0; i < docs.length; i++) {
+        var conversation = docs[i];
+        var content = conversation.closest('.cr-message-list__content');
+        if (!content) continue;
+        var id = String(conversation.getAttribute('data-root-id') || '');
+        if (selectedId && id === selectedId) return { conversation: conversation, content: content, id: id };
+        var rect = conversation.getBoundingClientRect();
+        if (!fallback && rect.width > 0 && rect.height > 0) fallback = { conversation: conversation, content: content, id: id };
+      }
+      return fallback;
+    }
+    function usageController(id) {
+      if (!WBS_COMPAT || typeof WBS_COMPAT.findConversationControllers !== 'function') return null;
+      var controllers = [];
+      try { controllers = WBS_COMPAT.findConversationControllers(document) || []; } catch (_) {}
+      for (var i = 0; i < controllers.length; i++) {
+        if (!id || String(controllers[i].conversationId || '') === String(id)) return controllers[i];
+      }
+      return null;
+    }
+    function hideUsagePopover() {
+      if (!conversationUsage.popover) return;
+      conversationUsage.popover.classList.remove('is-visible');
+    }
+    function usageScrollElement(surface) {
+      if (!surface || !surface.content) return null;
+      return surface.content.closest('.cr-message-list') || document.querySelector('.cr-message-list');
+    }
+    function setConversationUsageVisible(visible) {
+      visible = !!visible;
+      conversationUsage.visible = visible;
+      if (conversationUsage.summary) conversationUsage.summary.classList.toggle('is-hidden', !visible);
+      if (!visible) hideUsagePopover();
+    }
+    function updateConversationUsageScrollState() {
+      var scrollElement = conversationUsage.scrollElement;
+      if (!scrollElement || !conversationUsage.summary) {
+        setConversationUsageVisible(false);
+        return;
+      }
+      var maxScroll = scrollElement.scrollHeight - scrollElement.clientHeight;
+      var canScroll = maxScroll > 1;
+      var atBottom = canScroll && maxScroll - scrollElement.scrollTop <= 4;
+      setConversationUsageVisible(atBottom);
+    }
+    function scheduleConversationUsageScrollState() {
+      if (conversationUsage.scrollFrame != null) return;
+      var raf = window.requestAnimationFrame || function (callback) { return window.setTimeout(callback, 16); };
+      conversationUsage.scrollFrame = raf(function () {
+        conversationUsage.scrollFrame = null;
+        updateConversationUsageScrollState();
+      });
+    }
+    function bindConversationUsageScroll(surface) {
+      var next = usageScrollElement(surface);
+      if (conversationUsage.scrollElement === next) {
+        updateConversationUsageScrollState();
+        return;
+      }
+      if (conversationUsage.scrollElement) {
+        conversationUsage.scrollElement.removeEventListener('scroll', scheduleConversationUsageScrollState);
+      }
+      conversationUsage.scrollElement = next;
+      if (next) next.addEventListener('scroll', scheduleConversationUsageScrollState, { passive: true });
+      updateConversationUsageScrollState();
+    }
+    function unbindConversationUsageScroll() {
+      if (conversationUsage.scrollElement) {
+        conversationUsage.scrollElement.removeEventListener('scroll', scheduleConversationUsageScrollState);
+      }
+      conversationUsage.scrollElement = null;
+      if (conversationUsage.scrollFrame != null) {
+        var cancel = window.cancelAnimationFrame || window.clearTimeout;
+        cancel(conversationUsage.scrollFrame);
+        conversationUsage.scrollFrame = null;
+      }
+      setConversationUsageVisible(false);
+    }
+    function positionUsagePopover() {
+      var summary = conversationUsage.summary;
+      var popover = conversationUsage.popover;
+      if (!summary || !popover || !popover.classList.contains('is-visible')) return;
+      var rect = summary.getBoundingClientRect();
+      var left = Math.max(8, rect.left);
+      var width = Math.min(popover.offsetWidth || 320, Math.max(120, window.innerWidth - left - 8));
+      var height = popover.offsetHeight || 180;
+      var top = rect.top - height - 8;
+      if (top < 8) top = Math.min(window.innerHeight - height - 8, rect.bottom + 8);
+      popover.style.left = Math.round(left) + 'px';
+      popover.style.width = Math.round(width) + 'px';
+      popover.style.top = Math.round(Math.max(8, top)) + 'px';
+    }
+    function positionConversationUsage() {
+      var summary = conversationUsage.summary;
+      var surface = conversationUsage.surface;
+      if (!summary || !surface || !conversationUsageEnabled) return;
+      var contentRect = surface.content.getBoundingClientRect();
+      if (!contentRect || contentRect.width <= 0) return;
+      var inputArea = document.querySelector('.conversation-input-area,.conversation-input,.cr-input-box');
+      var inputRect = inputArea && inputArea.getBoundingClientRect();
+      var viewport = surface.content.closest('.cr-message-list-viewport');
+      var viewportRect = viewport && viewport.getBoundingClientRect();
+      var anchorTop = inputRect && inputRect.top > 0 ? inputRect.top : (viewportRect && viewportRect.bottom) || window.innerHeight;
+      var left = inputRect && inputRect.width > 0 ? inputRect.left : contentRect.left;
+      var maxWidth = inputRect && inputRect.width > 0 ? inputRect.width : contentRect.width;
+      left = Math.max(8, left);
+      summary.style.left = Math.round(left) + 'px';
+      summary.style.width = 'max-content';
+      summary.style.maxWidth = Math.round(Math.min(maxWidth, window.innerWidth - left - 8)) + 'px';
+      summary.style.bottom = Math.round(Math.max(4, window.innerHeight - anchorTop + 4)) + 'px';
+      if (conversationUsage.spacer && conversationUsage.spacer.parentNode) {
+        conversationUsage.spacer.style.height = Math.ceil(summary.getBoundingClientRect().height || 34) + 'px';
+      }
+    }
+    function showUsagePopover() {
+      if (!conversationUsage.summary || !conversationUsage.popover) return;
+      if (conversationUsage.popoverTimer) clearTimeout(conversationUsage.popoverTimer);
+      conversationUsage.popover.classList.add('is-visible');
+      positionUsagePopover();
+    }
+    function scheduleHideUsagePopover() {
+      if (conversationUsage.popoverTimer) clearTimeout(conversationUsage.popoverTimer);
+      conversationUsage.popoverTimer = setTimeout(function () {
+        conversationUsage.popoverTimer = null;
+        if (conversationUsage.summary && conversationUsage.summary.matches(':hover')) return;
+        if (conversationUsage.popover && conversationUsage.popover.matches(':hover')) return;
+        hideUsagePopover();
+      }, 120);
+    }
+    function usageDetailRows(state) {
+      var models = (state && state.models || []).slice().sort(function (a, b) { return b.tokens - a.tokens; });
+      if (!models.length) return [el('div', 'wbs-session-usage-empty', wbsTranslateString('暂无已完成用量', WBS_LANGUAGE))];
+      var rows = [];
+      for (var i = 0; i < models.length; i++) {
+        var model = models[i];
+        var row = el('div', 'wbs-session-usage-detail-row');
+        var name = el('span', 'wbs-session-usage-model', model.modelName);
+        name.title = model.modelName;
+        row.appendChild(name);
+        row.appendChild(el('span', 'wbs-session-usage-calls', model.calls + ' 次'));
+        row.appendChild(el('span', 'wbs-session-usage-tokens', formatUsageTokens(model.tokens)));
+        row.appendChild(el('span', 'wbs-session-usage-credit', formatUsageCredit(model.credit, model.creditKnown)));
+        rows.push(row);
+      }
+      return rows;
+    }
+    function renderConversationUsage(state) {
+      conversationUsage.state = state || null;
+      var summary = conversationUsage.summary;
+      var popover = conversationUsage.popover;
+      if (!summary || !popover) return;
+      var main = summary.querySelector('.wbs-session-usage-main');
+      var body = popover.querySelector('.wbs-session-usage-detail-body');
+      if (!main || !body) return;
+      main.textContent = '';
+      body.textContent = '';
+      var calls = state && state.calls || 0;
+      if (!state) {
+        main.appendChild(el('span', 'wbs-session-usage-label', '会话用量'));
+        main.appendChild(el('span', 'wbs-session-usage-loading', '读取中…'));
+      } else if (!calls) {
+        main.appendChild(el('span', 'wbs-session-usage-label', '会话用量'));
+        main.appendChild(el('span', 'wbs-session-usage-loading', '暂无已完成用量'));
+      } else {
+        main.appendChild(el('span', 'wbs-session-usage-label', '会话用量'));
+        main.appendChild(el('span', 'wbs-session-usage-number', formatUsageTokens(state.tokens) + ' Token'));
+        main.appendChild(el('span', 'wbs-session-usage-separator', '·'));
+        main.appendChild(el('span', 'wbs-session-usage-number', formatUsageCredit(state.credit, state.creditKnown) + ' 积分'));
+        main.appendChild(el('span', 'wbs-session-usage-separator', '·'));
+        var models = state.models || [];
+        var modelLabel = models.length === 1 ? models[0].modelName + ' × ' + calls : models.length + ' 个模型';
+        main.appendChild(el('span', 'wbs-session-usage-models', modelLabel));
+      }
+      var total = popover.querySelector('.wbs-session-usage-detail-total');
+      if (total) total.textContent = '总计  ' + formatUsageTokens(state && state.tokens) + ' Token  ·  ' + formatUsageCredit(state && state.credit, state && state.creditKnown !== false) + ' 积分';
+      var rows = usageDetailRows(state);
+      for (var i = 0; i < rows.length; i++) body.appendChild(rows[i]);
+      applyI18n(summary);
+      applyI18n(popover);
+      positionConversationUsage();
+      positionUsagePopover();
+    }
+    function ensureUsageNodes(surface) {
+      if (!conversationUsage.summary) {
+        var summary = el('div', 'wbs-session-usage-summary');
+        summary.id = 'wbs-session-usage-summary';
+        summary.tabIndex = 0;
+        summary.setAttribute('role', 'group');
+        summary.setAttribute('aria-label', '本会话用量');
+        summary.setAttribute('aria-describedby', 'wbs-session-usage-popover');
+        summary.appendChild(el('div', 'wbs-session-usage-main'));
+        conversationUsage.summary = summary;
+        listen(summary, 'mouseenter', showUsagePopover);
+        listen(summary, 'mouseleave', scheduleHideUsagePopover);
+        listen(summary, 'focusin', showUsagePopover);
+        listen(summary, 'focusout', scheduleHideUsagePopover);
+      }
+      if (!conversationUsage.popover) {
+        var popover = el('div', 'wbs-session-usage-popover');
+        popover.id = 'wbs-session-usage-popover';
+        popover.setAttribute('role', 'tooltip');
+        popover.appendChild(el('div', 'wbs-session-usage-detail-title', '本会话用量明细'));
+        popover.appendChild(el('div', 'wbs-session-usage-detail-total'));
+        var detailHead = el('div', 'wbs-session-usage-detail-head');
+        detailHead.appendChild(el('span', '', '模型'));
+        detailHead.appendChild(el('span', '', '调用'));
+        detailHead.appendChild(el('span', '', 'Token'));
+        detailHead.appendChild(el('span', '', '积分'));
+        popover.appendChild(detailHead);
+        popover.appendChild(el('div', 'wbs-session-usage-detail-body'));
+        conversationUsage.popover = popover;
+        document.body.appendChild(popover);
+        listen(popover, 'mouseenter', showUsagePopover);
+        listen(popover, 'mouseleave', scheduleHideUsagePopover);
+      }
+      if (!conversationUsage.spacer) {
+        var spacer = el('div', 'wbs-session-usage-spacer');
+        spacer.setAttribute('aria-hidden', 'true');
+        conversationUsage.spacer = spacer;
+      }
+      if (surface && surface.content && conversationUsage.spacer.parentNode !== surface.content) {
+        surface.content.appendChild(conversationUsage.spacer);
+      }
+      // fixed 元素必须挂在 body 下；消息网格祖先带 transform，会改变 fixed 的坐标系。
+      if (conversationUsage.summary.parentNode !== document.body && document.body) {
+        document.body.appendChild(conversationUsage.summary);
+      }
+    }
+    function bindUsageController(controller) {
+      if (conversationUsage.controller === controller) {
+        if (controller && controller.messageStore) renderConversationUsage(collectConversationUsage(controller.messageStore.getState().messages));
+        return;
+      }
+      if (conversationUsage.unsubscribe) {
+        try { conversationUsage.unsubscribe(); } catch (_) {}
+        conversationUsage.unsubscribe = null;
+      }
+      conversationUsage.controller = controller || null;
+      renderConversationUsage(null);
+      if (!controller || !controller.messageStore) return;
+      var store = controller.messageStore;
+      function refresh(state) {
+        if (conversationUsage.controller !== controller) return;
+        if (!state || !Array.isArray(state.messages)) {
+          try { state = store.getState(); } catch (_) { state = null; }
+        }
+        renderConversationUsage(collectConversationUsage(state && state.messages));
+      }
+      try { conversationUsage.unsubscribe = store.subscribe(refresh); } catch (_) { conversationUsage.unsubscribe = null; }
+      try { refresh(store.getState()); } catch (_) {}
+    }
+    function syncConversationUsage() {
+      if (!alive) return;
+      if (!conversationUsageEnabled) {
+        if (conversationUsage.summary) conversationUsage.summary.remove();
+        if (conversationUsage.spacer) conversationUsage.spacer.remove();
+        unbindConversationUsageScroll();
+        hideUsagePopover();
+        bindUsageController(null);
+        conversationUsage.surface = null;
+        return;
+      }
+      var surface = usageSurface();
+      if (!surface) {
+        if (conversationUsage.summary) conversationUsage.summary.remove();
+        if (conversationUsage.spacer) conversationUsage.spacer.remove();
+        unbindConversationUsageScroll();
+        hideUsagePopover();
+        bindUsageController(null);
+        conversationUsage.surface = null;
+        return;
+      }
+      conversationUsage.surface = surface;
+      ensureUsageNodes(surface);
+      bindConversationUsageScroll(surface);
+      positionConversationUsage();
+      var controller = usageController(surface.id);
+      bindUsageController(controller);
+    }
+    function setConversationUsageEnabled(enabled) {
+      conversationUsageEnabled = !!enabled;
+      try { localStorage.setItem(CONVERSATION_USAGE_ENABLED_KEY, conversationUsageEnabled ? '1' : '0'); } catch (_) {}
+      syncConversationUsage();
+    }
+    listen(window, 'resize', function () {
+      positionConversationUsage();
+      positionUsagePopover();
+      updateConversationUsageScrollState();
+    });
+    listen(window, 'scroll', function () {
+      positionConversationUsage();
+      if (conversationUsage.popover && conversationUsage.popover.classList.contains('is-visible')) positionUsagePopover();
+    }, true);
+    setBuildInterval(syncConversationUsage, 800);
+    setBuildTimeout(syncConversationUsage, 120);
+    registerDisposer(function () {
+      if (conversationUsage.unsubscribe) { try { conversationUsage.unsubscribe(); } catch (_) {} }
+      unbindConversationUsageScroll();
+      if (conversationUsage.popoverTimer) clearTimeout(conversationUsage.popoverTimer);
+      if (conversationUsage.summary) conversationUsage.summary.remove();
+      if (conversationUsage.popover) conversationUsage.popover.remove();
+      if (conversationUsage.spacer) conversationUsage.spacer.remove();
+      conversationUsage.summary = null;
+      conversationUsage.popover = null;
+      conversationUsage.spacer = null;
+      conversationUsage.controller = null;
+    });
     var toastRuntime = window.__wbsToastRuntime;
     if (!toastRuntime) throw new Error('通知组件未加载');
     registerDisposer(function () { toastRuntime.destroy(); });
@@ -2423,6 +2857,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
      * 暂存提示词/快捷短语由 daemon 持久化；消息索引开关保存在渲染器 localStorage。
      * stash 按钮显隐受「暂存提示词」开关影响；explore 按钮与面板选项受「快捷短语」开关/列表影响。 */
     var MESSAGE_NAV_ENABLED_KEY = 'workdaddy.session.messageNavigationEnabled';
+    // 会话用量开关使用 renderer localStorage，默认开启，不依赖 daemon 状态。
     var SELECTION_QUOTE_ENABLED_KEY = 'workdaddy.session.selectionQuoteEnabled';
     var FORK_ENABLED_KEY = 'workdaddy.session.forkEnabled';
     var FORK_OPEN_KEY = 'workdaddy.session.pendingForkOpen.' + PROFILE_ID;
@@ -2447,6 +2882,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     var sessState = {
       stash: true,
       messageNav: readMessageNavigationEnabled(),
+      usageSummary: conversationUsageEnabled,
       selectionQuote: readSelectionQuoteEnabled(),
       fork: readForkEnabled(),
       phrase: true,
@@ -2465,12 +2901,14 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       var pane0 = enhancePane;
       var swS = pane0 && pane0.querySelector('#wbs-sess-stash');
       var swN = pane0 && pane0.querySelector('#wbs-sess-message-nav');
+      var swU = pane0 && pane0.querySelector('#wbs-sess-usage-summary');
       var swQ = pane0 && pane0.querySelector('#wbs-sess-selection-quote');
       var swF = pane0 && pane0.querySelector('#wbs-sess-fork');
       var swP = pane0 && pane0.querySelector('#wbs-sess-phrase');
       var area = pane0 && pane0.querySelector('#wbs-qp-area');
       if (swS) swS.checked = !!sessState.stash;
       if (swN) swN.checked = !!sessState.messageNav;
+      if (swU) swU.checked = !!conversationUsageEnabled;
       if (swQ) swQ.checked = !!sessState.selectionQuote;
       if (swF) swF.checked = !!sessState.fork;
       if (swP) swP.checked = !!sessState.phrase;
@@ -7988,6 +8426,11 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         '<label class="wbs-switch" title="在会话左侧显示消息索引"><input type="checkbox" id="wbs-sess-message-nav"><span class="wbs-switch-slider"></span></label>' +
         '</div>' +
         '<div class="wbs-nd-row">' +
+        '<span class="wbs-nd-title">会话用量汇总</span>' +
+        '<span class="wbs-nd-hint">在会话底部显示 Token、积分和模型汇总</span>' +
+        '<label class="wbs-switch" title="在会话底部显示 Token、积分和模型汇总"><input type="checkbox" id="wbs-sess-usage-summary"><span class="wbs-switch-slider"></span></label>' +
+        '</div>' +
+        '<div class="wbs-nd-row">' +
         '<span class="wbs-nd-title">分支到新会话</span>' +
         '<span class="wbs-nd-hint">复制到这条回复为止的聊天内容，在当前工作区继续聊；原会话不变</span>' +
         '<label class="wbs-switch"><input type="checkbox" id="wbs-sess-fork" aria-label="分支到新会话"><span class="wbs-switch-slider"></span></label>' +
@@ -11688,6 +12131,14 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         writeMessageNavigationEnabled(sessState.messageNav);
         if (messageNavigation) messageNavigation.setEnabled(sessState.messageNav);
       });
+      var swU = pane2.querySelector('#wbs-sess-usage-summary');
+      if (swU) {
+        swU.checked = conversationUsageEnabled;
+        swU.addEventListener('change', function () {
+          sessState.usageSummary = !!this.checked;
+          setConversationUsageEnabled(sessState.usageSummary);
+        });
+      }
       var swQ = pane2.querySelector('#wbs-sess-selection-quote');
       if (swQ) swQ.addEventListener('change', function () {
         sessState.selectionQuote = !!this.checked;
@@ -13754,6 +14205,30 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '.wbs-root{position:fixed;right:22px;bottom:22px;z-index:2147483647;font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;font-size:13px;color:#1f1f1f;-webkit-font-smoothing:antialiased}',
     '.wbs-root,.wbs-status-popover,.wbs-credit-summary-popover,#wbs-token-stats-modal{--wbs-primary:#22c55e;--wbs-primary-rgb:34,197,94;--wbs-primary-ink:#22c55e;--wbs-primary-soft:rgba(34,197,94,.09);--wbs-primary-soft-hover:rgba(34,197,94,.14)}',
     'html[data-wbs-theme-id="dark"] .wbs-root,html[data-wbs-theme-id="dark"] .wbs-status-popover,html[data-wbs-theme-id="dark"] .wbs-credit-summary-popover,html[data-wbs-theme-id="dark"] #wbs-token-stats-modal,html[data-wbs-theme-id="cyber-purple"] .wbs-root,html[data-wbs-theme-id="cyber-purple"] .wbs-status-popover,html[data-wbs-theme-id="cyber-purple"] .wbs-credit-summary-popover,html[data-wbs-theme-id="cyber-purple"] #wbs-token-stats-modal,html[data-wbs-theme-id="nebula"] .wbs-root,html[data-wbs-theme-id="nebula"] .wbs-status-popover,html[data-wbs-theme-id="nebula"] .wbs-credit-summary-popover,html[data-wbs-theme-id="nebula"] #wbs-token-stats-modal{--wbs-primary:#7f77dd;--wbs-primary-rgb:127,119,221;--wbs-primary-ink:#7f77dd;--wbs-primary-soft:rgba(127,119,221,.12);--wbs-primary-soft-hover:rgba(127,119,221,.18)}',
+    '.wbs-session-usage-summary{position:fixed;z-index:20;display:block;box-sizing:border-box;min-height:28px;padding:4px 8px 2px;border:0;border-radius:8px;background:color-mix(in srgb,var(--wb-bg-popover,#fff) 52%,transparent);color:var(--wb-color-text-primary,#1f1f1f);font-size:11px;font-weight:400;line-height:1.35;opacity:.52;box-shadow:none;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);outline:none;transition:opacity .15s ease}',
+    '.wbs-session-usage-summary:hover,.wbs-session-usage-summary:focus-visible{opacity:.9}',
+    '.wbs-session-usage-summary.is-hidden{visibility:hidden;opacity:0;pointer-events:none}',
+    '.wbs-session-usage-main{display:flex;align-items:center;justify-content:flex-start;gap:7px;min-width:0;overflow:hidden;text-align:left;white-space:nowrap}',
+    '.wbs-session-usage-label{flex:0 0 auto;color:var(--wb-icon-secondary,#667085);font-weight:400}',
+    '.wbs-session-usage-number{flex:0 0 auto;color:var(--wb-color-text-primary,#1f1f1f);font-variant-numeric:tabular-nums;font-weight:400}',
+    '.wbs-session-usage-separator{flex:0 0 auto;color:var(--wb-icon-tertiary,#969aa3)}',
+    '.wbs-session-usage-models{min-width:0;overflow:hidden;color:var(--wb-color-text-secondary,#5f6368);text-overflow:ellipsis;white-space:nowrap}',
+    '.wbs-session-usage-loading{color:var(--wb-icon-secondary,#667085);font-weight:400}',
+    '.wbs-session-usage-popover{position:fixed;z-index:21;width:min(390px,calc(100vw - 16px));box-sizing:border-box;padding:8px 10px;border:0;border-radius:8px;background:color-mix(in srgb,var(--wb-bg-popover,#fff) 90%,transparent);color:var(--wb-color-text-primary,#1f1f1f);box-shadow:0 6px 18px rgba(20,24,32,.16);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);opacity:0;pointer-events:none;transform:translateY(4px);transition:opacity .14s ease,transform .14s ease}',
+    '.wbs-session-usage-popover.is-visible{opacity:1;pointer-events:auto;transform:translateY(0)}',
+    '.wbs-session-usage-detail-title{font-size:12px;font-weight:400;line-height:1.4}',
+    '.wbs-session-usage-detail-total{margin-top:3px;color:var(--wb-icon-secondary,#667085);font-size:10.5px;font-variant-numeric:tabular-nums}',
+    '.wbs-session-usage-detail-head,.wbs-session-usage-detail-row{display:grid;grid-template-columns:minmax(0,1fr) 42px 58px 48px;gap:7px;align-items:center}',
+    '.wbs-session-usage-detail-head{margin-top:9px;padding:5px 0;border-top:1px solid var(--wb-border-subtle,#eee);border-bottom:1px solid var(--wb-border-subtle,#eee);color:var(--wb-icon-tertiary,#8a8f98);font-size:10px}',
+    '.wbs-session-usage-detail-head span,.wbs-session-usage-detail-row span{text-align:left}',
+    '.wbs-session-usage-detail-row{min-height:29px;border-bottom:1px solid var(--wb-border-subtle,#eee);color:var(--wb-color-text-secondary,#5f6368);font-size:10.5px;font-variant-numeric:tabular-nums}',
+    '.wbs-session-usage-detail-row:last-child{border-bottom:0}',
+    '.wbs-session-usage-model{min-width:0;overflow:hidden;color:var(--wb-color-text-primary,#1f1f1f);text-overflow:ellipsis;white-space:nowrap}',
+    '.wbs-session-usage-empty{padding:10px 0;color:var(--wb-icon-tertiary,#8a8f98);font-size:10.5px}',
+    '.wbs-session-usage-spacer{display:block;width:100%;height:28px;min-height:28px;pointer-events:none;visibility:hidden}',
+    'html.cb-dark .wbs-session-usage-summary,html[data-theme="dark"] .wbs-session-usage-summary,body[data-vscode-theme-name*="dark" i] .wbs-session-usage-summary{background:color-mix(in srgb,var(--wb-bg-popover,#202126) 80%,transparent);color:var(--wb-color-text-primary,#f2f3f5);box-shadow:0 5px 18px rgba(0,0,0,.2)}',
+    'html.cb-dark .wbs-session-usage-popover,html[data-theme="dark"] .wbs-session-usage-popover,body[data-vscode-theme-name*="dark" i] .wbs-session-usage-popover{background:color-mix(in srgb,var(--wb-bg-popover,#202126) 92%,transparent);color:var(--wb-color-text-primary,#f2f3f5);box-shadow:0 8px 22px rgba(0,0,0,.32)}',
+    '@media(max-width:620px){.wbs-session-usage-summary{padding-left:8px;padding-right:8px}.wbs-session-usage-main{gap:5px}.wbs-session-usage-popover{width:calc(100vw - 16px)}}',
     '.wbs-daily-rings,.wbs-status-popover{--wbs-ring-growth:var(--wbs-primary-ink);--wbs-ring-rewards:var(--wbs-primary-ink);--wbs-ring-cat:var(--wbs-primary-ink);--wbs-tip-credit:var(--wbs-primary-ink);--wbs-liquid-fill:var(--wbs-primary);--wbs-liquid-bg:color-mix(in srgb,var(--wbs-primary) 12%,var(--wb-bg-secondary,#f6f7f8));--wbs-liquid-ink:color-mix(in srgb,var(--wbs-primary-ink) 72%,var(--wb-color-text-primary,#1f1f1f))}',
     '.wbs-root.wbs-no-stash .wbs-stash-inline{display:none !important}',
     '.wbs-fork-button{display:flex;flex:0 0 24px;align-items:center;justify-content:center;width:24px;height:24px;box-sizing:border-box;padding:0;border:0;border-radius:8px;background:transparent;color:var(--wb-icon-secondary,rgba(0,0,0,.7));cursor:pointer;transition:color .15s ease,background-color .15s ease}',
