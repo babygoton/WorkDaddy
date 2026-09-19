@@ -107,7 +107,7 @@ WBSWITCH_PROFILE=workbuddy-ai bash scripts/relaunch-with-cdp.sh
 
 Prompt stashing and themes are enabled for both WorkBuddy profiles. CodeBuddy profile support is on hold and is outside the current release scope.
 
-The release scripts produce four packages for the two WorkBuddy clients: `WorkDaddy-<version>.dmg`, `WorkDaddy-AI-<version>.dmg`, `WorkDaddy-Setup-<version>.exe`, and `WorkDaddy-AI-Setup-<version>.exe`. For macOS builds, set `WORKDADDY_BUILD_PROFILE=workbuddy-cn` or `workbuddy-ai` to build only one client. Windows ZIPs are temporary installer build inputs, not release downloads.
+The release scripts produce packages for both WorkBuddy clients: `WorkDaddy-<version>.dmg` and `WorkDaddy-AI-<version>.dmg` on macOS; `WorkDaddy-Setup-<version>.exe` / `WorkDaddy-Portable-<version>.zip` and `WorkDaddy-AI-Setup-<version>.exe` / `WorkDaddy-AI-Portable-<version>.zip` on Windows; and `WorkDaddy_<version>_amd64.deb` / `WorkDaddy-AI_<version>_amd64.deb` on Linux. For macOS builds, set `WORKDADDY_BUILD_PROFILE=workbuddy-cn` or `workbuddy-ai` to build only one client. Windows ZIPs are temporary installer build inputs, not release downloads.
 
 `install.sh`:
 

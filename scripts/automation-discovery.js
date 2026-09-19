@@ -6,6 +6,7 @@ const path = require('node:path');
 const { replaceFileWithRetry } = require('./atomic-file-write');
 const { previewPackage } = require('./automation-packages');
 const { SCHEMA_VERSION } = require('./automation');
+const { stableVersion } = require('./automation-compatibility');
 
 const DISCOVERY_MARKER = 'WorkDaddyAutomationRepository';
 const CACHE_VERSION = 3;
@@ -31,6 +32,15 @@ function documentIdentity(content) {
   const document = JSON.parse(String(content).replace(/^\uFEFF/, ''));
   const canonical = canonicalJson(document);
   return { document, key: crypto.createHash('sha256').update(canonical).digest('hex') };
+}
+
+function comparePackageVersions(left, right) {
+  const a = stableVersion(String(left));
+  const b = stableVersion(String(right));
+  for (let index = 0; index < 3; index += 1) {
+    if (a[index] !== b[index]) return a[index] > b[index] ? 1 : -1;
+  }
+  return 0;
 }
 
 function emptyCache() {
@@ -260,13 +270,20 @@ function catalogFromState(state, runtime) {
         if (!preview.task) continue;
         const document = identity.document;
         const definition = document.kind ? document.task : document.task || document;
-        const item = merged.get(identity.key) || {
+        const packageId = preview.package && String(preview.package.id || '') || '';
+        const packageVersion = preview.package && String(preview.package.version || '') || '';
+        const mergeKey = packageId ? 'package:' + packageId : 'document:' + identity.key;
+        const existing = merged.get(mergeKey);
+        if (existing && packageId && comparePackageVersions(packageVersion, existing.packageVersion) < 0) continue;
+        if (existing && packageId && comparePackageVersions(packageVersion, existing.packageVersion) > 0) merged.delete(mergeKey);
+        const item = merged.get(mergeKey) || {
           key: identity.key,
           name: String(document.name || preview.task.name || file.path).slice(0, 120),
           description: String(document.description || preview.task.description || '').slice(0, 1000),
           compatible: preview.compatible,
           issues: preview.issues || [],
           schemaVersion: definition.schemaVersion == null ? 1 : definition.schemaVersion,
+          ...(packageId ? { packageId, packageVersion } : {}),
           stars: 0,
           sources: [],
         };
@@ -281,7 +298,7 @@ function catalogFromState(state, runtime) {
           });
           item.stars += repository.stars;
         }
-        merged.set(identity.key, item);
+        merged.set(mergeKey, item);
       } catch (_) {}
     }
   }
@@ -347,8 +364,8 @@ function createAutomationDiscovery(options) {
     return publicCatalog();
   }
 
-  async function getCatalog() {
-    if (now() - Number(state.checkedAt || 0) < CACHE_TTL_MS) return publicCatalog();
+  async function getCatalog(options = {}) {
+    if (!options.force && now() - Number(state.checkedAt || 0) < CACHE_TTL_MS) return publicCatalog();
     if (!inFlight) inFlight = refresh().finally(() => { inFlight = null; });
     return inFlight;
   }
@@ -369,6 +386,7 @@ function createAutomationDiscovery(options) {
 module.exports = {
   DISCOVERY_MARKER,
   CACHE_TTL_MS,
+  comparePackageVersions,
   createAutomationDiscovery,
   documentIdentity,
 };

@@ -7201,7 +7201,7 @@ function handleApi(req, res) {
   }
 
   if (req.method === 'GET' && p === '/api/automations/discovery') {
-    return automationDiscovery.getCatalog()
+    return automationDiscovery.getCatalog({ force: url.searchParams.get('refresh') === '1' })
       .then(result => json(res, 200, { ok: true, ...result }))
       .catch(error => json(res, 503, { ok: false, error: error.message || '公开任务加载失败' }));
   }
@@ -7210,7 +7210,7 @@ function handleApi(req, res) {
     return readBody(req).then((body) => {
       const content = automationDiscovery.getTaskContent(body && body.key);
       const runtime = { version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform };
-      return importTasks(DATA_DIR, { content, selected: ['0'] }, runtime);
+      return importTasks(DATA_DIR, { content, selected: ['0'], replaceExisting: body && body.replaceExisting === true }, runtime);
     }).then(result => json(res, 200, { ok: true, ...result }))
       .catch(error => json(res, 400, { ok: false, error: error.message }));
   }
@@ -7784,6 +7784,30 @@ function handleApi(req, res) {
     return readBody(req).then((body) => {
       try { return json(res, 200, { ok: true, accountOrder: setAccountOrder(DATA_DIR, body) }); }
       catch (error) { return json(res, 400, { ok: false, error: error.message }); }
+    });
+  }
+
+  // The official check-in endpoint is idempotent and reports "already
+  // checked in" for a check-in completed outside WorkDaddy.  Reconcile only
+  // the currently logged-in account when the panel asks for a fresh account
+  // snapshot; this keeps the optional all-account automation opt-in.
+  if (req.method === 'POST' && p === '/api/accounts/checkin-sync') {
+    return readBody(req).then(async (body) => {
+      try {
+        if (!PROFILE.capabilities.accounts || PROFILE.capabilities.checkin === false) {
+          return json(res, 400, { ok: false, error: '当前客户端不支持账号签到' });
+        }
+        const current = currentAccount();
+        const requestedUid = String(body && body.uid || '').trim();
+        const uid = requestedUid || String(current && current.uid || '').trim();
+        if (!uid || (current && requestedUid && requestedUid !== String(current.uid || ''))) {
+          return json(res, 400, { ok: false, error: '签到状态同步仅支持当前账号' });
+        }
+        const result = await claimDailyForUid(uid);
+        return json(res, 200, { ok: true, result });
+      } catch (error) {
+        return json(res, 400, { ok: false, error: error.message });
+      }
     });
   }
 

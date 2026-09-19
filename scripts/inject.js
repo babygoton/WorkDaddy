@@ -1009,7 +1009,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     "请选择有效的执行日期和时间": "Choose a valid date and time",
     "每月日期必须是 1–31": "Day of month must be 1\u201331",
     '产物索引已变化，请重试同步': 'Artifact index changed; retry synchronization', '已到期': 'Expired', ' 个未获取余额': ' balances unavailable', ' 个不限量': ' unlimited', '无效的账号排序设置': 'Invalid account order settings', '产物索引超过 16MB，未覆盖目标索引': 'Artifact index exceeds 16MB; target index was preserved', '产物索引格式不受支持': 'Unsupported artifact index format', '积分汇总': 'Credit summary', '更多账号设置': 'More account settings', '积分到期分布': 'Credit expiry distribution', '剩余天数 · 积分': 'Days left · Credits', '按剩余天数汇总积分': 'Credits by days remaining', '未知有效期': 'Unknown expiry', '暂无可汇总积分': 'No credits to summarize', '拖拽调整顺序，也可聚焦拖拽按钮后按 ↑ ↓ 调整。新增账号排在最后。': 'Drag to reorder, or focus a handle and press ↑ ↓. New accounts appear last.', '拖拽排序，或按上下方向键调整': 'Drag or use arrow keys to reorder', '调整账号顺序': 'Reorder account', '固定账号顺序': 'Fixed account order', '保存排序失败': 'Failed to save order', '暂无账号': 'No accounts', '{n} 个账号': '{n} accounts', '{n} 个未获取余额': '{n} balances unavailable', '{n} 个不限量': '{n} unlimited', '今日未签到': 'Not checked in today', '浅色': 'Light', '深色': 'Dark', '更多': 'More', '汇总': 'Summary', '账号排序': 'Account order', '按积分临近时间': 'Nearest credit expiry', '固定顺序': 'Fixed order', '今日签到': 'Daily check-in', '今日已签到': 'Checked in today', '今日尚未签到': 'Not checked in today', '客户端加载': 'Client loaded', '打开面板': 'Panel opened', '事件触发（可多选）': 'Event triggers (select any)', '定时间隔（分钟）': 'Interval (minutes)', '定时': 'Scheduled', '每 ': 'Every ', '定时间隔必须是 1–10080 分钟的整数': 'Interval must be an integer from 1 to 10080 minutes', '不支持的面板事件': 'Unsupported panel event', '无签到活动': 'No check-in activity', '登录身份过期': 'Login expired', '刚刚': 'Just now', '分钟前': ' minutes ago', '小时前': ' hours ago', '天前': ' days ago',
-    '发现新版本': 'New version available', '立即更新': 'Update now', '有新版本可用，点击更新。': 'A new version is available. Click Update.', '下载中…': 'Downloading…', '正在打开…': 'Opening…', '安装程序已打开': 'Installer opened', '打开安装程序': 'Open installer', '安装中…': 'Installing…', '重启中…': 'Restarting…', '已完成': 'Completed', '重试更新': 'Retry update',
+    '发现新版本': 'New version available', '立即更新': 'Update now', '有新版本可用，点击更新。': 'A new version is available. Click Update.', '有新版': 'New version', '新版': 'New version', '更新': 'Update', '任务已更新': 'Task updated', '更新自动化任务？': 'Update automation task?', '确认用公开仓库中的新版覆盖本地任务？': 'Replace the local task with the newer public version?', '覆盖': 'Replace', '提示：部分会话尚未完成，当前 Token 和积分仅按已完成用量统计，最终数据可能存在偏差。': 'Note: Some sessions are still in progress. Token and credit totals include completed usage only and may change.', '下载中…': 'Downloading…', '正在打开…': 'Opening…', '安装程序已打开': 'Installer opened', '打开安装程序': 'Open installer', '安装中…': 'Installing…', '重启中…': 'Restarting…', '已完成': 'Completed', '重试更新': 'Retry update',
     '安全传输': 'Secure transfer', '选择内容': 'Select content', '选择账号': 'Select accounts', '选择目标账号': 'Select target account', '选择目标账号…': 'Select a target account…', '密码': 'Password', '请输入密码': 'Enter password', '密码不能为空': 'Password cannot be empty', '请至少选择一项': 'Select at least one item', '处理中…': 'Processing…', '新版文件请输入密码': 'Enter the password for the new file', '新版文件必须输入密码；旧版导出文件可留空。': 'New files require a password; older exports may be left blank.', '新版文件请输入密码；已有的相同短语会自动跳过。': 'Enter the password for the new file; duplicate phrases are skipped.',
     '电脑休眠': 'Computer sleep', '允许电脑休眠': 'Allow computer sleep', '持续禁止休眠': 'Keep awake', '所有会话结束允许休眠': 'Allow sleep when all sessions end', '系统默认，空闲后正常休眠': 'System default; sleep normally when idle', '保持唤醒，防黑屏锁屏': 'Stay awake to prevent screen lock', '任一会话运行中都保持唤醒': 'Stay awake while any session is running', '允许显示器休眠': 'Allow display sleep', '禁止休眠时，是否允许显示器单独黑屏': 'When sleep is blocked, allow the display to turn off',
     '发送错误诊断': 'Send error diagnostics', '推荐开启': 'Recommended', '由环境变量控制': 'Controlled by environment variable', '默认开启 · 设置读取失败': 'Enabled by default · failed to read setting', '保存中…': 'Saving…', '此开关控制脱敏错误诊断。匿名安装数和日活独立统计（随机安装标识、系统、架构、版本、客户端类型及出口国家），不受此开关影响。不包含账号、会话内容、Token 或 API Key。': 'This switch controls redacted error diagnostics. Anonymous installation and daily active counts are collected independently (random installation ID, system, architecture, version, client type, and network country). No accounts, session content, tokens, or API keys.', '查看错误诊断说明': 'View diagnostics details', '问题反馈': 'Report an issue', '会话监听日志': 'Session monitor log', '仅保存在当前页面内存': 'Stored only in this page memory',
@@ -1618,25 +1618,43 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
   // 每个积分段只归入一个剩余天数桶；缺失有效期的余额不展示，不猜测到期日。
   function summarizeCreditDays(accounts, now) {
     var buckets = new Map(), unavailable = 0, unlimited = 0;
-    function add(days, credits) {
-      if (credits > 0 && isFinite(credits)) buckets.set(days, (buckets.get(days) || 0) + credits);
+    function add(days, credits, detail) {
+      if (credits > 0 && isFinite(credits)) {
+        var bucket = buckets.get(days);
+        if (!bucket) { bucket = { credits: 0, segments: [] }; buckets.set(days, bucket); }
+        bucket.credits += credits;
+        if (detail) bucket.segments.push({
+          remaining: credits,
+          total: detail.total || credits,
+          expiresAt: detail.expiresAt,
+          source: detail.source,
+          accountName: detail.accountName,
+        });
+      }
     }
     (accounts || []).forEach(function (account) {
       if (account.creditUnlimited) { unlimited++; return; }
       if (account.creditExpired || isIdentityExpired(account) || typeof account.credits !== 'number' || !isFinite(account.credits)) { unavailable++; return; }
       var balance = Math.max(0, account.credits);
       var segments = Array.isArray(account.creditSegments) ? account.creditSegments : [];
+      var accountName = account.nickname || account.uid || '未命名账号';
       segments.forEach(function (segment) {
         if (!segment || !isFinite(Number(segment.remaining))) return;
         var amount = Math.min(balance, Math.max(0, Number(segment.remaining)));
         var expiry = segment.expiresAt;
         var days = expiry !== null && expiry !== undefined && expiry !== '' && isFinite(Number(expiry))
           ? Math.max(0, Math.ceil((Number(expiry) - now) / 86400000)) : null;
-        add(days, amount); balance -= amount;
+        add(days, amount, { total: segment.total || amount, expiresAt: expiry, source: segment.source, accountName: accountName }); balance -= amount;
       });
       add(null, balance);
     });
-    return { rows: Array.from(buckets, function (item) { return { days: item[0], credits: item[1] }; }).filter(function (row) { return row.days !== null; }).sort(function (a, b) {
+    return { rows: Array.from(buckets, function (item) {
+      var row = { days: item[0], credits: item[1].credits };
+      // Keep the public summary shape stable for existing consumers while the
+      // popup can still render each underlying account segment.
+      Object.defineProperty(row, 'segments', { value: item[1].segments, enumerable: false });
+      return row;
+    }).filter(function (row) { return row.days !== null; }).sort(function (a, b) {
       if (a.days === b.days) return 0;
       if (a.days === null) return 1;
       if (b.days === null) return -1;
@@ -5248,7 +5266,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     var automationDiscoveryPromise = null;
     function preloadAutomationDiscovery() {
       if (automationDiscoveryPromise) return automationDiscoveryPromise;
-      automationDiscoveryPromise = api('/api/automations/discovery').finally(function () { automationDiscoveryPromise = null; });
+      automationDiscoveryPromise = api('/api/automations/discovery?refresh=1').finally(function () { automationDiscoveryPromise = null; });
       return automationDiscoveryPromise;
     }
 
@@ -5314,8 +5332,9 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     function creditPopoverHtml(segment) {
       var lines = String(segment.getAttribute('data-tip') || '').split('\n');
       return '<div class="wbs-daily-popover-head"><strong>' + esc(lines[0] || '积分') + '</strong></div>' +
+        (lines[3] ? '<div class="wbs-credit-tip-account">' + esc(lines[3]) + '</div>' : '') +
         '<div class="wbs-credit-tip-value"><i class="credit"></i><b>' + esc(lines[1] || '') + '</b></div>' +
-        '<div class="wbs-daily-manual">' + esc(lines.slice(2).join(' · ') || '有效期未知') + '</div>';
+        '<div class="wbs-daily-manual">' + esc(lines[2] || '有效期未知') + '</div>';
     }
 
     function hideCreditTooltip() {
@@ -5533,7 +5552,16 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         popup.innerHTML = '<div class="wbs-credit-summary-head"><strong>积分到期分布</strong><span>剩余天数 · 积分</span></div>' +
           '<div class="wbs-credit-summary-chart">' + (summary.rows.map(function (row) {
             var label = row.days === 0 ? '已到期' : row.days + ' 天';
-            return '<div class="wbs-credit-summary-row"><span>' + esc(label) + '</span><div class="wbs-credit-summary-track"><i class="wbs-credit-summary-fill" style="--wbs-credit-alpha:' + creditOpacity(row.days).toFixed(5) + ';width:' + Math.max(1, row.credits / max * 100).toFixed(2) + '%"></i></div><b>' + esc(fmtCredits(row.credits)) + '</b></div>';
+            var total = row.credits || 1;
+            var rowAlpha = creditOpacity(row.days);
+            var nodes = (row.segments || []).map(function (segment) {
+              var amount = Math.max(0, Number(segment.remaining) || 0);
+              var tip = creditSummaryTip(segment);
+              var attrTip = esc(tip).replace(/"/g, '&quot;');
+              var daysLeft = segment.expiresAt === null || segment.expiresAt === undefined || segment.expiresAt === '' ? null : (Number(segment.expiresAt) - Date.now()) / 86400000;
+              return '<span class="wbs-credit-segment" style="--wbs-credit-alpha:' + creditOpacity(daysLeft).toFixed(5) + ';flex:' + Math.max(0.008, amount / total).toFixed(4) + ' 1 0" data-tip="' + attrTip + '" aria-label="' + attrTip + '"></span>';
+            }).join('');
+            return '<div class="wbs-credit-summary-row"><span>' + esc(label) + '</span><div class="wbs-credit-summary-track" style="--wbs-credit-alpha:' + rowAlpha.toFixed(5) + '">' + nodes + '</div><b>' + esc(fmtCredits(row.credits)) + '</b></div>';
           }).join('') || '<div class="wbs-empty">暂无可汇总积分</div>') + '</div>' +
           '<div class="wbs-credit-summary-foot">' + summary.accountCount + ' 个账号' +
           (summary.unavailable ? ' · ' + summary.unavailable + ' 个未获取余额' : '') +
@@ -5549,9 +5577,21 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       listen(button, 'focus', show); listen(button, 'blur', deferHide);
       listen(button, 'click', show);
       listen(button, 'keydown', function (event) { if (event.key === 'Escape') { event.stopPropagation(); hide(); } });
+      listen(popup, 'mouseover', function (event) {
+        var segment = findCreditSegment(event.target);
+        if (!segment || segment === creditTooltipSegment) return;
+        creditTooltipSegment = segment;
+        showCreditTooltip(segment);
+      });
+      listen(popup, 'mouseout', function (event) {
+        var from = findCreditSegment(event.target);
+        var to = findCreditSegment(event.relatedTarget);
+        if (from && from !== to) hideCreditTooltip();
+      });
       listen(popup, 'mouseenter', function () { clearTimeout(hideTimer); });
       listen(popup, 'mouseleave', deferHide);
       listen(popup, 'wheel', function (event) { event.stopPropagation(); });
+      listen(popup, 'scroll', hideCreditTooltip, true);
       listen(popup, 'pointerdown', function (event) { event.stopPropagation(); });
       listen(window, 'resize', hide);
       listen(accountsPane, 'scroll', hide, true);
@@ -6233,11 +6273,11 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       mask.className = 'wbs-modal-mask wbs-usage-modal-mask';
       mask.innerHTML = '<div class="wbs-modal wbs-token-stats-modal" role="dialog" aria-modal="true" aria-labelledby="wbs-token-stats-title">' +
         '<div class="wbs-usage-header"><div class="wbs-token-stats-head"><div class="wbs-modal-title" id="wbs-token-stats-title">用量统计</div></div>' +
-        '<div class="wbs-usage-tabs"><button type="button" class="active" data-usage-tab="token">Token</button><button type="button" data-usage-tab="credit">积分</button></div></div><div class="wbs-usage-scroll wbs-usage-dashboard">' +
-        '<div data-usage-pane="token">' + usageTimeSegmentHtml('token') +
+        '<div class="wbs-usage-tabs"><button type="button" class="active" data-usage-tab="credit">积分</button><button type="button" data-usage-tab="token">Token</button></div></div><div class="wbs-usage-scroll wbs-usage-dashboard">' +
+        '<div data-usage-pane="token" hidden>' + usageTimeSegmentHtml('token') +
         '<div class="wbs-token-source-note">Token 用量仅统计本机记录，在不同电脑上查看的数据可能不一致。</div>' +
         '<div class="wbs-token-stats-content"><div class="wbs-token-stats-body"></div><div class="wbs-token-stats-overlay" role="status" aria-label="正在读取统计…"><div class="wbs-token-stats-spinner"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle></svg><span hidden>首次加载时间较长，请等候</span></div></div></div></div>' +
-        '<div data-usage-pane="credit" hidden>' + usageTimeSegmentHtml('credit') +
+        '<div data-usage-pane="credit">' + usageTimeSegmentHtml('credit') +
         '<div data-credit-result role="status" class="wbs-credit-stats-note" hidden></div>' +
         '<div class="wbs-credit-query-content"><div class="wbs-credit-stats-body wbs-token-stats-body"></div><div class="wbs-credit-sync-overlay" hidden><div class="wbs-credit-sync-progress" role="status" aria-live="polite"><strong>正在查询积分用量…</strong><span data-credit-progress-copy>正在连接…</span><progress data-credit-progress max="100" value="0" aria-label="积分查询进度"></progress><span data-credit-progress-detail></span></div></div></div></div></div>' +
         '<div class="wbs-modal-actions"><button class="wbs-modal-btn" type="button" data-token-close>关闭</button></div></div>';
@@ -6468,7 +6508,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
           hasStats = true;
         }).catch(function (error) { if (!mask.isConnected || serial !== tokenReadSerial) return; if (hasStats) toast('读取失败：' + (error.message || error), true, root); else body.innerHTML = '<div class="wbs-token-stats-empty">读取失败：' + esc(error.message || error) + '</div>'; }).finally(function () { if (!mask.isConnected || serial !== tokenReadSerial) return; if (firstLoadTimer) { clearTimeout(firstLoadTimer); firstLoadTimer = null; } mask.querySelectorAll('[data-token-days]').forEach(function (button) { button.disabled = false; }); overlay.hidden = true; });
       }
-      load();
+      if (mask.querySelector('[data-usage-tab].active').getAttribute('data-usage-tab') === 'credit') loadCredits(); else load();
     }
 
     // ===== Tab 切换 =====
@@ -6486,6 +6526,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       if (name === 'models' && modelsPane && !modelsPane.dataset.built) buildModelsPane();
       if (name === 'enhance' && enhancePane && !enhancePane.dataset.built) buildEnhancePane();
       if (name === 'automations' && automationPane && !automationPane.dataset.built) buildAutomationPane();
+      else if (name === 'automations' && automationPane && automationPane.__wbsRefreshDiscovery) automationPane.__wbsRefreshDiscovery();
       if (name === 'pc' && pcPane && !pcPane.dataset.built) buildPcPane();
       if (name === 'about' && aboutPane && !aboutPane.dataset.built) buildAboutPane();
       if (name === 'settings' && settingsPane && !settingsPane.dataset.built) buildSettingsPane();
@@ -6501,6 +6542,29 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       if (!automationPane) return;
       automationPane.dataset.built = '1';
       var automationState = { tasks: [], runs: [], examples: [], selected: {}, batchMode: false, editingId: null, pollTimer: null, reviewPollTimer: null, reviewingId: null, stopping: {}, agentDraft: '', agentCreating: false, discovery: null, discoveryLoading: true, discoveryError: '' };
+      function comparePackageVersions(left, right) {
+        var a = String(left || '').split('.').map(Number), b = String(right || '').split('.').map(Number);
+        for (var i = 0; i < 3; i++) { if ((a[i] || 0) !== (b[i] || 0)) return (a[i] || 0) > (b[i] || 0) ? 1 : -1; }
+        return 0;
+      }
+      function importedPackage(task) {
+        var info = task && task['x-workdaddy-import'];
+        return info && info.kind === 'local-file' && info.packageId && info.packageVersion ? info : null;
+      }
+      function installedPackage(packageId) {
+        if (!packageId) return null;
+        for (var i = 0; i < automationState.tasks.length; i++) {
+          var info = importedPackage(automationState.tasks[i]);
+          if (info && info.packageId === packageId) return automationState.tasks[i];
+        }
+        return null;
+      }
+      function updateForTask(task) {
+        var info = importedPackage(task);
+        if (!info || !automationState.discovery) return null;
+        var latest = (automationState.discovery.tasks || []).filter(function (item) { return item.packageId === info.packageId && item.compatible !== false; })[0];
+        return latest && comparePackageVersions(latest.packageVersion, info.packageVersion) > 0 ? latest : null;
+      }
       function defaultTask() {
         return { schemaVersion: 2, id: 'task_' + Date.now().toString(36), name: '新自动化任务', description: '', enabled: true, concurrency: { policy: 'skip' }, trigger: { type: 'manual', oncePerNavigation: true }, variables: {}, steps: [] };
       }
@@ -6568,7 +6632,8 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
           var stateClass = active ? 'running' : !task.enabled && !task.manualRunnable ? 'off' : 'idle';
           var action = running ? '<button type="button" class="wbs-auto-icon is-running' + (stopping ? ' is-stopping' : '') + '" data-auto-stop="' + escAttr(run.id) + '" title="' + (stopping ? '正在停止…' : '停止本次执行') + '" aria-label="' + (stopping ? '正在停止…' : '停止本次执行') + '" aria-busy="true"' + (stopping ? ' disabled' : '') + '>' + (stopping ? AUTO_STOPPING_SVG : AUTO_STOP_SVG) + '</button>'
             : task.manualRunnable ? '<button type="button" class="wbs-auto-icon" data-auto-run="' + escAttr(task.id) + '" title="立即运行" aria-label="立即运行">' + MODEL_ENABLE_SVG + '</button>' : '';
-          row.innerHTML = '<div class="wbs-auto-row-head">' + check + '<div class="wbs-auto-name"' + (wbsBuiltinAutomationText(task, 'name') ? '' : ' data-wbs-i18n-skip="1"') + ' title="' + escAttr(task.name) + '">' + esc(task.name) + '</div>' +
+          var update = typeof updateForTask === 'function' ? updateForTask(task) : null;
+          row.innerHTML = '<div class="wbs-auto-row-head">' + check + '<div class="wbs-auto-name"' + (wbsBuiltinAutomationText(task, 'name') ? '' : ' data-wbs-i18n-skip="1"') + ' title="' + escAttr(task.name) + '">' + esc(task.name) + (update ? '<span class="wbs-auto-update-badge">有新版</span>' : '') + '</div>' +
             '<button type="button" class="wbs-auto-review" data-auto-review="' + escAttr(task.id) + '" title="安全评估"' + (automationState.reviewingId ? ' disabled' : '') + '>' + (automationState.reviewingId === task.id ? '评估中…' : '安全评估') + '</button>' +
             '<label class="wbs-switch wbs-auto-enabled" title="' + (task.manualRunnable ? '手动任务无需自动触发' : '启用自动触发') + '"' + (task.manualRunnable || task.compatible === false ? ' hidden' : '') + '><input type="checkbox" data-auto-enabled="' + escAttr(task.id) + '" aria-label="启用自动触发"' + (task.enabled ? ' checked' : '') + '><span class="wbs-switch-slider"></span></label></div>' +
             (task.description ? '<div class="wbs-auto-description"' + (wbsBuiltinAutomationText(task, 'description') ? '' : ' data-wbs-i18n-skip="1"') + ' title="' + escAttr(task.description) + '">' + esc(task.description) + '</div>' : '') +
@@ -6638,9 +6703,13 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         }
         matches.slice((page - 1) * pageSize, page * pageSize).forEach(function (task) {
           var item = document.createElement('section'); item.className = 'wbs-auto-discovery-item';
-          item.innerHTML = '<div class="wbs-auto-discovery-head"><div class="wbs-auto-discovery-name" data-wbs-i18n-skip="1"></div><span class="wbs-auto-discovery-version"></span></div><div class="wbs-auto-discovery-description" data-wbs-i18n-skip="1"></div><div class="wbs-auto-discovery-foot"><div class="wbs-auto-sources"></div><button class="wbs-modal-btn wbs-modal-ok" type="button" data-auto-discovery-import></button></div>';
+          item.innerHTML = '<div class="wbs-auto-discovery-head"><div class="wbs-auto-discovery-name" data-wbs-i18n-skip="1"></div><span class="wbs-auto-discovery-version"></span><span class="wbs-auto-discovery-update" hidden>新版</span></div><div class="wbs-auto-discovery-description" data-wbs-i18n-skip="1"></div><div class="wbs-auto-discovery-foot"><div class="wbs-auto-sources"></div><button class="wbs-modal-btn wbs-modal-ok" type="button" data-auto-discovery-import></button></div>';
           item.querySelector('.wbs-auto-discovery-name').textContent = task.name || '未命名任务';
-          item.querySelector('.wbs-auto-discovery-version').textContent = 'API V' + (Number(task.schemaVersion) || 1);
+          item.querySelector('.wbs-auto-discovery-version').textContent = task.packageVersion ? 'v' + task.packageVersion : 'API V' + (Number(task.schemaVersion) || 1);
+          var installed = installedPackage(task.packageId);
+          var installedInfo = importedPackage(installed);
+          var hasUpdate = !!(installedInfo && task.packageVersion && comparePackageVersions(task.packageVersion, installedInfo.packageVersion) > 0);
+          item.querySelector('.wbs-auto-discovery-update').hidden = !hasUpdate;
           var description = item.querySelector('.wbs-auto-discovery-description');
           description.textContent = task.description || '暂无说明';
           var sources = item.querySelector('.wbs-auto-sources');
@@ -6658,8 +6727,9 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
           });
           var importButton = item.querySelector('[data-auto-discovery-import]');
           importButton.setAttribute('data-auto-discovery-import', task.key || '');
+          importButton.setAttribute('data-auto-discovery-replace', hasUpdate ? '1' : '0');
           importButton.disabled = task.compatible === false;
-          importButton.textContent = task.compatible === false ? '不兼容' : '导入';
+          importButton.textContent = task.compatible === false ? '不兼容' : hasUpdate ? '更新' : '导入';
           list.appendChild(item);
         });
       }
@@ -6699,15 +6769,23 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
           }
           var button = event.target.closest && event.target.closest('[data-auto-discovery-import]');
           if (!button || button.disabled) return;
-          button.disabled = true; button.textContent = '导入中…';
-          api('/api/automations/discovery/import', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ key: button.getAttribute('data-auto-discovery-import') }) }).then(function (result) {
-            closePanelModal(mask);
-            toast(result.imported ? '任务已导入，启用后生效' : '任务已存在，未重复导入', false, root);
-            return load();
-          }).catch(function (error) {
-            button.disabled = false; button.textContent = '导入';
-            toast(error.message || '导入失败', true, root);
-          });
+          var replaceExisting = button.getAttribute('data-auto-discovery-replace') === '1';
+          var submitImport = function () {
+            button.disabled = true; button.textContent = '导入中…';
+            api('/api/automations/discovery/import', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ key: button.getAttribute('data-auto-discovery-import'), replaceExisting: replaceExisting }) }).then(function (result) {
+              closePanelModal(mask);
+              toast(result.replaced ? '任务已更新' : result.imported ? '任务已导入，启用后生效' : '任务已存在，未重复导入', false, root);
+              return load();
+            }).catch(function (error) {
+              button.disabled = false; button.textContent = replaceExisting ? '更新' : '导入';
+              toast(error.message || '导入失败', true, root);
+            });
+          };
+          if (replaceExisting) {
+            showAutomationConfirm('更新自动化任务？', '确认用公开仓库中的新版覆盖本地任务？', submitImport, '覆盖');
+            return;
+          }
+          submitImport();
         });
         search.focus();
       }
@@ -6717,6 +6795,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         if (button) { button.disabled = true; button.classList.add('is-loading'); button.querySelector('span').textContent = '正在发现…'; }
         return preloadAutomationDiscovery().then(function (result) {
           automationState.discovery = result;
+          render();
           return result;
         }).catch(function (error) {
           automationState.discoveryError = error.message || '公开任务加载失败';
@@ -7050,10 +7129,11 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         else if (button.hasAttribute('data-auto-copy')) { var copy = JSON.parse(JSON.stringify(task)); copy.id = 'task_' + Date.now().toString(36); copy.name = task.name + '（副本）'; showEditor(copy); }
         else if (button.hasAttribute('data-auto-delete')) showAutomationConfirm('删除该自动化任务？', '删除后无法恢复。', function () { api('/api/automations/bulk', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ids: [id], action: 'delete' }) }).then(load).catch(function (err) { toast(err.message || '删除失败', true, root); }); });
       });
-      registerDisposer(function () { if (automationState.pollTimer) clearInterval(automationState.pollTimer); if (automationState.reviewPollTimer) clearTimeout(automationState.reviewPollTimer); hideEditor(); root.querySelectorAll('.wbs-auto-dialog-mask').forEach(closePanelModal); });
+      registerDisposer(function () { if (automationState.pollTimer) clearInterval(automationState.pollTimer); if (automationState.reviewPollTimer) clearTimeout(automationState.reviewPollTimer); if (automationPane.__wbsRefreshDiscovery === loadAutomationDiscovery) delete automationPane.__wbsRefreshDiscovery; hideEditor(); root.querySelectorAll('.wbs-auto-dialog-mask').forEach(closePanelModal); });
       load();
       loadAgentInfo();
       loadAutomationDiscovery();
+      automationPane.__wbsRefreshDiscovery = loadAutomationDiscovery;
       automationState.pollTimer = setInterval(load, 2500);
     }
 
@@ -7132,21 +7212,21 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       sessionsPane.innerHTML =
         '<div class="wbs-pcard">' +
         '<div class="wbs-sess-filters">' +
-        '<div class="wbs-sess-filter-row"><span class="wbs-sess-flabel">账号</span><select class="wbs-sess-select" id="wbs-sess-account-select" title="选择要查看的账号"><option value="">加载中…</option></select></div>' +
-        '<div class="wbs-sess-filter-row"><span class="wbs-sess-flabel">时间</span><div class="wbs-sess-seg" id="wbs-sess-range-seg">' +
-        '<button class="wbs-sess-seg-btn" type="button" data-range="today">今天</button>' +
-        '<button class="wbs-sess-seg-btn" type="button" data-range="7d">近 7 天</button>' +
-        '<button class="wbs-sess-seg-btn" type="button" data-range="30d">近 30 天</button>' +
-        '<button class="wbs-sess-seg-btn active" type="button" data-range="all">全部</button>' +
+        '<button class="wbs-sess-auto-all" type="button" id="wbs-sess-auto-all" role="checkbox" aria-checked="false" aria-label="自动同步所有会话" title="切换账号时自动同步当前账号的所有会话，包括之后新增的会话">' +
+        '<span class="wbs-sess-auto-all-box" aria-hidden="true"><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="12" height="12" rx="2"/><path class="wbs-sess-auto-all-check" d="m4.5 8 2.2 2.2L11.5 5.5"/></svg></span>' +
+        '<span class="wbs-sess-auto-all-label">自动同步所有会话</span>' +
+        '</button>' +
+        '<div class="wbs-sess-filter-row wbs-sess-account-filter"><span class="wbs-sess-flabel">账号</span><select class="wbs-sess-select" id="wbs-sess-account-select" title="选择要查看的账号"><option value="">加载中…</option></select></div>' +
+        '<div class="wbs-sess-filter-row wbs-sess-time-filter"><span class="wbs-sess-flabel">时间</span><div class="wbs-usage-segment wbs-sess-seg" id="wbs-sess-range-seg">' +
+        '<button class="wbs-sess-seg-btn" type="button" aria-pressed="false" data-range="today">今天</button>' +
+        '<button class="wbs-sess-seg-btn" type="button" aria-pressed="false" data-range="7d">近 7 天</button>' +
+        '<button class="wbs-sess-seg-btn" type="button" aria-pressed="false" data-range="30d">近 30 天</button>' +
+        '<button class="wbs-sess-seg-btn active" type="button" aria-pressed="true" data-range="all">全部</button>' +
         '</div></div>' +
         '</div>' +
         '<div class="wbs-sess-toolbar">' +
         '<button class="wbs-sess-bbtn" type="button" id="wbs-sess-batch">批量操作</button>' +
         '<button class="wbs-sess-bbtn" type="button" id="wbs-sess-import" title="从加密文件导入会话">' + IMPORT_ICON + '<span>导入</span></button>' +
-        '<button class="wbs-sess-auto-all" type="button" id="wbs-sess-auto-all" role="checkbox" aria-checked="false" aria-label="自动同步所有会话" title="切换账号时自动同步当前账号的所有会话，包括之后新增的会话">' +
-        '<span class="wbs-sess-auto-all-box" aria-hidden="true"><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="12" height="12" rx="2"/><path class="wbs-sess-auto-all-check" d="m4.5 8 2.2 2.2L11.5 5.5"/></svg></span>' +
-        '<span class="wbs-sess-auto-all-label">自动同步所有会话</span>' +
-        '</button>' +
         '<span class="wbs-sess-count" id="wbs-sess-count"></span>' +
         '<div class="wbs-sess-batchbar" id="wbs-sess-batchbar" style="display:none">' +
         '<button class="wbs-sess-bbtn wbs-sess-check-all" type="button" id="wbs-sess-check-all">全选</button>' +
@@ -7349,6 +7429,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       var button = sessionsPane.querySelector('#wbs-sess-auto-all');
       if (!button) return;
       var enabled = !!sessionsState.autoCopyAll;
+      button.disabled = !!sessionsState.batchMode || !!sessionsState.autoCopyAllBusy;
       button.classList.toggle('active', enabled);
       button.setAttribute('aria-checked', enabled ? 'true' : 'false');
     }
@@ -7357,7 +7438,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       if (!button || button.disabled) return;
       var previous = !!sessionsState.autoCopyAll;
       sessionsState.autoCopyAll = !!enabled;
-      button.disabled = true;
+      sessionsState.autoCopyAllBusy = true;
       renderSessions();
       api('/api/sessions/auto-copy-all', {
         method: 'POST',
@@ -7365,12 +7446,12 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         body: JSON.stringify({ enabled: !!enabled }),
       }).then(function (response) {
         sessionsState.autoCopyAll = !!(response && response.autoCopyAll);
-        button.disabled = false;
+        sessionsState.autoCopyAllBusy = false;
         renderSessions();
         toast(sessionsState.autoCopyAll ? '已开启自动同步所有会话' : '已关闭自动同步所有会话', false, root);
       }).catch(function (e) {
         sessionsState.autoCopyAll = previous;
-        button.disabled = false;
+        sessionsState.autoCopyAllBusy = false;
         renderSessions();
         toast('自动同步所有会话设置失败: ' + (e.message || e), true, root);
       });
@@ -7532,18 +7613,13 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     }
 
     // 事件绑定（元素在 buildSessionsPane 之后才存在）
-    // 批量模式工具栏切换：开启时隐藏「批量操作/count/刷新」并在同一行显示批量操作按钮；
-    // 关闭时恢复。批量按钮行与筛选行共用 toolbar，不再另起一行。
+    // 批量模式保留顶部筛选和工具栏，禁用控件并在下方显示批量操作。
     function setSessBatchBar(on) {
       var bar = sessionsPane.querySelector('#wbs-sess-batchbar');
-      var bb = sessionsPane.querySelector('#wbs-sess-batch');
-      var importBtn = sessionsPane.querySelector('#wbs-sess-import');
-      var autoCopyAllBtn = sessionsPane.querySelector('#wbs-sess-auto-all');
-      var cnt = sessionsPane.querySelector('#wbs-sess-count');
-      if (bb) { bb.style.display = on ? 'none' : ''; bb.classList.toggle('active', on); }
-      if (importBtn) importBtn.style.display = on ? 'none' : '';
-      if (autoCopyAllBtn) autoCopyAllBtn.style.display = on ? 'none' : '';
-      if (cnt) cnt.style.display = on ? 'none' : '';
+      sessionsPane.querySelectorAll('.wbs-sess-filters button,.wbs-sess-filters select,#wbs-sess-batch,#wbs-sess-import').forEach(function (control) {
+        control.disabled = !!on;
+      });
+      updateAutoCopyAllButton();
       if (bar) bar.style.display = on ? 'flex' : 'none';
     }
 
@@ -7559,15 +7635,19 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       if (rangeSeg) {
         rangeSeg.addEventListener('click', function (e) {
           var b = e.target.closest ? e.target.closest('.wbs-sess-seg-btn') : null;
-          if (!b) return;
-          rangeSeg.querySelectorAll('.wbs-sess-seg-btn').forEach(function (x) { x.classList.toggle('active', x === b); });
+          if (!b || b.disabled || sessionsState.batchMode) return;
+          rangeSeg.querySelectorAll('.wbs-sess-seg-btn').forEach(function (x) {
+            var active = x === b;
+            x.classList.toggle('active', active);
+            x.setAttribute('aria-pressed', String(active));
+          });
           sessionsState.range = b.getAttribute('data-range');
           sessionsState.selected = {};
           sessionsState.wsExpanded = {};
           loadSessions();
         });
       }
-      // 批量操作：进入批量模式（工具栏右侧按钮隐藏，批量按钮在同一行原位显示）。退出通过「取消」按钮
+      // 批量操作：禁用顶部控件，退出通过「取消」按钮。
       var batchBtn = sessionsPane.querySelector('#wbs-sess-batch');
       if (batchBtn) {
         batchBtn.addEventListener('click', function () {
@@ -9385,7 +9465,8 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       fab.classList.toggle('hidden', open); // 打开时隐藏按钮
       fabQuietMode.wake();
       if (open) {
-        if (newlyOpened && typeof preloadAutomationDiscovery === 'function') preloadAutomationDiscovery().catch(function () {});
+        if (newlyOpened && typeof automationPane !== 'undefined' && automationPane && automationPane.__wbsRefreshDiscovery) automationPane.__wbsRefreshDiscovery();
+        else if (newlyOpened && typeof preloadAutomationDiscovery === 'function') preloadAutomationDiscovery().catch(function () {});
         if (newlyOpened && !(options && options.automation)) api('/api/automations/events', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ type: 'panelOpened' }) }).catch(function () {});
         if (newlyOpened) state.dailyProgressForceNext = true;
         refresh();
@@ -12729,6 +12810,12 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       return (source || '积分') + '\n' + amount + '\n' + expiryLine;
     }
 
+    function creditSummaryTip(segment) {
+      var accountName = segment.accountName || '未命名账号';
+      var lines = creditTip(segment).split('\n');
+      return (lines[0] || '积分') + '\n' + (lines[1] || '') + '\n' + (lines[2] || '') + '\n' + accountName;
+    }
+
     function creditBarHtml(credits, segments) {
       var list = Array.isArray(segments) ? segments.filter(function (s) { return s && Number(s.remaining) > 0; }) : [];
       if (!list.length && Number(credits) > 0) {
@@ -13600,6 +13687,21 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         .then(function (data) {
           if (!alive || requestId !== state.accountRefreshId) return;
           render(data);
+          // WorkBuddy can complete today's check-in outside WorkDaddy. Ask the
+          // idempotent official endpoint for the current account only, then
+          // patch that card in place so read-only account snapshots stay read-only.
+          if (!WBS_PROFILE_IS_AI && CAPS.checkin !== false && data.current && data.current.uid) {
+            api('/api/accounts/checkin-sync', {
+              method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+            }).then(function (sync) {
+              if (!alive || requestId !== state.accountRefreshId || !sync || !sync.result) return;
+              var result = sync.result;
+              var current = state.accounts.filter(function (account) { return String(account.uid) === String(result.uid || data.current.uid); })[0];
+              if (!current) return;
+              current.checkin = { ok: !!result.ok, inactive: !!result.inactive, code: result.code, message: result.message };
+              updateCheckinCells([current]);
+            }).catch(function () {});
+          }
           fetchCreditsForAccounts();
           fetchActivityForAccounts();
           fetchDailyProgressForAccounts(forceDailyProgress);
@@ -14440,7 +14542,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '.wbs-daily-streak-label{font-size:10.5px;line-height:1;font-weight:600;white-space:nowrap;font-variant-numeric:tabular-nums;color:inherit}.wbs-daily-streak-label.is-pending{color:var(--wb-icon-tertiary,#7c818b);font-weight:500}.wbs-daily-rings.is-loading .wbs-daily-vessel{opacity:.58}.wbs-daily-rings.is-loading .wbs-daily-cat-mark{animation:wbs-daily-cat-pulse 1.2s ease-in-out infinite}@keyframes wbs-daily-cat-pulse{50%{opacity:.45}}',
     '.wbs-status-popover{position:fixed;z-index:2147483647;width:306px;box-sizing:border-box;padding:12px;border:1px solid var(--wb-border-subtle,rgba(20,24,32,.14));border-radius:11px;background:color-mix(in srgb,var(--wb-bg-popover,#fff) 96%,transparent);color:var(--wb-color-text-primary,#1f1f1f);box-shadow:0 16px 42px rgba(20,24,32,.16),inset 0 1px 0 rgba(255,255,255,.5);backdrop-filter:blur(20px) saturate(1.08);-webkit-backdrop-filter:blur(20px) saturate(1.08);font:12px/1.45 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;pointer-events:auto}.wbs-status-popover.is-daily{width:620px;max-width:calc(100vw - 16px);max-height:calc(100vh - 16px);overflow-y:auto;overscroll-behavior:contain;scrollbar-width:none}',
     '.wbs-status-popover.is-daily::-webkit-scrollbar,.wbs-growth-task-list::-webkit-scrollbar{display:none}',
-    '.wbs-status-popover.is-passive{pointer-events:none}.wbs-status-popover[hidden]{display:none!important}.wbs-daily-popover-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:9px}.wbs-daily-popover-head strong{font-size:13px;font-weight:700;white-space:nowrap}.wbs-daily-popover-head span{color:var(--wb-icon-tertiary,#7c818b);font-size:10px;font-variant-numeric:tabular-nums}.wbs-daily-refresh-time{display:inline-flex;align-items:center;gap:5px;white-space:nowrap}',
+    '.wbs-status-popover.is-passive{pointer-events:none}.wbs-status-popover.is-credit{height:auto;min-height:0;max-height:calc(100vh - 16px);overflow:auto;overflow-wrap:anywhere}.wbs-status-popover[hidden]{display:none!important}.wbs-daily-popover-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:9px}.wbs-daily-popover-head strong{font-size:13px;font-weight:700;white-space:nowrap}.wbs-daily-popover-head span{color:var(--wb-icon-tertiary,#7c818b);font-size:10px;font-variant-numeric:tabular-nums}.wbs-daily-refresh-time{display:inline-flex;align-items:center;gap:5px;white-space:nowrap}',
     '.wbs-daily-refresh-spinner{width:9px;height:9px;box-sizing:border-box;border:1.5px solid color-mix(in srgb,var(--wbs-ring-growth) 25%,transparent);border-top-color:var(--wbs-ring-growth);border-radius:50%;animation:wbs-daily-spin .72s linear infinite}@keyframes wbs-daily-spin{to{transform:rotate(360deg)}}',
     '.wbs-daily-detail{display:grid;grid-template-columns:8px 72px minmax(0,1fr);align-items:center;gap:7px;min-height:31px;margin-top:5px;padding:0 9px;border:1px solid var(--wb-border-subtle,rgba(20,24,32,.1));border-radius:8px;background:color-mix(in srgb,var(--wb-bg-secondary,#f6f7f8) 72%,transparent)}',
     '.wbs-daily-detail i,.wbs-credit-tip-value i{display:block;width:8px;height:8px;border-radius:50%;background:currentColor;box-shadow:0 0 0 2px color-mix(in srgb,currentColor 17%,transparent)}.wbs-daily-detail i.growth{color:var(--wbs-ring-growth)}.wbs-daily-detail i.cat{color:var(--wbs-ring-cat)}.wbs-daily-detail i.credit{color:var(--wbs-tip-credit)}.wbs-daily-detail>span{color:var(--wb-color-text-secondary,#5f6368);white-space:nowrap}.wbs-daily-detail b{min-width:0;text-align:right;font-size:11px;font-weight:650;overflow-wrap:anywhere}.wbs-daily-detail.cat-row b{white-space:nowrap;font-variant-numeric:tabular-nums}.wbs-daily-cat-value{display:flex;min-width:0;align-items:center;justify-content:flex-end;gap:8px}.wbs-travel-claim{flex:0 0 auto}',
@@ -14451,6 +14553,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '.wbs-daily-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px;margin-top:4px}.wbs-daily-action{display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:center;gap:7px;min-height:29px;padding:3px 5px 3px 8px;border:1px solid var(--wb-border-subtle,rgba(20,24,32,.1));border-radius:7px;background:color-mix(in srgb,var(--wb-bg-secondary,#f6f7f8) 72%,transparent)}.wbs-daily-action span{min-width:0;color:var(--wb-color-text-secondary,#5f6368);white-space:nowrap}.wbs-daily-action b{color:var(--wb-color-text-primary,#1f1f1f);font-size:11px;font-weight:650;white-space:nowrap}.wbs-daily-action-button{min-width:46px}',
     '.wbs-growth-rewards{margin-top:8px;padding:8px;border:1px solid var(--wb-border-subtle,rgba(20,24,32,.1));border-radius:8px;background:color-mix(in srgb,var(--wb-bg-secondary,#f6f7f8) 46%,transparent)}.wbs-growth-rewards-head,.wbs-growth-tier{display:grid;align-items:center;column-gap:8px}.wbs-growth-rewards-head{grid-template-columns:minmax(0,1fr) auto;padding-bottom:6px;border-bottom:1px solid var(--wb-border-subtle,rgba(20,24,32,.1))}.wbs-growth-rewards-head span{font-weight:650;white-space:nowrap}.wbs-growth-rewards-head em{font-size:10px;font-style:normal;color:var(--wb-icon-tertiary,#7c818b);white-space:nowrap}.wbs-growth-tier{grid-template-columns:52px 38px minmax(0,1fr);min-height:24px;color:var(--wb-color-text-secondary,#5f6368);font-size:10.5px}.wbs-growth-tier span,.wbs-growth-tier em,.wbs-growth-tier b{white-space:nowrap}.wbs-growth-tier em{font-style:normal;color:var(--wb-icon-tertiary,#7c818b)}.wbs-growth-tier b{text-align:right;color:var(--wb-color-text-secondary,#5f6368);font-weight:650}.wbs-growth-tier.is-claimed b{color:var(--wb-icon-tertiary,#7c818b)}',
     '.wbs-status-popover button:not([disabled]){cursor:pointer}',
+    '.wbs-credit-tip-account{margin:-4px 0 8px;color:var(--wb-icon-tertiary,#8a8f98);font-size:10px;line-height:1.35;overflow-wrap:anywhere}',
     '.wbs-credit-tip-value{display:flex;align-items:center;gap:8px;padding:8px 9px;border:1px solid var(--wb-border-subtle,rgba(20,24,32,.1));border-radius:8px;background:color-mix(in srgb,var(--wb-bg-secondary,#f6f7f8) 72%,transparent);color:var(--wb-color-text-primary,#1f1f1f)}.wbs-credit-tip-value i.credit{color:var(--wbs-tip-credit)}.wbs-credit-tip-value b{font-size:12px;font-variant-numeric:tabular-nums}.wbs-credit-tip-value+.wbs-daily-manual{margin-top:11px}',
     '.wbs-daily-popover-empty,.wbs-daily-refresh-error{margin-top:8px;padding-top:8px;border-top:1px solid var(--wb-border-subtle,rgba(20,24,32,.12));color:var(--wb-icon-secondary,#667085);font-size:10.5px;line-height:1.55;overflow-wrap:anywhere}.wbs-daily-refresh-error{color:var(--wb-color-text-secondary,#5f6368)}',
     'html.cb-dark .wbs-status-popover,html[data-theme="dark"] .wbs-status-popover,body[data-vscode-theme-name*="dark" i] .wbs-status-popover{background:color-mix(in srgb,var(--wb-bg-popover,#202126) 88%,transparent);border-color:var(--wb-border-subtle,rgba(255,255,255,.14));color:var(--wb-color-text-primary,#f2f3f5);box-shadow:0 14px 38px rgba(0,0,0,.42),inset 0 1px 0 rgba(255,255,255,.08)}',
@@ -14670,7 +14773,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '.wbs-auto-row-head{display:flex;align-items:center;gap:8px;min-width:0}.wbs-auto-enabled{flex-shrink:0}.wbs-auto-enabled[hidden]{display:none!important}.wbs-auto-description{color:var(--wb-color-text-secondary,#666);font-size:11px;line-height:1.5;overflow-wrap:anywhere;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}.wbs-auto-row-foot{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:end;gap:10px}.wbs-auto-details{min-width:0}.wbs-auto-triggers{display:flex;flex-wrap:wrap;gap:4px}.wbs-auto-trigger-chip{display:inline-flex;max-width:100%;padding:2px 6px;border:1px solid var(--wb-border-subtle,#e7e7e7);border-radius:6px;background:var(--wb-bg-tertiary,#f5f5f5);color:var(--wb-color-text-secondary,#666);font-size:10px;line-height:1.4;overflow-wrap:anywhere}.wbs-auto-state-line{display:flex;align-items:center;flex-wrap:wrap;gap:4px 8px;min-height:16px;margin-top:5px;color:var(--wb-icon-tertiary,#888);font-size:10px}.wbs-auto-state{display:inline-flex;align-items:center;gap:4px}.wbs-auto-state:before{content:"";width:4px;height:4px;flex:0 0 4px;border-radius:50%;background:currentColor}.wbs-auto-state.running{color:var(--wb-button-primary-bg,#1f1f1f)}.wbs-auto-state.off{opacity:.65}.wbs-auto-last-run.failed{color:var(--wb-color-text-primary,#222)}.wbs-auto-icon:focus-visible{outline:2px solid var(--wb-button-primary-bg,#1f1f1f);outline-offset:1px}',
     '.wbs-auto-row:hover{background:var(--wb-bg-hover,#f5f5f5)}',
     '.wbs-auto-check{display:flex;align-items:center;justify-content:center;flex:0 0 20px;cursor:pointer}.wbs-auto-check input{accent-color:var(--wb-button-primary-bg,#1f1f1f)}',
-    '.wbs-auto-main{min-width:0;flex:1}.wbs-auto-name{display:block;flex:1;min-width:0;font-size:12px;font-weight:650;color:var(--wb-color-text-primary,#1f1f1f);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+    '.wbs-auto-main{min-width:0;flex:1}.wbs-auto-name{display:flex;align-items:center;gap:6px;flex:1;min-width:0;font-size:12px;font-weight:650;color:var(--wb-color-text-primary,#1f1f1f);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.wbs-auto-update-badge,.wbs-auto-discovery-update{flex:0 0 auto;padding:2px 5px;border:1px solid var(--wb-accent-blue,#4f86ff);border-radius:5px;background:color-mix(in srgb,var(--wb-accent-blue,#4f86ff) 12%,transparent);color:var(--wb-accent-blue,#4f86ff);font-size:10px;font-weight:600;line-height:1.2;white-space:nowrap}.wbs-auto-update-badge{overflow:visible}',
     '.wbs-auto-review{flex:0 0 auto;min-width:64px;height:25px;padding:0 6px;border:1px solid var(--wb-border-default,#ddd);border-radius:6px;background:var(--wb-bg-tertiary,#f5f5f5);color:var(--wb-color-text-secondary,#666);font:inherit;font-size:11px;cursor:pointer}.wbs-auto-review:hover{background:var(--wb-bg-hover,#eee);color:var(--wb-color-text-primary,#222)}.wbs-auto-review:focus-visible{outline:2px solid var(--wb-button-primary-bg,#1f1f1f);outline-offset:2px}.wbs-auto-review:disabled{opacity:.6;cursor:wait}',
     '.wbs-auto-status{flex:0 0 auto;padding:2px 6px;border-radius:999px;font-size:10px;font-weight:500}.wbs-auto-status.on{color:#1b7f56;background:rgba(46,190,126,.14)}.wbs-auto-status.off{color:var(--wb-icon-tertiary,#888);background:var(--wb-bg-tertiary,#f1f1f1)}',
     '.wbs-auto-meta{margin-top:3px;color:var(--wb-icon-tertiary,#999);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
@@ -14701,11 +14804,9 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '.wbs-nd-title{font-size:12px;font-weight:600;color:var(--wb-color-text-primary,#1f1f1f);white-space:nowrap}',
     '.wbs-nd-hint{font-size:11px;color:var(--wb-icon-tertiary,#999);text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
     /* 会话页：筛选 + 批量 + 列表 + 迁移/删除弹窗 */
-    '.wbs-sess-filters{display:flex;flex-direction:row;align-items:center;gap:8px;margin-bottom:10px}',
-    // 账号 + 时间筛选同一行：账号下拉缩窄，时间分段占用剩余宽度
-    '.wbs-sess-filter-row{display:flex;align-items:center;gap:8px;flex:0 0 auto}',
-    '.wbs-sess-filter-row:last-child{flex:1 1 auto;min-width:0}',
-    '#wbs-sess-account-select{max-width:112px}',
+    '.wbs-sess-filters{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:10px;min-width:0}',
+    '.wbs-sess-account-filter{flex:0 1 190px;min-width:150px}',
+    '.wbs-sess-time-filter{flex:1 1 240px;min-width:0}',
     /* 会话页/模型页：卡片与列表贴底，减少底部留白 */
     '.wbs-pane[data-pane="sessions"]{padding-bottom:1px}',
     '.wbs-pane[data-pane="sessions"] > .wbs-pcard{margin-bottom:0;padding-bottom:4px}',
@@ -14723,8 +14824,9 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '.wbs-sess-select:hover{border-color:var(--wb-border-strong,#bbb)}',
     '.wbs-sess-select:focus{outline:none;border-color:var(--wb-accent-blue,#4f86ff)}',
     /* 时间筛选：Segment 组件（容器灰底 + 激活黑块，与主题页 segmented 一致） */
-    '.wbs-sess-seg{display:flex;flex:1;min-width:0;background:var(--wb-bg-tertiary,#f0f0f0);border-radius:10px;padding:3px;gap:3px}',
-    '.wbs-sess-seg-btn{flex:1;padding:6px 4px;border:none;border-radius:8px;background:transparent;color:var(--wb-icon-secondary,#666);font-size:12px;font-weight:600;cursor:pointer;transition:all .15s;font-family:inherit;white-space:nowrap}',
+    '.wbs-sess-time-filter .wbs-sess-seg{display:flex;flex:1 1 auto;width:auto;max-width:none;min-width:0}',
+    '.wbs-sess-time-filter .wbs-sess-seg button{flex:1 1 0;min-width:0;padding:0 4px}',
+    '.wbs-sess-seg-btn{flex:0 0 auto;padding:6px 4px;border:none;border-radius:8px;background:transparent;color:var(--wb-icon-secondary,#666);font-size:12px;font-weight:600;cursor:pointer;transition:all .15s;font-family:inherit;white-space:nowrap}',
     '.wbs-sess-seg-btn:hover{color:var(--wb-color-text-primary,#1f1f1f)}',
     '.wbs-sess-seg-btn.active{background:var(--wb-button-primary-bg,#1f1f1f);color:var(--wb-button-primary-fg,#fff);box-shadow:0 1px 4px rgba(0,0,0,.2)}',
     '.wbs-sess-toolbar{display:flex;align-items:center;flex-wrap:wrap;gap:6px;margin-bottom:8px}',
@@ -14747,7 +14849,10 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '.wbs-sess-auto-all.active .wbs-sess-auto-all-box{color:var(--wb-button-primary-bg,#1f1f1f)}',
     '.wbs-sess-auto-all.active .wbs-sess-auto-all-check{opacity:1}',
     '.wbs-sess-auto-all-label{white-space:nowrap}',
+    '.wbs-sess-account-filter .wbs-sess-select{width:100%;max-width:none}',
     '.wbs-sess-batchbar{display:flex;align-items:center;gap:5px;flex-wrap:wrap;min-width:0;margin:0;padding:0;border:none;background:transparent}',
+    '#wbs-sess-batchbar{flex-basis:100%}',
+    '.wbs-sess-filters button:disabled,.wbs-sess-filters select:disabled,#wbs-sess-batch:disabled,#wbs-sess-import:disabled{opacity:.45;cursor:not-allowed;pointer-events:none}',
     '.wbs-sess-done{margin-left:auto;color:#fff;background:#141416;border-color:#141416}',
     '.wbs-sess-done:hover{background:#2a2a2e;color:#fff}',
     /* 删除按钮：图标按钮，尺寸与兄弟一致；点击后变警告色（armed） */
@@ -15062,7 +15167,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '.wbs-account-order-modal :is(button,input):focus-visible{outline:2px solid var(--wb-accent-blue);outline-offset:2px}.wbs-account-order-modal button:disabled{opacity:.5;cursor:default}',
     '.wbs-credit-summary-popover{position:fixed;z-index:2147483647;box-sizing:border-box;width:300px;max-width:calc(100vw - 16px);padding:12px;background:var(--wb-bg-popover,var(--wb-bg-primary));color:var(--wb-color-text-primary);border:1px solid var(--wb-border-default);border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,.18);font:12px/1.5 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;overflow:auto;overscroll-behavior:contain;pointer-events:auto}',
     '.wbs-credit-summary-head{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:10px}.wbs-credit-summary-head strong{font-size:13px}.wbs-credit-summary-head span,.wbs-credit-summary-foot{font-size:10px;color:var(--wb-color-text-secondary)}',
-    '.wbs-credit-summary-chart{max-height:230px;overflow:auto;overscroll-behavior:contain}.wbs-credit-summary-row{display:grid;grid-template-columns:68px minmax(30px,1fr) 58px;align-items:center;gap:8px;min-height:28px}.wbs-credit-summary-row>span{font-size:11px;color:var(--wb-color-text-secondary)}.wbs-credit-summary-row>b{text-align:right;font-size:11px;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}.wbs-credit-summary-track{height:8px;border-radius:4px;background:var(--wb-bg-tertiary);overflow:hidden}.wbs-credit-summary-track i{display:block;height:100%;border-radius:4px;}.wbs-credit-summary-foot{border-top:1px solid var(--wb-border-subtle);padding-top:8px;margin-top:8px}',
+    '.wbs-credit-summary-chart{max-height:230px;overflow:auto;overscroll-behavior:contain}.wbs-credit-summary-row{display:grid;grid-template-columns:68px minmax(30px,1fr) 58px;align-items:center;gap:8px;min-height:28px}.wbs-credit-summary-row>span{font-size:11px;color:var(--wb-color-text-secondary)}.wbs-credit-summary-row>b{text-align:right;font-size:11px;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}.wbs-credit-summary-track{display:flex;align-items:stretch;gap:2px;height:8px;border-radius:4px;background:var(--wb-bg-tertiary);overflow:visible}.wbs-credit-summary-track .wbs-credit-segment{height:8px;min-width:3px}.wbs-credit-summary-track i{display:block;height:100%;border-radius:4px;}.wbs-credit-summary-foot{border-top:1px solid var(--wb-border-subtle);padding-top:8px;margin-top:8px}',
     'html.cb-dark .wbs-credit-summary-popover,html[data-theme="dark"] .wbs-credit-summary-popover,body[data-vscode-theme-name="IDE Night"] .wbs-credit-summary-popover{background:var(--wb-bg-popover,var(--wb-bg-primary));color:var(--wb-color-text-primary);border-color:var(--wb-border-default)}',
     '@media(max-width:600px){.wbs-acct-toolbar{flex-wrap:wrap;gap:8px}.wbs-acct-summary{flex-wrap:wrap}.wbs-acct-actions{margin-left:auto}}',
     '.wbs-acct-summary{display:flex;align-items:center;gap:12px;min-width:0}',

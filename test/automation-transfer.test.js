@@ -24,6 +24,26 @@ test('duplicate IDs skip existing tasks without overwriting or re-enabling them,
   const before=fs.readFileSync(path.join(dir,'automations.json'));assert.equal(importTasks(dir,{...payload,selected:['1']},runtime).imported,0);assert.deepEqual(fs.readFileSync(path.join(dir,'automations.json')),before);
  }finally{fs.rmSync(dir,{recursive:true,force:true});}
 });
+
+test('package updates replace the matching imported task and keep its runtime ID', () => {
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'wd-transfer-package-update-'));
+ try{
+  const packageFile=path.join(__dirname,'../examples/automation-packages/account-summary.workdaddy.json');
+  const older=JSON.parse(fs.readFileSync(packageFile,'utf8'));
+  const newer={...older,version:'1.1.0',name:'新版账号概况',task:{...older.task,name:'新版账号概况'}};
+  const first=importTasks(dir,{content:JSON.stringify(older),selected:['0']},runtime);
+  assert.equal(first.imported,1);
+  const before=readAutomations(dir)[0];
+  const result=importTasks(dir,{content:JSON.stringify(newer),selected:['0'],replaceExisting:true},runtime);
+  assert.equal(result.replaced,1);
+  assert.equal(result.imported,0);
+  const updated=readAutomations(dir)[0];
+  assert.equal(updated.id,before.id);
+  assert.equal(updated.name,'新版账号概况');
+  assert.equal(updated['x-workdaddy-import'].packageId,older.id);
+  assert.equal(updated['x-workdaddy-import'].packageVersion,'1.1.0');
+ }finally{fs.rmSync(dir,{recursive:true,force:true});}
+});
 test('invalid selected task and capacity failures do not partially save',()=>{
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'wd-transfer-'));
  try{

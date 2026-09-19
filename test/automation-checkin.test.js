@@ -103,6 +103,16 @@ test('legacy implicit triggers and pending UI are removed; panel event is explic
   assert.doesNotMatch(ctx.checkinHtml({checkin:{ok:false,message:'bad'}}),/bad/);
 });
 
+test('panel refresh exposes an explicit current-account check-in reconciliation route', () => {
+  assert.match(source, /p === '\/api\/accounts\/checkin-sync'/);
+  const route = source.slice(source.indexOf("p === '/api/accounts/checkin-sync'"), source.indexOf("if (req.method === 'GET' && p === '/api/accounts')"));
+  assert.match(route, /claimDailyForUid\(uid\)/);
+  assert.match(route, /仅支持当前账号/);
+  const ui = fs.readFileSync(path.join(__dirname, '../scripts/inject.js'), 'utf8');
+  assert.match(ui, /api\('\/api\/accounts\/checkin-sync'/);
+  assert.match(ui, /current\.checkin = \{ ok: !!result\.ok/);
+});
+
 test('failed or stale cache records never suppress today\'s check-in request', async () => {
   for (const cached of [
     {date:'2026-09-08',ok:false,verified:false,code:0,message:'HTTP 500'},
@@ -121,7 +131,7 @@ test('panel-open emits once per user opening and excludes automation restoration
   const calls=[];const noop=()=>{};
   const ctx={window:{},state:{open:false,creditRunId:0},panel:{classList:{toggle:noop}},fab:{classList:{toggle:noop}},
     api:(route,options)=>{if(route==='/api/automations/discovery')return Promise.resolve({tasks:[]});calls.push([route,JSON.parse(options.body).type]);return Promise.resolve();},
-    preloadAutomationDiscovery:()=>Promise.resolve({tasks:[]}),CAPS:{accounts:false},refresh:noop,checkForUpdate:noop,acCheckPromptOnOpen:noop,syncSessionModule:noop,fabQuietMode:{wake:noop}};
+    preloadAutomationDiscovery:()=>Promise.resolve({tasks:[]}),CAPS:{accounts:false},refresh:noop,checkForUpdate:noop,acCheckPromptOnOpen:noop,syncSessionModule:noop,closeSessionCopyNotice:noop,fabQuietMode:{wake:noop}};
   vm.createContext(ctx);vm.runInContext(ui.slice(start,end),ctx);
   ctx.setOpen(true);ctx.setOpen(true);assert.equal(calls.length,1);
   ctx.setOpen(false);ctx.setOpen(true,{automation:true});assert.equal(calls.length,1);

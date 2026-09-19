@@ -41,11 +41,10 @@ WS_ARCHIVE_NAME=ws-8.18.3.tgz
 WS_SHA256=424be604c8e7926fc29a1f067bf2dac256af3bcea62fe30395018bbaf8a9be2a
 TEMP="$(mktemp -d)"
 trap 'rm -rf -- "$TEMP"' EXIT
-STAGE="$TEMP/stage"
-SCRIPTS="$STAGE/opt/workdaddy/scripts"
-mkdir -p "$SCRIPTS/runtime/node" "$SCRIPTS/node_modules/ws" "$SCRIPTS/assets" \
-  "$STAGE/DEBIAN" "$STAGE/usr/share/applications" \
-  "$STAGE/usr/share/icons/hicolor/1024x1024/apps" release/linux
+COMMON="$TEMP/common"
+COMMON_SCRIPTS="$COMMON/opt/workdaddy/scripts"
+mkdir -p "$COMMON_SCRIPTS/runtime/node" "$COMMON_SCRIPTS/node_modules/ws" "$COMMON_SCRIPTS/assets" \
+  "$COMMON/usr/share/icons/hicolor/1024x1024/apps" release/linux
 
 fetch_archive() {
   local source="${1:-}" url="$2" expected="$3" output="$4"
@@ -73,25 +72,25 @@ fetch_archive "${WORKDADDY_WS_ARCHIVE:-}" \
   "https://registry.npmjs.org/ws/-/$WS_ARCHIVE_NAME" "$WS_SHA256" "$TEMP/$WS_ARCHIVE_NAME"
 mkdir -p "$TEMP/node"
 tar -xJf "$TEMP/$NODE_ARCHIVE_NAME" -C "$TEMP/node"
-cp "$TEMP/node/node-v22.23.1-linux-x64/bin/node" "$SCRIPTS/runtime/node/node"
-cp "$TEMP/node/node-v22.23.1-linux-x64/LICENSE" "$SCRIPTS/runtime/node/LICENSE"
-chmod 755 "$SCRIPTS/runtime/node/node"
-tar -xzf "$TEMP/$WS_ARCHIVE_NAME" -C "$SCRIPTS/node_modules/ws" --strip-components=1
+cp "$TEMP/node/node-v22.23.1-linux-x64/bin/node" "$COMMON_SCRIPTS/runtime/node/node"
+cp "$TEMP/node/node-v22.23.1-linux-x64/LICENSE" "$COMMON_SCRIPTS/runtime/node/LICENSE"
+chmod 755 "$COMMON_SCRIPTS/runtime/node/node"
+tar -xzf "$TEMP/$WS_ARCHIVE_NAME" -C "$COMMON_SCRIPTS/node_modules/ws" --strip-components=1
 
 # Explicit source list: no account data, macOS bundle, repair prompt, tests or staging archives.
-cp scripts/*.js "$SCRIPTS/"
-cp scripts/*-linux.sh "$SCRIPTS/"
-cp -R scripts/builtin "$SCRIPTS/builtin"
-cp -R scripts/builtin-overrides "$SCRIPTS/builtin-overrides"
+cp scripts/*.js "$COMMON_SCRIPTS/"
+cp scripts/*-linux.sh "$COMMON_SCRIPTS/"
+cp -R scripts/builtin "$COMMON_SCRIPTS/builtin"
+cp -R scripts/builtin-overrides "$COMMON_SCRIPTS/builtin-overrides"
 cp scripts/assets/workdaddy-logo.svg scripts/assets/workdaddy-app-icon-source.svg \
-  scripts/assets/workbuddy-buddy-mark.svg "$SCRIPTS/assets/"
+  scripts/assets/workbuddy-buddy-mark.svg "$COMMON_SCRIPTS/assets/"
 cp scripts/assets/workdaddy-icon-foreground.png \
-  "$STAGE/usr/share/icons/hicolor/1024x1024/apps/workdaddy.png"
-chmod 755 "$SCRIPTS/"*-linux.sh
+  "$COMMON/usr/share/icons/hicolor/1024x1024/apps/workdaddy.png"
+chmod 755 "$COMMON_SCRIPTS/"*-linux.sh
 
-BUILD_NODE="$SCRIPTS/runtime/node/node"
+BUILD_NODE="$COMMON_SCRIPTS/runtime/node/node"
 if [ "$CROSS_PACKAGE" = 1 ]; then BUILD_NODE="$(command -v node)"; fi
-"$BUILD_NODE" - "$SCRIPTS/daemon.js" "$VERSION" <<'NODE'
+"$BUILD_NODE" - "$COMMON_SCRIPTS/daemon.js" "$VERSION" <<'NODE'
 const fs = require('node:fs');
 const file = process.argv[2];
 const version = process.argv[3];
@@ -106,44 +105,52 @@ for (const [field, value] of [
 }
 fs.writeFileSync(file, source);
 NODE
-"$BUILD_NODE" --check "$SCRIPTS/daemon.js"
-"$BUILD_NODE" -e "require(process.argv[1]); require('node:sqlite')" "$SCRIPTS/node_modules/ws"
+"$BUILD_NODE" --check "$COMMON_SCRIPTS/daemon.js"
+"$BUILD_NODE" -e "require(process.argv[1]); require('node:sqlite')" "$COMMON_SCRIPTS/node_modules/ws"
 
-cat > "$STAGE/DEBIAN/control" <<EOF
-Package: workdaddy
+build_package() {
+  local profile="$1" package_name="$2" install_root="$3" display_name="$4" output_name="$5"
+  local stage="$TEMP/stage-$profile"
+  local scripts="$stage$install_root/scripts"
+  mkdir -p "$scripts" "$stage/DEBIAN" "$stage/usr/share/applications" \
+    "$stage/usr/share/icons/hicolor/1024x1024/apps"
+  cp -R "$COMMON/opt/workdaddy/scripts/." "$scripts/"
+  cp "$COMMON/usr/share/icons/hicolor/1024x1024/apps/workdaddy.png" \
+    "$stage/usr/share/icons/hicolor/1024x1024/apps/workdaddy-$profile.png"
+  chmod 755 "$scripts/"*-linux.sh
+
+  cat > "$stage/DEBIAN/control" <<EOF
+Package: $package_name
 Version: $VERSION
 Section: utils
 Priority: optional
 Architecture: amd64
 Maintainer: WorkDaddy <babygoton@users.noreply.github.com>
 Depends: libc6 (>= 2.28), libstdc++6, bash, curl, ca-certificates, procps, util-linux, xdg-utils, zenity
-Description: WorkDaddy desktop enhancement for WorkBuddy
- Local CDP integration for separately installed WorkBuddy CN and WorkBuddy AI.
+Description: $display_name desktop enhancement for WorkBuddy
+ Local CDP integration for the separately installed $display_name client.
 EOF
 
-for profile in cn ai; do
-  if [ "$profile" = cn ]; then name=WorkDaddy; else name='WorkDaddy AI'; fi
-  cat > "$STAGE/usr/share/applications/workdaddy-$profile.desktop" <<EOF
+  cat > "$stage/usr/share/applications/workdaddy-$profile.desktop" <<EOF
 [Desktop Entry]
 Type=Application
-Name=$name
-Exec=/opt/workdaddy/scripts/launch-gui-linux.sh $profile
-TryExec=/opt/workdaddy/scripts/launch-gui-linux.sh
-Icon=workdaddy
+Name=$display_name
+Exec=$install_root/scripts/launch-gui-linux.sh $profile
+TryExec=$install_root/scripts/launch-gui-linux.sh
+Icon=workdaddy-$profile
 Terminal=false
 Categories=Utility;
 EOF
-done
 
-OUT="$ROOT/release/linux/WorkDaddy_${VERSION}_amd64.deb"
-if [ "$CROSS_PACKAGE" = 1 ]; then
-  python3 - "$STAGE" "$OUT" "$VERSION" <<'PY'
+  local out="$ROOT/release/linux/$output_name"
+  if [ "$CROSS_PACKAGE" = 1 ]; then
+    python3 - "$stage" "$out" "$VERSION" "$install_root" "$package_name" <<'PY'
 import pathlib
 import sys
 import tarfile
 import tempfile
 
-stage, output, version = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2]), sys.argv[3]
+stage, output, version, install_root, package_name = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2]), sys.argv[3], sys.argv[4], sys.argv[5]
 
 def add_entry(archive, path, name):
     info = archive.gettarinfo(str(path), name)
@@ -195,32 +202,41 @@ with tempfile.TemporaryDirectory() as tmp:
 
     if version != next(line.split(': ', 1)[1] for line in (stage / 'DEBIAN/control').read_text().splitlines() if line.startswith('Version: ')):
         raise SystemExit('Debian metadata version mismatch')
+    if package_name != next(line.split(': ', 1)[1] for line in (stage / 'DEBIAN/control').read_text().splitlines() if line.startswith('Package: ')):
+        raise SystemExit('Debian metadata package mismatch')
     with tarfile.open(data, 'r:xz') as archive:
         names = archive.getnames()
-        for required in ('./opt/workdaddy/scripts/runtime/node/node', './opt/workdaddy/scripts/daemon.js'):
+        prefix = './' + install_root.lstrip('/') + '/scripts/'
+        for required in (prefix + 'runtime/node/node', prefix + 'daemon.js'):
             if required not in names:
                 raise SystemExit(f'Missing payload file: {required}')
         if any('安装失败自主解决提示词' in name or name.endswith('.zip') for name in names):
             raise SystemExit('Forbidden payload file')
-        daemon = archive.extractfile('./opt/workdaddy/scripts/daemon.js').read().decode()
-        node = archive.extractfile('./opt/workdaddy/scripts/runtime/node/node').read(5)
+        daemon = archive.extractfile(prefix + 'daemon.js').read().decode()
+        node = archive.extractfile(prefix + 'runtime/node/node').read(5)
         if f"const DAEMON_VERSION = '{version}';" not in daemon or node != b'\x7fELF\x02':
             raise SystemExit('Payload version or Linux x64 runtime mismatch')
 PY
-else
-  dpkg-deb --build --root-owner-group "$STAGE" "$OUT"
-  test "$(dpkg-deb --field "$OUT" Version)" = "$VERSION"
-  dpkg-deb --contents "$OUT" > "$TEMP/manifest"
-  grep -q '/opt/workdaddy/scripts/runtime/node/node$' "$TEMP/manifest"
-  grep -q '/opt/workdaddy/scripts/daemon.js$' "$TEMP/manifest"
-  if grep -q '安装失败自主解决提示词\|\.zip$' "$TEMP/manifest"; then
-    echo '发行包包含禁止交付的文件' >&2
-    exit 2
+  else
+    dpkg-deb --build --root-owner-group "$stage" "$out"
+    test "$(dpkg-deb --field "$out" Version)" = "$VERSION"
+    test "$(dpkg-deb --field "$out" Package)" = "$package_name"
+    dpkg-deb --contents "$out" > "$TEMP/manifest-$profile"
+    grep -q "$install_root/scripts/runtime/node/node$" "$TEMP/manifest-$profile"
+    grep -q "$install_root/scripts/daemon.js$" "$TEMP/manifest-$profile"
+    if grep -q '安装失败自主解决提示词\|\.zip$' "$TEMP/manifest-$profile"; then
+      echo '发行包包含禁止交付的文件' >&2
+      exit 2
+    fi
+    local verify="$TEMP/verify-$profile"
+    mkdir -p "$verify"
+    dpkg-deb --extract "$out" "$verify"
+    grep -qx "const DAEMON_VERSION = '$VERSION';" "$verify$install_root/scripts/daemon.js"
+    "$verify$install_root/scripts/runtime/node/node" --check \
+      "$verify$install_root/scripts/daemon.js"
   fi
-  mkdir -p "$TEMP/verify"
-  dpkg-deb --extract "$OUT" "$TEMP/verify"
-  grep -qx "const DAEMON_VERSION = '$VERSION';" "$TEMP/verify/opt/workdaddy/scripts/daemon.js"
-  "$TEMP/verify/opt/workdaddy/scripts/runtime/node/node" --check \
-    "$TEMP/verify/opt/workdaddy/scripts/daemon.js"
-fi
-echo "Linux 安装包: $OUT"
+  echo "Linux 安装包: $out"
+}
+
+build_package cn workdaddy /opt/workdaddy 'WorkDaddy' "WorkDaddy_${VERSION}_amd64.deb"
+build_package ai workdaddy-ai /opt/workdaddy-ai 'WorkDaddy AI' "WorkDaddy-AI_${VERSION}_amd64.deb"

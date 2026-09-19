@@ -1167,7 +1167,11 @@ test('session copy-all is a separate override with a distinct toggle and hidden 
   assert.match(daemon, /POST' && p === '\/api\/sessions\/auto-copy-all'/);
   assert.match(daemon, /sourceRules\.allSessions/);
   assert.match(inject, /id="wbs-sess-auto-all"/);
-  assert.match(inject, /id="wbs-sess-import"[\s\S]*id="wbs-sess-auto-all"/);
+  const filters = inject.slice(inject.indexOf('<div class="wbs-sess-filters">'), inject.indexOf('<div class="wbs-sess-toolbar">'));
+  assert.match(filters, /id="wbs-sess-auto-all"[\s\S]*id="wbs-sess-account-select"[\s\S]*id="wbs-sess-range-seg"/);
+  assert.equal((filters.match(/<div\b/g) || []).length, (filters.match(/<\/div>/g) || []).length);
+  assert.match(inject, /\.wbs-sess-filters\{[^}]*flex-wrap:wrap/);
+  assert.match(inject, /id="wbs-sess-import"[\s\S]*id="wbs-sess-count"/);
   assert.match(inject, /id="wbs-sess-auto-all"[^>]*role="checkbox"[^>]*aria-checked="false"/);
   assert.match(inject, /wbs-sess-auto-all-box/);
   assert.match(inject, /getAttribute\('aria-checked'\)/);
@@ -1252,6 +1256,32 @@ test('session conflict reset is retired and details stay at the left', () => {
   assert.doesNotMatch(inject, /data-session-copy-reset|sessionCopyResetError/);
   assert.match(inject, /会话已分叉，已保留双方内容/);
   assert.match(inject, /\.wbs-session-copy-actions\{[^}]*justify-content:flex-start/);
+});
+
+test('credit expiry summary keeps per-account nodes and reuses the compact usage segment', () => {
+  const inject = read('inject.js');
+  const summaryStart = inject.indexOf('function setupCreditSummary()');
+  const summaryEnd = inject.indexOf('function openOfficialGrowthCenter()', summaryStart);
+  const summary = inject.slice(summaryStart, summaryEnd);
+  assert.match(inject, /function creditSummaryTip\(segment\)/);
+  assert.match(inject, /segments:\s*\[\]/);
+  assert.match(summary, /row\.segments/);
+  assert.match(summary, /class="wbs-credit-segment"/);
+  assert.match(summary, /listen\(popup, 'mouseover'/);
+
+  const modalStart = inject.indexOf('<div class="wbs-usage-tabs">');
+  const modalTabs = inject.slice(modalStart, modalStart + 280);
+  assert.ok(modalTabs.indexOf('data-usage-tab="credit"') < modalTabs.indexOf('data-usage-tab="token"'));
+  assert.match(modalTabs, /class="active" data-usage-tab="credit"/);
+  assert.match(inject, /<div data-usage-pane="token" hidden>/);
+  assert.match(inject, /<div data-usage-pane="credit">/);
+  assert.match(inject, /if \(mask\.querySelector\('\[data-usage-tab\]\.active'\).*loadCredits\(\); else load\(\);/);
+  assert.match(inject, /class="wbs-usage-segment wbs-sess-seg" id="wbs-sess-range-seg"/);
+  assert.match(inject, /\.wbs-sess-time-filter \.wbs-sess-seg\{[^}]*flex:1 1 auto[^}]*width:auto/);
+  assert.match(inject, /\.wbs-sess-account-filter\{[^}]*flex:0 1 190px/);
+  assert.match(inject, /\.wbs-sess-seg button\{[^}]*flex:1 1 0[^}]*min-width:0/);
+  assert.match(inject, /\.wbs-credit-tip-account\{[^}]*color:var\(--wb-icon-tertiary[^}]*font-size:10px/);
+  assert.match(inject, /\.wbs-status-popover\.is-credit\{[^}]*height:auto[^}]*max-height:calc\(100vh - 16px\)/);
 });
 
 test('session summary counts effective sessions and models tab only exposes sanitized model APIs', () => {
