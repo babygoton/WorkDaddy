@@ -262,6 +262,25 @@ function autoContinueControllerCompleted(snapshot) {
   return s.terminalKnown ? !!s.terminal : !!s.complete;
 }
 
+// Controller/store 快照 → 判定证据的唯一映射。原来的映射写在 acControllerCheck 内联对象里，
+// 只有「已经进入判定」的会话才会用到它；绑定闸门要判断「这个空闲会话该不该进判定」时，
+// 若另写一套更窄的规则（例如只认 error），两条规则就会错位：判定层愿意续跑的会话被闸门
+// 挡在门外，功能对这类会话彻底失效。判定与绑定必须共用同一份映射。
+function controllerAutoContinueDecision(snapshot) {
+  var s = snapshot || {};
+  return classifyAutoContinueControllerSnapshot({
+    assistantId: s.assistantId,
+    busy: s.busy,
+    manualStop: s.manualStop,
+    error: s.error,
+    networkFailure: s.networkFailure,
+    completionMarker: s.completionMarker,
+    // 新版明确暴露 isRequestTerminal 时只认该字段；旧版没有该字段才退回 complete。
+    complete: s.terminalKnown ? false : s.complete,
+    terminal: s.terminal,
+  });
+}
+
 function selectAutoContinueAssistant(messageState) {
   var state = messageState || {};
   var messages = Array.isArray(state.messages) ? state.messages : [];
@@ -490,6 +509,20 @@ function isSessionMonitorInProgress(snapshot) {
   return !!(snapshot && (snapshot.busy || snapshot.blocked || snapshot.hydrating));
 }
 
+// isSessionMonitorInProgress 判「还在跑」，本函数判「已经停下、但判定层会续跑」。
+// 两者合起来才是完整的绑定闸门：只按 in-progress 过滤时，已中断的会话在绑定阶段就被
+// 当成历史会话丢掉（acMultiCreateSession 返回 null / acBindController 重建 baseline），
+// 判定层一次都看不到它。它又不会再产生新回复，于是「等新回复」的 baseline 门控是一条
+// 死等待——用户关掉再打开开关同样无效，因为重开只是在同一条卡住的回复上重建 baseline。
+// 这里不自己判断「算不算中断」，直接复用判定层的结论，保证「允许绑定的会话」与
+// 「会被续跑的会话」永远一致：判定层不续跑的历史回复（已完成 / 带完成标记 / 主动取消）
+// 同样不会绑定。
+function isSessionMonitorInterrupted(snapshot) {
+  var s = snapshot || {};
+  if (!s || s.busy || s.blocked || s.hydrating) return false; // 运行/等决策/恢复中：交给 in-progress 分支
+  return controllerAutoContinueDecision(s).trigger === true;
+}
+
 var SESSION_MONITOR_ACTIVE_STATUSES = {
   planning: true, preparing: true, connecting: true, working: true, running: true,
   tool_start: true, tool_end: true, handoff: true, summarizing: true,
@@ -662,6 +695,7 @@ if (typeof module !== 'undefined' && module.exports) {
     classifyAutoContinueControllerSnapshot: classifyAutoContinueControllerSnapshot,
     autoContinueMessageText: autoContinueMessageText,
     autoContinueControllerCompleted: autoContinueControllerCompleted,
+    controllerAutoContinueDecision: controllerAutoContinueDecision,
     selectAutoContinueAssistant: selectAutoContinueAssistant,
     composerBlocksFromTree: composerBlocksFromTree,
     composerTextFromTree: composerTextFromTree,
@@ -676,6 +710,7 @@ if (typeof module !== 'undefined' && module.exports) {
     ndConfirmHints: ND_CONFIRM_HINTS,
     ndDenyHints: ND_DENY_HINTS,
     isSessionMonitorInProgress: isSessionMonitorInProgress,
+    isSessionMonitorInterrupted: isSessionMonitorInterrupted,
     normalizeSessionMonitorResourceRecord: normalizeSessionMonitorResourceRecord,
     sessionMonitorLifecycleAction: sessionMonitorLifecycleAction,
     subscribeSessionMonitorResource: subscribeSessionMonitorResource,
@@ -10376,6 +10411,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
           assistant: assistant,
           assistantId: assistant && String(assistant.id || assistant.requestId || ''),
           text: text,
+          completionMarker: acHasMarker(text),
           complete: !!(assistant && assistant.complete === true),
           terminalKnown: Object.prototype.hasOwnProperty.call(extra, 'isRequestTerminal'),
           terminal: !!(assistant && extra.isRequestTerminal === true),
@@ -10455,17 +10491,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         acScheduleSettle(Math.max(250, AC_CONTROLLER_SETTLE_MS - idleFor));
         return;
       }
-      var decision = classifyAutoContinueControllerSnapshot({
-        assistantId: snap.assistantId,
-        busy: snap.busy,
-        manualStop: snap.manualStop,
-        error: snap.error,
-        networkFailure: snap.networkFailure,
-        completionMarker: acHasMarker(snap.text),
-        // 新版明确暴露 isRequestTerminal 时只认该字段；旧版没有该字段才退回 complete。
-        complete: snap.terminalKnown ? false : snap.complete,
-        terminal: snap.terminal,
-      });
+      var decision = controllerAutoContinueDecision(snap);
       c.judgedMessages.add(signature);
       if (!decision.trigger) {
         acLog('controller-completed', { id: snap.assistantId, reason: decision.reason, complete: snap.complete, terminal: snap.terminal });
@@ -10489,7 +10515,9 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       c.controllerLastBusy = snap.busy;
       c.controllerIdleAt = snap.busy ? 0 : Date.now();
       c.baselineAssistantKey = preserve ? String(carry.baselineAssistantKey || '') : (snap.assistantId || '');
-      c.awaitingNewReply = preserve ? !!carry.awaitingNewReply : true;
+      // 已中断的会话不会有新回复：awaitingNewReply 置 true 会让 acControllerCheck 的
+      // baseline 分支永久 return，当前这条被中断的回复一次都判不到（与多会话监控同一缺陷）。
+      c.awaitingNewReply = preserve ? !!carry.awaitingNewReply : !isSessionMonitorInterrupted(snap);
       c.judgedMessages = new Set(preserve && Array.isArray(carry.judgedMessages) ? carry.judgedMessages : []);
       c.controllerUnsubs = [];
       var notify = function () {
@@ -11077,16 +11105,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         acMultiSchedule(session, Math.max(250, AC_CONTROLLER_SETTLE_MS - idleFor));
         return;
       }
-      var decision = classifyAutoContinueControllerSnapshot({
-        assistantId: snapshot.assistantId,
-        busy: snapshot.busy,
-        manualStop: snapshot.manualStop,
-        error: snapshot.error,
-        networkFailure: snapshot.networkFailure,
-        completionMarker: acHasMarker(snapshot.text),
-        complete: snapshot.terminalKnown ? false : snapshot.complete,
-        terminal: snapshot.terminal,
-      });
+      var decision = controllerAutoContinueDecision(snapshot);
       session.judgedMessages.add(signature);
       if (!decision.trigger) {
         acMultiFinishSession(session);
@@ -11114,7 +11133,9 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         return existing;
       }
       var initialSnapshot = acControllerSnapshot(controller);
-      if (!existing && !isSessionMonitorInProgress(initialSnapshot)) return null;
+      // 已中断（空闲 + 判定层愿意续跑）的会话也必须绑定一次：它不会再产生新回复，
+      // 只按 in-progress 过滤会让它永远进不了监控，Auto-Continue 对它完全失效。
+      if (!existing && !isSessionMonitorInProgress(initialSnapshot) && !isSessionMonitorInterrupted(initialSnapshot)) return null;
       var session = existing || acMultiCreateSession({
         id: id,
         title: acSessionTitle(controller),
@@ -11136,12 +11157,20 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       // A busy controller's current assistant is the in-flight reply, not a
       // historical baseline. Leave it empty so completion can be judged.
       if (initialSnapshot && !initialSnapshot.busy && !initialSnapshot.blocked && !initialSnapshot.hydrating) {
-        session.baselineAssistantKey = initialSnapshot.assistantId || '';
+        if (isSessionMonitorInterrupted(initialSnapshot)) {
+          // 已中断的会话没有「新回复」可等：保留 baseline + awaitingNewReply 会让
+          // acMultiCheckSession 的等待分支立刻注销会话（acMultiFinishSession），
+          // 一次判定都走不到。改为放行对当前这条被中断回复的判定。
+          session.awaitingNewReply = false;
+          session.baselineAssistantKey = '';
+        } else {
+          session.baselineAssistantKey = initialSnapshot.assistantId || '';
+        }
       }
       var notify = function () { acMultiCheckSession(session); };
       try { if (controller.sessionStore && typeof controller.sessionStore.subscribe === 'function') session.unsubs.push(controller.sessionStore.subscribe(notify)); } catch (_) {}
       try { if (controller.messageStore && typeof controller.messageStore.subscribe === 'function') session.unsubs.push(controller.messageStore.subscribe(notify)); } catch (_) {}
-      if (initialSnapshot && (isSessionMonitorInProgress(initialSnapshot) || !session.resourceActive)) acMultiCheckSession(session);
+      if (initialSnapshot && (isSessionMonitorInProgress(initialSnapshot) || isSessionMonitorInterrupted(initialSnapshot) || !session.resourceActive)) acMultiCheckSession(session);
       return session;
     }
 
