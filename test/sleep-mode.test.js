@@ -60,7 +60,9 @@ test('until-done waits for every discovered session, including blocked and recen
     {conversationId:'a', busy:true}, {conversationId:'b', blocked:true},
   ];
   const posts = [];
+  const disposers = [];
   const ctx = {
+    window: {}, registerDisposer: fn => disposers.push(fn),
     Date: {now:()=>now}, document:{}, alive:true, sleepMode:'until-done',
     acMulti:{sessions:{}}, sleepSessionCache:Object.create(null), sleepUntilDoneCheck:null,
     WBS_COMPAT:{findConversationControllers:()=>controllers},
@@ -71,6 +73,7 @@ test('until-done waits for every discovered session, including blocked and recen
   };
   vm.createContext(ctx);
   vm.runInContext(ui.slice(ui.indexOf('    function discoverSleepSessionBusy()'), ui.indexOf('    // 同步防休眠状态：三模式')), ctx);
+  assert.equal(ctx.window.__wbsAnySessionBusy(), true);
   ctx.startUntilDoneCheck();
   poll(); assert.equal(posts.length, 0);
   controllers[0].busy = false;
@@ -80,4 +83,9 @@ test('until-done waits for every discovered session, including blocked and recen
   controllers.push({conversationId:'b', busy:false});
   poll(); await Promise.resolve();
   assert.deepEqual(posts, [{mode:'allow', displaySleep:false}]);
+  assert.equal(ctx.window.__wbsAnySessionBusy(), false);
+  ctx.alive = false;
+  assert.equal(ctx.window.__wbsAnySessionBusy(), null);
+  disposers.forEach(fn => fn());
+  assert.equal(ctx.window.__wbsAnySessionBusy, undefined);
 });

@@ -24,8 +24,13 @@ test('Linux release builds a versioned, self-contained Debian package without ro
   assert.match(source, /node_modules\/ws/);
   assert.match(source, /scripts\/builtin/);
   assert.match(source, /scripts\/assets\/workdaddy-logo\.svg/);
-  assert.match(source, /for profile in cn ai/);
-  assert.match(source, /workdaddy-\$profile\.desktop/);
+  assert.match(source, /build_package cn workdaddy \/opt\/workdaddy/);
+  assert.match(source, /build_package ai workdaddy-ai \/opt\/workdaddy-ai/);
+  assert.match(source, /WorkDaddy_\$\{VERSION\}_amd64\.deb/);
+  assert.match(source, /WorkDaddy-AI_\$\{VERSION\}_amd64\.deb/);
+  assert.match(source, /Exec=\$install_root\/scripts\/launch-gui-linux\.sh \$profile/);
+  assert.match(source, /workdaddy-\$profile\.png/);
+  assert.match(source, /Icon=workdaddy-\$profile/);
   assert.match(source, /const DAEMON_VERSION =/);
   assert.match(source, /\['DAEMON_BUILD_ID', `release-\$\{version\}-linux-deb`\]/);
   assert.doesNotMatch(source, /DEBIAN\/(?:preinst|postinst|prerm|postrm)/);
@@ -49,32 +54,47 @@ test('Linux file-manager action does not invoke the macOS open command', () => {
   assert.match(daemon, /if \(IS_LINUX\) \{\s*require\('child_process'\)\.execFile\('xdg-open', \[DATA_DIR\]\)/);
 });
 
-test('built Linux package has matching metadata and payload', { skip: process.platform !== 'linux' || !process.env.WORKDADDY_LINUX_DEB }, () => {
-  const deb = process.env.WORKDADDY_LINUX_DEB;
+test('built Linux packages have matching metadata and isolated payloads', { skip: process.platform !== 'linux' || !process.env.WORKDADDY_LINUX_DEBS }, () => {
+  const debs = process.env.WORKDADDY_LINUX_DEBS.split(path.delimiter).filter(Boolean);
+  assert.equal(debs.length, 2);
+  const expected = new Map([
+    ['WorkDaddy_', { packageName: 'workdaddy', root: 'opt/workdaddy', desktop: 'workdaddy-cn.desktop', filePattern: /^WorkDaddy_\d+\.\d+\.\d+_amd64\.deb$/ }],
+    ['WorkDaddy-AI_', { packageName: 'workdaddy-ai', root: 'opt/workdaddy-ai', desktop: 'workdaddy-ai.desktop', filePattern: /^WorkDaddy-AI_\d+\.\d+\.\d+_amd64\.deb$/ }],
+  ]);
+  for (const deb of debs) {
+    const fileName = path.basename(deb);
+    const entry = [...expected.entries()].find(([prefix]) => fileName.startsWith(prefix))?.[1];
+    assert.ok(entry, `unexpected Linux package: ${fileName}`);
+    assert.match(fileName, entry.filePattern);
   const version = spawnSync('dpkg-deb', ['-f', deb, 'Version'], { encoding: 'utf8' });
   assert.equal(version.status, 0);
+  const packageName = spawnSync('dpkg-deb', ['-f', deb, 'Package'], { encoding: 'utf8' });
+  assert.equal(packageName.stdout.trim(), entry.packageName);
   const entries = spawnSync('dpkg-deb', ['--contents', deb], { encoding: 'utf8' });
   assert.equal(entries.status, 0);
   for (const name of ['scripts/daemon.js', 'scripts/runtime/node/node', 'scripts/node_modules/ws/package.json',
-    'scripts/builtin/nebula/theme.json', 'scripts/assets/workdaddy-logo.svg',
-    'workdaddy-cn.desktop', 'workdaddy-ai.desktop']) {
-    assert.ok(entries.stdout.includes(name), `missing ${name}`);
+    'scripts/builtin/nebula/theme.json', 'scripts/assets/workdaddy-logo.svg']) {
+    assert.ok(entries.stdout.includes(`${entry.root}/${name}`), `missing ${entry.root}/${name}`);
   }
+  assert.ok(entries.stdout.includes(entry.desktop));
+  assert.equal(entries.stdout.includes(entry.root === 'opt/workdaddy' ? 'opt/workdaddy-ai/' : 'opt/workdaddy/'), false);
   assert.ok(!entries.stdout.includes('安装失败自主解决提示词.txt'));
   const extracted = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'workdaddy-linux-deb-test-'));
   try {
     assert.equal(spawnSync('dpkg-deb', ['--extract', deb, extracted]).status, 0);
-    const daemon = fs.readFileSync(path.join(extracted, 'opt/workdaddy/scripts/daemon.js'), 'utf8');
+    const daemon = fs.readFileSync(path.join(extracted, entry.root, 'scripts/daemon.js'), 'utf8');
     assert.match(daemon, new RegExp(`const DAEMON_VERSION = '${version.stdout.trim().replace(/\./g, '\\.')}';`));
     assert.match(daemon, /const DAEMON_BUILD_ID = 'release-[^']+-linux-deb';/);
   } finally {
     fs.rmSync(extracted, { recursive: true, force: true });
   }
   assert.match(path.basename(deb), new RegExp(version.stdout.trim().replace(/\./g, '\\.') + '_amd64\\.deb$'));
+  }
 });
 
-test('cross-built Debian archive exposes standard member names and control metadata', { skip: !process.env.WORKDADDY_LINUX_DEB }, () => {
-  const deb = process.env.WORKDADDY_LINUX_DEB;
+test('cross-built Debian archives expose standard member names and control metadata', { skip: !process.env.WORKDADDY_LINUX_DEBS }, () => {
+  const debs = process.env.WORKDADDY_LINUX_DEBS.split(path.delimiter).filter(Boolean);
+  for (const deb of debs) {
   const members = spawnSync('ar', ['-t', deb], { encoding: 'utf8' });
   assert.equal(members.status, 0, members.stderr);
   assert.deepEqual(members.stdout.trim().split('\n'), ['debian-binary', 'control.tar.xz', 'data.tar.xz']);
@@ -82,8 +102,9 @@ test('cross-built Debian archive exposes standard member names and control metad
   assert.equal(control.status, 0, String(control.stderr));
   const metadata = spawnSync('tar', ['-xOJf', '-', './control'], { input: control.stdout, encoding: 'utf8' });
   assert.equal(metadata.status, 0, metadata.stderr);
-  const version = path.basename(deb).match(/^WorkDaddy_(\d+\.\d+\.\d+)_amd64\.deb$/)?.[1];
+  const version = path.basename(deb).match(/^(?:WorkDaddy|WorkDaddy-AI)_(\d+\.\d+\.\d+)_amd64\.deb$/)?.[1];
   assert.ok(version);
   assert.ok(metadata.stdout.split('\n').includes(`Version: ${version}`));
   assert.match(metadata.stdout, /^Architecture: amd64$/m);
+  }
 });

@@ -203,16 +203,13 @@ test('WorkDaddy-triggered reload injects on the new main execution context befor
   assert.ok((autoCopy.match(/await yieldAutoCopyToRenderer\(\)/g) || []).length >= 2, 'auto-copy must yield before planning and each synchronous file batch');
 
   const yieldStart = script.indexOf('async function yieldAutoCopyToRenderer()');
-  const syncStart = script.indexOf('async function syncAutoCopyLineage(', yieldStart);
+  const syncStart = script.indexOf('const MAX_SESSION_EXPORT_FILES', yieldStart);
   const yieldHelper = script.slice(yieldStart, syncStart);
   assert.match(yieldHelper, /setImmediate/);
   assert.match(yieldHelper, /rendererReloadPriorityPromise/);
   assert.match(yieldHelper, /await reloadPriority/);
   assert.match(yieldHelper, /pendingReloadInjection/);
   assert.match(yieldHelper, /await pending\.ready/);
-  const syncEnd = script.indexOf('\nconst MAX_SESSION_EXPORT_FILES', syncStart);
-  const syncLineage = script.slice(syncStart, syncEnd);
-  assert.ok((syncLineage.match(/await yieldAutoCopyToRenderer\(\)/g) || []).length >= 2, 'lineage scans and copies must pause for renderer reloads');
   assert.match(switchRoute, /const releaseRendererReload = body\.reload \? beginRendererReloadPriority\(\) : null/);
   assert.match(switchRoute, /finally \{\s*if \(releaseRendererReload\) releaseRendererReload\(\)/);
 });
@@ -1151,13 +1148,13 @@ test('automatic session copy includes workspace-only rules when the initial plan
   assert.match(daemon, /GET' && p === '\/api\/sessions\/auto-copy\/status'/);
   assert.match(daemon, /getAutoCopyMapping\(DATA_DIR, lineageId, targetUid\)/);
   assert.match(daemon, /getAutoCopySessionMembers\(DATA_DIR, lineageId, targetUid\)/);
-  assert.match(daemon, /const canonicalId = candidates\[0\]\.id/);
+  assert.match(daemon, /const existing = candidates\.find\(/);
   assert.match(daemon, /const sourceRules = sourceUid \? getAutoCopyRules\(DATA_DIR, sourceUid\)/);
   assert.match(daemon, /hasSourceAutoCopyRules/);
   assert.match(daemon, /hasPendingAutoCopyTo\(uid\)/);
   assert.match(daemon, /startAutoCopyJob\(sourceUid, uid, \[\]/);
-  assert.match(daemon, /syncAutoCopyLineage\(src\.lineageId, targetUid\)/);
-  assert.match(daemon, /selectLatestAutoCopyMember\(live\)/);
+  assert.match(daemon, /copySessionRecord\(src, targetUid/);
+  assert.match(daemon, /sessionSync\.compareSnapshots\(left, right\)/);
   assert.match(daemon, /ensureAutoCopySessions\(DATA_DIR, source, lineageSessionIds, \{ enabled: !rules\.allSessions \}\)/);
   assert.match(inject, /data-auto-kind="' \+ kind \+ '"/);
   assert.match(inject, /autoCopyButton\('workspace'/);
@@ -1170,7 +1167,11 @@ test('session copy-all is a separate override with a distinct toggle and hidden 
   assert.match(daemon, /POST' && p === '\/api\/sessions\/auto-copy-all'/);
   assert.match(daemon, /sourceRules\.allSessions/);
   assert.match(inject, /id="wbs-sess-auto-all"/);
-  assert.match(inject, /id="wbs-sess-import"[\s\S]*id="wbs-sess-auto-all"/);
+  const filters = inject.slice(inject.indexOf('<div class="wbs-sess-filters">'), inject.indexOf('<div class="wbs-sess-toolbar">'));
+  assert.match(filters, /id="wbs-sess-auto-all"[\s\S]*id="wbs-sess-account-select"[\s\S]*id="wbs-sess-range-seg"/);
+  assert.equal((filters.match(/<div\b/g) || []).length, (filters.match(/<\/div>/g) || []).length);
+  assert.match(inject, /\.wbs-sess-filters\{[^}]*flex-wrap:wrap/);
+  assert.match(inject, /id="wbs-sess-import"[\s\S]*id="wbs-sess-count"/);
   assert.match(inject, /id="wbs-sess-auto-all"[^>]*role="checkbox"[^>]*aria-checked="false"/);
   assert.match(inject, /wbs-sess-auto-all-box/);
   assert.match(inject, /getAttribute\('aria-checked'\)/);
@@ -1187,13 +1188,13 @@ test('session copy-all is a separate override with a distinct toggle and hidden 
   assert.match(inject, /\.wbs-sess-summary-tag\{[^}]*border:0[^}]*background:transparent/);
 });
 
-test('session auto-copy plans and API responses collapse duplicate rows by account lineage', () => {
+test('session auto-copy plans preserve physical source rows while list APIs deduplicate display', () => {
   const daemon = read('daemon.js');
   const lib = read('lib.js');
-  assert.match(lib, /function dedupeAutoCopySessionRows\(rows, lineagesByUid\)/);
+  assert.match(lib, /function dedupeAutoCopySessionRows\(rows, lineagesByUid, branchesByUid/);
   assert.match(lib, /const allLineages = \{\}/);
-  assert.match(daemon, /dedupeAutoCopySessionRows\(rows, \{ \[source\]: rules\.allLineages \}\)/);
-  assert.match(daemon, /dedupeAutoCopySessionRows\(rows, lineagesByUid\)/);
+  assert.match(daemon, /rows\.filter\(/);
+  assert.match(daemon, /dedupeAutoCopySessionRows\(rows, lineagesByUid, branchesByUid\)/);
   assert.match(daemon, /const DAEMON_VERSION = '\d+\.\d+\.\d+'/);
 });
 
@@ -1213,7 +1214,7 @@ test('session pane restores and renders persistent auto-copy progress', () => {
 test('account switching shows a compact copy notice and defers conflict feedback until completion', () => {
   const daemon = read('daemon.js');
   const inject = read('inject.js');
-  assert.match(daemon, /conflict: true/);
+  assert.match(daemon, /branched: branched && changed/);
   assert.match(daemon, /conflicts: 0/);
   assert.match(daemon, /job\.status = job\.conflicts \? 'conflict'/);
   assert.match(daemon, /failedItems: 0/);
@@ -1222,15 +1223,15 @@ test('account switching shows a compact copy notice and defers conflict feedback
   assert.match(daemon, /sourceName: job\.sourceName/);
   assert.match(daemon, /targetName: job\.targetName/);
   assert.match(daemon, /details: Array\.isArray\(job\.details\)/);
-  assert.match(daemon, /unchanged: true/);
+  assert.match(daemon, /changed \? 'copied' : 'skipped'/);
   assert.match(inject, /wbs-session-copy-notice/);
   assert.match(inject, /function pollSessionCopyNotice\(jobId, accountName\)/);
   assert.match(inject, /sessionCopySummaryText\(job\)/);
-  assert.match(inject, /会话同步完成，发现冲突/);
+  assert.match(inject, /会话同步完成，已保留分叉/);
   assert.match(inject, /会话同步明细/);
   assert.match(inject, /会话同步结果筛选/);
   assert.match(inject, /正在同步已标记会话/);
-  assert.match(inject, /setBuildTimeout\(closeSessionCopyNotice, 10000\)/);
+  assert.match(inject, /setBuildTimeout\(closeSessionCopyNotice, 5000\)/);
   assert.match(inject, /sessionCopyNoticeChecked/);
   assert.match(inject, /sessionCopyNoticeActiveAttempts < 10/);
   assert.match(inject, /data-session-copy-details/);
@@ -1245,6 +1246,42 @@ test('account switching shows a compact copy notice and defers conflict feedback
   assert.match(inject, /setBuildTimeout\(pollActiveSessionCopyNotice, 250\)/);
   assert.match(inject, /renderer before the daemon enqueues/);
   assert.match(inject, /html\.cb-dark \.wbs-session-copy-notice/);
+});
+
+test('session conflict reset is retired and details stay at the left', () => {
+  const daemon = read('daemon.js');
+  const inject = read('inject.js');
+  const route = daemon.slice(daemon.indexOf("if (req.method === 'POST' && p === '/api/sessions/auto-copy/reset')"));
+  assert.match(route.slice(0, 300), /json\(res, 410/);
+  assert.doesNotMatch(inject, /data-session-copy-reset|sessionCopyResetError/);
+  assert.match(inject, /会话已分叉，已保留双方内容/);
+  assert.match(inject, /\.wbs-session-copy-actions\{[^}]*justify-content:flex-start/);
+});
+
+test('credit expiry summary keeps per-account nodes and reuses the compact usage segment', () => {
+  const inject = read('inject.js');
+  const summaryStart = inject.indexOf('function setupCreditSummary()');
+  const summaryEnd = inject.indexOf('function openOfficialGrowthCenter()', summaryStart);
+  const summary = inject.slice(summaryStart, summaryEnd);
+  assert.match(inject, /function creditSummaryTip\(segment\)/);
+  assert.match(inject, /segments:\s*\[\]/);
+  assert.match(summary, /row\.segments/);
+  assert.match(summary, /class="wbs-credit-segment"/);
+  assert.match(summary, /listen\(popup, 'mouseover'/);
+
+  const modalStart = inject.indexOf('<div class="wbs-usage-tabs">');
+  const modalTabs = inject.slice(modalStart, modalStart + 280);
+  assert.ok(modalTabs.indexOf('data-usage-tab="credit"') < modalTabs.indexOf('data-usage-tab="token"'));
+  assert.match(modalTabs, /class="active" data-usage-tab="credit"/);
+  assert.match(inject, /<div data-usage-pane="token" hidden>/);
+  assert.match(inject, /<div data-usage-pane="credit">/);
+  assert.match(inject, /if \(mask\.querySelector\('\[data-usage-tab\]\.active'\).*loadCredits\(\); else load\(\);/);
+  assert.match(inject, /class="wbs-usage-segment wbs-sess-seg" id="wbs-sess-range-seg"/);
+  assert.match(inject, /\.wbs-sess-time-filter \.wbs-sess-seg\{[^}]*flex:1 1 auto[^}]*width:auto/);
+  assert.match(inject, /\.wbs-sess-account-filter\{[^}]*flex:0 1 190px/);
+  assert.match(inject, /\.wbs-sess-seg button\{[^}]*flex:1 1 0[^}]*min-width:0/);
+  assert.match(inject, /\.wbs-credit-tip-account\{[^}]*color:var\(--wb-icon-tertiary[^}]*font-size:10px/);
+  assert.match(inject, /\.wbs-status-popover\.is-credit\{[^}]*height:auto[^}]*max-height:calc\(100vh - 16px\)/);
 });
 
 test('session summary counts effective sessions and models tab only exposes sanitized model APIs', () => {

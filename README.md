@@ -111,7 +111,7 @@ node scripts/workbuddy-target.js --configure --platform darwin \
 
 Linux 发布包面向 Ubuntu / Debian `amd64`。安装前请先安装并登录对应的 WorkBuddy 客户端；WorkDaddy 通过 CDP 连接客户端，不会替换或修改 WorkBuddy 本体。
 
-1. 在 [Releases](../../releases) 下载 `WorkDaddy_x.y.z_amd64.deb`。
+1. 在 [Releases](../../releases) 下载对应客户端的安装包：国内版是 `WorkDaddy_x.y.z_amd64.deb`，国际版是 `WorkDaddy-AI_x.y.z_amd64.deb`。
 
 2. 在下载目录执行：
 
@@ -119,12 +119,24 @@ Linux 发布包面向 Ubuntu / Debian `amd64`。安装前请先安装并登录�
    sudo apt install ./WorkDaddy_x.y.z_amd64.deb
    ```
 
+   如果安装 WorkBuddy AI 国际版，请改用：
+
+   ```bash
+   sudo apt install ./WorkDaddy-AI_x.y.z_amd64.deb
+   ```
+
 3. 从应用菜单启动 **WorkDaddy**（国内版）或 **WorkDaddy AI**（国际版）。首次启动会准备本地数据目录并启动后台服务；随后按提示重启 WorkBuddy 以开启 CDP 面板。
 
-安装包默认安装到 `/opt/workdaddy`，不默认设置开机自启。需要手动启动选择器时，可运行：
+国内版安装到 `/opt/workdaddy`，国际版安装到 `/opt/workdaddy-ai`。两个包可以同时安装，互不覆盖；都不默认设置开机自启。需要手动启动选择器时，可运行：
 
 ```bash
 bash /opt/workdaddy/scripts/launch-gui-linux.sh
+```
+
+国际版对应路径为：
+
+```bash
+bash /opt/workdaddy-ai/scripts/launch-gui-linux.sh ai
 ```
 
 如果系统没有应用菜单，也可以直接运行 `cn`、`ai`、`both` 或 `services` 参数选择启动方式：
@@ -144,6 +156,12 @@ WBSWITCH_PROFILE=workbuddy-ai bash /opt/workdaddy/scripts/systemd-install-linux.
 
 ```bash
 sudo apt remove workdaddy
+```
+
+卸载国际版：
+
+```bash
+sudo apt remove workdaddy-ai
 ```
 
 卸载软件包不会删除账号备份和运行数据；如需清理数据，请先确认对应的 `~/.config/WorkDaddy` 内容后再手动处理。
@@ -186,7 +204,7 @@ WBSWITCH_PROFILE=workbuddy-ai bash scripts/relaunch-with-cdp.sh
 
 暂存提示词和主题功能在两个 WorkBuddy profile 开启。CodeBuddy profile 的适配暂缓，不进入当前发布包。
 
-当前发布脚本打包两个 WorkBuddy 客户端：Windows 每个客户端发布 Setup.exe 与便携版 ZIP 两个包：`WorkDaddy-Setup-<version>.exe` / `WorkDaddy-Portable-<version>.zip`、`WorkDaddy-AI-Setup-<version>.exe` / `WorkDaddy-AI-Portable-<version>.zip`；macOS 发布两个 DMG，Linux 发布 `WorkDaddy_<version>_amd64.deb`。macOS 构建时传 `WORKDADDY_BUILD_PROFILE=workbuddy-cn` 或 `workbuddy-ai` 可单独重打一个客户端。Windows 便携版 ZIP 与 Setup.exe 同源生成，顶层只有启动和停止入口。
+当前发布脚本打包两个 WorkBuddy 客户端：Windows 每个客户端发布 Setup.exe 与便携版 ZIP 两个包：`WorkDaddy-Setup-<version>.exe` / `WorkDaddy-Portable-<version>.zip`、`WorkDaddy-AI-Setup-<version>.exe` / `WorkDaddy-AI-Portable-<version>.zip`；macOS 发布两个 DMG；Linux 发布 `WorkDaddy_<version>_amd64.deb` 和 `WorkDaddy-AI_<version>_amd64.deb`。macOS 构建时传 `WORKDADDY_BUILD_PROFILE=workbuddy-cn` 或 `workbuddy-ai` 可单独重打一个客户端。Windows 便携版 ZIP 与 Setup.exe 同源生成，顶层只有启动和停止入口。
 
 `install.sh` 做了：
 

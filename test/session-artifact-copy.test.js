@@ -7,8 +7,8 @@ const path = require('node:path');
 const vm = require('node:vm');
 const source = fs.readFileSync(path.join(__dirname, '../scripts/daemon.js'), 'utf8');
 function helpers(fsImpl = fs, log = () => {}) {
-  const ctx = { fs: fsImpl, path, log };
-  vm.runInNewContext(source.slice(source.indexOf('async function copySessionFiles('), source.indexOf('// Reconcile every live member')), ctx);
+  const ctx = { fs: fsImpl, path, log, crypto: require('node:crypto'), Buffer };
+  vm.runInNewContext(source.slice(source.indexOf('async function copySessionFiles('), source.indexOf('// Yield between session pairs')), ctx);
   return ctx;
 }
 test('copied delivered artifacts retain official ownership visibility and original timestamps', async t => {
@@ -99,36 +99,4 @@ test('unparseable artifact contents never appear in copy diagnostics', async t =
   await helpers(fs, value => logs.push(value)).copySessionFiles(dir, 'source', 'target');
   assert.doesNotMatch(logs.join('\n'), /private-fixture/);
   assert.match(logs.join('\n'), /格式不受支持/);
-});
-
-test('switch lineage synchronization repairs every legacy copy using the newest content', async t => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wd-artifact-lineage-'));
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
-  fs.mkdirSync(path.join(dir, 'artifact-index'));
-  const members = [{ uid: 'account-a', id: 'source' }, { uid: 'account-b', id: 'copy' }, { uid: 'account-c', id: 'third' }];
-  for (const [index, member] of members.entries()) {
-    const file = path.join(dir, 'artifact-index', member.id + '.json');
-    fs.writeFileSync(file, JSON.stringify({ version: 1, artifacts: [{ id: index === 1 ? 'newest-artifact' : 'old-artifact', requestId: 'protocol-42', _meta: { ownerConversationId: 'source' } }] }));
-    const time = new Date(index === 1 ? '2026-02-01' : '2026-01-01');
-    fs.utimesSync(file, time, time);
-  }
-  const h = helpers();
-  Object.assign(h, {
-    PROFILE: { kind: 'workbuddy', dataRoot: dir }, DATA_DIR: dir, SESSION_COPY_COLUMNS: ['id','user_id'],
-    getAutoCopySessionMemberRecords: () => members,
-    selectLatestAutoCopyMember: require('../scripts/lib.js').selectLatestAutoCopyMember,
-    yieldAutoCopyToRenderer: async () => {},
-    sqliteQuery: async (_, params) => [{ id: params[0], user_id: params[1], updated_at: 1 }],
-    sqliteRun: async () => {},
-  });
-  vm.runInNewContext(source.slice(source.indexOf('async function syncAutoCopyLineage('), source.indexOf('const MAX_SESSION_EXPORT_FILES')), h);
-  const result = await h.syncAutoCopyLineage('known-lineage', 'account-c');
-  assert.equal(result.sourceId, 'copy');
-  assert.equal(result.failedFiles, 0);
-  for (const member of members) {
-    const artifact = JSON.parse(fs.readFileSync(path.join(dir, 'artifact-index', member.id + '.json'))).artifacts[0];
-    assert.equal(artifact.id, 'newest-artifact');
-    assert.equal(artifact._meta.ownerConversationId, member.id);
-    assert.equal(artifact.requestId, 'protocol-42');
-  }
 });

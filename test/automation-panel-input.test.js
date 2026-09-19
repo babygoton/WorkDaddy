@@ -5,7 +5,7 @@ const ui=fs.readFileSync(path.join(__dirname,'../scripts/inject.js'),'utf8');
 
 test('panel opening is blocked only during input; waiting for a reply still allows access',()=>{
  const calls=[];const noop=()=>{};
- const ctx={window:{__wbsAutomationInputActive:true},state:{open:false},root:{},panel:{classList:{toggle:noop}},fab:{classList:{toggle:noop}},CAPS:{accounts:false},fabQuietMode:{wake:noop},toast:()=>calls.push('blocked'),refresh:()=>calls.push('refresh'),checkForUpdate:noop,acCheckPromptOnOpen:noop,syncSessionModule:noop,api:()=>Promise.resolve()};
+ const ctx={window:{__wbsAutomationInputActive:true},state:{open:false},root:{},panel:{classList:{toggle:noop}},fab:{classList:{toggle:noop}},CAPS:{accounts:false},fabQuietMode:{wake:noop},toast:()=>calls.push('blocked'),refresh:()=>calls.push('refresh'),checkForUpdate:noop,acCheckPromptOnOpen:noop,syncSessionModule:noop,closeSessionCopyNotice:noop,api:()=>Promise.resolve()};
  const start=ui.indexOf('    function setOpen(open, options)');
  vm.runInNewContext(ui.slice(start,ui.indexOf('    function setupFabDrag()',start)),ctx);
  ctx.setOpen(true);assert.equal(ctx.state.open,false);assert.deepEqual(calls,['blocked']);

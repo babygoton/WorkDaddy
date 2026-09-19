@@ -98,6 +98,10 @@ test('discovery searches GitHub and Gitee, deduplicates task JSON and caches res
     await discovery.getCatalog();
     assert.ok(f.calls.length > before, 'stale cache should refresh repository searches');
     assert.equal(f.calls.filter(url => url.includes('/contents/tasks')).length, 4, 'unmarked or unchanged repositories should not be rescanned');
+
+    const forcedBefore = f.calls.length;
+    await discovery.getCatalog({ force: true });
+    assert.ok(f.calls.length > forcedBefore, 'forced discovery should search when the automation page opens');
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -129,6 +133,37 @@ test('discovery ignores the old cache and reads V2 from task JSON, not the repos
     assert.equal(readAutomations(dir)[0].schemaVersion, 2);
     assert.deepEqual(catalog.tasks[0].sources.map(source => source.platform), ['github', 'gitee']);
     assert.equal(f.calls.some(url => url.includes('api.github.com/search/repositories')), true);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('discovery groups package revisions by ID and keeps the highest version', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wd-discovery-package-revisions-'));
+  try {
+    const packageFile = path.join(__dirname, '../examples/automation-packages/account-summary.workdaddy.json');
+    const older = JSON.parse(fs.readFileSync(packageFile, 'utf8'));
+    const newer = { ...older, version: '1.1.0', name: '账号积分与活跃天数新版' };
+    fs.writeFileSync(path.join(dir, 'automation-discovery-cache.json'), JSON.stringify({
+      version: 3, checkedAt: 1_000_000, refreshedAt: 1_000_000,
+      providers: { github: [], gitee: [] },
+      repositories: {
+        'github:demo/tasks': {
+          platform: 'github', fullName: 'demo/tasks', repositoryUrl: 'https://github.com/demo/tasks', stars: 3,
+          tasks: [
+            { path: 'tasks/older.json', downloadUrl: 'https://raw.githubusercontent.com/demo/tasks/main/tasks/older.json', content: JSON.stringify(older) },
+            { path: 'tasks/newer.json', downloadUrl: 'https://raw.githubusercontent.com/demo/tasks/main/tasks/newer.json', content: JSON.stringify(newer) },
+          ],
+        },
+      }, errors: [],
+    }));
+    const discovery = createAutomationDiscovery({ dataDir: dir, fetchImpl: async () => { throw new Error('cache should be fresh'); }, now: () => 1_000_000, runtime });
+    const catalog = await discovery.getCatalog();
+    assert.equal(catalog.tasks.length, 1);
+    assert.equal(catalog.tasks[0].packageId, older.id);
+    assert.equal(catalog.tasks[0].packageVersion, '1.1.0');
+    assert.equal(catalog.tasks[0].name, '账号积分与活跃天数新版');
+    assert.match(discovery.getTaskContent(catalog.tasks[0].key), /"version":"1\.1\.0"/);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -220,6 +255,11 @@ test('automation UI preloads discovery and exposes fuzzy task search and import'
   assert.match(source, /WorkDaddyAutomationRepository。/);
   assert.doesNotMatch(source, /WorkDaddyAutomationRepositoryV1/);
   assert.match(source, /wbs-auto-discovery-version/);
+  assert.match(source, /wbs-auto-update-badge/);
+  assert.match(source, /wbs-auto-discovery-update/);
+  assert.match(source, /replaceExisting/);
+  assert.match(source, /\/api\/automations\/discovery\?refresh=1/);
+  assert.match(source, /确认用公开仓库中的新版覆盖本地任务/);
   assert.match(source, /source\.platform === 'github'/);
   assert.match(source, /wbs-usage-modal-mask wbs-auto-dialog-mask/);
   assert.doesNotMatch(source, /wbs-auto-discovery-stars/);

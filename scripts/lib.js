@@ -609,10 +609,14 @@ function getAutoCopyRules(dataDir, uid) {
   const sessionIds = [];
   const lineages = {};
   const allLineages = {};
+  const branchSessionIds = [];
   for (const sessionId of Object.keys(index)) {
     const lineageId = index[sessionId];
     const lineage = config.sessions[lineageId];
-    if (lineage) allLineages[sessionId] = lineageId;
+    if (lineage) {
+      allLineages[sessionId] = lineageId;
+      if ((Array.isArray(lineage.members) ? lineage.members : []).some(member => member && member.uid === sourceUid && member.id === sessionId && member.branchCopy === true)) branchSessionIds.push(sessionId);
+    }
     if (lineage && lineage.enabled !== false) {
       sessionIds.push(sessionId);
       lineages[sessionId] = lineageId;
@@ -623,21 +627,21 @@ function getAutoCopyRules(dataDir, uid) {
     sessionIds,
     lineages,
     allLineages,
+    branchSessionIds,
     workspaces: Object.keys(config.workspaces),
   };
 }
 
-// A lineage represents one logical session per account. Older copies can
-// leave multiple physical rows indexed under the same lineage; keep the first
-// row (the SQL callers order newest activity first) for plans and UI counts.
-function dedupeAutoCopySessionRows(rows, lineagesByUid) {
+// Hide redundant legacy copies in lists, but keep explicit branch copies
+// visible beside the original. Sync plans still inspect every physical row.
+function dedupeAutoCopySessionRows(rows, lineagesByUid, branchesByUid = {}) {
   if (!Array.isArray(rows)) return [];
   const seen = new Set();
   return rows.filter((row) => {
     const uid = String(row && row.user_id || '').trim();
     const id = String(row && row.id || '').trim();
     const lineageId = lineagesByUid && lineagesByUid[uid] && lineagesByUid[uid][id];
-    if (!lineageId) return true;
+    if (!lineageId || branchesByUid[uid]?.has(id)) return true;
     const key = uid + '::' + String(lineageId);
     if (seen.has(key)) return false;
     seen.add(key);
@@ -882,7 +886,7 @@ function mergeAutoCopyLineages(dataDir, fromLineageId, intoLineageId) {
   return { ok: true, movedMembers };
 }
 
-function addAutoCopySessionMember(dataDir, lineageId, uid, sessionId) {
+function addAutoCopySessionMember(dataDir, lineageId, uid, sessionId, options = {}) {
   const meta = readMeta(dataDir);
   const config = ensureAutoCopyMeta(meta);
   const lineage = config.sessions[String(lineageId || '')];
@@ -898,6 +902,7 @@ function addAutoCopySessionMember(dataDir, lineageId, uid, sessionId) {
   }
   config.sessionIndex[sourceUid][id] = String(lineageId);
   addLineageMember(lineage, sourceUid, id);
+  if (options.branchCopy === true) lineage.members.find(member => member.uid === sourceUid && member.id === id).branchCopy = true;
   writeMeta(dataDir, meta);
   return true;
 }

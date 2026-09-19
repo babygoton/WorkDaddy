@@ -65,15 +65,31 @@ function importTasks(dataDir, payload, runtime) {
   // Re-read, revalidate and write once, synchronously. Preview is not an authority
   // to overwrite tasks added/edited while the import dialog was open.
   const tasks = readAutomations(dataDir), preview = previewImport(payload, tasks, runtime);
+  const replaceExisting = payload.replaceExisting === true;
   const selected = [...new Set(payload.selected)].map(key => {
     const entry = preview.entries.find(e => e.key === key);
     if (!entry || !entry.compatible) throw new Error('所选任务不兼容或文件已损坏');
     return entry;
   });
-  const added = selected.filter(e => !e.existing).map(e => e.task);
+  const added = [];
+  let replaced = 0;
+  selected.forEach((entry) => {
+    const packageId = entry.task && entry.task['x-workdaddy-import'] && entry.task['x-workdaddy-import'].packageId;
+    const existingIndex = replaceExisting && packageId
+      ? tasks.findIndex(task => task && task['x-workdaddy-import'] && task['x-workdaddy-import'].packageId === packageId)
+      : -1;
+    if (existingIndex >= 0) {
+      // Keep the local runtime ID so existing run records and UI references remain valid.
+      entry.task.id = tasks[existingIndex].id;
+      tasks[existingIndex] = entry.task;
+      replaced += 1;
+    } else if (!entry.existing) {
+      added.push(entry.task);
+    }
+  });
   if (added.length && tasks.length + added.length > MAX_TASKS) throw new Error('自动化任务数量已达到上限');
-  if (added.length) writeAutomations(dataDir, [...added, ...tasks]);
-  return { imported: added.length, skipped: selected.length - added.length, executed: false };
+  if (added.length || replaced) writeAutomations(dataDir, [...added, ...tasks]);
+  return { imported: added.length, replaced, skipped: selected.length - added.length - replaced, executed: false };
 }
 // These file endpoints use a bounded body reader instead of the legacy API reader.
 function readTransferBody(req) {
