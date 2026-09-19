@@ -55,6 +55,9 @@ test('conversation usage UI uses a body-fixed mount, bottom spacer and message s
   assert.match(source, /wbs-session-usage-summary\{[^}]*z-index:20/);
   assert.match(source, /wbs-session-usage-popover\{[^}]*z-index:21/);
   assert.match(source, /wbs-session-usage-summary\{[^}]*border:0/);
+  assert.match(source, /wbs-session-usage-summary\{[^}]*cursor:pointer/);
+  assert.match(source, /wbs-session-usage-detail-title\{[^}]*font-weight:700/);
+  assert.match(source, /return usageNumber\(value\) > 0 \? '≥' \+ formatted/);
   assert.match(source, /addEventListener\('scroll', scheduleConversationUsageScrollState, \{ passive: true \}\)/);
   assert.match(source, /var canScroll = maxScroll > 1/);
   assert.match(source, /var atBottom = canScroll && maxScroll - scrollElement\.scrollTop <= 4/);
