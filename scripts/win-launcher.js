@@ -1495,6 +1495,7 @@ function nativeDaemonStatusMatches(status) {
     status && status.ok === true &&
     status.profile && status.profile.id === PROFILE.id &&
     status.dataDir && sameWindowsPath(status.dataDir, DATA_DIR) &&
+    status.appDir && sameWindowsPath(status.appDir, WORKDADDY_APP_DIR) &&
     status.version === identity.version &&
     status.buildId === identity.buildId &&
     status.privilege === WINDOWS_PRIVILEGE
@@ -1526,6 +1527,9 @@ async function ensureDaemonNative(nodeBin) {
   if (status && nativeDaemonStatusMatches(status)) {
     log('daemon profile、版本、构建和实际权限均已验证，跳过启动 privilege=' + WINDOWS_PRIVILEGE);
     return true;
+  }
+  if (status && status.appDir && !sameWindowsPath(status.appDir, WORKDADDY_APP_DIR)) {
+    throw new Error('当前客户端 profile 已由另一目录的 WorkDaddy 运行；请先从原目录停止后台服务');
   }
   if (status) {
     log('daemon 身份或版本不匹配，先检查旧托管 Node 生命周期');

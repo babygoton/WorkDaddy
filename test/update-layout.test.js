@@ -624,17 +624,42 @@ test('Windows release packages bundle a pinned Node runtime and build a user-lev
   assert.match(launcher, /runtime\\node\\node\.exe/);
 });
 
-test('Windows release publishes Setup.exe only and removes temporary ZIP staging', () => {
+test('Windows release publishes paired Setup.exe and portable ZIP artifacts', () => {
   const workflow = fs.readFileSync(path.join(repoRoot, '.github', 'workflows', 'build-win.yml'), 'utf8');
   const installer = read('build-win-installer.ps1');
+  const build = read('build-win-zip.sh');
+  const start = read('Start-WorkDaddy.cmd');
+  const stop = read('Stop-WorkDaddy.cmd');
+  const iss = fs.readFileSync(path.join(repoRoot, 'scripts', 'win', 'workdaddy.iss'), 'utf8');
   const guide = fs.readFileSync(path.join(repoRoot, 'AGENTS.md'), 'utf8');
-  assert.match(workflow, /仅 Setup\.exe/);
-  assert.doesNotMatch(workflow, /release\/windows\/WorkDaddy-\*-win64\.zip/);
-  assert.match(workflow, /确认仅保留 Setup\.exe 发行产物/);
-  assert.match(installer, /ZIP is only an internal staging input/);
+  assert.match(workflow, /WorkDaddy-Portable-\*\.zip/);
+  assert.match(workflow, /WorkDaddy-AI-Portable-\*\.zip/);
+  assert.match(installer, /Move-Item -LiteralPath \$zipPath -Destination \$portable/);
   assert.match(installer, /Remove-Item -LiteralPath \$zipPath/);
-  assert.match(guide, /Windows releases are `Setup\.exe` only/);
-  assert.match(guide, /temporary staging/);
+  assert.match(build, /\$STAGE\/WorkDaddy\.portable/);
+  assert.doesNotMatch(build, /cp scripts\/(?:Install|Uninstall)-WorkDaddy\.cmd "\$STAGE\//);
+  assert.match(start, /WorkDaddyLauncher\.exe/);
+  assert.doesNotMatch(start, /scripts\\launcher\.cmd/);
+  assert.match(stop, /WorkDaddyLauncher\.exe" --stop-lifecycle --app-dir "%~dp0"/);
+  assert.match(build, /cp scripts\/Stop-WorkDaddy\.cmd "\$STAGE\/Stop-WorkDaddy\.cmd"/);
+  assert.doesNotMatch(iss, /Source:.*WorkDaddy\.portable/);
+  assert.match(guide, /WorkDaddy-AI-Portable-<VERSION>\.zip/);
+});
+
+test('portable Windows daemon never checks or applies installer updates', () => {
+  const daemon = read('daemon.js');
+  assert.match(daemon, /IS_PORTABLE_WIN = IS_WIN && fs\.existsSync\(path\.join\(WORKDADDY_DIR_WIN, 'WorkDaddy\.portable'\)\)/);
+  assert.match(daemon, /if \(IS_PORTABLE_WIN && \['\/api\/update-download', '\/api\/update-apply'\]\.includes\(p\)\)/);
+  assert.match(daemon, /if \(!IS_PORTABLE_WIN\) \{\s*setTimeout\(\(\) => \{ checkUpdate\(true\)/);
+  assert.match(daemon, /if \(IS_PORTABLE_WIN\) return Promise\.resolve\(updateState\);/);
+});
+
+test('Windows native launcher refuses to reuse a daemon from another package directory', () => {
+  const launcher = read('win-launcher.js');
+  const daemon = read('daemon.js');
+  assert.match(daemon, /if \(IS_WIN\) status\.appDir = WORKDADDY_DIR_WIN;/);
+  assert.match(launcher, /status\.appDir && sameWindowsPath\(status\.appDir, WORKDADDY_APP_DIR\)/);
+  assert.match(launcher, /if \(status && status\.appDir && !sameWindowsPath\(status\.appDir, WORKDADDY_APP_DIR\)\) \{/);
 });
 
 test('Windows Setup waits for WorkBuddy and stops only a native-verified profile lifecycle', () => {
@@ -791,14 +816,15 @@ test('account cards keep the compact three-row layout', () => {
   assert.doesNotMatch(script, /data-tip="' \+ attrTip \+ '" title=/);
   assert.match(script, /creditOpacity\(row\.days\)/);
   assert.match(script, /creditOpacity\(segment\.expiresAt/);
-  assert.match(script, /background:rgba\(34,197,94,var\(--wbs-credit-alpha,1\)\)/);
-  assert.match(script, /background:rgba\(126,134,255,var\(--wbs-credit-alpha,1\)\)/);
-  assert.match(script, /\.wbs-checkin-tag\.ok\{background:#edf9ef/);
-  assert.match(script, /html\.cb-dark \.wbs-checkin-tag\.ok,html\[data-theme="dark"\] \.wbs-checkin-tag\.ok\{/);
+  assert.match(script, /\.wbs-credit-segment,\.wbs-credit-summary-fill\{background:rgba\(var\(--wbs-primary-rgb,34,197,94\),var\(--wbs-credit-alpha,1\)\)/);
+  ['dark', 'cyber-purple', 'nebula'].forEach((themeId) => {
+    assert.match(script, new RegExp('html\\[data-wbs-theme-id="' + themeId + '"\\][\\s\\S]*--wbs-primary-rgb:127,119,221'));
+  });
+  assert.match(script, /\.wbs-daily-rings,\.wbs-checkin-tag\.ok\{[^}]*background:var\(--wbs-badge-bg\)[^}]*color:var\(--wbs-badge-fg\)/);
   assert.match(script, /今日签到/);
   assert.match(script, /function accountStatusTagsHtml\(a\)/);
   assert.match(script, /function checkinBadgeHtml\(a\)/);
-  assert.match(script, /badge \+ checkinBadge/);
+  assert.match(script, /badge \+ dailyRingsHtml\(a\) \+ checkinBadge/);
   assert.match(script, /if \(!usage \|\| usage\.synced !== true\) return '';/);
   assert.match(script, /wbs-usage-tag/);
   assert.match(script, /wbs-usage-tag[^\n]+今日已使用[^\n]+CREDIT_ICON/);
@@ -1129,7 +1155,7 @@ test('automatic session copy includes workspace-only rules when the initial plan
   assert.match(daemon, /const sourceRules = sourceUid \? getAutoCopyRules\(DATA_DIR, sourceUid\)/);
   assert.match(daemon, /hasSourceAutoCopyRules/);
   assert.match(daemon, /hasPendingAutoCopyTo\(uid\)/);
-  assert.match(daemon, /startAutoCopyJob\(sourceUid, uid, \[\]\)/);
+  assert.match(daemon, /startAutoCopyJob\(sourceUid, uid, \[\]/);
   assert.match(daemon, /syncAutoCopyLineage\(src\.lineageId, targetUid\)/);
   assert.match(daemon, /selectLatestAutoCopyMember\(live\)/);
   assert.match(daemon, /ensureAutoCopySessions\(DATA_DIR, source, lineageSessionIds, \{ enabled: !rules\.allSessions \}\)/);
@@ -1150,7 +1176,11 @@ test('session copy-all is a separate override with a distinct toggle and hidden 
   assert.match(inject, /getAttribute\('aria-checked'\)/);
   assert.match(inject, /\.wbs-sess-auto-all\{display:inline-flex/);
   assert.doesNotMatch(inject, /wbs-sess-auto-all-switch/);
-  assert.match(inject, /自动复制所有会话/);
+  assert.match(inject, /自动同步所有会话/);
+  assert.doesNotMatch(inject, /自动复制所有会话|会话复制完成|正在复制已标记会话/);
+  assert.match(inject, /同步选中到其他账号/);
+  assert.match(inject, /<span>同步<\/span>/);
+  assert.match(inject, /复制选中快捷短语/);
   assert.match(inject, /sessionsState\.autoCopyAll/);
   assert.match(inject, /if \(sessionsState\.autoCopyAll \|\| !canEditAutoCopy\(uid\)\) return ''/);
   assert.match(inject, /\/api\/sessions\/auto-copy-all/);
@@ -1165,6 +1195,56 @@ test('session auto-copy plans and API responses collapse duplicate rows by accou
   assert.match(daemon, /dedupeAutoCopySessionRows\(rows, \{ \[source\]: rules\.allLineages \}\)/);
   assert.match(daemon, /dedupeAutoCopySessionRows\(rows, lineagesByUid\)/);
   assert.match(daemon, /const DAEMON_VERSION = '\d+\.\d+\.\d+'/);
+});
+
+test('session pane restores and renders persistent auto-copy progress', () => {
+  const daemon = read('daemon.js');
+  const inject = read('inject.js');
+  assert.match(daemon, /GET' && p === '\/api\/sessions\/auto-copy\/active'/);
+  assert.match(daemon, /function activeAutoCopyJob\(\)/);
+  assert.match(inject, /id="wbs-sess-copy-progress"/);
+  assert.match(inject, /function renderSessionCopyProgress\(job\)/);
+  assert.match(inject, /\/api\/sessions\/auto-copy\/active/);
+  assert.match(inject, /aria-valuenow/);
+  assert.match(inject, /\.wbs-sess-copy-progress\{/);
+  assert.match(inject, /html\.cb-dark \.wbs-sess-copy-progress/);
+});
+
+test('account switching shows a compact copy notice and defers conflict feedback until completion', () => {
+  const daemon = read('daemon.js');
+  const inject = read('inject.js');
+  assert.match(daemon, /conflict: true/);
+  assert.match(daemon, /conflicts: 0/);
+  assert.match(daemon, /job\.status = job\.conflicts \? 'conflict'/);
+  assert.match(daemon, /failedItems: 0/);
+  assert.match(daemon, /sourceName: String\(accountLabels\.sourceName/);
+  assert.match(daemon, /targetName: String\(accountLabels\.targetName/);
+  assert.match(daemon, /sourceName: job\.sourceName/);
+  assert.match(daemon, /targetName: job\.targetName/);
+  assert.match(daemon, /details: Array\.isArray\(job\.details\)/);
+  assert.match(daemon, /unchanged: true/);
+  assert.match(inject, /wbs-session-copy-notice/);
+  assert.match(inject, /function pollSessionCopyNotice\(jobId, accountName\)/);
+  assert.match(inject, /sessionCopySummaryText\(job\)/);
+  assert.match(inject, /会话同步完成，发现冲突/);
+  assert.match(inject, /会话同步明细/);
+  assert.match(inject, /会话同步结果筛选/);
+  assert.match(inject, /正在同步已标记会话/);
+  assert.match(inject, /setBuildTimeout\(closeSessionCopyNotice, 10000\)/);
+  assert.match(inject, /sessionCopyNoticeChecked/);
+  assert.match(inject, /sessionCopyNoticeActiveAttempts < 10/);
+  assert.match(inject, /data-session-copy-details/);
+  assert.match(inject, /秒后自动关闭/);
+  assert.match(inject, /wbs-session-copy-details-modal/);
+  assert.match(inject, /data-session-copy-tab/);
+  assert.match(inject, /wbs-session-copy-detail-tabs/);
+  assert.match(inject, /wbs-model-tabs wbs-session-copy-detail-tabs/);
+  assert.match(inject, /grid-template-rows:auto auto minmax\(0,1fr\) auto/);
+  assert.match(inject, /sourceLabel = sessionCopyAccountLabel/);
+  assert.match(inject, /\.wbs-session-copy-status'\)\.hidden = !active/);
+  assert.match(inject, /setBuildTimeout\(pollActiveSessionCopyNotice, 250\)/);
+  assert.match(inject, /renderer before the daemon enqueues/);
+  assert.match(inject, /html\.cb-dark \.wbs-session-copy-notice/);
 });
 
 test('session summary counts effective sessions and models tab only exposes sanitized model APIs', () => {

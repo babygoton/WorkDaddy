@@ -342,7 +342,29 @@ async function fetchGrowthStreak(accessToken, options = {}) {
     const data = await readJsonResponse(response, '成长活跃');
     const days = data && data.streak && data.streak.days;
     if (!Number.isSafeInteger(days) || days < 0) throw new Error('成长活跃接口缺少有效连续天数');
-    return { days };
+    const streak = data.streak || {};
+    const makeupCards = data.makeup_cards && Number.isSafeInteger(data.makeup_cards.balance) && data.makeup_cards.balance >= 0
+      ? data.makeup_cards.balance : null;
+    const redemption = data.redemption_status && typeof data.redemption_status === 'object' ? data.redemption_status : {};
+    const progressDays = Number.isSafeInteger(redemption.remaining_days) && redemption.remaining_days >= 0
+      ? redemption.remaining_days : days;
+    const configured = Array.isArray(redemption.tiers) ? redemption.tiers : [];
+    const defaults = [{ tier: '7d', days: 7 }, { tier: '14d', days: 14 }, { tier: '28d', days: 28 }];
+    const tiers = defaults.map((fallback) => {
+      const source = configured.find((tier) => tier && tier.tier === fallback.tier) || fallback;
+      const tierDays = Number.isSafeInteger(source.days) && source.days > 0 ? source.days : fallback.days;
+      const status = String(redemption[`tier_${fallback.tier}_status`] || source.status || 'locked');
+      return { key: fallback.tier, days: tierDays, status };
+    });
+    return {
+      days,
+      progressDays,
+      nextTier: typeof streak.next_tier === 'string' ? streak.next_tier : null,
+      nextTierRemaining: Number.isSafeInteger(streak.next_tier_remaining) && streak.next_tier_remaining >= 0
+        ? streak.next_tier_remaining : null,
+      makeupCards,
+      tiers,
+    };
   } catch (error) {
     if (error && error.name === 'AbortError') throw new Error('成长活跃接口请求超时');
     throw error;
@@ -358,19 +380,19 @@ function createGrowthStreakCache(load, options = {}) {
     const entry = entries.get(uid);
     const at = now();
     return entry && at < entry.expiresAt && day(at) === day(entry.fetchedAt)
-      ? { days: entry.days, status: entry.status, fetchedAt: entry.fetchedAt } : null;
+      ? { ...entry.value } : null;
   };
-  const get = (uid) => {
-    const hit = peek(uid);
+  const get = (uid, detail = {}) => {
+    const hit = detail.force === true ? null : peek(uid);
     if (hit) return Promise.resolve(hit);
     if (pending.has(uid)) return pending.get(uid);
     const startedAt = now();
     const request = Promise.resolve().then(() => load(uid)).then((result) => {
       if (!result || !Number.isSafeInteger(result.days) || result.days < 0) throw new Error('Invalid streak');
-      return { days: result.days, status: 'ready' };
+      return { ...result, status: 'ready' };
     }).catch(() => ({ days: null, status: 'unavailable' })).then((result) => {
       const value = { ...result, fetchedAt: startedAt };
-      entries.set(uid, { ...value, expiresAt: startedAt + (result.status === 'ready' ? 300000 : 30000) });
+      entries.set(uid, { value, fetchedAt: startedAt, expiresAt: startedAt + (result.status === 'ready' ? 300000 : 30000) });
       if (entries.size > 500) entries.delete(entries.keys().next().value);
       return value;
     }).finally(() => pending.delete(uid));

@@ -56,12 +56,12 @@ chmod 644 "$APP/Contents/Resources/AppIcon.icns"
 echo "==> 应用图标已同步（背景 #e1e1e1）"
 
 # 2) 只覆盖前端代码（保留壳的其余一切：launcher/Info.plist/builtin/node_modules/theme-audit.js）
-for f in daemon.js toast-runtime.js toast-options.js primary-account.js completion-report.js automation-runtime.js automation-packages.js automation-compatibility.js automation-transfer.js automation-zip.js automation.js automation-picker.js token-refresh.js session-db.js third-party-models.js secure-transfer.js session-transfer.js windows-process-boundary.js workbuddy-compat.js inject.js theme-patches.js theme-text-shadow.js theme-vars.js credit-segments.js credit-resource-queries.js credit-request-usage.js credit-history-sync.js credit-usage-store.js credit-rotation.js token-stats.js growth-active.js atomic-file-write.js ui-port.js checkin-result.js checkin-consent.js lib.js profiles.js workbuddy-target.js cdp-targets.js sentry-report.js usage-report.js install.sh relaunch-with-cdp.sh uninstall.sh apply-update.sh; do
+for f in daemon.js toast-runtime.js toast-options.js primary-account.js completion-report.js automation-runtime.js automation-model.js automation-packages.js automation-compatibility.js automation-transfer.js automation-discovery.js automation-zip.js automation.js automation-picker.js token-refresh.js session-db.js session-fork.js third-party-models.js secure-transfer.js session-transfer.js windows-process-boundary.js windows-installer-launch.js workbuddy-compat.js inject.js theme-patches.js theme-text-shadow.js theme-vars.js credit-segments.js credit-resource-queries.js credit-request-usage.js credit-history-sync.js credit-usage-store.js credit-rotation.js token-stats.js growth-active.js growth-daily.js atomic-file-write.js ui-port.js checkin-result.js lib.js platform.js profiles.js workbuddy-target.js cdp-targets.js sentry-report.js usage-report.js install.sh relaunch-with-cdp.sh uninstall.sh apply-update.sh; do
   [ -f "scripts/$f" ] && cp "scripts/$f" "$APP/Contents/Resources/scripts/$f"
 done
 # Injection reads the wordmark at runtime; keep brand assets in both profiles.
 mkdir -p "$APP/Contents/Resources/scripts/assets"
-cp scripts/assets/workdaddy-logo.svg scripts/assets/workdaddy-app-icon.svg scripts/assets/workdaddy-app-icon-source.svg "$APP/Contents/Resources/scripts/assets/"
+cp scripts/assets/workdaddy-logo.svg scripts/assets/workdaddy-app-icon.svg scripts/assets/workdaddy-app-icon-source.svg scripts/assets/workbuddy-buddy-mark.svg "$APP/Contents/Resources/scripts/assets/"
 # Presets are runtime source, independent of the reusable wallpaper/theme shell.
 mkdir -p "$APP/Contents/Resources/scripts/builtin/automations"
 cp scripts/builtin/automations/*.json "$APP/Contents/Resources/scripts/builtin/automations/"
@@ -96,6 +96,7 @@ chmod 644 "$APP/Contents/Resources/scripts/session-db.js" \
   "$APP/Contents/Resources/scripts/workbuddy-target.js" \
   "$APP/Contents/Resources/scripts/secure-transfer.js" \
   "$APP/Contents/Resources/scripts/session-transfer.js" \
+  "$APP/Contents/Resources/scripts/session-fork.js" \
   "$APP/Contents/Resources/scripts/windows-process-boundary.js" \
   "$APP/Contents/Resources/scripts/credit-request-usage.js" \
   "$APP/Contents/Resources/scripts/credit-history-sync.js" \
@@ -105,7 +106,7 @@ chmod 644 "$APP/Contents/Resources/scripts/session-db.js" \
   "$APP/Contents/Resources/scripts/atomic-file-write.js" \
   "$APP/Contents/Resources/scripts/ui-port.js" \
   "$APP/Contents/Resources/scripts/checkin-result.js" \
-  "$APP/Contents/Resources/scripts/checkin-consent.js" \
+  "$APP/Contents/Resources/scripts/automation-discovery.js" \
   "$APP/Contents/Resources/scripts/workbuddy-compat.js" \
   "$APP/Contents/Resources/scripts/inject.js" \
   "$APP/Contents/Resources/scripts/theme-patches.js"

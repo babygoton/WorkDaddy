@@ -106,6 +106,30 @@
     return turns;
   }
 
+  function findSessionForkSelection(frame, messageStore) {
+    try {
+      var id = frame && frame.getAttribute('data-cr-frame-id');
+      var state = messageStore && messageStore.getState();
+      var messages = state && state.messages;
+      if (!id || !Array.isArray(messages) || !messages.length || messages.length > 10000) return null;
+      var roles = '';
+      var index = -1;
+      for (var i = 0; i < messages.length; i++) {
+        var message = messages[i];
+        if (!message || (message.messageType !== 'user' && message.messageType !== 'assistant')) return null;
+        roles += message.messageType === 'user' ? 'u' : 'a';
+        if (message.id === id) index = i;
+      }
+      var selected = messages[index];
+      if (!selected || selected.messageType !== 'assistant' ||
+          selected.complete === false || selected.isEnd === false ||
+          !Number.isSafeInteger(selected.finishTime) || selected.finishTime <= 0) return null;
+      return { messageIndex: index, roles: roles, finishedAt: selected.finishTime };
+    } catch (_) {
+      return null;
+    }
+  }
+
   function selectedConversationId(candidates) {
     var list = Array.isArray(candidates) ? candidates : [];
     for (var i = 0; i < list.length; i++) {
@@ -429,6 +453,7 @@
     findConversationListRecords: findConversationListRecords,
     findMessageNavigationAdapter: findMessageNavigationAdapter,
     findMessageNavigationSurface: findMessageNavigationSurface,
+    findSessionForkSelection: findSessionForkSelection,
     findConversationControllers: findConversationControllers,
     getSelectedConversationId: getSelectedConversationId,
     hasModernQueueSurface: hasModernQueueSurface,

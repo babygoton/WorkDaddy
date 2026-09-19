@@ -31,3 +31,19 @@ test('background auth backup and account switching preserve fixed sort metadata'
   lib.updateMeta(dir, { uid: 'a', nickname: 'switched' });
   assert.deepEqual(Object.fromEntries(lib.listAccounts(dir).map(a => [a.uid,a.sort])), { a: 2, b: 1 });
 });
+
+test('legacy account notes stay in metadata but are not exposed in the account list', t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wd-account-settings-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  fs.mkdirSync(lib.accountsDir(dir), { recursive: true });
+  const backup = path.join(lib.accountsDir(dir), 'a.info');
+  fs.writeFileSync(backup, '{}');
+  const before = fs.readFileSync(backup);
+  fs.writeFileSync(lib.metaFile(dir), JSON.stringify({ accounts: { a: { note: '公司邮箱注册' } } }));
+  lib.updateMeta(dir, { uid: 'a', nickname: 'new name' });
+  assert.equal(JSON.parse(fs.readFileSync(lib.metaFile(dir), 'utf8')).accounts.a.note, '公司邮箱注册');
+  assert.deepEqual(fs.readFileSync(backup), before);
+  lib.setAccountOrder(dir, { mode: 'expiry', uids: ['a'] });
+  assert.equal(JSON.parse(fs.readFileSync(lib.metaFile(dir), 'utf8')).accounts.a.note, '公司邮箱注册');
+  assert.equal(Object.hasOwn(lib.listAccounts(dir)[0], 'note'), false);
+});

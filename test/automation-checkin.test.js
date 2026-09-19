@@ -7,7 +7,14 @@ const path = require('node:path');
 const os = require('node:os');
 const automation = require('../scripts/automation');
 const source = fs.readFileSync(path.join(__dirname, '../scripts/daemon.js'), 'utf8');
-const presetPath = path.join(__dirname, '../scripts/builtin/automations/daily-account-checkin.json');
+const checkinTask = automation.normalizeTask({
+  id: 'community-checkin',
+  enabled: false,
+  trigger: { type: 'manual' },
+  steps: [{ op: 'account.forEach', accounts: 'all', switch: false, steps: [
+    { op: 'logic.catch', steps: [{ op: 'account.checkin', saveAs: 'checkin' }], onError: [] },
+  ] }],
+});
 
 test('multiple event triggers survive validation and match independently', () => {
   const task = automation.validateTask({id:'multi', trigger:{type:'manual',types:['clientLoaded','panelOpened']}, schedule:{type:'interval',minutes:60},steps:[]});
@@ -33,8 +40,9 @@ test('interval scheduler handles edits, disabled tasks and overlapping runs with
   tick([{...task,schedule:{type:'interval',minutes:5}}],run,()=>false,14700002);assert.equal(calls.length,3);
 });
 
-test('built-in task is installed once and respects edits, disabling and deletion', () => {
+test('built-in task installation respects edits, disabling and deletion', () => {
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'wd-checkin-'));
+  const presetPath = path.join(__dirname, '../scripts/builtin/automations/close-buddy-popups.json');
   try {
     automation.installBuiltinTask(dir,presetPath);
     const tasks=automation.readAutomations(dir);assert.equal(tasks.length,1);
@@ -44,8 +52,8 @@ test('built-in task is installed once and respects edits, disabling and deletion
   } finally {fs.rmSync(dir,{recursive:true,force:true});}
 });
 
-test('preset silently iterates accounts, continues after failures and leaves the panel open', async () => {
-  const preset=JSON.parse(fs.readFileSync(presetPath));
+test('an imported task can silently iterate accounts, continue after failures and leave the panel open', async () => {
+  const preset=checkinTask;
   assert.equal(automation.taskNeedsPanelClosed(preset),false);
   assert.equal(automation.taskNeedsPanelClosed({...preset,onFailure:[{op:'session.sendCurrent',message:'test'}]}),true);
   const calls=[];
@@ -112,8 +120,8 @@ test('panel-open emits once per user opening and excludes automation restoration
   const end=ui.indexOf('    function setupFabDrag()',start);
   const calls=[];const noop=()=>{};
   const ctx={window:{},state:{open:false,creditRunId:0},panel:{classList:{toggle:noop}},fab:{classList:{toggle:noop}},
-    api:(route,options)=>{calls.push([route,JSON.parse(options.body).type]);return Promise.resolve();},
-    CAPS:{accounts:false},refresh:noop,checkForUpdate:noop,acCheckPromptOnOpen:noop,syncSessionModule:noop,fabQuietMode:{wake:noop}};
+    api:(route,options)=>{if(route==='/api/automations/discovery')return Promise.resolve({tasks:[]});calls.push([route,JSON.parse(options.body).type]);return Promise.resolve();},
+    preloadAutomationDiscovery:()=>Promise.resolve({tasks:[]}),CAPS:{accounts:false},refresh:noop,checkForUpdate:noop,acCheckPromptOnOpen:noop,syncSessionModule:noop,fabQuietMode:{wake:noop}};
   vm.createContext(ctx);vm.runInContext(ui.slice(start,end),ctx);
   ctx.setOpen(true);ctx.setOpen(true);assert.equal(calls.length,1);
   ctx.setOpen(false);ctx.setOpen(true,{automation:true});assert.equal(calls.length,1);
@@ -129,15 +137,20 @@ test('automation editor assigns remaining height to the code field without an ou
   assert.doesNotMatch(rules,/height:calc\(100% - 164px\)|min-height:190px/);
 });
 
-test('fresh CN and AI profiles receive all three presets without reinstalling deleted tasks', () => {
+test('fresh CN receives Buddy travel and check-in disabled while AI keeps the two existing presets', () => {
   const init = source.slice(source.indexOf("for (const preset of ['close-buddy-popups.json'"), source.indexOf('\nrestoreSleepMode();'));
   const { PROFILES } = require('../scripts/profiles');
   for (const id of ['workbuddy-cn', 'workbuddy-ai']) {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wd-presets-'));
     try {
-      const context = { initializeCheckinConsent: require('../scripts/checkin-consent').initializeCheckinConsent, PROFILE: PROFILES[id], DATA_DIR: dir, path, __dirname: path.join(__dirname, '../scripts'), installBuiltinTask: automation.installBuiltinTask, log() {} };
+      const context = { PROFILE: PROFILES[id], DATA_DIR: dir, path, __dirname: path.join(__dirname, '../scripts'), installBuiltinTask: automation.installBuiltinTask, log() {} };
       vm.runInNewContext(init, context);
-      assert.deepEqual(automation.readAutomations(dir).map(t => t.id).sort(), ['buddy-fuel-station-close-on-account-switch', 'daily-account-checkin', 'keep-accounts-active-1-plus-1']);
+      assert.deepEqual(automation.readAutomations(dir).map(t => t.id).sort(), id === 'workbuddy-cn'
+        ? ['buddy-fuel-station-close-on-account-switch', 'daily-account-checkin', 'daily-growth-and-buddy', 'keep-accounts-active-1-plus-1']
+        : ['buddy-fuel-station-close-on-account-switch', 'keep-accounts-active-1-plus-1']);
+      if (id === 'workbuddy-cn') for (const taskId of ['daily-growth-and-buddy', 'daily-account-checkin']) {
+        assert.equal(automation.readAutomations(dir).find(t => t.id === taskId).enabled, false);
+      }
       automation.writeAutomations(dir, []);
       vm.runInNewContext(init, context);
       assert.equal(automation.readAutomations(dir).length, 0);

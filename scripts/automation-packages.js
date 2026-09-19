@@ -105,7 +105,7 @@ function previewPackage(input, options = {}) {
     if (task.requires != null) throw new Error('Package requirements belong in the envelope only');
     inputs=document.inputs||{};
   }else { task=object(document.task||document,'task'); requires=task.requires || null; }
-  if((task.schemaVersion??1)!==1)return incompatible('unsupported_task_schema');
+  if(packaged ? (task.schemaVersion??1)!==1 : ![1,2].includes(task.schemaVersion??1))return incompatible('unsupported_task_schema');
   const analysis=analyzeTask(task);
   issues.push(...assessRequirements(requires,{...runtime,capabilities:runtime.capabilities || CAPABILITIES.filter(c=>c.available!==false).map(c=>c.id)},analysis.capabilities));
   const bound=bindInputs(inputs,options.values||{});

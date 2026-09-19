@@ -69,8 +69,8 @@ test('account loops can physically switch each account and restore the original'
 test('capability protocol documents every supported step and rejects event ids as steps', () => {
   const documented = new Set(CAPABILITIES.map((item) => item.id));
   for (const op of SUPPORTED_OPS) assert.equal(documented.has(op), true, `missing capability documentation for ${op}`);
-  assert.match(capabilityText('zh'), /WorkDaddy 自动化任务协议 v1/);
-  assert.match(capabilityText('en'), /WorkDaddy Automation Task Protocol v1/);
+  assert.match(capabilityText('zh'), /WorkDaddy 自动化任务协议 v2/);
+  assert.match(capabilityText('en'), /WorkDaddy Automation Task Protocol v2/);
   assert.match(capabilityText('zh'), /基础接口总目录：[\s\S]*logic:[\s\S]*account:[\s\S]*http:[\s\S]*dom:[\s\S]*session:[\s\S]*state:[\s\S]*notify:/);
   assert.match(capabilityText('zh'), /HTTP 输入：[\s\S]*响应：\{ok,status,headers,text,json\}/);
   assert.match(capabilityText('en'), /Capability index:[\s\S]*Per-operation reference and minimal examples:/);
@@ -101,6 +101,41 @@ test('automation execution records step-level failures even when logic.catch han
   assert.ok(logs.some((line) => /step:start:\d+:logic\.assert/.test(line)));
   assert.ok(logs.some((line) => /step:error:\d+:logic\.assert:expected failure/.test(line)));
   assert.ok(logs.some((line) => /step:complete:\d+:logic\.catch/.test(line)));
+});
+
+test('task log accepts named parameters and records caught account failures without secrets', async () => {
+  const logs = [];
+  const task = {
+    id: 'account-log', name: 'account log',
+    steps: [{ op: 'account.forEach', accounts: 'all', steps: [{
+      op: 'logic.catch',
+      steps: [{ op: 'logic.assert', condition: { left: false, operator: 'truthy' }, message: 'HTTP 400' }],
+      onError: [{ op: 'log.write', message: '账号 {account} 失败：{reason}', params: {
+        account: '{{account.uid}}', reason: '{{vars.error.message}}',
+      } }],
+    }] }],
+  };
+  await executeTask(task, { listAccounts: async () => [{ uid: '13362365681' }], log: line => logs.push(line) });
+  assert.ok(logs.includes('任务日志: 账号 ***5681 失败：HTTP 400'));
+  assert.equal(logs.some(line => line.includes('13362365681')), false);
+  const sensitiveLogs = [];
+  await executeTask({ id: 'redacted-log', name: 'redacted', steps: [
+    { op: 'log.write', message: '失败：{reason}', params: { reason: 'Bearer highly-private-value' } },
+  ] }, { log: line => sensitiveLogs.push(line) });
+  assert.ok(sensitiveLogs.includes('任务日志: 失败：Bearer [已隐藏]'));
+  assert.equal(sensitiveLogs.some(line => line.includes('highly-private-value')), false);
+  assert.throws(() => validateTask({ id: 'bad-log', name: 'bad', steps: [
+    { op: 'log.write', message: '泄漏 {value}', params: { value: '{{vars.response.headers.authorization}}' } },
+  ] }), /敏感/);
+});
+
+test('daemon returns the full in-memory log for each automation run', () => {
+  const daemon = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'daemon.js'), 'utf8');
+  const publicRun = daemon.slice(daemon.indexOf('function automationPublicRun('), daemon.indexOf('// 自动化运行前', daemon.indexOf('function automationPublicRun(')));
+  const append = daemon.slice(daemon.indexOf('const appendRunLog ='), daemon.indexOf('automationRuns.set(id, run)', daemon.indexOf('const appendRunLog =')));
+  assert.match(publicRun, /logs:\s*run\.logs\b/);
+  assert.doesNotMatch(publicRun, /run\.logs\.slice/);
+  assert.doesNotMatch(append, /run\.logs\.(?:splice|shift)/);
 });
 
 test('automation panel uses its published picker and wider protocol surfaces', () => {
@@ -295,6 +330,8 @@ test('automation task editor is a modal and is not rendered below example prompt
   assert.match(pane, /mask\.id = 'wbs-auto-editor-mask'/);
   assert.match(pane, /wbs-modal wbs-auto-editor-modal/);
   const htmlStart = pane.indexOf('automationPane.innerHTML =');
-  const htmlEnd = pane.indexOf("automationPane.querySelector('#wbs-auto-new')", htmlStart);
+  const htmlEnd = pane.indexOf("automationPane.querySelector('#wbs-auto-export')", htmlStart);
   assert.doesNotMatch(pane.slice(htmlStart, htmlEnd), /wbs-auto-editor/);
+  assert.doesNotMatch(pane, /id="wbs-auto-new"|querySelector\('#wbs-auto-new'\)/);
+  assert.doesNotMatch(pane, /暂无自动化任务，点击“新建任务”开始。/);
 });

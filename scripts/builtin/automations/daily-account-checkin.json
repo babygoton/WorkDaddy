@@ -6,16 +6,10 @@
   "enabled": false,
   "trigger": {
     "type": "clientLoaded",
-    "types": [
-      "clientLoaded",
-      "panelOpened"
-    ],
+    "types": ["clientLoaded", "panelOpened"],
     "oncePerNavigation": true
   },
-  "schedule": {
-    "type": "interval",
-    "minutes": 60
-  },
+  "schedule": { "type": "interval", "minutes": 60 },
   "variables": {},
   "steps": [
     {
@@ -26,29 +20,15 @@
         {
           "op": "logic.catch",
           "steps": [
-            {
-              "op": "account.checkin",
-              "saveAs": "checkin"
-            },
+            { "op": "account.checkin", "saveAs": "checkin" },
             {
               "op": "logic.if",
-              "condition": {
-                "left": "{{vars.checkin.skipped}}",
-                "operator": "falsy"
-              },
-              "then": [
-                {
-                  "op": "logic.delay",
-                  "ms": 250
-                }
-              ]
+              "condition": { "left": "{{vars.checkin.skipped}}", "operator": "falsy" },
+              "then": [{ "op": "logic.delay", "ms": 250 }]
             },
             {
               "op": "logic.assert",
-              "condition": {
-                "left": "{{vars.checkin.ok}}",
-                "operator": "truthy"
-              },
+              "condition": { "left": "{{vars.checkin.ok}}", "operator": "truthy" },
               "message": "该账号签到未成功，请检查登录状态或签到活动"
             }
           ],

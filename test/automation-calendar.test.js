@@ -27,12 +27,44 @@ test('weekly/monthly/once match local calendar, skip overlap and nonexistent mon
  const fresh=a.createScheduleTicker();fresh([t],run,()=>false,at(match));assert.equal(calls.length,1);
  }
 });
-test('all three builtins preserve existing edits and deletion across updates',()=>{
+test('all four builtins preserve existing edits and deletion across updates',()=>{
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'wd-builtins-'));try{
- const files=fs.readdirSync(path.join(__dirname,'../scripts/builtin/automations')).filter(f=>f.endsWith('.json'));assert.equal(files.length,3);
+ const files=fs.readdirSync(path.join(__dirname,'../scripts/builtin/automations')).filter(f=>f.endsWith('.json'));assert.equal(files.length,4);
  const install=()=>files.forEach(f=>a.installBuiltinTask(dir,path.join(__dirname,'../scripts/builtin/automations',f)));
- install();const original=a.readAutomations(dir);assert.equal(new Set(original.map(t=>t.id)).size,3);
+ install();const original=a.readAutomations(dir);assert.equal(new Set(original.map(t=>t.id)).size,4);
+ assert.equal(original.find(t=>t.id==='daily-growth-and-buddy').enabled,false);
+ assert.equal(original.find(t=>t.id==='daily-account-checkin').enabled,false);
  const edited=original.slice(1).map(t=>({...t,name:'用户修改',enabled:false}));a.writeAutomations(dir,edited);install();assert.deepEqual(a.readAutomations(dir),edited);
+ }finally{fs.rmSync(dir,{recursive:true,force:true});}
+});
+
+test('existing imported Buddy travel task is not overwritten or automatically enabled',()=>{
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'wd-buddy-existing-'));
+ try{
+  const file=path.join(__dirname,'../scripts/builtin/automations/buddy-travel.json');
+  const existing=a.validateTask({...JSON.parse(fs.readFileSync(file,'utf8')),name:'我的派猫猫任务',enabled:false});
+  a.writeAutomations(dir,[existing]);
+  a.installBuiltinTask(dir,file);
+  assert.deepEqual(a.readAutomations(dir),[existing]);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(dir,'automation-builtins.json'),'utf8'))[existing.id].managed,false);
+ }finally{fs.rmSync(dir,{recursive:true,force:true});}
+});
+
+test('automation list marks only managed presets as built in',()=>{
+ const source=fs.readFileSync(path.join(__dirname,'../scripts/daemon.js'),'utf8');
+ const start=source.indexOf("  if (req.method === 'GET' && p === '/api/automations') {");
+ const end=source.indexOf("  if (req.method === 'POST' && p === '/api/automations/logs/clear')",start);
+ assert.ok(start>=0&&end>start);
+ const route=new Function('req','p','res','importAgentInbox','DATA_DIR','PROFILE','log','readAutomations','fs','path','automationRuns','automationPublicRun','json','canManuallyRunTask','isTaskCompatible',source.slice(start,end));
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'wd-builtin-label-'));
+ try{
+  const buddyFile=path.join(__dirname,'../scripts/builtin/automations/buddy-travel.json');
+  a.writeAutomations(dir,[a.validateTask({...JSON.parse(fs.readFileSync(buddyFile)),name:'我的任务'})]);
+  a.installBuiltinTask(dir,buddyFile);
+  a.installBuiltinTask(dir,path.join(__dirname,'../scripts/builtin/automations/close-buddy-popups.json'));
+  const result=route({method:'GET'},'/api/automations',{},()=>[],dir,{},()=>{},a.readAutomations,fs,path,new Map(),()=>({}),(_res,_status,body)=>body,a.canManuallyRunTask,()=>true);
+  assert.equal(result.tasks.find(t=>t.id==='daily-growth-and-buddy').builtinManaged,false);
+  assert.equal(result.tasks.find(t=>t.id==='buddy-fuel-station-close-on-account-switch').builtinManaged,true);
  }finally{fs.rmSync(dir,{recursive:true,force:true});}
 });
 

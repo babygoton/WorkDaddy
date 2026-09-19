@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# WorkDaddy Windows 安装暂存脚本（在 macOS/Linux/Windows Git Bash 上运行）
-# 产出的是供 build-win-installer.ps1 消费的临时 ZIP；Windows 正式发行只交付 Setup.exe，
-# 安装器完成后会删除该暂存 ZIP，旧 ZIP 仅由更新器兼容读取历史版本。
+# WorkDaddy Windows 安装/便携包 staging（在 macOS/Linux/Windows Git Bash 上运行）。
+# build-win-installer.ps1 使用 ZIP 编译 Setup.exe，成功后将 ZIP 发布为 Portable。
 # 可选：内置 node_modules/ws（面板 DevTools 代理依赖；无则代理功能降级，其余功能不受影响）
 set -euo pipefail
 
@@ -129,20 +128,20 @@ if [ "${WALLPAPER_COUNT:-0}" -le 0 ]; then
   echo "错误：内置官方壁纸为空：$BUILTIN_SRC/wallpapers" >&2
   exit 2
 fi
-echo "==> 内置资产来源: $BUILTIN_SRC（${WALLPAPER_COUNT} 张壁纸 + 主题）"
+echo "==> 内置资产来源: ${BUILTIN_SRC}（${WALLPAPER_COUNT} 张壁纸 + 主题）"
 WALLPAPER_OVERRIDE="$DIR/scripts/builtin-overrides/wallpaper-06.webp"
 
-# 3) 打包：staging 目录，把两个顶层入口文件 + scripts/ 一起打进 zip 根（解压即见一键安装/启动）
+# 3) 打包：顶层只保留免安装启动入口和便携标记；安装请使用 Setup.exe。
 #    注意 apply-update.ps1 复用本结构（需 zip 内存在 scripts\daemon.js 做 srcRoot 判定）
 STAGE="$(mktemp -d)"
 # 清理旧的同名输出（zip 打开 w 模式会覆盖，因此 rm 仅兜底已存在的旧文件；失败不再中断打包）
 if [ -f "$OUT" ]; then
   rm -f "$OUT" || true
 fi
-# 3.1) 顶层入口（zip 根）：Install-WorkDaddy.cmd / Start-WorkDaddy.cmd / Uninstall-WorkDaddy.cmd
-cp scripts/Install-WorkDaddy.cmd "$STAGE/Install-WorkDaddy.cmd"
+# 3.1) 顶层入口与标记只存在于 ZIP，Inno Setup 只安装 scripts/ 和原生启动器。
 cp scripts/Start-WorkDaddy.cmd "$STAGE/Start-WorkDaddy.cmd"
-cp scripts/Uninstall-WorkDaddy.cmd "$STAGE/Uninstall-WorkDaddy.cmd"
+cp scripts/Stop-WorkDaddy.cmd "$STAGE/Stop-WorkDaddy.cmd"
+printf 'portable\n' > "$STAGE/WorkDaddy.portable"
 # 3.2) scripts\ 本体（含 node_modules/ws、builtin）
 cp -R scripts "$STAGE/scripts"
 # 内置资产直接写入 staging，避免修改源码树，也确保最终 ZIP/Setup.exe 一定包含它们。
@@ -293,16 +292,12 @@ if [ -f "$DIR/release/WorkDaddy.ico" ]; then
 else
   echo "==> 警告: 未找到 release/WorkDaddy.ico，桌面图标将回退为 cmd 默认"
 fi
-# 3.3) 排除开发/临时文件 + 顶层入口在 scripts\ 内的重复副本
-#      （Install-WorkDaddy.cmd / Start-WorkDaddy.cmd / Uninstall-WorkDaddy.cmd 只应存在
-#       于 zip 根，避免用户误进 scripts\ 双击导致相对路径解析错误）
+# 3.3) 排除开发/临时文件 + scripts\ 内旧版安装/卸载入口副本。
 rm -rf "$STAGE/scripts/win/probe" "$STAGE/scripts/win/probe/"* 2>/dev/null || true
-rm -f "$STAGE/scripts/Install-WorkDaddy.cmd" "$STAGE/scripts/Start-WorkDaddy.cmd" "$STAGE/scripts/Uninstall-WorkDaddy.cmd" 2>/dev/null || true
+rm -f "$STAGE/scripts/Install-WorkDaddy.cmd" "$STAGE/scripts/Start-WorkDaddy.cmd" "$STAGE/scripts/Stop-WorkDaddy.cmd" "$STAGE/scripts/Uninstall-WorkDaddy.cmd" 2>/dev/null || true
 find "$STAGE" -name '*.log' -delete 2>/dev/null || true
 find "$STAGE" -name '.DS_Store' -delete 2>/dev/null || true
-# 3.3a) AI 包品牌化：cmd 描述/桌面图标/安装目录名跟随工包显示为 WorkDaddy AI
-#       （仅 workbuddy-ai；CN 包保持 WorkDaddy。文件名 Install-WorkDaddy.cmd、
-#        数据目录 %APPDATA%\WorkDaddy、WorkDaddy.ico 不随包变，保持原样。）
+# 3.3a) AI 包品牌化：cmd 描述/桌面图标/安装目录名跟随工包显示为 WorkDaddy AI。
 if [ "$PROFILE" = "workbuddy-ai" ]; then
   echo "==> AI 包品牌化：cmd 描述 / 桌面图标 / 安装目录名 → WorkDaddy AI"
 "$PYTHON_BIN" - "$(winpath "$STAGE")" <<'PY'
@@ -326,20 +321,14 @@ def patch(path, pairs):
     with open(p, 'wb') as f:
         f.write((b'\xef\xbb\xbf' if has_bom else b'') + encoded)
 
-# zip 根两个入口 cmd
-patch('Install-WorkDaddy.cmd', [
-    ('WorkDaddy 一键安装', 'WorkDaddy AI 一键安装'),
-    (r'%LOCALAPPDATA%\Programs\WorkDaddy', r'%LOCALAPPDATA%\Programs\WorkDaddy AI'),
-    ('extracted WorkDaddy zip', 'extracted WorkDaddy AI zip'),
-])
+# zip 根启动入口
 patch('Start-WorkDaddy.cmd', [
     ('WorkDaddy 一键启动', 'WorkDaddy AI 一键启动'),
     ('「WorkDaddy」图标', '「WorkDaddy AI」图标'),
     ('WorkDaddy launcher starting', 'WorkDaddy AI launcher starting'),
 ])
-patch('Uninstall-WorkDaddy.cmd', [
-    ('WorkDaddy 一键卸载', 'WorkDaddy AI 一键卸载'),
-    (r'%LOCALAPPDATA%\Programs\WorkDaddy', r'%LOCALAPPDATA%\Programs\WorkDaddy AI'),
+patch('Stop-WorkDaddy.cmd', [
+    ('WorkDaddy stopped.', 'WorkDaddy AI stopped.'),
 ])
 patch('scripts/uninstall-win.cmd', [
     ('WorkDaddy Windows 卸载核心', 'WorkDaddy AI Windows 卸载核心'),
@@ -366,7 +355,7 @@ patch('scripts/verify-win.cmd', [
     (r'Desktop\WorkDaddy.lnk', r'Desktop\WorkDaddy AI.lnk'),
     ('桌面已有 WorkDaddy 图标', '桌面已有 WorkDaddy AI 图标'),
 ])
-print('==>  品牌化替换完成（Install/Start/install-win/launcher/verify-win + base64 提示）')
+print('==>  品牌化替换完成（Start/Stop/install-win/launcher/verify-win + base64 提示）')
 PY
 fi
 # 3.3.5) 非 ASCII 文件名守护：Windows 安装包路径必须保持 ASCII。
@@ -411,5 +400,5 @@ if [ -d "$STAGE" ]; then
   find "$STAGE" -depth -delete 2>/dev/null || rm -rf "$STAGE" || true
 fi
 
-echo "==> 安装暂存包完成: $(ls -lh "$OUT" | awk '{print $5}')"
-echo "==> 下一步由 build-win-installer.ps1 生成 Setup.exe；正式发行不保留该 ZIP。"
+echo "==> 便携包暂存完成: $(ls -lh "$OUT" | awk '{print $5}')"
+echo "==> 下一步由 build-win-installer.ps1 生成 Setup.exe 并发布该 ZIP。"

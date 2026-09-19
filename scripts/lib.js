@@ -18,44 +18,39 @@ const path = require('path');
 const crypto = require('crypto');
 const { getProfile, profileDataDir, sharedDataDir } = require('./profiles.js');
 
-const IS_WIN = process.platform === 'win32';
+const plat = require('./platform.js');
 
-const PLATFORM_DATA_DIR = IS_WIN
-  ? path.join(
-      process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'),
-      'WorkDaddy'
-    )
-  : path.join(os.homedir(), 'Library', 'Application Support', 'WorkDaddy');
-const LEGACY_DATA_DIR = IS_WIN
-  ? null
-  : path.join(os.homedir(), 'Library', 'Application Support', 'HelloBuddy');
+const IS_WIN = plat.IS_WIN;
+const IS_MAC = plat.IS_MAC;
+const IS_LINUX = plat.IS_LINUX;
+
+// 备份数据目录：macOS ~/Library/Application Support/WorkDaddy
+//             Linux $XDG_CONFIG_HOME/WorkDaddy (~/.config/WorkDaddy)
+//             Windows %APPDATA%\WorkDaddy
+const PLATFORM_DATA_DIR = path.join(plat.appSupport, 'WorkDaddy');
+// 旧版 HelloBuddy 目录只存在于 macOS 历史版本，仅 macOS 需要做隐式迁移
+const LEGACY_DATA_DIR = IS_MAC
+  ? path.join(os.homedir(), 'Library', 'Application Support', 'HelloBuddy')
+  : null;
 
 function samePath(a, b) {
   return !!a && !!b && path.resolve(a) === path.resolve(b);
 }
 
 function isLegacyDataDir(dataDir) {
-  return !IS_WIN && samePath(dataDir, LEGACY_DATA_DIR);
+  return !!LEGACY_DATA_DIR && samePath(dataDir, LEGACY_DATA_DIR);
 }
 
-// macOS: ~/Library/Application Support/CodeBuddyExtension/Data/Public/auth/workbuddy-desktop.info
-// Windows: %LOCALAPPDATA%\CodeBuddyExtension\Data\Public\auth\workbuddy-desktop.info（真机已确认）
+// 登录凭据文件：<扩展数据根>/CodeBuddyExtension/Data/Public/auth/workbuddy-desktop.info
+//   macOS: ~/Library/Application Support/...   Windows: %LOCALAPPDATA%\...   Linux: ~/.local/share/...
+// 正常路径已由 profile 给出；此处的兜底仅在 profile 未提供 authFile 时使用。
 const ACTIVE_PROFILE = getProfile();
 const AUTH_FILE = process.env.WBSWITCH_AUTH_FILE !== undefined
   ? process.env.WBSWITCH_AUTH_FILE
-  : (ACTIVE_PROFILE.authFile === null ? null : (ACTIVE_PROFILE.authFile || (IS_WIN
-    ? path.join(
-        process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'),
-        'CodeBuddyExtension',
-        'Data',
-        'Public',
-        'auth',
-        'workbuddy-desktop.info'
-      )
-    : path.join(
-        os.homedir(),
-        'Library/Application Support/CodeBuddyExtension/Data/Public/auth/workbuddy-desktop.info'
-      ))));
+  : (ACTIVE_PROFILE.authFile === null ? null : (ACTIVE_PROFILE.authFile || path.join(
+      plat.extensionAuth,
+      'workbuddy-desktop.info'
+    )));
 
 const LOGOUT_MARKER = `${AUTH_FILE}.logged-out`;
 const EXPLICIT_AUTH_FILE = process.env.WBSWITCH_AUTH_FILE !== undefined;
@@ -808,42 +803,83 @@ function ensureAutoCopySession(dataDir, uid, sessionId, options) {
   return ensureAutoCopySessions(dataDir, uid, [id], options)[id];
 }
 
-// Keep the core lineage invariant: one physical session per account in each
-// lineage. Older copy jobs could append a second session for the same account
-// when a mapping was stale. Preserve every physical row, but move duplicates
-// to their own lineage so the next all-session reconciliation can pair them.
-function normalizeAutoCopyLineages(dataDir) {
-  const meta = readMeta(dataDir);
-  const config = ensureAutoCopyMeta(meta);
-  let changed = false;
+// Audit duplicate physical sessions without changing their lineage. Splitting
+// them here makes the next copy treat the detached row as a new logical
+// session, which can create another duplicate on every account switch.
+function collectAutoCopyDuplicates(config) {
+  const duplicates = [];
   for (const lineageId of Object.keys(config.sessions)) {
     const lineage = config.sessions[lineageId];
     if (!lineage || !Array.isArray(lineage.members)) continue;
     const seenUids = new Set();
-    const kept = [];
     for (const member of lineage.members) {
       const uid = String(member && member.uid || '').trim();
       const id = String(member && member.id || '').trim();
-      if (!uid || !id || !seenUids.has(uid)) {
-        if (uid) seenUids.add(uid);
-        kept.push(member);
-        continue;
-      }
-      const replacementId = crypto.randomUUID();
-      config.sessions[replacementId] = {
-        originLineageId: lineage.originLineageId || lineageId,
-        enabled: lineage.enabled !== false,
-        members: [{ uid, id }],
-        createdAt: Date.now(),
-      };
-      if (!config.sessionIndex[uid]) config.sessionIndex[uid] = {};
-      config.sessionIndex[uid][id] = replacementId;
-      changed = true;
+      if (!uid || !id) continue;
+      if (!seenUids.has(uid)) { seenUids.add(uid); continue; }
+      duplicates.push({ lineageId, uid, id });
     }
-    if (kept.length !== lineage.members.length) lineage.members = kept;
   }
-  if (changed) writeMeta(dataDir, meta);
-  return changed;
+  return duplicates;
+}
+
+function normalizeAutoCopyLineages(dataDir) {
+  const meta = readMeta(dataDir);
+  const config = ensureAutoCopyMeta(meta);
+  const duplicates = collectAutoCopyDuplicates(config);
+  const previous = Array.isArray(config.duplicates) ? config.duplicates : [];
+  const unchanged = previous.length === duplicates.length && previous.every((item, index) => item
+    && String(item.lineageId) === duplicates[index].lineageId
+    && String(item.uid) === duplicates[index].uid
+    && String(item.id) === duplicates[index].id);
+  if (unchanged) return false;
+  config.duplicates = duplicates;
+  writeMeta(dataDir, meta);
+  return true;
+}
+
+function mergeAutoCopyLineages(dataDir, fromLineageId, intoLineageId) {
+  const meta = readMeta(dataDir);
+  const config = ensureAutoCopyMeta(meta);
+  const from = String(fromLineageId || '').trim();
+  const into = String(intoLineageId || '').trim();
+  if (!from || !into || from === into) return { ok: false, reason: 'invalid' };
+  const fromLineage = config.sessions[from];
+  const intoLineage = config.sessions[into];
+  if (!fromLineage || !intoLineage) return { ok: false, reason: 'missing' };
+
+  const knownMembers = new Set((intoLineage.members || []).map((member) =>
+    JSON.stringify([String(member && member.uid || ''), String(member && member.id || '')])));
+  let movedMembers = 0;
+  for (const member of fromLineage.members || []) {
+    const uid = String(member && member.uid || '').trim();
+    const id = String(member && member.id || '').trim();
+    const key = JSON.stringify([uid, id]);
+    if (!uid || !id || knownMembers.has(key)) continue;
+    intoLineage.members = intoLineage.members || [];
+    intoLineage.members.push({ uid, id });
+    knownMembers.add(key);
+    movedMembers++;
+  }
+  for (const uid of Object.keys(config.sessionIndex)) {
+    const index = config.sessionIndex[uid];
+    for (const sessionId of Object.keys(index || {})) {
+      if (index[sessionId] === from) index[sessionId] = into;
+    }
+  }
+  for (const key of Object.keys(config.copies || {})) {
+    let lineageKey;
+    let targetUid;
+    try { [lineageKey, targetUid] = JSON.parse(key); } catch (_) { continue; }
+    if (lineageKey !== from) continue;
+    const destinationKey = autoCopyRuleKey(into, targetUid);
+    if (!config.copies[destinationKey]) config.copies[destinationKey] = config.copies[key];
+    delete config.copies[key];
+  }
+  delete config.sessions[from];
+  config.duplicates = collectAutoCopyDuplicates(config);
+  writeMeta(dataDir, meta);
+  return { ok: true, movedMembers };
 }
 
 function addAutoCopySessionMember(dataDir, lineageId, uid, sessionId) {
@@ -1106,7 +1142,9 @@ function retireLogoutMarker(log = () => {}, file = AUTH_FILE) {
     log('[switch] 已清理 WorkBuddy 登录退出标记');
     return true;
   } catch (e) {
-    if (IS_WIN) {
+    // 只有 macOS 能用 osascript 委托 GUI 会话清理；Windows 目录本就可写，
+    // Linux 无 osascript，两者都如实报错而不是走注定失败的回退。
+    if (!IS_MAC) {
       throw new Error(`清理登录退出标记失败(${e.code || ''}): ${(e.message || e).toString().slice(0, 200)}`);
     }
     // WorkBuddy may launch the daemon in a sandbox that cannot unlink auth files.
@@ -1132,7 +1170,8 @@ function retireLogoutMarker(log = () => {}, file = AUTH_FILE) {
  * 源目录和文件均保留，重复调用幂等。
  */
 function migrateLegacyDataDir(dataDir, log = () => {}) {
-  if (IS_WIN || !samePath(dataDir, PLATFORM_DATA_DIR)) {
+  // 旧版 HelloBuddy 目录仅存在于 macOS；其他平台直接跳过（LEGACY_DATA_DIR 为 null）
+  if (!LEGACY_DATA_DIR || !samePath(dataDir, PLATFORM_DATA_DIR)) {
     return { migrated: 0, skipped: 0, source: null, target: dataDir };
   }
 
@@ -1216,6 +1255,7 @@ function updateMeta(dataDir, info, { preserveBinding = false } = {}) {
     authDomain: info.authDomain || prev.authDomain || '',
     authIssuer: info.authIssuer || prev.authIssuer || '',
     sort: Number.isSafeInteger(prev.sort) && prev.sort > 0 ? prev.sort : 0,
+    note: typeof prev.note === 'string' ? prev.note : '',
     firstSeen: prev.firstSeen || now,
     lastSeen: now,
   };
@@ -1306,7 +1346,7 @@ function getAccountOrder(dataDir) {
 
 function setAccountOrder(dataDir, value) {
   if (!value || !['expiry', 'fixed'].includes(value.mode) || !Array.isArray(value.uids) ||
-      value.uids.length > 10000 || value.uids.some(uid => typeof uid !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(uid)) ||
+      value.uids.length > 10000 || value.uids.some(uid => typeof uid !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(uid) || ['__proto__', 'prototype', 'constructor'].includes(uid)) ||
       new Set(value.uids).size !== value.uids.length) throw new Error('无效的账号排序设置');
   const current = new Set(listAccounts(dataDir).map(account => account.uid));
   const meta = readMeta(dataDir);
@@ -1432,7 +1472,7 @@ function deleteAccount(dataDir, uid, log = () => {}) {
   const files = [backupPath(dataDir, uid)];
   // 旧版 HelloBuddy 目录仍会在每次启动时迁移缺失的账号备份。删除新目录
   // 的文件后若留下旧源文件，下一次 daemon 启动就会把账号重新复制回来。
-  if (!IS_WIN && samePath(dataDir, PLATFORM_DATA_DIR)) {
+  if (LEGACY_DATA_DIR && samePath(dataDir, PLATFORM_DATA_DIR)) {
     files.push(backupPath(LEGACY_DATA_DIR, uid));
   }
   let deletedFile = false;
@@ -1482,8 +1522,9 @@ function switchTo(dataDir, uid, log = () => {}) {
   } catch (e) {
     // 沙箱环境（如从 WorkBuddy 托管后台运行）直接写系统目录会 EPERM。
     // macOS 回退：osascript 委托 GUI 会话复制（不涉及内容转义，只传路径）。
-    // Windows：目录在 %LOCALAPPDATA% 用户可写区，直写失败即如实报错。
-    if (IS_WIN) {
+    // Windows：目录在 %LOCALAPPDATA% 用户可写区；Linux：目录在 ~/.local/share 用户可写区。
+    // 后两者直写失败即如实报错，不走 osascript（该命令在 Linux 上不存在）。
+    if (!IS_MAC) {
       throw new Error(
         `写入登录文件失败(${e.code || ''}): ${(e.message || e).toString().slice(0, 200)}`
       );
@@ -1579,6 +1620,7 @@ module.exports = {
   ensureAutoCopySessions,
   ensureAutoCopySession,
   normalizeAutoCopyLineages,
+  mergeAutoCopyLineages,
   addAutoCopySessionMember,
   removeAutoCopySessionMember,
   moveAutoCopySession,

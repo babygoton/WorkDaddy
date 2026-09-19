@@ -93,15 +93,29 @@ jobs:
             -File .\scripts\build-win-installer.ps1 -IsccPath $iscc -Profile workbuddy-ai -Version ${{ steps.ver.outputs.version }}
           if ($LASTEXITCODE -ne 0) { throw "WorkDaddy AI Setup build failed with exit code $LASTEXITCODE" }
 
-      - name: 确认仅保留 Setup.exe 发行产物
+      - name: 确认 Setup.exe + 便携版产物齐备
         shell: pwsh
         run: |
-          $legacyZip = Get-ChildItem -LiteralPath release\windows -Filter '*-win64.zip' -File -ErrorAction SilentlyContinue
-          if ($legacyZip) {
-            $legacyZip | Remove-Item -Force
-          }
-          if (Get-ChildItem -LiteralPath release\windows -Filter '*-win64.zip' -File -ErrorAction SilentlyContinue) {
-            throw 'Windows 发布目录仍包含旧 ZIP 产物。'
+          $version = '${{ steps.ver.outputs.version }}'
+          $expected = @(
+            "WorkDaddy-Setup-$version.exe", "WorkDaddy-AI-Setup-$version.exe",
+            "WorkDaddy-Portable-$version.zip", "WorkDaddy-AI-Portable-$version.zip"
+          )
+          $actual = @(Get-ChildItem -LiteralPath release\windows -File | ForEach-Object Name)
+          if (@(Compare-Object $expected $actual).Count -ne 0) { throw "Windows 发行产物不匹配: $($actual -join ', ')" }
+          foreach ($profile in @('workbuddy-cn', 'workbuddy-ai')) {
+            $name = if ($profile -eq 'workbuddy-ai') { 'WorkDaddy-AI' } else { 'WorkDaddy' }
+            $extract = Join-Path $env:RUNNER_TEMP ("portable-$profile")
+            Expand-Archive -LiteralPath "release\windows\$name-Portable-$version.zip" -DestinationPath $extract -Force
+            foreach ($file in @('WorkDaddy.portable', 'Start-WorkDaddy.cmd', 'Stop-WorkDaddy.cmd', 'WorkDaddyLauncher.exe', 'scripts\runtime\node\node.exe')) {
+              if (-not (Test-Path -LiteralPath (Join-Path $extract $file) -PathType Leaf)) { throw "$name ZIP 缺少 $file" }
+            }
+            if ((Get-Content -LiteralPath (Join-Path $extract 'scripts\profile-id.txt') -Raw).Trim() -ne $profile) { throw "$name ZIP profile 错误" }
+            $daemon = Get-Content -LiteralPath (Join-Path $extract 'scripts\daemon.js') -Raw
+            if ($daemon -notmatch "const DAEMON_VERSION = '$([regex]::Escape($version))'") { throw "$name ZIP daemon 版本错误" }
+            if (Test-Path -LiteralPath (Join-Path $extract 'Install-WorkDaddy.cmd')) { throw "$name ZIP 包含安装入口" }
+            if (Test-Path -LiteralPath (Join-Path $extract 'Uninstall-WorkDaddy.cmd')) { throw "$name ZIP 包含卸载入口" }
+            if (@(Get-ChildItem -LiteralPath $extract -Recurse -File | Where-Object Name -eq '安装失败自主解决提示词.txt').Count) { throw "$name ZIP 包含修复提示词" }
           }
 
       - name: 列出产物
@@ -113,13 +127,15 @@ jobs:
         run: |
           call scripts\verify-win.cmd
 
-      - name: 上传产物（仅 Setup.exe）
+      - name: 上传产物（Setup.exe + 便携版 ZIP）
         uses: actions/upload-artifact@v4
         with:
           name: workdaddy-win64
           path: |
             release/windows/WorkDaddy-Setup-*.exe
             release/windows/WorkDaddy-AI-Setup-*.exe
+            release/windows/WorkDaddy-Portable-*.zip
+            release/windows/WorkDaddy-AI-Portable-*.zip
 
       # ---- 只有打 tag 时才顺手挂到 GitHub Release ----
       - name: 发布到 GitHub Release
@@ -129,5 +145,7 @@ jobs:
           files: |
             release/windows/WorkDaddy-Setup-*.exe
             release/windows/WorkDaddy-AI-Setup-*.exe
+            release/windows/WorkDaddy-Portable-*.zip
+            release/windows/WorkDaddy-AI-Portable-*.zip
             release/*.dmg
           generate_release_notes: true

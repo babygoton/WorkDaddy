@@ -103,10 +103,14 @@ function Invoke-WindowsInstallerBuild {
   }
   $packageName = if ($Profile -eq 'workbuddy-ai') { 'WorkDaddy-AI' } else { 'WorkDaddy' }
   $setup = Join-Path $OutputDirectory "$packageName-Setup-$ReleaseVersion.exe"
+  $portable = Join-Path $OutputDirectory "$packageName-Portable-$ReleaseVersion.zip"
   if (-not (Test-Path -LiteralPath $setup -PathType Leaf)) {
     throw "未找到生成的安装包: $setup"
   }
-  return $setup
+  if (-not (Test-Path -LiteralPath $portable -PathType Leaf)) {
+    throw "未找到生成的便携包: $portable"
+  }
+  return $setup, $portable
 }
 
 try {
@@ -163,7 +167,7 @@ try {
   }
 
   Write-Host "`n============================================================"
-  Write-Host "Windows 双版本安装包生成完成（版本 $Version）"
+  Write-Host "Windows 双版本 Setup.exe / Portable.zip 生成完成（版本 $Version）"
   foreach ($package in $packages) {
     $item = Get-Item -LiteralPath $package
     Write-Host ("{0}  ({1:N0} bytes)" -f $item.FullName, $item.Length)
