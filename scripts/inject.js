@@ -2061,6 +2061,8 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       var raf = window.requestAnimationFrame || function (callback) { return window.setTimeout(callback, 16); };
       conversationUsage.scrollFrame = raf(function () {
         conversationUsage.scrollFrame = null;
+        positionConversationUsage();
+        if (conversationUsage.popover && conversationUsage.popover.classList.contains('is-visible')) positionUsagePopover();
         updateConversationUsageScrollState();
       });
     }
@@ -2113,14 +2115,17 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       var inputRect = inputArea && inputArea.getBoundingClientRect();
       var viewport = surface.content.closest('.cr-message-list-viewport');
       var viewportRect = viewport && viewport.getBoundingClientRect();
-      var anchorTop = inputRect && inputRect.top > 0 ? inputRect.top : (viewportRect && viewportRect.bottom) || window.innerHeight;
-      var left = inputRect && inputRect.width > 0 ? inputRect.left : contentRect.left;
-      var maxWidth = inputRect && inputRect.width > 0 ? inputRect.width : contentRect.width;
+      var bottomMask = document.querySelector('.cr-message-list__bottom-mask');
+      var maskRect = bottomMask && bottomMask.getBoundingClientRect();
+      var anchorRect = maskRect && maskRect.width > 0 && maskRect.height > 0 ? maskRect : inputRect;
+      var anchorTop = anchorRect && anchorRect.top > 0 ? anchorRect.top : (viewportRect && viewportRect.bottom) || window.innerHeight;
+      var left = anchorRect && anchorRect.width > 0 ? anchorRect.left : contentRect.left;
+      var maxWidth = anchorRect && anchorRect.width > 0 ? anchorRect.width : contentRect.width;
       left = Math.max(8, left);
       summary.style.left = Math.round(left) + 'px';
       summary.style.width = 'max-content';
       summary.style.maxWidth = Math.round(Math.min(maxWidth, window.innerWidth - left - 8)) + 'px';
-      summary.style.bottom = Math.round(Math.max(4, window.innerHeight - anchorTop + 4)) + 'px';
+      summary.style.bottom = Math.round(Math.max(0, window.innerHeight - anchorTop)) + 'px';
       if (conversationUsage.spacer && conversationUsage.spacer.parentNode) {
         conversationUsage.spacer.style.height = Math.ceil(summary.getBoundingClientRect().height || 34) + 'px';
       }
