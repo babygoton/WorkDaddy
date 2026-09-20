@@ -21,8 +21,10 @@ function harness(t) {
     rows.set(id, { id, user_id: uid, title: 'fixture', created_at: 1, updated_at: 1 });
     lib.addAutoCopySessionMember(root, lineage, uid, id); write(id, base);
   }
+  const syncCacheMap = new Map();
   const ctx = { ...lib, sessionSync, fs, path, crypto, DATA_DIR: root, PROFILE: { dataRoot: root, kind: 'workbuddy' },
-    SESSION_COPY_COLUMNS: ['id', 'user_id'], sessionCopyLocks: new Map(), yieldAutoCopyToRenderer: async () => {}, assertSessionSyncIdle: async () => {},
+    accountSwitchInProgress: false, SESSION_COPY_COLUMNS: ['id', 'user_id'], sessionCopyLocks: new Map(), yieldAutoCopyToRenderer: async () => {}, assertSessionSyncIdle: async () => {},
+    getSessionSyncCache: () => syncCacheMap, scheduleSessionSyncCacheSave: () => {},
     log: () => {}, sqliteQuery: async (_, params) => {
       const row = rows.get(params[0]); return row && (!params[1] || params[1] === row.user_id) ? [{ ...row }] : [];
     },
@@ -39,6 +41,31 @@ test('account two continuation updates account one and never account three', asy
   assert.equal(result.status, 'copied');
   assert.deepEqual(fs.readFileSync(h.file('a')), fs.readFileSync(h.file('b')));
   assert.deepEqual(fs.readFileSync(h.file('c')), third);
+  assert.equal(result.warning, '');
+  assert.equal(result.totalBytes, fs.statSync(h.file('a')).size);
+  assert.equal(result.copiedBytes, fs.statSync(h.file('a')).size);
+  assert.equal((await h.copy()).copiedBytes, 0);
+});
+
+test('sessions over 100 MiB copy completely and report only an advisory, including on repeat sync', async t => {
+  const h = harness(t);
+  const file = path.join(h.root, 'workspace/sessions/a/large.bin');
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, 'large session fixture');
+  const size = 100 * 1024 * 1024 + 1;
+  fs.truncateSync(file, size);
+  const result = await h.copy();
+  assert.equal(result.status, 'copied');
+  assert.equal(result.failedFiles, 0);
+  assert.equal(result.warning, '会话超过 100 MB，同步可能较慢');
+  const target = path.join(h.root, 'workspace/sessions/b/large.bin');
+  assert.equal(fs.statSync(target).size, size);
+  assert.equal(result.totalBytes, size + fs.statSync(h.file('b')).size);
+  const hash = file => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+  assert.equal(hash(target), hash(file));
+  const repeat = await h.copy();
+  assert.equal(repeat.status, 'skipped');
+  assert.equal(repeat.warning, result.warning);
 });
 test('divergent copies survive repeated switches and stale mappings cannot force overwrite', async t => {
   const h = harness(t);
@@ -92,24 +119,37 @@ test('manual and automatic switching bypass session activity while retaining ope
     (await ctx.assertAccountSwitchIdle())();
   }
   for (const block of [source.slice(source.indexOf('function automationSwitchAccount('), source.indexOf('function startAutomationRun(')), source.slice(source.indexOf("if (req.method === 'POST' && p === '/api/switch')"))]) {
-    assert.ok(block.indexOf('await assertAccountSwitchIdle()') < block.indexOf('switchTo(DATA_DIR, uid, log)'));
+    assert.ok(/await (assertAccountSwitchIdle|acquireAutomationAccountSwitch)\(/.test(block) && block.search(/await (assertAccountSwitchIdle|acquireAutomationAccountSwitch)\(/) < block.indexOf('switchTo(DATA_DIR, uid, log)'));
   }
 });
 test('mixed sync jobs continue after divergence and report every result', async () => {
   const results = ['conflict', 'copied', 'skipped', 'error'];
   const ctx = { crypto, autoCopyJobs: new Map(), autoCopyQueue: [], Date,
     yieldAutoCopyToRenderer: async () => {}, buildAutoCopyPlan: async () => results.map((_, i) => ({ id: String(i) })),
-    copySessionRecord: async row => { const status = results[Number(row.id)]; if (status === 'error') throw Error('fixture failure'); return { status, branched: status === 'copied' }; },
+    copySessionRecord: async row => { const status = results[Number(row.id)]; if (status === 'error') throw Error('fixture failure'); return { status, branched: status === 'copied', copiedBytes: status === 'copied' ? 123456 : 0, totalBytes: 123456, warning: status === 'copied' ? 'large session advisory' : '' }; },
     log() {}, runAutoCopyQueue() {}, pruneAutoCopyJobs() {}, setTimeout: () => ({ unref() {} }),
   };
   const start = source.indexOf('function startAutoCopyJob(');
-  vm.runInNewContext(source.slice(start, source.indexOf('function publicAutoCopyJob(', start)), ctx);
+  vm.runInNewContext(source.slice(start, source.indexOf('function activeAutoCopyJob(', start)), ctx);
   const job = ctx.startAutoCopyJob('one', 'two', []);
   await ctx.autoCopyQueue[0].run();
   assert.equal(job.processed, 4);
+  assert.equal(job.copiedBytes, 123456);
   assert.equal(job.conflicts, 1); assert.equal(job.copied, 1); assert.equal(job.skipped, 1); assert.equal(job.failedItems, 1);
   assert.equal(job.details[1].branched, true);
+  assert.equal(job.details[1].warning, 'large session advisory');
+  assert.equal(job.warning, 'large session advisory');
   assert.deepEqual(Array.from(job.details, item => item.status), ['conflict', 'copied', 'skipped', 'failed']);
+  results.splice(0, results.length, 'copied', 'skipped');
+  const advisoryOnly = ctx.startAutoCopyJob('one', 'two', []);
+  await ctx.autoCopyQueue[1].run();
+  const published = ctx.publicAutoCopyJob(advisoryOnly);
+  assert.equal(published.status, 'done');
+  assert.equal(published.failed, 0);
+  assert.equal(published.failedItems, 0);
+  assert.equal(published.warning, 'large session advisory');
+  assert.equal(published.details[0].warning, 'large session advisory');
+  assert.equal(published.details[0].totalBytes, 123456);
 });
 test('macOS packaging includes the required sync module', () => {
   const script = fs.readFileSync(path.join(__dirname, '../scripts/build-mac-dmg.sh'), 'utf8');

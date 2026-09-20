@@ -584,18 +584,32 @@ function ensureAutoCopyMeta(meta) {
   return next;
 }
 
+// Auto-copy rules are read several times per session during a sync batch.
+// Memoize on the meta file fingerprint; all writes go through writeMeta
+// (tmp + rename), which always bumps mtime, so a stale view lasts at most one
+// call and self-corrects on the next stat.
+const autoCopyConfigCache = new Map();
 function readAutoCopyConfig(dataDir) {
+  let fingerprint = null;
+  try { const stat = fs.statSync(metaFile(dataDir)); fingerprint = stat.mtimeMs + ':' + stat.size; } catch (_) {}
+  const cached = autoCopyConfigCache.get(dataDir);
+  if (cached && cached.fingerprint === fingerprint) return cached.value;
   const meta = readMeta(dataDir);
   const wasCurrent = !!(meta.autoCopy && meta.autoCopy.version === 2);
   const autoCopy = ensureAutoCopyMeta(meta);
-  if (!wasCurrent) writeMeta(dataDir, meta);
-  return {
+  if (!wasCurrent) {
+    writeMeta(dataDir, meta);
+    try { const stat = fs.statSync(metaFile(dataDir)); fingerprint = stat.mtimeMs + ':' + stat.size; } catch (_) { fingerprint = null; }
+  }
+  const value = {
     allSessions: autoCopy.allSessions === true,
     sessions: autoCopy.sessions,
     sessionIndex: autoCopy.sessionIndex,
     workspaces: autoCopy.workspaces,
     copies: autoCopy.copies,
   };
+  autoCopyConfigCache.set(dataDir, { fingerprint, value });
+  return value;
 }
 
 function autoCopyRuleKey(lineageId, targetUid) {

@@ -7,8 +7,8 @@ const { validateRequirements, assessRequirements } = require('./automation-compa
 const { normalizeToastOptions } = require('./toast-options.js');
 const { normalizeAutomationModelId } = require('./automation-model.js');
 
-const SCHEMA_VERSION = 2;
-const SUPPORTED_SCHEMA_VERSIONS = new Set([1, 2]);
+const SCHEMA_VERSION = 3;
+const SUPPORTED_SCHEMA_VERSIONS = new Set([1, 2, 3]);
 const MAX_TASKS = 200;
 const MAX_STEPS = 200;
 const MAX_DEPTH = 12;
@@ -43,7 +43,7 @@ const CAPABILITIES = [
   { id: 'logic.catch', zh: '捕获错误', en: 'Catch an error', descriptionZh: '执行 steps；失败时把错误写入 vars.error 并运行 onError。', descriptionEn: 'Run steps; on failure, write the error to vars.error and run onError.', example: { op: 'logic.catch', steps: [], onError: [] } },
   { id: 'logic.assert', zh: '条件断言', en: 'Assert a condition', descriptionZh: '条件不成立时终止任务并给出错误信息。', descriptionEn: 'Stop the task with an error when a condition is false.', example: { op: 'logic.assert', condition: { left: '{{response.ok}}', operator: 'truthy' }, message: '请求失败' } },
   { id: 'log.write', zh: '写入运行日志', en: 'Write run log', descriptionZh: '将固定 message 中的 {参数名} 替换为 params 标量值后写入运行日志。参数可引用模板；拒绝凭据字段，对手机号和令牌格式脱敏。不弹出通知。', descriptionEn: 'Write a run log using {name} placeholders and scalar params. Templates are supported; credential paths are rejected and phone/token patterns are redacted. No notification.', example: { op: 'log.write', message: '账号 {account}：{state}', params: { account: '{{account.uid}}', state: '{{vars.catStatus.json.data.state}}' } } },
-  { id: 'account.forEach', zh: '循环账号', en: 'Iterate accounts', descriptionZh: '对全部或指定账号依次执行步骤；switch:true 会真实切换登录账号，并在循环结束后恢复原账号。', descriptionEn: 'Run steps for all or selected accounts; switch:true physically switches the logged-in account and restores the original account when the loop ends.', example: { op: 'account.forEach', accounts: 'all', switch: true, steps: [] } },
+  { id: 'account.forEach', zh: '循环账号', en: 'Iterate accounts', descriptionZh: '对全部或指定账号依次执行步骤；switch:true 会真实切换登录账号，等待会话同步成功后再执行步骤，并在循环结束后安全恢复原账号；V3 支持 prepare 只读准备与 condition 切换前筛选。', descriptionEn: 'Run steps for all or selected accounts; switch:true physically switches the logged-in account, waits for successful session sync before executing steps, and safely restores the original account. V3 supports read-only prepare steps and a condition evaluated before switching.', example: { op: 'account.forEach', accounts: 'all', switch: true, steps: [] } },
   { id: 'account.status', zh: '查询账号状态', en: 'Read account status', descriptionZh: '查询今日签到、今日活跃和积分等只读状态。', descriptionEn: 'Read check-in, activity, and credit status.', example: { op: 'account.status', fields: ['checkin.today', 'activity.today'] } },
   { id: 'account.checkin', zh: '账号静默签到', en: 'Check in as account', descriptionZh: '使用循环账号的 token 签到，不切换客户端。当天已确认签到时跳过所有请求；返回 ok、skipped、code 等状态。', descriptionEn: 'Check in using the context account token without switching accounts. Confirmed daily records skip all requests. Returns ok, skipped and code.', example: { op: 'account.checkin', saveAs: 'checkin' } },
   { id: 'http.request', zh: 'HTTP 请求', en: 'HTTP request', descriptionZh: '调用 HTTP/HTTPS 接口并保存响应。', descriptionEn: 'Call an HTTP/HTTPS endpoint and retain its response.', example: { op: 'http.request', method: 'GET', url: 'https://example.com/api', saveAs: 'response' } },
@@ -257,6 +257,12 @@ function taskIsPassiveCleanup(task) {
   return valid && clicks > 0;
 }
 
+function stepsContainCheckin(value) {
+  if (Array.isArray(value)) return value.some(stepsContainCheckin);
+  if (!value || typeof value !== 'object') return false;
+  return value.op === 'account.checkin' || Object.values(value).some(stepsContainCheckin);
+}
+
 function taskNeedsPanelClosed(task) {
   const walk = (value) => {
     if (Array.isArray(value)) return value.some(walk);
@@ -352,6 +358,13 @@ function validateSteps(steps, depth = 0, schemaVersion = 1) {
   steps.forEach((step, index) => {
     if (!step || typeof step !== 'object') throw new Error(`第 ${index + 1} 步不是对象`);
     const op = String(step.op || '').trim();
+    if (op === 'account.forEach' && (step.prepare != null || step.condition != null)) {
+      if (schemaVersion < 3) throw new Error('切换前筛选需要自动化协议 V3');
+      const allowed = new Set(['account.status', 'state.get', 'vars.set', 'time.now', 'value.number', 'log.write']);
+      if (step.prepare != null && (!Array.isArray(step.prepare) || step.prepare.some(item => !item || !allowed.has(item.op)))) throw new Error('prepare 仅支持只读账号状态、state.get、变量和日志步骤');
+      validateSteps(step.prepare || [], depth + 1, schemaVersion);
+      if (step.condition != null && (!step.condition || typeof step.condition !== 'object' || Array.isArray(step.condition))) throw new Error('筛选 condition 必须是条件对象');
+    }
     if (op === 'log.write') {
       if (typeof step.message !== 'string' || !step.message.trim() || step.message.length > 240 || /\{\{|\}\}/.test(step.message)) throw new Error('日志 message 需要不含模板的固定文字（最多 240 字符）');
       const params = step.params == null ? {} : step.params;
@@ -451,7 +464,7 @@ function createSafetyReviewTask(dataDir, taskId) {
 | 建议 | 可以启用 / 谨慎启用 / 不建议启用 |
 整张表不超过 160 字，不要解释原因、过程或原理。`;
   return validateTask({
-    schemaVersion: 2,
+    schemaVersion: 3,
     id: 'safety_review_' + crypto.randomBytes(8).toString('hex'),
     name: '安全评估', enabled: true, trigger: { type: 'manual' },
     steps: [{ op: 'session.create', model: 'deepseek-v4.1-flash', message: finalMessage }],
@@ -520,12 +533,12 @@ function capabilityText(language = 'zh') {
     groups[group].push(item.id + (item.available === false ? (zh ? '（预留）' : ' (reserved)') : ''));
   });
   const lines = zh ? [
-    'WorkDaddy 自动化任务协议 v2（兼容 v1）',
+    'WorkDaddy 自动化任务协议 v3（兼容 v1、v2）',
     '',
     '任务 JSON：',
-    JSON.stringify({ schemaVersion: 2, id: 'example-task', name: '任务名称', description: '', enabled: true, concurrency: { policy: 'skip' }, trigger: { type: 'manual', oncePerNavigation: true }, variables: {}, steps: [], onSuccess: [], onFailure: [] }, null, 2),
+    JSON.stringify({ schemaVersion: 3, id: 'example-task', name: '任务名称', description: '', enabled: true, concurrency: { policy: 'skip' }, trigger: { type: 'manual', oncePerNavigation: true }, variables: {}, steps: [], onSuccess: [], onFailure: [] }, null, 2),
     '',
-    '任务字段：schemaVersion 支持 1 和 2，新任务使用 2；id 在全部任务中唯一；name 必填；description 可空；enabled 控制生命周期触发；V2 concurrency.policy 支持 skip；variables 是任务初始变量；steps 是主步骤；onSuccess/onFailure 分别在成功/失败后执行。',
+    '任务字段：schemaVersion 支持 1、2、3，新任务使用 3；id 在全部任务中唯一；name 必填；description 可空；enabled 控制生命周期触发；V2 concurrency.policy 支持 skip；variables 是任务初始变量；steps 是主步骤；onSuccess/onFailure 分别在成功/失败后执行。',
     '约束：最多 200 个任务；每组最多 200 个步骤；最多嵌套 12 层；单次重复最多 100 次；重试最多 10 次；单次等待最多 300 秒。任务中不要保存 Token、Cookie 或密码。',
     '触发器：manual 仅手动运行；pageReady 在首次打开、导航完成或账号切换后的页面刷新完成后运行。pageReady 默认同一次页面导航只触发一次；pageLoaded 同样覆盖页面加载（包括切换刷新）；accountSwitched 仅账号切换；clientLoaded 仅 daemon 连接已加载客户端时触发（兼容名，不建议新任务使用）。组合事件同一导航只执行一次。',
     '组合触发：trigger.types:["clientLoaded","panelOpened"] 可多选，存在时替代 trigger.type；空数组仅手动。schedule:{type:"interval",minutes:60} 每小时触发（1–10080 分钟）；也支持 {type:"daily",time:"09:00"}、{type:"weekly",days:[1,2,3,4,5],time:"09:00"}（0=周日）、{type:"monthly",day:15,time:"09:00"}、{type:"once",at:"2026-12-01T09:00"}。均为电脑本地时区，每月不存在的日期跳过，指定时间任务不会重复，可与事件组合；enabled:false 停止所有自动触发。自动任务不提供立即运行；需要测试时在编辑器清空自动触发条件并关闭定时，再手动运行。运行中的同一任务不会重入，错过的定时不会补跑。POST /api/automations/events {type:"panelOpened"} 在面板从关闭变为打开时调用，需标准本地 API 认证。',
@@ -533,24 +546,25 @@ function capabilityText(language = 'zh') {
     '通用步骤字段：op 必填；saveAs 可把该步骤返回值保存到 {{vars.<name>}}；每个步骤的返回值也会覆盖 {{step.*}}。嵌套步骤仍按顺序执行。',
     '模板变量：V2 提供 {{runtime.time.iso}}、{{runtime.time.epochMs}}、{{runtime.time.localDate}}、{{runtime.run.id}}、{{runtime.trigger.type}}；并兼容 {{now}}、{{event.type}}、{{account.uid}}、{{vars.name}}、{{response.json}}、{{step.*}}。对象与数组递归展开模板；完整字符串模板保留原始数值/对象/数组类型，混合文本模板会转成字符串。',
     '条件运算符：equals、notEquals、contains、matches、truthy、falsy、gt、gte、lt、lte。matches 的 right 是正则表达式字符串。',
-    '账号作用域：account.forEach 默认只改变嵌套步骤的账号上下文；设置 switch:true 才会真实切换登录账号，并在循环结束后恢复原账号。account.status 和 http.requestAsAccount 使用当前上下文；DOM 与当前会话步骤操作切换后的可见 WorkBuddy 页面。',
+    '账号作用域：account.forEach 默认只改变嵌套步骤的账号上下文；设置 switch:true 才会真实切换登录账号，等待会话同步成功后再执行步骤，并在循环结束后安全恢复原账号；V3 支持 prepare 只读准备与 condition 切换前筛选。account.status 和 http.requestAsAccount 使用当前上下文；DOM 与当前会话步骤操作切换后的可见 WorkBuddy 页面。',
     '元素定位 locator：{kind,value}。kind 支持 css、xpath、text、role、ariaLabel、placeholder、attribute。coordinates 仅保留协议格式，当前不可用于 DOM 步骤。',
     'DOM 等待：dom.wait 可使用 seconds 做固定等待；或使用 locator、until:{state:"visible"|"hidden"|"attached"|"detached"|"clickable"}、timeoutMs 等待元素状态。until 还支持 text 包含匹配或 attribute/value 相等。locators 数组提供依次回退的定位器；readText 最多 100000 字符。iframe 内目前只支持读取，不支持点击与输入。DOM 读取结果可用 saveAs 保存。',
     'HTTP 输入：method、url、query、headers、body、timeoutMs（500-60000）、saveAs。响应：{ok,status,headers,text,json}，正文最多 1 MiB。http.request 不允许自定义 Authorization/Cookie；http.requestAsAccount 只对当前客户端官方 HTTPS origin 注入账号登录态；禁止跨域、非默认端口、URL 用户名密码。重定向不会自动跟随。body/query/headers 支持递归模板。默认非 2xx 返回 ok:false 供分支判断；throwOnHttpError:true 抛错以配合 retry（支持 backoff，默认 1）。停止会中止 HTTP 和等待。',
     '运行日志：log.write 使用固定 message 和 params 命名标量参数，例如 {account} 对应 params.account:"{{account.uid}}"。会脱敏手机号和常见令牌格式，拒绝敏感字段路径；不要在 message 中写凭据。运行日志不弹通知，单次运行不按条数截断；daemon 重启后内存中的运行记录会清空。',
     '会话：session.create 新建并发送第一条消息；session.send 仅向选中且无草稿的指定 conversationId 发送。V2 两者均可选 model（精确模型 ID，支持模板），切换未确认则拒绝发送；create 发送后恢复新建任务模型偏好，send 保留会话模型。返回 {accountUid,conversationId,userMessageId,requestId,baselineAssistantId} 回执，saveAs 保存。session.wait 接受 receipt（默认 vars.session）、timeoutMs（最长 300000）、contains，按回执监听。未知发送结果不会自动重发；发送不能嵌套 retry。session.sendCurrent/waitReply 是兼容别名，前者实际上新建会话。仅支持挂载的可见会话，不支持后台任意会话发送。',
+    'V3 账号循环：account.forEach 可选 prepare 数组（仅 account.status、state.get、vars.set、time.now、value.number、log.write），先在每个账号上下文执行，再判断 condition={left,operator,right}；条件不满足则不切换、不执行 steps。V1/V2/V3 的 switch:true 均等待前序同步、页面刷新和本次同步成功才执行 steps；失败/部分成功/未解决冲突终止，大小提醒不影响成功。运行接口继续立即返回 202；run-status 的 phase/sync 展示等待和进度；停止请求以 stopRequested 标记，安全收尾完成后才变为 cancelled。',
     '状态作用域：state.get/state.set 的 scope 支持 task（默认）或 account；所有状态首先按任务 ID 隔离；account scope 再按 uid 隔离。V2 state.set 可设置 ttlMs，过期后 state.get 返回空值并清理。key 必填；state.get 可配 saveAs。',
     '通知：notify.toast 使用 react-hot-toast，从窗口底部向上弹出；level 支持 info、success、warning、error、loading。可选 duration（1000–60000 毫秒）、id、saveAs；相同 id 更新提示，notify.dismiss 用 id 关闭。id 按本次运行隔离，任务结束自动清理 loading。notify.afterAllTasks 已废弃，仅兼容旧任务；新任务不要使用。',
     '失败语义：未捕获错误会停止主步骤并执行 onFailure；logic.catch 捕获局部错误并把消息写入 {{vars.error.message}}；logic.retry 只重试其嵌套步骤。',
     '',
     '基础接口总目录：',
   ] : [
-    'WorkDaddy Automation Task Protocol v2 (backward compatible with v1)',
+    'WorkDaddy Automation Task Protocol v3 (backward compatible with v1 and v2)',
     '',
     'Task JSON:',
-    JSON.stringify({ schemaVersion: 2, id: 'example-task', name: 'Task name', description: '', enabled: true, concurrency: { policy: 'skip' }, trigger: { type: 'manual', oncePerNavigation: true }, variables: {}, steps: [], onSuccess: [], onFailure: [] }, null, 2),
+    JSON.stringify({ schemaVersion: 3, id: 'example-task', name: 'Task name', description: '', enabled: true, concurrency: { policy: 'skip' }, trigger: { type: 'manual', oncePerNavigation: true }, variables: {}, steps: [], onSuccess: [], onFailure: [] }, null, 2),
     '',
-    'Task fields: schemaVersion 1 and 2 are supported; new tasks use 2. id is unique; name is required; description may be empty; enabled controls lifecycle triggers; V2 concurrency.policy supports skip; variables contains initial values; steps is the main sequence; onSuccess/onFailure run after success/failure.',
+    'Task fields: schemaVersion 1, 2 and 3 are supported; new tasks use 3. id is unique; name is required; description may be empty; enabled controls lifecycle triggers; V2 concurrency.policy supports skip; variables contains initial values; steps is the main sequence; onSuccess/onFailure run after success/failure.',
     'Limits: 200 tasks; 200 steps per group; nesting depth 12; 100 repeat iterations; 10 retry attempts; 300 seconds per wait. Never store tokens, cookies, or passwords in a task.',
     'Triggers: manual only runs on demand; pageReady runs after initial load, navigation, or the page refresh following an account switch. pageReady runs once per navigation by default; pageLoaded includes all page loads; accountSwitched only matches switches; clientLoaded is a legacy connection-only trigger. Combined events run once per navigation.',
     'Combined triggers: trigger.types:["clientLoaded","panelOpened"] overrides trigger.type. Empty types means manual only. schedule:{type:"interval",minutes:60} adds an interval of 1–10080 minutes. Also supported: {type:"daily",time:"09:00"}, {type:"weekly",days:[1,2,3,4,5],time:"09:00"} (0=Sunday), {type:"monthly",day:15,time:"09:00"}, {type:"once",at:"2026-12-01T09:00"}. All use local computer time; nonexistent month dates and missed slots are skipped, and calendar slots are not repeated after restart. Only tasks without automatic triggers or a schedule can run manually. Disabled tasks do not auto-run; running tasks skip overlapping triggers. POST /api/automations/events {type:"panelOpened"} requires local API authentication. account.checkin uses the context account token and skips all requests for a confirmed daily check-in; use logic.catch to handle individual account errors.',
@@ -563,6 +577,7 @@ function capabilityText(language = 'zh') {
     'HTTP input: method, url, query, headers, body, timeoutMs (500-60000), saveAs. Response: {ok,status,headers,text,json}; body is capped at 1 MiB. http.request rejects Authorization/Cookie; http.requestAsAccount injects credentials only for current-profile official HTTPS origins, rejecting foreign origins, ports and URL credentials. Redirects are not followed. body/query/headers resolve recursive templates. Non-2xx returns ok:false by default; throwOnHttpError:true enables retry (backoff defaults to 1). Cancellation aborts HTTP and waits.',
     'Run logs: log.write takes a fixed message and named scalar params; {account} reads params.account:"{{account.uid}}". Phone and common token patterns are redacted, and sensitive paths are rejected. Never put credentials in message. Run logs do not show notifications and are not truncated by entry count; in-memory runs are cleared on daemon restart.',
     'Sessions: session.create creates by sending the first message; session.send targets only a selected conversationId with an empty composer. In V2 both accept an optional model (exact model ID, templates supported) and refuse to send if the switch is unconfirmed. create restores the New Task model preference after sending; send keeps the model selected in the conversation. Returns {accountUid,conversationId,userMessageId,requestId,baselineAssistantId}; saveAs persists the receipt in variables. session.wait accepts receipt (default vars.session), timeoutMs (up to 300000), contains. Unconfirmed sends are never automatically retried; sends cannot be nested in retry. sendCurrent/waitReply are legacy aliases; sendCurrent creates a new conversation. Only mounted visible sessions are supported.',
+    'V3 account loops: account.forEach accepts prepare (only account.status, state.get, vars.set, time.now, value.number, log.write) and condition={left,operator,right}, evaluated in each account context before any physical switch. A false condition skips switching and steps. switch:true in V1/V2/V3 waits for prior sync, page reload and successful inbound sync. Partial/failed/unresolved sync stops execution; size warnings do not. Run requests still return 202; run-status exposes phase/sync progress and stopRequested while cancellation drains safely.',
     'State scope: state.get/state.set scope is task (default) or account. State is isolated by task ID and account scope adds the uid. V2 state.set accepts ttlMs; expired values are removed and state.get returns empty. key is required; state.get accepts saveAs.',
     'Notifications: notify.toast uses react-hot-toast at bottom-center. level is info, success, warning, error, or loading. Optional duration (1000–60000 ms), id, and saveAs; reuse id to update, notify.dismiss with id to dismiss. IDs are scoped to a run; unfinished loading notifications are cleared when the run ends. notify.afterAllTasks is deprecated and retained only for saved tasks. Do not generate it for new tasks.',
     'Failure behavior: an uncaught error stops main steps and runs onFailure. logic.catch writes a local error to {{vars.error.message}}. logic.retry retries only its nested steps.',
@@ -580,7 +595,7 @@ function capabilityText(language = 'zh') {
   });
   lines.push('', zh ? '账号状态字段：checkin.today、activity.today、activity.streak、credits。返回 uid、isPrimary、checkin、activity、credits；activity.streak={days,status}，days=null 表示不可用；credits={total,unlimited,cycleResetTime}。活跃天数是连续活跃天数，不是注册天数。' : 'Account fields: checkin.today, activity.today, activity.streak, credits. Returns uid,isPrimary,checkin,activity,credits. activity.streak={days,status}; null means unavailable. credits={total,unlimited,cycleResetTime}. Streak means consecutive active days, not registration age.');
   lines.push(zh ? '预检：POST /api/automations/validate 或 /api/automations/dry-run，body={task}，需本地认证。仅静态校验并返回操作计划/弃用警告，executed:false，不发请求、不切账号、不发送消息，不保证运行时 DOM/API 可用。state.checkpoint 显式保存业务进度，state.get 读取；不会自动恢复或重放副作用。修改同一渲染器的任务排队串行，静默 API 任务可并发；restartOnNavigation 的只读/关闭按钮监听不占用整轮锁，但点击与输入仍互斥，避免关闭弹窗任务阻塞发送；取消不代表已发送消息或已完成服务器操作可撤销。' : 'Preflight: authenticated POST /api/automations/validate or /api/automations/dry-run with {task}. Static validation and operation plan/deprecation warnings only; executed:false. No HTTP, switches or messages. Does not guarantee runtime DOM/API availability. state.checkpoint explicitly saves progress for state.get; never automatically resumes or replays side effects. Renderer tasks queue serially; silent API tasks can run concurrently. Navigation-scoped read/click-only observers share a short input lock so popup cleanup can run between sends. Cancellation cannot undo messages or completed server operations.');
-  lines.push(zh ? '共享任务兼容：本地任务继续使用 schemaVersion:1，可选 requires={minWorkDaddyVersion,taskSchemaVersion,capabilities,profiles?,platforms?}；不满足依赖时不会执行。外部分发使用独立的 workdaddy.automation-package 包（formatVersion:1、独立 id/version、requires、inputs、task）。POST /api/automations/packages/preview {document,values?} 只预检，需检查 compatible:true；不会安装或执行。为本面板生成任务时仍输出本地任务 JSON，不要向 Agent 收件箱写入包或索引。' : 'Sharing compatibility: local tasks remain schemaVersion:1 and may declare requires={minWorkDaddyVersion,taskSchemaVersion,capabilities,profiles?,platforms?}; incompatible tasks never execute. Distribution uses a separate workdaddy.automation-package envelope with formatVersion:1, independent id/version, requires, inputs and task. POST /api/automations/packages/preview {document,values?} is preview-only; check compatible:true. No installation or execution. When creating tasks for this panel, keep generating local task JSON, never a package or index in the Agent inbox.');
+  lines.push(zh ? '共享任务兼容：本地任务支持 schemaVersion:1/2/3，新任务使用 3，可选 requires={minWorkDaddyVersion,taskSchemaVersion,capabilities,profiles?,platforms?}；不满足依赖时不会执行。外部分发使用独立的 workdaddy.automation-package 包（formatVersion:1、独立 id/version、requires、inputs、task）。POST /api/automations/packages/preview {document,values?} 只预检，需检查 compatible:true；不会安装或执行。为本面板生成任务时仍输出本地任务 JSON，不要向 Agent 收件箱写入包或索引。' : 'Sharing compatibility: local tasks support schemaVersion:1/2/3; use 3 for new tasks and may declare requires={minWorkDaddyVersion,taskSchemaVersion,capabilities,profiles?,platforms?}; incompatible tasks never execute. Distribution uses a separate workdaddy.automation-package envelope with formatVersion:1, independent id/version, requires, inputs and task. POST /api/automations/packages/preview {document,values?} is preview-only; check compatible:true. No installation or execution. When creating tasks for this panel, keep generating local task JSON, never a package or index in the Agent inbox.');
   return lines.join('\n');
 }
 
@@ -883,7 +898,8 @@ async function executeTask(taskInput, options = {}) {
     if (op === 'account.getCurrent') { ctx.account = options.currentAccount ? await options.currentAccount() : null; ctx.vars.account = ctx.account; return ctx.account; }
     if (op === 'account.forEach') {
       const all = typeof options.listAccounts === 'function' ? await options.listAccounts() : [];
-      const wanted = step.accounts === 'all' || !step.accounts ? all : all.filter((account) => (Array.isArray(step.accounts) ? step.accounts : [step.accounts]).includes(account.uid));
+      let wanted = step.accounts === 'all' || !step.accounts ? all : all.filter((account) => (Array.isArray(step.accounts) ? step.accounts : [step.accounts]).includes(account.uid));
+      if (stepsContainCheckin(step.steps) && typeof options.orderCheckinAccounts === 'function') wanted = await options.orderCheckinAccounts(wanted);
       const results = [];
       const physicallySwitch = step.switch === true || step.switchAccounts === true;
       const original = physicallySwitch && typeof options.currentAccount === 'function' ? await options.currentAccount() : null;
@@ -896,6 +912,11 @@ async function executeTask(taskInput, options = {}) {
           assertActive();
           ctx.account = account;
           ctx.vars.account = account;
+          if (step.prepare) await runSteps(step.prepare);
+          if (step.condition && !compare(resolveValue(step.condition.left, ctx), step.condition.operator || 'truthy', resolveValue(step.condition.right, ctx))) {
+            log('account:skip:' + account.uid);
+            continue;
+          }
           if (physicallySwitch) await options.accountSwitch(account);
           results.push(await runSteps(step.steps || []));
         }
@@ -1009,6 +1030,7 @@ module.exports = {
   createScheduleTicker,
   validateSchedule,
   taskNeedsPanelClosed,
+  stepsContainCheckin,
   taskIsPassiveCleanup,
   installBuiltinTask,
   SCHEMA_VERSION,

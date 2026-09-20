@@ -28,7 +28,7 @@ function assessRequirements(requires, runtime, actualCapabilities=[]) {
   if(requires){
     validateRequirements(requires);
     if(!runtime.version||!versionAtLeast(runtime.version,requires.minWorkDaddyVersion))issues.push({code:'workdaddy_version',required:requires.minWorkDaddyVersion});
-    if(requires.taskSchemaVersion!==1)issues.push({code:'unsupported_task_schema'});
+    if(![1,2,3].includes(requires.taskSchemaVersion))issues.push({code:'unsupported_task_schema'});
     if(requires.profiles&&!requires.profiles.includes(runtime.profileId))issues.push({code:'profile',allowed:requires.profiles});
     if(requires.platforms&&!requires.platforms.includes(runtime.platform))issues.push({code:'platform',allowed:requires.platforms});
   }

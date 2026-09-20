@@ -768,7 +768,7 @@ test('Windows daemon lock validates the owner process instead of trusting a reus
 test('session ranges use last-modified time and preserve standard WorkBuddy workspaces', () => {
   const daemon = read('daemon.js');
   const inject = read('inject.js');
-  assert.match(daemon, /COALESCE\(last_activity_at, updated_at, created_at\) >=/);
+  assert.match(daemon, /Number\(row\.last_activity_at \?\? row\.updated_at \?\? row\.created_at\) >= rangeMs/);
   assert.match(daemon, /ORDER BY COALESCE\(last_activity_at, updated_at, created_at\) DESC/);
   assert.match(inject, /sessionsState\.list = \(\(d && d\.sessions\) \|\| \[\]\);/);
   assert.match(inject, /if \(isTaskSessionRecordUI\(s\)\) \{ tasks\.push\(s\); return; \}/);
@@ -1168,9 +1168,11 @@ test('session copy-all is a separate override with a distinct toggle and hidden 
   assert.match(daemon, /sourceRules\.allSessions/);
   assert.match(inject, /id="wbs-sess-auto-all"/);
   const filters = inject.slice(inject.indexOf('<div class="wbs-sess-filters">'), inject.indexOf('<div class="wbs-sess-toolbar">'));
-  assert.match(filters, /id="wbs-sess-auto-all"[\s\S]*id="wbs-sess-account-select"[\s\S]*id="wbs-sess-range-seg"/);
+  assert.match(filters, /id="wbs-sess-account-select"[\s\S]*id="wbs-sess-size-seg"[\s\S]*id="wbs-sess-range-seg"/);
+  assert.match(inject, /<div class="wbs-sess-toolbar">[\s\S]*id="wbs-sess-auto-all"[\s\S]*id="wbs-sess-batch"/);
+  assert.doesNotMatch(filters, /wbs-sess-auto-all|1073741824|524288000|wbs-sess-size-select/);
   assert.equal((filters.match(/<div\b/g) || []).length, (filters.match(/<\/div>/g) || []).length);
-  assert.match(inject, /\.wbs-sess-filters\{[^}]*flex-wrap:wrap/);
+  assert.match(inject, /\.wbs-sess-filters\{[^}]*flex-wrap:nowrap[^}]*overflow-x:auto/);
   assert.match(inject, /id="wbs-sess-import"[\s\S]*id="wbs-sess-count"/);
   assert.match(inject, /id="wbs-sess-auto-all"[^>]*role="checkbox"[^>]*aria-checked="false"/);
   assert.match(inject, /wbs-sess-auto-all-box/);
@@ -1277,8 +1279,8 @@ test('credit expiry summary keeps per-account nodes and reuses the compact usage
   assert.match(inject, /<div data-usage-pane="credit">/);
   assert.match(inject, /if \(mask\.querySelector\('\[data-usage-tab\]\.active'\).*loadCredits\(\); else load\(\);/);
   assert.match(inject, /class="wbs-usage-segment wbs-sess-seg" id="wbs-sess-range-seg"/);
-  assert.match(inject, /\.wbs-sess-time-filter \.wbs-sess-seg\{[^}]*flex:1 1 auto[^}]*width:auto/);
-  assert.match(inject, /\.wbs-sess-account-filter\{[^}]*flex:0 1 190px/);
+  assert.match(inject, /:is\(\.wbs-sess-time-filter,\.wbs-sess-size-filter\) \.wbs-sess-seg\{[^}]*flex:1 1 auto[^}]*width:auto/);
+  assert.match(inject, /\.wbs-sess-account-filter\{[^}]*flex:0 1 150px/);
   assert.match(inject, /\.wbs-sess-seg button\{[^}]*flex:1 1 0[^}]*min-width:0/);
   assert.match(inject, /\.wbs-credit-tip-account\{[^}]*color:var\(--wb-icon-tertiary[^}]*font-size:10px/);
   assert.match(inject, /\.wbs-status-popover\.is-credit\{[^}]*height:auto[^}]*max-height:calc\(100vh - 16px\)/);

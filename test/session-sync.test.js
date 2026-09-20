@@ -18,6 +18,26 @@ function fixture(t) {
   };
   return { root, file, write, read: id => readSnapshot(root, id, ['a', 'b', 'c']) };
 }
+test('session snapshots accept payloads larger than the former 64 MiB limit', t => {
+  const f = fixture(t); f.write('a', base);
+  const file = path.join(f.root, 'workspace', 'sessions', 'a', 'large.bin');
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const size = 64 * 1024 * 1024 + 1;
+  fs.writeFileSync(file, '');
+  fs.truncateSync(file, size);
+  const snapshot = f.read('a');
+  assert.equal(snapshot.files.get('workspace/sessions/__session__/large.bin').bytes.length, size);
+});
+
+test('session snapshots accept more than 20,000 files', t => {
+  const f = fixture(t); f.write('a', base);
+  const directory = path.join(f.root, 'workspace', 'sessions', 'a');
+  fs.mkdirSync(directory, { recursive: true });
+  for (let i = 0; i <= 20000; i++) fs.writeFileSync(path.join(directory, 'file-' + i + '.bin'), '');
+  const snapshot = f.read('a');
+  assert.equal(snapshot.files.size, 20002);
+});
+
 test('same content skips; only a full prefix permits replacement, irrespective of mtime', t => {
   const f = fixture(t); f.write('a', base); f.write('b', base);
   assert.equal(compareSnapshots(f.read('a'), f.read('b')).kind, 'equal');
@@ -173,4 +193,38 @@ test('malformed official artifact index still blocks sync and names the failing 
   fs.mkdirSync(path.join(f.root, 'artifact-index'));
   fs.writeFileSync(path.join(f.root, 'artifact-index/a.json'), '{broken');
   assert.throws(() => f.read('a'), /会话产物索引损坏，未同步/);
+});
+
+test('fingerprint cache reuses hashes for unchanged files and reloads changed ones', async t => {
+  const f = fixture(t); f.write('a', base); f.write('b', [...base, message('user', 'continued')]);
+  const cache = new Map();
+  const first = readSnapshot(f.root, 'a', ['a', 'b', 'c'], cache);
+  assert.ok(cache.size > 0);
+  // A cache hit defers payload reads: bytes arrive through a lazy getter.
+  const second = readSnapshot(f.root, 'a', ['a', 'b', 'c'], cache);
+  const transcript = second.files.get('projects/project/__session__.jsonl');
+  assert.equal(typeof Object.getOwnPropertyDescriptor(transcript, 'bytes').get, 'function');
+  assert.deepEqual(second.records, first.records);
+  assert.equal(compareSnapshots(second, readSnapshot(f.root, 'b', ['a', 'b', 'c'], cache)).kind, 'right-extends');
+  // Alias-dependent semantics are recomputed when the alias set changes.
+  const otherAliases = readSnapshot(f.root, 'a', ['a', 'b', 'c', 'd'], cache);
+  assert.notEqual(otherAliases.files.get('projects/project/__session__.jsonl').semanticAliases.length, 0);
+  // Changed content invalidates the fingerprint and is re-read.
+  f.write('a', [...base, message('assistant', 'updated')]);
+  const changed = readSnapshot(f.root, 'a', ['a', 'b', 'c'], cache);
+  assert.equal(changed.records.length, first.records.length + 1);
+  assert.notEqual(changed.files.get('projects/project/__session__.jsonl').hash, first.files.get('projects/project/__session__.jsonl').hash);
+});
+
+test('cached snapshots still drive copy, race checks and rollback', async t => {
+  const f = fixture(t); f.write('a', [...base, message('user', 'continued')]); f.write('b', base);
+  const cache = new Map();
+  readSnapshot(f.root, 'a', ['a', 'b', 'c'], cache);
+  readSnapshot(f.root, 'b', ['a', 'b', 'c'], cache);
+  const source = readSnapshot(f.root, 'a', ['a', 'b', 'c'], cache);
+  const target = readSnapshot(f.root, 'b', ['a', 'b', 'c'], cache);
+  assert.equal(compareSnapshots(source, target).kind, 'left-extends');
+  await applySnapshot(source, target, { backupRoot: path.join(f.root, 'backups') });
+  assert.deepEqual(fs.readFileSync(f.file('b')), fs.readFileSync(f.file('a')));
+  assert.equal(compareSnapshots(readSnapshot(f.root, 'a', ['a', 'b', 'c'], cache), readSnapshot(f.root, 'b', ['a', 'b', 'c'], cache)).kind, 'equal');
 });

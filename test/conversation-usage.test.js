@@ -59,9 +59,12 @@ test('conversation usage UI uses a body-fixed mount, bottom spacer and message s
   assert.match(source, /wbs-session-usage-detail-title\{[^}]*font-weight:700/);
   assert.match(source, /wbs-session-usage-summary\{[^}]*font-size:13px[^}]*opacity:\.72/);
   assert.match(source, /wbs-session-usage-detail-title\{[^}]*font-size:14px/);
+  assert.match(source, /wbs-session-usage-detail-title-row\{[^}]*display:flex[^}]*align-items:center[^}]*justify-content:space-between/);
+  assert.match(source, /detailTitleRow\.appendChild\(el\('div', 'wbs-session-usage-detail-total'/);
   assert.match(source, /wbs-session-usage-detail-row\{[^}]*font-size:12px/);
   assert.match(source, /wbs-session-usage-detail-note/);
-  assert.match(source, /部分会话尚未完成，当前 Token 和积分仅按已完成用量统计/);
+  assert.match(source, /用量统计会随会话完成逐步更新/);
+  assert.doesNotMatch(source, /部分会话尚未完成，当前 Token 和积分仅按已完成用量统计/);
   assert.match(source, /if \(open\) \{[\s\S]{0,260}closeSessionCopyNotice\(\)/);
   assert.match(source, /pollSessionCopyNotice[\s\S]{0,500}if \(state\.open\)/);
   assert.match(source, /return usageNumber\(value\) > 0 \? '≥' \+ formatted/);

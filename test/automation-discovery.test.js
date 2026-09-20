@@ -82,7 +82,7 @@ test('discovery searches GitHub and Gitee, deduplicates task JSON and caches res
     assert.equal(result.tasks.length, 1);
     assert.equal(result.tasks[0].name, '账号提示');
     assert.equal(result.tasks[0].schemaVersion, 1);
-    assert.equal(result.schemaVersion, 2);
+    assert.equal(result.schemaVersion, 3);
     assert.equal(result.marker, MARKER);
     assert.deepEqual(result.tasks[0].sources.map(source => source.platform), ['github', 'gitee']);
     assert.equal(result.tasks[0].compatible, true);
@@ -257,6 +257,14 @@ test('automation UI preloads discovery and exposes fuzzy task search and import'
   assert.match(source, /wbs-auto-discovery-version/);
   assert.match(source, /wbs-auto-update-badge/);
   assert.match(source, /wbs-auto-discovery-update/);
+  assert.match(source, /data-auto-discovery-filter="favorites"/);
+  assert.match(source, /data-auto-discovery-favorite/);
+  assert.match(source, /\/api\/automations\/discovery\/favorite/);
+  assert.match(source, /favoriteCount/);
+  assert.match(source, /matches\.sort\(function \(left, right\)/);
+  assert.match(source, /Number\(right\.favoriteCount\).*Number\(left\.favoriteCount\)/);
+  assert.match(source, /wbs-auto-discovery-favorite\.is-active\{color:var\(--wb-color-text-primary/);
+  assert.doesNotMatch(source, /wbs-auto-discovery-favorite\.is-active\{color:var\(--wb-accent-blue/);
   assert.match(source, /replaceExisting/);
   assert.match(source, /\/api\/automations\/discovery\?refresh=1/);
   assert.match(source, /确认用公开仓库中的新版覆盖本地任务/);
