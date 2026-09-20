@@ -20,6 +20,99 @@ const { getProfile, profileDataDir, sharedDataDir } = require('./profiles.js');
 
 const plat = require('./platform.js');
 
+// ===================== [wd-compat] WorkBuddy 5.6.0 $wbEncrypted 字段信封解密适配 =====================
+// 背景：WorkBuddy 5.6.0 起对 workbuddy.cn 域账号启用 at-rest 字段级加密（编译期策略，
+//   无用户开关），auth/account 文件中 nickname/phoneNumber/accessToken/refreshToken 等
+//   写为 {"$wbEncrypted":1,"envelope":"<base64(JSON)>"。AES-256-GCM(sym-v1)。
+//   本插件 1.2.4 无该能力，读到的密文串导致「梦生丶」式乱码与「登录身份过期」。
+// 方案：读取端解密——遇到信封字段时通过 WorkBuddy 自带 Electron 的原生绑定
+//   electron_browser_workbuddy_storage.loggerGet() 取密钥负载（子进程管道传递，
+//   内存缓存，不落盘），按官方 sym-v1 AAD 规则解密后原位替换。
+// 失败语义：任何一步失败仅记 debug 日志并保留原值（密文），不抛错——不阻断账号管理。
+const WD_COMPAT = { keyCache: null, keyFail: null, decOk: 0, decFail: 0 };
+function wdCompatLog(msg) {
+  try { require('fs').appendFileSync(logFile(), `[wd-compat] ${msg}\n`); } catch (_) {}
+}
+function wdCompatStaticKey() {
+  if (WD_COMPAT.keyCache) return WD_COMPAT.keyCache;
+  if (WD_COMPAT.keyFail) throw new Error(WD_COMPAT.keyFail);
+  const candidates = [
+    '/Applications/WorkBuddy.app/Contents/MacOS/Electron',
+    '/Applications/WorkBuddy AI.app/Contents/MacOS/Electron',
+  ];
+  let lastErr = '未找到 WorkBuddy 可执行文件';
+  for (const exe of candidates) {
+    if (!fs.existsSync(exe)) continue;
+    const r = require('child_process').spawnSync(exe, [__filename, '--wd-compat-print-keyid'], {
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+      timeout: 15000, encoding: 'utf8',
+    });
+    const m = r.stdout && r.stdout.match(/WD_COMPAT_KEY ([0-9a-f]{16}) ([A-Za-z0-9+/=]+)/);
+    if (m) {
+      WD_COMPAT.keyCache = { keyId: m[1], key: Buffer.from(m[2], 'base64') };
+      return WD_COMPAT.keyCache;
+    }
+    lastErr = (r.stderr && String(r.stderr).trim().slice(0, 120)) || `exit=${r.status}`;
+  }
+  WD_COMPAT.keyFail = lastErr;
+  wdCompatLog(`取钥失败: ${lastErr}`);
+  throw new Error(lastErr);
+}
+// 被 wdCompatStaticKey 以 ELECTRON_RUN_AS_NODE 方式再次执行本文件时输出负载派生钥后退出
+if (process.argv.includes('--wd-compat-print-keyid')) {
+  try {
+    const b = process._linkedBinding('electron_browser_workbuddy_storage');
+    const payload = JSON.parse(b.loggerGet());
+    if (payload && payload.version === 1 && typeof payload.atRestSecretKey === 'string') {
+      const key = crypto.createHash('sha256').update(payload.atRestSecretKey, 'utf8').digest();
+      process.stdout.write(`WD_COMPAT_KEY ${key.toString('hex').slice(0, 16)} ${key.toString('base64')}\n`);
+      key.fill(0);
+      process.exit(0);
+    }
+    process.stderr.write('payload schema mismatch');
+    process.exit(4);
+  } catch (e) { process.stderr.write(String(e.message || e).slice(0, 200)); process.exit(3); }
+}
+function wdCompatOpenEnvelope(env, key) {
+  const FRAMING_FIELD = 2, FMT_FIELD = 'WBEV1', AAD_DOMAIN = Buffer.from('WB-AAD\0', 'ascii');
+  const lp = (s) => { const b = Buffer.from(s, 'utf8'); const l = Buffer.alloc(4); l.writeUInt32BE(b.length); return Buffer.concat([l, b]); };
+  const u32 = (n) => { const b = Buffer.alloc(4); b.writeUInt32BE(n); return b; };
+  const aad = Buffer.concat([
+    AAD_DOMAIN, Buffer.from([1]), lp(FMT_FIELD), lp('sym-v1'), u32(env.suite || 1),
+    lp(env.keyId || ''), Buffer.from([FRAMING_FIELD]), Buffer.from([0]), Buffer.from([0]),
+  ]);
+  const d = crypto.createDecipheriv('aes-256-gcm', key, Buffer.from(env.nonce, 'base64'), { authTagLength: 16 });
+  d.setAAD(aad);
+  d.setAuthTag(Buffer.from(env.authTag, 'base64'));
+  return Buffer.concat([d.update(Buffer.from(env.ciphertext, 'base64')), d.final()]).toString('utf8');
+}
+function wdCompatDecryptAuthJson(json) {
+  if (!json || typeof json !== 'object') return json;
+  const isEnv = (v) => v && typeof v === 'object' && !Array.isArray(v) && v.$wbEncrypted === 1 && typeof v.envelope === 'string';
+  let touched = false;
+  const walk = (node) => {
+    if (Array.isArray(node)) { node.forEach(walk); return; }
+    if (!node || typeof node !== 'object') return;
+    for (const k of Object.keys(node)) {
+      const v = node[k];
+      if (isEnv(v)) {
+        try {
+          const env = JSON.parse(Buffer.from(v.envelope, 'base64').toString('utf8'));
+          node[k] = wdCompatOpenEnvelope(env, wdCompatStaticKey().key);
+          WD_COMPAT.decOk++; touched = true;
+        } catch (e) {
+          WD_COMPAT.decFail++;
+          wdCompatLog(`解密失败 ${k}: ${String(e.message || e).slice(0, 80)}`);
+        }
+      } else if (v && typeof v === 'object') walk(v);
+    }
+  };
+  walk(json);
+  if (touched) wdCompatLog(`已解密 ${WD_COMPAT.decOk} 个字段（累计失败 ${WD_COMPAT.decFail}）`);
+  return json;
+}
+// ===================== [wd-compat] 适配层结束 =====================
+
 const IS_WIN = plat.IS_WIN;
 const IS_MAC = plat.IS_MAC;
 const IS_LINUX = plat.IS_LINUX;
@@ -138,6 +231,8 @@ function parseAuthFile(file, options = {}) {
   if (!file || !fs.existsSync(file)) return null;
   try {
     const json = JSON.parse(fs.readFileSync(file, 'utf8'));
+    // [wd-compat] WorkBuddy 5.6.0+ 字段信封读取端解密
+    wdCompatDecryptAuthJson(json);
     return authRecordFromJson(file, json, options);
   } catch (_) {
     return null;
@@ -145,6 +240,7 @@ function parseAuthFile(file, options = {}) {
 }
 
 function parseAuthJson(json, options = {}) {
+  json = wdCompatDecryptAuthJson(json); // [wd-compat]
   return authRecordFromJson(null, json, options);
 }
 
@@ -1272,7 +1368,16 @@ function backupAuthFile(dataDir, file, log = () => {}) {
   const info = readAuthFile(file);
   const dest = backupPath(dataDir, info.uid);
   const tmp = dest + '.tmp';
-  fs.writeFileSync(tmp, fs.readFileSync(file), { mode: 0o600 });
+  // [wd-compat] WorkBuddy 5.6.0+ 会把官方 auth 文件重写为 $wbEncrypted 密文；
+  // 备份落盘前解密为明文 JSON，保证备份始终可用（token 刷新/积分/切换依赖明文）。
+  let backupContent;
+  try {
+    const decrypted = wdCompatDecryptAuthJson(JSON.parse(fs.readFileSync(file, 'utf8')));
+    backupContent = Buffer.from(JSON.stringify(decrypted), 'utf8');
+  } catch (_) {
+    backupContent = fs.readFileSync(file); // 解密失败回退原样拷贝（保持旧行为）
+  }
+  fs.writeFileSync(tmp, backupContent, { mode: 0o600 });
   fs.renameSync(tmp, dest);
   fs.chmodSync(dest, 0o600);
   updateMeta(dataDir, info, { preserveBinding: true });
@@ -1398,7 +1503,7 @@ function listAccounts(dataDir) {
       authValid: false,
     };
     try {
-      const j = JSON.parse(fs.readFileSync(path.join(dir, n), 'utf8'));
+    const j = wdCompatDecryptAuthJson(JSON.parse(fs.readFileSync(path.join(dir, n), 'utf8'))); // [wd-compat]
       item.authValid = !!parseAuthJson(j);
       const acct = j.account || (Array.isArray(j.accounts) && j.accounts[0]);
       if (acct) {
@@ -1639,4 +1744,5 @@ module.exports = {
   listAccounts,
   switchTo,
   deleteAccount,
+  wdCompatDecryptAuthJson, // [wd-compat]
 };
