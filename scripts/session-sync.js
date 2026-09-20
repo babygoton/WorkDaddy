@@ -90,38 +90,97 @@ async function readSessionSizes(root, ids) {
   return sizes;
 }
 
-function readSnapshot(root, id, aliases = []) {
+function aliasesEqual(left, right) {
+  if (!Array.isArray(left) || left.length !== right.length) return false;
+  const set = new Set(right);
+  return left.every(value => set.has(value));
+}
+
+// Fingerprint cache: relative path -> { size, mtimeMs, ctimeMs, hash, mode,
+// semantic, aliases, records }. A file whose size/mtime/ctime all match the
+// cached fingerprint reuses its SHA-256 without being re-read; bytes load
+// lazily (only files actually copied/backed up are read). Transcript records
+// and the artifact index hash depend on the alias set, so those are reused
+// only when computed for the same aliases.
+function readSnapshot(root, id, aliases = [], cache = null) {
   if (!id || /[/\\\x00]/.test(id) || id === '.' || id === '..') throw Error('无效的会话标识');
   root = path.resolve(root);
   if (fs.lstatSync(root).isSymbolicLink()) throw Error('会话目录包含符号链接，未同步');
   const knownIds = Array.from(new Set([id, ...aliases]));
   const files = new Map();
   let total = 0;
+  // Directory components repeat across thousands of session files. Verify each
+  // path component once per snapshot instead of lstat-ing the whole chain per
+  // file; the per-entry symlink/type checks below still apply to every file.
+  const trustedComponents = new Map();
+  function safePathFast(relative) {
+    const parts = relative.split('/');
+    let target = root;
+    for (let i = 0; i < parts.length - 1; i++) {
+      target = path.join(target, parts[i]);
+      if (trustedComponents.has(target)) continue;
+      try { if (fs.lstatSync(target).isSymbolicLink()) throw Error('会话文件包含符号链接，未同步'); }
+      catch (error) { if (error.code !== 'ENOENT') throw error; }
+      trustedComponents.set(target, true);
+    }
+    return path.join(target, parts[parts.length - 1]);
+  }
+  function attachBytes(entry) {
+    if (entry.bytes) return;
+    let loaded = null;
+    Object.defineProperty(entry, 'bytes', {
+      enumerable: true,
+      get() {
+        if (loaded) return loaded;
+        const file = safePath(root, entry.relative);
+        let now;
+        try { now = fs.statSync(file); } catch (_) { throw Error('会话文件正在变化，请稍后重试'); }
+        if (now.size !== entry.size || now.mtimeMs !== entry.mtimeMs || now.ctimeMs !== entry.ctimeMs) throw Error('会话文件正在变化，请稍后重试');
+        loaded = fs.readFileSync(file);
+        return loaded;
+      },
+    });
+  }
+  function cached(relative, stat) {
+    if (!cache) return null;
+    const entry = cache.get(relative);
+    if (!entry || typeof entry !== 'object') return null;
+    if (entry.size !== stat.size || entry.mtimeMs !== stat.mtimeMs || entry.ctimeMs !== stat.ctimeMs) return null;
+    if (typeof entry.hash !== 'string' || !entry.hash) return null;
+    return entry;
+  }
   function visit(relative, logical) {
-    const file = safePath(root, relative);
+    const file = safePathFast(relative);
     let stat;
     try { stat = fs.lstatSync(file); } catch (error) { if (error.code === 'ENOENT') return; throw Error('会话文件无法读取'); }
+    if (stat.isSymbolicLink()) throw Error('会话文件包含符号链接，未同步');
     if (stat.isDirectory()) {
       for (const entry of fs.readdirSync(file).sort()) visit(relative + '/' + entry, logical + '/' + entry);
       return;
     }
     if (!stat.isFile()) throw Error('会话文件类型不受支持');
     total += stat.size;
+    const hit = cached(relative, stat);
+    if (hit) {
+      const entry = {
+        relative, hash: hit.hash, mode: stat.mode & 0o777, mtimeMs: stat.mtimeMs,
+        size: stat.size, ctimeMs: stat.ctimeMs,
+        semantic: typeof hit.semantic === 'string' && hit.semantic ? hit.semantic : null,
+        semanticAliases: Array.isArray(hit.aliases) ? hit.aliases : null,
+        records: Array.isArray(hit.records) ? hit.records : null,
+      };
+      attachBytes(entry);
+      files.set(logical, entry);
+      return;
+    }
     const bytes = fs.readFileSync(file);
     const after = fs.statSync(file);
     if (stat.size !== bytes.length || stat.size !== after.size || stat.mtimeMs !== after.mtimeMs || stat.ctimeMs !== after.ctimeMs) throw Error('会话文件正在变化，请稍后重试');
-    let semantic = digest(bytes);
-    // Workspace files and history snapshots are user work products. Their
-    // extension does not guarantee valid JSON (JSONC, drafts, empty files,
-    // or arbitrary bytes). Preserve and compare those files byte-for-byte.
-    // Only the official index needs structured identity normalization because
-    // targetBytes rewrites its ownerConversationId during a copy.
-    if (logical === 'artifact-index/__session__.json') {
-      let value;
-      try { value = JSON.parse(bytes.toString('utf8')); } catch (_) { throw Error('会话产物索引损坏，未同步'); }
-      semantic = digest(JSON.stringify(canonical(value, knownIds)));
-    }
-    files.set(logical, { relative, bytes, hash: digest(bytes), semantic, mode: stat.mode & 0o777, mtimeMs: stat.mtimeMs });
+    files.set(logical, {
+      relative, bytes, hash: digest(bytes), mode: stat.mode & 0o777, mtimeMs: stat.mtimeMs,
+      size: after.size, ctimeMs: after.ctimeMs,
+      semantic: null, semanticAliases: null, records: null,
+    });
   }
   const projects = safePath(root, 'projects');
   if (fs.existsSync(projects)) {
@@ -133,24 +192,52 @@ function readSnapshot(root, id, aliases = []) {
   }
   for (const prefix of ['workspace/sessions', 'tasks', 'file-history']) visit(prefix + '/' + id, prefix + '/__session__');
   visit('artifact-index/' + id + '.json', 'artifact-index/__session__.json');
+  // Workspace files and history snapshots are user work products. Their
+  // extension does not guarantee valid JSON (JSONC, drafts, empty files,
+  // or arbitrary bytes). Preserve and compare those files byte-for-byte.
+  // Only the official index needs structured identity normalization because
+  // targetBytes rewrites its ownerConversationId during a copy.
   const transcripts = [...files].filter(([key]) => /^projects\/[^/]+\/__session__\.jsonl$/.test(key));
   if (transcripts.length > 1) throw Error('会话消息文件不唯一，未同步');
   let records = null, transcriptKey = null;
   if (transcripts.length) {
     transcriptKey = transcripts[0][0];
-    const lines = transcripts[0][1].bytes.toString('utf8').split(/\r?\n/).filter(line => line.trim());
-    if (!lines.length) throw Error('会话消息文件为空，未同步');
-    records = lines.map(line => {
-      let record;
-      try { record = JSON.parse(line); } catch (_) { throw Error('会话消息文件未写完或已损坏，未同步'); }
-      if (!record || typeof record !== 'object' || Array.isArray(record) || typeof record.type !== 'string') throw Error('会话消息格式不受支持，未同步');
-      return digest(JSON.stringify(canonical(record, knownIds)));
-    });
-    // Require actual messages: a metadata-only journal is not an empty base.
-    if (!lines.some(line => JSON.parse(line).type === 'message')) throw Error('会话消息文件没有消息，未同步');
-    transcripts[0][1].semantic = digest(records.join('\n'));
+    const entry = transcripts[0][1];
+    if (!(entry.records && entry.semantic && aliasesEqual(entry.semanticAliases, knownIds))) {
+      const lines = entry.bytes.toString('utf8').split(/\r?\n/).filter(line => line.trim());
+      if (!lines.length) throw Error('会话消息文件为空，未同步');
+      entry.records = lines.map(line => {
+        let record;
+        try { record = JSON.parse(line); } catch (_) { throw Error('会话消息文件未写完或已损坏，未同步'); }
+        if (!record || typeof record !== 'object' || Array.isArray(record) || typeof record.type !== 'string') throw Error('会话消息格式不受支持，未同步');
+        return digest(JSON.stringify(canonical(record, knownIds)));
+      });
+      // Require actual messages: a metadata-only journal is not an empty base.
+      if (!lines.some(line => JSON.parse(line).type === 'message')) throw Error('会话消息文件没有消息，未同步');
+      entry.semantic = digest(entry.records.join('\n'));
+      entry.semanticAliases = [...knownIds];
+    }
+    records = entry.records;
   }
-  return { root, id, aliases: knownIds, files, records, transcriptKey, totalBytes: total };
+  const indexEntry = files.get('artifact-index/__session__.json');
+  if (indexEntry && !(indexEntry.semantic && aliasesEqual(indexEntry.semanticAliases, knownIds))) {
+    let value;
+    try { value = JSON.parse(indexEntry.bytes.toString('utf8')); } catch (_) { throw Error('会话产物索引损坏，未同步'); }
+    indexEntry.semantic = digest(JSON.stringify(canonical(value, knownIds)));
+    indexEntry.semanticAliases = [...knownIds];
+  }
+  for (const [key, entry] of files) {
+    if (!entry.semantic) entry.semantic = entry.hash;
+    if (cache) {
+      cache.set(entry.relative, {
+        size: entry.size, mtimeMs: entry.mtimeMs, ctimeMs: entry.ctimeMs,
+        hash: entry.hash, mode: entry.mode, semantic: entry.semantic,
+        aliases: entry.semanticAliases ? [...entry.semanticAliases] : null,
+        records: entry.records ? [...entry.records] : null,
+      });
+    }
+  }
+  return { root, id, aliases: knownIds, files, records, transcriptKey, totalBytes: total, cache };
 }
 
 function compareSnapshots(left, right) {
@@ -221,7 +308,7 @@ async function selectTargetSnapshot(source, targetIds, readTarget, preferredId) 
 }
 
 function unchanged(snapshot) {
-  const now = readSnapshot(snapshot.root, snapshot.id, snapshot.aliases);
+  const now = readSnapshot(snapshot.root, snapshot.id, snapshot.aliases, snapshot.cache || null);
   return now.files.size === snapshot.files.size && [...snapshot.files].every(([key, file]) => now.files.get(key)?.hash === file.hash);
 }
 
@@ -277,7 +364,7 @@ async function applySnapshot(source, target, options) {
   let totalBytes = 0;
   const verifyPublished = () => {
     if (!unchanged(source)) throw Error('源会话正在变化，已停止同步');
-    const now = readSnapshot(target.root, target.id, target.aliases);
+    const now = readSnapshot(target.root, target.id, target.aliases, target.cache || null);
     if (now.files.size !== expected.size || [...expected].some(([key, hash]) => now.files.get(key)?.hash !== hash)) {
       throw Error('目标会话正在变化，已停止同步');
     }

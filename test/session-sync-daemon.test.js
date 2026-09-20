@@ -21,8 +21,10 @@ function harness(t) {
     rows.set(id, { id, user_id: uid, title: 'fixture', created_at: 1, updated_at: 1 });
     lib.addAutoCopySessionMember(root, lineage, uid, id); write(id, base);
   }
+  const syncCacheMap = new Map();
   const ctx = { ...lib, sessionSync, fs, path, crypto, DATA_DIR: root, PROFILE: { dataRoot: root, kind: 'workbuddy' },
     accountSwitchInProgress: false, SESSION_COPY_COLUMNS: ['id', 'user_id'], sessionCopyLocks: new Map(), yieldAutoCopyToRenderer: async () => {}, assertSessionSyncIdle: async () => {},
+    getSessionSyncCache: () => syncCacheMap, scheduleSessionSyncCacheSave: () => {},
     log: () => {}, sqliteQuery: async (_, params) => {
       const row = rows.get(params[0]); return row && (!params[1] || params[1] === row.user_id) ? [{ ...row }] : [];
     },

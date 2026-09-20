@@ -381,8 +381,8 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 // 1.2.52：成长任务支持在悬浮层内直接接取，并在完成后同步最新任务状态。
 // 1.2.55：成长弹窗支持开启盲盒与抽奖并提示奖励，收敛成长/用量统计 primary 色使用。
 // 1.2.56：成长任务补齐说明与标签、已领取折叠、Buddy 派出，并把用量柱状图改为面积折线图。
-const DAEMON_VERSION = '1.2.92';
-const DAEMON_BUILD_ID = 'release-1.2.92-20260920-session-copy-rate';
+const DAEMON_VERSION = '1.2.95';
+const DAEMON_BUILD_ID = 'release-1.2.95-20260920-session-sync-skip-fastpath';
 const usageReporter = createUsageReporter({ profile: PROFILE.id, version: DAEMON_VERSION });
 configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const automationDiscovery = createAutomationDiscovery({
@@ -4465,6 +4465,50 @@ async function importSessionArchives(payload, targetUid, staged = false) {
   return { imported, failed: errors.length, errors: summarizeSessionImportErrors(errors) };
 }
 
+// Session-copy fingerprint cache: files whose size/mtime/ctime are unchanged
+// reuse their stored SHA-256 instead of being re-read on every sync. Best
+// effort only — a lost or stale entry just costs one re-read. The cap must
+// cover every session file on disk (tens of thousands), or active sessions
+// evict each other and the cache never warms up.
+const SESSION_SYNC_CACHE_LIMIT = 100000;
+let sessionSyncCacheState = null;
+function getSessionSyncCache() {
+  if (sessionSyncCacheState) return sessionSyncCacheState.map;
+  const file = path.join(DATA_DIR, 'session-sync-cache.json');
+  const map = new Map();
+  try {
+    const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
+    if (raw && raw.version === 1 && raw.entries && typeof raw.entries === 'object') {
+      for (const [key, entry] of Object.entries(raw.entries)) {
+        if (!entry || typeof entry !== 'object') continue;
+        if (typeof entry.hash !== 'string' || !entry.hash) continue;
+        if (![entry.size, entry.mtimeMs, entry.ctimeMs].every(Number.isFinite)) continue;
+        map.set(key, entry);
+      }
+    }
+  } catch (_) {}
+  while (map.size > SESSION_SYNC_CACHE_LIMIT) map.delete(map.keys().next().value);
+  sessionSyncCacheState = { file, map, timer: null, dirty: false };
+  const set = map.set.bind(map);
+  map.set = (key, value) => { sessionSyncCacheState.dirty = true; return set(key, value); };
+  return map;
+}
+function scheduleSessionSyncCacheSave() {
+  const state = sessionSyncCacheState;
+  if (!state || !state.dirty || state.timer) return;
+  state.timer = setTimeout(() => {
+    state.timer = null;
+    if (!state.dirty) return;
+    state.dirty = false;
+    try {
+      while (state.map.size > SESSION_SYNC_CACHE_LIMIT) state.map.delete(state.map.keys().next().value);
+      fs.mkdirSync(path.dirname(state.file), { recursive: true });
+      replaceFileWithRetry(state.file, JSON.stringify({ version: 1, entries: Object.fromEntries(state.map) }), 0o600);
+    } catch (_) { state.dirty = true; }
+  }, 1000);
+  if (typeof state.timer.unref === 'function') state.timer.unref();
+}
+
 async function copySessionRecord(src, targetUid, options = {}) {
   if (accountSwitchInProgress && !options.auto) throw new Error('账号正在切换，请稍后同步');
   const sourceUid = String(options.sourceUid || src.user_id || '').trim();
@@ -4490,10 +4534,11 @@ async function copySessionRecord(src, targetUid, options = {}) {
     }
     const targetIds = candidates.length ? candidates.map(row => row.id) : [crypto.randomUUID()];
     const aliases = getAutoCopySessionMemberRecords(DATA_DIR, lineageId).map(member => member.id).concat(targetIds);
-    let left = sessionSync.readSnapshot(PROFILE.dataRoot, sourceRow.id, aliases);
+    const syncCache = getSessionSyncCache();
+    let left = sessionSync.readSnapshot(PROFILE.dataRoot, sourceRow.id, aliases, syncCache);
     const selection = await sessionSync.selectTargetSnapshot(left, targetIds, async id => {
       await yieldAutoCopyToRenderer();
-      return sessionSync.readSnapshot(PROFILE.dataRoot, id, aliases);
+      return sessionSync.readSnapshot(PROFILE.dataRoot, id, aliases, syncCache);
     }, mapping && mapping.targetId);
     // A divergent source still needs to reach the destination. Publish it as
     // a new physical session in the same lineage, so later scans find it by
@@ -4502,7 +4547,16 @@ async function copySessionRecord(src, targetUid, options = {}) {
     const targetId = branched ? crypto.randomUUID() : selection.targetId;
     if (branched) aliases.push(targetId);
     const existing = candidates.find(row => row.id === targetId) || null;
-    let right = sessionSync.readSnapshot(PROFILE.dataRoot, targetId, aliases);
+    // An equal selection needs no writes: the trimmed selection snapshot is
+    // enough to skip, and the next sync re-reads everything anyway. Avoid the
+    // extra full target snapshot on the hot all-skipped path.
+    if (!branched && selection.comparison.kind === 'equal') {
+      if (!getAutoCopySessionMembers(DATA_DIR, lineageId, targetUid).includes(targetId)) addAutoCopySessionMember(DATA_DIR, lineageId, targetUid, targetId);
+      if (!mapping || mapping.targetId !== targetId) setAutoCopyMapping(DATA_DIR, lineageId, targetUid, { targetId, status: 'copied', failedFiles: 0 });
+      const warning = left.totalBytes > 100 * 1024 * 1024 ? '会话超过 100 MB，同步可能较慢' : '';
+      return { status: 'skipped', sourceId: src.id, targetId, branched: false, failedFiles: 0, warning, sourceBytes: left.totalBytes, totalBytes: left.totalBytes, copiedBytes: 0 };
+    }
+    let right = sessionSync.readSnapshot(PROFILE.dataRoot, targetId, aliases, syncCache);
     // Size is advisory only; both manual and automatic sync keep all files.
     const warning = Math.max(left.totalBytes, right.totalBytes) > 100 * 1024 * 1024
       ? '会话超过 100 MB，同步可能较慢' : '';
@@ -4555,8 +4609,8 @@ async function copySessionRecord(src, targetUid, options = {}) {
       if (comparison.missingRight) await update(left, right, sourceRow, existing, true);
       if (comparison.missingLeft) {
         // Re-read after the first repair, so race detection uses current bytes.
-        left = sessionSync.readSnapshot(PROFILE.dataRoot, sourceRow.id, aliases);
-        right = sessionSync.readSnapshot(PROFILE.dataRoot, targetId, aliases);
+        left = sessionSync.readSnapshot(PROFILE.dataRoot, sourceRow.id, aliases, syncCache);
+        right = sessionSync.readSnapshot(PROFILE.dataRoot, targetId, aliases, syncCache);
         await update(right, left, existing, sourceRow, true);
       }
     }
@@ -4570,7 +4624,10 @@ async function copySessionRecord(src, targetUid, options = {}) {
   const current = previous.catch(() => {}).then(perform);
   sessionCopyLocks.set(lockKey, current);
   try { return await current; }
-  finally { if (sessionCopyLocks.get(lockKey) === current) sessionCopyLocks.delete(lockKey); }
+  finally {
+    if (sessionCopyLocks.get(lockKey) === current) sessionCopyLocks.delete(lockKey);
+    scheduleSessionSyncCacheSave();
+  }
 }
 
 async function buildAutoCopyPlan(sourceUid, targetUid) {
