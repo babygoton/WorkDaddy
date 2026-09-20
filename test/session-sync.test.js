@@ -18,6 +18,26 @@ function fixture(t) {
   };
   return { root, file, write, read: id => readSnapshot(root, id, ['a', 'b', 'c']) };
 }
+test('session snapshots accept payloads larger than the former 64 MiB limit', t => {
+  const f = fixture(t); f.write('a', base);
+  const file = path.join(f.root, 'workspace', 'sessions', 'a', 'large.bin');
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const size = 64 * 1024 * 1024 + 1;
+  fs.writeFileSync(file, '');
+  fs.truncateSync(file, size);
+  const snapshot = f.read('a');
+  assert.equal(snapshot.files.get('workspace/sessions/__session__/large.bin').bytes.length, size);
+});
+
+test('session snapshots accept more than 20,000 files', t => {
+  const f = fixture(t); f.write('a', base);
+  const directory = path.join(f.root, 'workspace', 'sessions', 'a');
+  fs.mkdirSync(directory, { recursive: true });
+  for (let i = 0; i <= 20000; i++) fs.writeFileSync(path.join(directory, 'file-' + i + '.bin'), '');
+  const snapshot = f.read('a');
+  assert.equal(snapshot.files.size, 20002);
+});
+
 test('same content skips; only a full prefix permits replacement, irrespective of mtime', t => {
   const f = fixture(t); f.write('a', base); f.write('b', base);
   assert.equal(compareSnapshots(f.read('a'), f.read('b')).kind, 'equal');

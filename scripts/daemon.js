@@ -29,6 +29,7 @@ const os = require('os');
 const crypto = require('crypto');
 const net = require('net');
 const sessionSync = require('./session-sync.js');
+const { createAccountCreditCache } = require('./account-credit-cache.js');
 const { spawn, spawnSync } = require('child_process');
 const {
   assertSameProcessIdentity,
@@ -141,6 +142,7 @@ const {
 const {
   captureException,
   captureMessage,
+  persistentInstallationId,
   setTelemetryEnabled,
   telemetryEnabled,
   telemetryEnvironmentOverride,
@@ -181,6 +183,7 @@ const {
   taskMatchesEvent,
   createScheduleTicker,
   taskNeedsPanelClosed,
+  stepsContainCheckin,
   taskIsPassiveCleanup,
   isSupportedTaskSchema,
   isTaskCompatible,
@@ -197,12 +200,14 @@ let automationInputActive = false;
 const { previewPackage, PACKAGE_FORMAT_VERSION } = require('./automation-packages.js');
 const { exportTasks, importTasks, readTransferBody } = require('./automation-transfer.js');
 const { createAutomationDiscovery } = require('./automation-discovery.js');
+const { createAutomationLikesClient } = require('./automation-likes.js');
 
 const { createAutomationNotifier } = require('./toast-options.js');
 const { runCompletionReport, probeAccountCompletion } = require('./completion-report.js');
 const { createPrimaryAccountStore } = require('./primary-account.js');
 const PROFILE = getProfile();
 const DATA_DIR = defaultDataDir();
+const accountCreditCache = createAccountCreditCache(DATA_DIR);
 const thirdPartyModels = createThirdPartyImport({ targetFile: workbuddyModelsFile(), dataDir: DATA_DIR });
 const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.existsSync(accountBackupFile(uid)));
 // 版本号：改动 daemon/inject/theme-patches/builtin 资产后递增，launcher 检测到运行中版本不一致会强制用 app 内置代码重启
@@ -376,13 +381,17 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 // 1.2.52：成长任务支持在悬浮层内直接接取，并在完成后同步最新任务状态。
 // 1.2.55：成长弹窗支持开启盲盒与抽奖并提示奖励，收敛成长/用量统计 primary 色使用。
 // 1.2.56：成长任务补齐说明与标签、已领取折叠、Buddy 派出，并把用量柱状图改为面积折线图。
-const DAEMON_VERSION = '1.2.83';
-const DAEMON_BUILD_ID = 'release-1.2.83-20260919-switch-without-session-activity-gate';
+const DAEMON_VERSION = '1.2.92';
+const DAEMON_BUILD_ID = 'release-1.2.92-20260920-session-copy-rate';
 const usageReporter = createUsageReporter({ profile: PROFILE.id, version: DAEMON_VERSION });
 configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const automationDiscovery = createAutomationDiscovery({
   dataDir: DATA_DIR,
   runtime: { version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform },
+});
+const automationLikes = createAutomationLikesClient({
+  endpoint: process.env.WORKDADDY_AUTOMATION_LIKES_ENDPOINT || 'https://workdaddy.dev/api/automation-likes',
+  getActorId: persistentInstallationId,
 });
 const HOST = '127.0.0.1';
 // 平台分支开关。上游历史代码把「非 Windows」一律当 macOS，Linux 适配时拆成
@@ -3107,7 +3116,7 @@ async function automationHttpRequest(request, account) {
     return { ok: response.ok, status: response.status, headers: { 'content-type': response.headers.get('content-type') || '' }, text, json: jsonBody };
   } catch (e) { if (request.isCancelled && request.isCancelled()) throw new Error('任务已停止'); if (e && e.name === 'AbortError') throw new Error('HTTP 请求超时'); throw new Error(e && e.message === 'HTTP 响应超过 1 MiB' ? e.message : 'HTTP 请求失败'); } finally { clearTimeout(timer); clearInterval(cancelTimer); }
 }
-function automationPublicRun(run) { return { id: run.id, taskId: run.taskId, status: run.status, phase: run.phase || 'executing', startedAt: run.startedAt, finishedAt: run.finishedAt || 0, error: run.error || '', logs: run.logs, result: run.result || null }; }
+function automationPublicRun(run) { return { id: run.id, taskId: run.taskId, status: run.status, phase: run.phase || 'executing', sync: run.sync || null, stopRequested: !!run.stopRequested, startedAt: run.startedAt, finishedAt: run.finishedAt || 0, error: run.error || '', logs: run.logs, result: run.result || null }; }
 
 // 自动化运行前收拢 WorkDaddy 面板「窗口」，避免其 contenteditable/悬浮层与 WorkBuddy 原生
 // composer 抢焦点或遮挡，导致任务把提示词键入到 WorkDaddy 面板输入框 / 点不到官方发送按钮
@@ -3181,6 +3190,7 @@ async function automationNotifyToast(detail) {
   return response.result.value;
 }
 let accountSwitchInProgress = false;
+const accountSyncFailures = new Map();
 async function assertSessionSyncIdle() {
   if (PROFILE.kind !== 'workbuddy') return;
   if (!cdp.connected) throw new Error('无法确认会话状态，请连接 WorkBuddy 后重试');
@@ -3201,16 +3211,82 @@ async function assertAccountSwitchIdle() {
 }
 
 let automationAccountSwitchTail = Promise.resolve();
-function automationSwitchAccount(account) {
+function assertAutoCopySucceeded(job) {
+  if (job && (job.status !== 'done' || job.processed !== job.total || job.failed || job.failedItems || job.partial || job.conflicts)) {
+    throw new Error('会话同步未成功完成，已停止自动切换（同步任务 ' + job.id + '，状态 ' + job.status + '）');
+  }
+}
+
+function recordAccountSyncResult(job) {
+  if (!job || !job.targetUid) return;
+  try {
+    assertAutoCopySucceeded(job);
+    accountSyncFailures.delete(job.targetUid);
+  } catch (_) {
+    // UI history expires after 30 minutes. Keep a compact failure barrier until
+    // a subsequent successful synchronization proves this account is ready.
+    accountSyncFailures.set(job.targetUid, {
+      id: job.id, status: job.status, total: job.total, processed: job.processed,
+      failed: job.failed, failedItems: job.failedItems, partial: job.partial, conflicts: job.conflicts,
+    });
+  }
+}
+
+function automationSwitchProgress(options, phase, job = null) {
+  if (typeof options.onProgress !== 'function') return;
+  options.onProgress({ phase, sync: job ? {
+    jobId: job.id, status: job.status, processed: job.processed, total: job.total,
+    failed: job.failed || 0, conflicts: job.conflicts || 0,
+  } : null });
+}
+
+async function waitAutomationSyncJob(job, options) {
+  // Completion includes worker cleanup. Keep the account lock while writes drain,
+  // even after Stop; releasing it early would let restoration race file commits.
+  let finished = false;
+  job.completion.then(() => { finished = true; });
+  while (!finished) {
+    automationSwitchProgress(options, options.isCancelled && options.isCancelled() ? 'stopping-sync' : 'syncing-sessions', job);
+    await sleep(200);
+  }
+  automationSwitchProgress(options, 'syncing-sessions', job);
+  assertAutoCopySucceeded(job);
+}
+
+async function acquireAutomationAccountSwitch(options) {
+  for (;;) {
+    if (options.isCancelled && options.isCancelled()) throw new Error('任务已停止');
+    const busy = accountSwitchInProgress || autoCopyWorkerRunning || autoCopyQueue.length || sessionCopyLocks.size;
+    if (!busy) {
+      // Check the latest inbound result, not just an empty queue. A failed job
+      // must not silently become permission to switch once its worker stops.
+      const uid = String((currentAccount() || {}).uid || '');
+      assertAutoCopySucceeded(accountSyncFailures.get(uid));
+      let latest = null;
+      for (const job of autoCopyJobs.values()) if (job.targetUid === uid) latest = job;
+      assertAutoCopySucceeded(latest);
+      // No await between the idle check and claiming the synchronous switch lock.
+      return assertAccountSwitchIdle();
+    }
+    const pending = Array.from(autoCopyJobs.values()).find(job => job.status === 'queued' || job.status === 'running');
+    automationSwitchProgress(options, 'waiting-sync', pending);
+    await sleep(200);
+  }
+}
+
+function automationSwitchAccount(account, options = {}) {
   const target = account && typeof account === 'object' ? account : { uid: String(account || '').trim() };
   const run = automationAccountSwitchTail.then(async () => {
     const uid = String(target.uid || '').trim();
     if (!uid) throw new Error('账号切换缺少 uid');
-    const active = currentAccount();
-    if (active && active.uid === uid) return { ok: true, uid, switched: false };
-    const releaseAccountSwitch = await assertAccountSwitchIdle();
-    const releaseRendererReload = beginRendererReloadPriority();
+    const releaseAccountSwitch = await acquireAutomationAccountSwitch(options);
+    let releaseRendererReload = null;
     try {
+      if (options.isCancelled && options.isCancelled()) throw new Error('任务已停止');
+      const active = currentAccount();
+      if (active && active.uid === uid) return { ok: true, uid, switched: false };
+      automationSwitchProgress(options, options.restore ? 'restoring-account' : 'switching-account');
+      releaseRendererReload = beginRendererReloadPriority();
       const acct = switchTo(DATA_DIR, uid, log);
       pendingAutomationAccountSwitch = { account: { uid: acct.uid, nickname: acct.nickname } };
       await reloadWorkBuddyPage();
@@ -3221,16 +3297,23 @@ function automationSwitchAccount(account) {
       }
       const sourceUid = String(active && active.uid || '');
       const rules = sourceUid ? getAutoCopyRules(DATA_DIR, sourceUid) : {};
+      let job = null;
       if (rules.allSessions || (rules.sessionIds || []).length || (rules.workspaces || []).length) {
-        startAutoCopyJob(sourceUid, uid, [], { sourceName: active.nickname, targetName: acct.nickname });
+        job = startAutoCopyJob(sourceUid, uid, [], { sourceName: active.nickname, targetName: acct.nickname });
       }
-      return { ok: true, uid: acct.uid, nickname: acct.nickname, switched: true };
+      // Sync yields to reload priority: release it before awaiting the job.
+      releaseRendererReload();
+      releaseRendererReload = null;
+      if (job) await waitAutomationSyncJob(job, options);
+      if (options.isCancelled && options.isCancelled()) throw new Error('任务已停止');
+      return { ok: true, uid: acct.uid, nickname: acct.nickname, switched: true, syncJobId: job ? job.id : null };
     } catch (error) {
       pendingAutomationAccountSwitch = null;
       throw error;
     } finally {
-      releaseRendererReload();
+      if (releaseRendererReload) releaseRendererReload();
       releaseAccountSwitch();
+      automationSwitchProgress(options, 'executing');
     }
   });
   automationAccountSwitchTail = run.catch(() => {});
@@ -3246,7 +3329,7 @@ function startAutomationRun(task, event = null) {
   }
   const id = 'run_' + Date.now().toString(36) + '_' + crypto.randomBytes(3).toString('hex');
   const run = { id, taskId: task.id, status: 'running', startedAt: Date.now(), finishedAt: 0, error: '', logs: [], result: null, navigationSerial: event && event.navigationSerial, pageSessionId: event && event.pageSessionId };
-  const isCancelled = () => run.status === 'cancelled' || run.superseded === true ||
+  const isCancelled = () => run.stopRequested === true || run.status === 'cancelled' || run.superseded === true ||
     (task.trigger.restartOnNavigation && event && (event.navigationSerial !== mainFrameNavigationSerial || event.pageSessionId !== cdpPageSessionId));
   log('[automation-focus-diagnostics] automation:start ' + JSON.stringify({ runId: id, taskId: task.id, source: event && event.source || '', account: event && event.account || null, cdpTargetUrl: cdp.targetUrl, cdpTargetTitle: cdp.targetTitle }));
   const appendRunLog = (message) => {
@@ -3413,7 +3496,15 @@ function startAutomationRun(task, event = null) {
   run.cleanupNotifications = runNotifier.cleanup;
   const publicAccounts = () => listAccounts(DATA_DIR).map(a => ({uid:a.uid,nickname:a.nickname,isPrimary:primaryAccountStore.get()===a.uid}));
   const publicCurrent = () => { const a = currentAccount(); return a ? {uid:a.uid,nickname:a.nickname,isPrimary:primaryAccountStore.get()===a.uid} : null; };
-  const runDeps = { runId: id, sessionAction, primaryAccount: async () => publicAccounts().find(a=>a.isPrimary) || null, dismissToast: runNotifier.dismiss, completionReport, event, listAccounts: async () => publicAccounts(), currentAccount: publicCurrent, accountSwitch: (account, detail) => withInput(() => automationSwitchAccount(account), !!(detail && detail.restore)), accountStatus: automationAccountStatus, accountCheckin: async (account) => {
+  const runDeps = { runId: id, sessionAction, primaryAccount: async () => publicAccounts().find(a=>a.isPrimary) || null, dismissToast: runNotifier.dismiss, completionReport, event, orderCheckinAccounts: (accounts) => accountCreditCache.order(accounts), listAccounts: async () => publicAccounts(), currentAccount: publicCurrent, accountSwitch: (account, detail) => withInput(() => automationSwitchAccount(account, {
+    restore: !!(detail && detail.restore),
+    isCancelled: detail && detail.restore ? () => false : isCancelled,
+    onProgress: progress => {
+      if (run.phase !== progress.phase || (run.sync && run.sync.jobId) !== (progress.sync && progress.sync.jobId)) appendRunLog('account:switch:' + progress.phase + (progress.sync ? ':' + progress.sync.jobId : ''));
+      run.phase = progress.phase;
+      run.sync = progress.sync;
+    },
+  }), !!(detail && detail.restore)), accountStatus: automationAccountStatus, accountCheckin: async (account) => {
     if (!account || !account.uid) throw new Error('没有可用账号');
     const result = await claimDailyForUid(account.uid);
     appendRunLog('account:checkin:' + (result.skipped ? 'skipped' : result.ok ? 'success' : 'failed'));
@@ -4375,6 +4466,7 @@ async function importSessionArchives(payload, targetUid, staged = false) {
 }
 
 async function copySessionRecord(src, targetUid, options = {}) {
+  if (accountSwitchInProgress && !options.auto) throw new Error('账号正在切换，请稍后同步');
   const sourceUid = String(options.sourceUid || src.user_id || '').trim();
   targetUid = String(targetUid || '').trim();
   if (!sourceUid || !targetUid || sourceUid === targetUid) return { status: 'skipped', sourceId: src.id, targetId: src.id };
@@ -4411,6 +4503,9 @@ async function copySessionRecord(src, targetUid, options = {}) {
     if (branched) aliases.push(targetId);
     const existing = candidates.find(row => row.id === targetId) || null;
     let right = sessionSync.readSnapshot(PROFILE.dataRoot, targetId, aliases);
+    // Size is advisory only; both manual and automatic sync keep all files.
+    const warning = Math.max(left.totalBytes, right.totalBytes) > 100 * 1024 * 1024
+      ? '会话超过 100 MB，同步可能较慢' : '';
     // Selection may have yielded while inspecting other legacy copies.
     // Require the chosen complete snapshot to remain the same before writing.
     if (!branched && selection.snapshot.records && sessionSync.compareSnapshots(selection.snapshot, right).kind !== 'equal') {
@@ -4419,6 +4514,8 @@ async function copySessionRecord(src, targetUid, options = {}) {
     const comparison = sessionSync.compareSnapshots(left, right);
     if (comparison.kind === 'conflict') throw new Error('会话记录正在变化，请稍后重试');
     let changed = false;
+    let totalBytes = left.totalBytes;
+    let copiedBytes = 0;
     const update = async (from, to, fromRow, toRow, missingOnly = false) => {
       await yieldAutoCopyToRenderer();
       const verifyRows = async () => {
@@ -4429,7 +4526,7 @@ async function copySessionRecord(src, targetUid, options = {}) {
           throw new Error('会话记录正在变化，请稍后重试');
         }
       };
-      await sessionSync.applySnapshot(from, to, {
+      const applied = await sessionSync.applySnapshot(from, to, {
         backupRoot: path.join(DATA_DIR, 'session-sync-backups'), metadata: toRow,
         missingOnly, guard: verifyRows,
         commit: async verifyPublished => {
@@ -4448,6 +4545,8 @@ async function copySessionRecord(src, targetUid, options = {}) {
           );
         },
       });
+      totalBytes = applied.totalBytes;
+      copiedBytes += applied.copiedBytes;
       changed = true;
     };
     if (comparison.kind === 'left-extends') await update(left, right, sourceRow, existing);
@@ -4463,7 +4562,7 @@ async function copySessionRecord(src, targetUid, options = {}) {
     }
     if (!getAutoCopySessionMembers(DATA_DIR, lineageId, targetUid).includes(targetId)) addAutoCopySessionMember(DATA_DIR, lineageId, targetUid, targetId);
     if (changed || !mapping || mapping.targetId !== targetId) setAutoCopyMapping(DATA_DIR, lineageId, targetUid, { targetId, status: 'copied', failedFiles: 0 });
-    return { status: changed ? 'copied' : 'skipped', sourceId: src.id, targetId, branched: branched && changed, failedFiles: 0 };
+    return { status: changed ? 'copied' : 'skipped', sourceId: src.id, targetId, branched: branched && changed, failedFiles: 0, warning, sourceBytes: left.totalBytes, totalBytes, copiedBytes };
   };
   // One lineage lock also serializes manual copy and reverse-direction updates.
   const lockKey = lineageId;
@@ -4558,7 +4657,9 @@ function runAutoCopyQueue() {
       pruneAutoCopyJobs();
     })
     .finally(() => {
+      recordAccountSyncResult(item.job);
       autoCopyWorkerRunning = false;
+      if (item.complete) item.complete(item.job);
       runAutoCopyQueue();
     });
 }
@@ -4585,6 +4686,10 @@ function startAutoCopyJob(sourceUid, targetUid, plan, labels) {
     details: [],
     error: null,
     currentLabel: '',
+    copiedBytes: 0,
+    processedBytes: 0,
+    totalBytes: null,
+    copyStartedAt: null,
     startedAt: Date.now(),
     finishedAt: null,
   };
@@ -4596,8 +4701,15 @@ function startAutoCopyJob(sourceUid, targetUid, plan, labels) {
     await yieldAutoCopyToRenderer();
     // A rapid switch chain may enqueue this job before the previous copy has
     // created the target rows. Re-plan after the queue reaches this job.
+    job.copyStartedAt = Date.now();
     job.plan = await buildAutoCopyPlan(sourceUid, targetUid);
     job.total = job.plan.length;
+    try {
+      const sizes = await sessionSync.readSessionSizes(PROFILE.dataRoot, job.plan.map(src => String(src.id || '')));
+      const values = job.plan.map(src => sizes.get(String(src.id || '')));
+      job.totalBytes = values.every(value => typeof value === 'number' && Number.isFinite(value) && value >= 0)
+        ? values.reduce((sum, value) => sum + value, 0) : null;
+    } catch (_) { job.totalBytes = null; }
     for (const src of job.plan) {
       job.currentLabel = String(src.custom_title || src.title || src.cwd || '未命名会话');
       const detail = {
@@ -4614,6 +4726,11 @@ function startAutoCopyJob(sourceUid, targetUid, plan, labels) {
           : result.status === 'conflict' ? 'conflict'
           : result.status === 'skipped' ? 'skipped' : 'copied';
         detail.branched = result.branched === true;
+        detail.totalBytes = result.totalBytes;
+        job.copiedBytes += Math.max(0, Number(result.copiedBytes) || 0);
+        job.processedBytes += Math.max(0, Number(result.sourceBytes) || 0);
+        detail.warning = result.warning || '';
+        if (detail.warning) job.warning = detail.warning;
         detail.failedFiles = Number(result.failedFiles) || 0;
         detail.conflicts = Number(result.conflicts) || 0;
         if (result.status === 'skipped') job.skipped++;
@@ -4640,23 +4757,32 @@ function startAutoCopyJob(sourceUid, targetUid, plan, labels) {
   };
   // Serialising jobs makes a chain such as h -> s -> x observe the sessions
   // created by the preceding job, even when the user switches rapidly.
-  autoCopyQueue.push({ job, run });
+  let complete;
+  Object.defineProperty(job, 'completion', { value: new Promise(resolve => { complete = resolve; }) });
+  autoCopyQueue.push({ job, run, complete });
   runAutoCopyQueue();
   return job;
 }
 
 function publicAutoCopyJob(job) {
   if (!job) return null;
+  const copiedBytes = typeof job.copiedBytes === 'number' && Number.isFinite(job.copiedBytes) ? Math.max(0, job.copiedBytes) : null;
+  const elapsedMs = job.copyStartedAt == null ? 0 : Math.max(0, (job.finishedAt == null ? Date.now() : job.finishedAt) - job.copyStartedAt);
   return {
     id: job.id,
     status: job.status,
     total: job.total,
     processed: job.processed,
     copied: job.copied,
+    copiedBytes,
+    processedBytes: typeof job.processedBytes === 'number' ? Math.max(0, job.processedBytes) : null,
+    totalBytes: typeof job.totalBytes === 'number' && Number.isFinite(job.totalBytes) ? Math.max(0, job.totalBytes) : null,
+    averageBytesPerSecond: copiedBytes == null || !elapsedMs ? null : Math.round(copiedBytes * 1000 / elapsedMs),
     skipped: job.skipped,
     partial: job.partial,
     failed: job.failed,
     failedItems: job.failedItems,
+    warning: job.warning || '',
     conflicts: job.conflicts,
     details: Array.isArray(job.details) ? job.details.slice(0, 500) : [],
     error: job.error,
@@ -7197,13 +7323,23 @@ function handleApi(req, res) {
   }
 
   if (req.method === 'GET' && p === '/api/automations/capabilities') {
-    return json(res, 200, { ok: true, schemaVersion: AUTOMATION_SCHEMA_VERSION, supportedSchemaVersions: [1, 2], capabilities: AUTOMATION_CAPABILITIES.filter(item => item.available !== false), protocolZh: automationCapabilityText('zh'), protocolEn: automationCapabilityText('en') });
+    return json(res, 200, { ok: true, schemaVersion: AUTOMATION_SCHEMA_VERSION, supportedSchemaVersions: [1, 2, 3], capabilities: AUTOMATION_CAPABILITIES.filter(item => item.available !== false), protocolZh: automationCapabilityText('zh'), protocolEn: automationCapabilityText('en') });
   }
 
   if (req.method === 'GET' && p === '/api/automations/discovery') {
     return automationDiscovery.getCatalog({ force: url.searchParams.get('refresh') === '1' })
+      .then(result => automationLikes.decorate(result))
       .then(result => json(res, 200, { ok: true, ...result }))
       .catch(error => json(res, 503, { ok: false, error: error.message || '公开任务加载失败' }));
+  }
+
+  if (req.method === 'POST' && p === '/api/automations/discovery/favorite') {
+    return readBody(req).then(body => {
+      if (!body || typeof body.key !== 'string' || typeof body.favorite !== 'boolean') throw new Error('收藏请求参数无效');
+      return automationLikes.toggle(body.key, body.favorite);
+    })
+      .then(result => json(res, 200, { ok: true, ...result }))
+      .catch(error => json(res, 400, { ok: false, error: error.message || '收藏失败' }));
   }
 
   if (req.method === 'POST' && p === '/api/automations/discovery/import') {
@@ -7374,7 +7510,7 @@ function handleApi(req, res) {
       const run = automationRuns.get(String(body && body.runId || ''));
       if (!run) return json(res, 404, { ok: false, error: '运行记录不存在' });
       // 当前执行器的网络/CDP调用由超时控制；停止请求先标记状态，避免新的批量运行进入。
-      if (run.status === 'running') { run.pendingEvent = null; run.status = 'cancelled'; run.finishedAt = Date.now(); run.error = '用户停止任务'; }
+      if (run.status === 'running') { run.pendingEvent = null; run.stopRequested = true; run.phase = 'stopping'; run.error = '用户停止任务，正在安全收尾'; }
       if (run.cleanupNotifications) await run.cleanupNotifications();
       return json(res, 200, { ok: true, run: automationPublicRun(run) });
     });
@@ -7813,6 +7949,7 @@ function handleApi(req, res) {
 
   if (req.method === 'GET' && p === '/api/accounts') {
     const accounts = listAccounts(DATA_DIR);
+    const checkinAutomationEnabled = readAutomations(DATA_DIR).some(task => task.enabled && stepsContainCheckin(task.steps));
     const cache = loadCheckinCache();
     const today = todayStr();
     return CREDIT_USAGE_STORE.listDailyCheckins(accounts.map((a) => a.uid), today)
@@ -7826,7 +7963,7 @@ function handleApi(req, res) {
           const checked = c && c.ok && (c.verified === true || classifyCheckinResult({ httpOk: true, code: c.code, message: c.message }).ok)
             ? c
             : null;
-          return Object.assign({}, a, {
+          return Object.assign({}, a, { creditSegments: [] }, accountCreditCache.get(a.uid), {
             checkin: checkinDisplayValue(checked, today),
             activityStreak: growthStreakCache.peek(a.uid),
           });
@@ -7836,11 +7973,11 @@ function handleApi(req, res) {
             const withUsage = enriched.map((account) => summaries[account.uid]
               ? Object.assign({}, account, { todayUsage: summaries[account.uid] })
               : account);
-            return json(res, 200, { ok: true, current: currentAccount(), primaryUid: primaryAccountStore.get(), accountOrder: getAccountOrder(DATA_DIR), accounts: withUsage });
+            return json(res, 200, { ok: true, checkinAutomationEnabled, current: currentAccount(), primaryUid: primaryAccountStore.get(), accountOrder: getAccountOrder(DATA_DIR), accounts: withUsage });
           })
           .catch((error) => {
             log('[credits-usage] 读取本地今日用量失败: ' + error.message);
-            return json(res, 200, { ok: true, current: currentAccount(), primaryUid: primaryAccountStore.get(), accountOrder: getAccountOrder(DATA_DIR), accounts: enriched });
+            return json(res, 200, { ok: true, checkinAutomationEnabled, current: currentAccount(), primaryUid: primaryAccountStore.get(), accountOrder: getAccountOrder(DATA_DIR), accounts: enriched });
           });
       });
   }
@@ -7882,6 +8019,8 @@ function handleApi(req, res) {
           unlimited: !!r.unlimited,
           cycleResetTime: r.cycleResetTime || null,
         };
+        // Cache failures must not turn a successful credit query into an error.
+        try { accountCreditCache.set(uid, r); } catch (_) { log('[credits] 本地积分缓存写入失败'); }
         if (usage.synced) payload.todayUsage = usage.value;
         return json(res, 200, payload);
       } catch (e) {
@@ -8431,10 +8570,9 @@ function handleApi(req, res) {
     const clauses = ["deleted_at IS NULL"];
     const params = [];
     if (uid) { clauses.push('user_id = ?'); params.push(uid); }
-    if (rangeMs) { clauses.push('COALESCE(last_activity_at, updated_at, created_at) >= ?'); params.push(rangeMs); }
     // 时间筛选和排序按最近活动/修改时间；旧记录缺字段时回退到创建时间。
     return sqliteQuery("SELECT id, cwd, user_id, title, custom_title, status, created_at, updated_at, last_activity_at, is_playground, project_id FROM sessions WHERE " + clauses.join(' AND ') + " ORDER BY COALESCE(last_activity_at, updated_at, created_at) DESC, created_at DESC;", params)
-      .then((rows) => {
+      .then(async (rows) => {
         const autoCopyAll = getAutoCopyRules(DATA_DIR, uid).allSessions;
         const rulesByUid = {};
         rows.forEach((row) => {
@@ -8445,13 +8583,19 @@ function handleApi(req, res) {
         });
         const lineagesByUid = {}, branchesByUid = {};
         Object.keys(rulesByUid).forEach((owner) => { lineagesByUid[owner] = rulesByUid[owner].lineages; branchesByUid[owner] = rulesByUid[owner].branches; });
-        const sessions = dedupeAutoCopySessionRows(rows, lineagesByUid, branchesByUid).map((row) => {
+        const allSessions = dedupeAutoCopySessionRows(rows, lineagesByUid, branchesByUid).map((row) => {
           const rules = rulesByUid[String(row.user_id || '').trim()] || { sessions: new Set(), workspaces: new Set() };
           return Object.assign({}, row, {
             autoCopySession: rules.sessions.has(String(row.id)),
             autoCopyWorkspace: rules.workspaces.has(canonicalWorkspace(row.cwd)),
           });
         });
+        const sizes = await sessionSync.readSessionSizes(PROFILE.dataRoot, allSessions.map(row => String(row.id)));
+        allSessions.forEach(row => { row.totalBytes = sizes.get(String(row.id)); });
+        // Account totals deliberately include sessions hidden by either filter.
+        const totalBytes = allSessions.every(row => typeof row.totalBytes === 'number' && Number.isFinite(row.totalBytes))
+          ? allSessions.reduce((sum, row) => sum + row.totalBytes, 0) : null;
+        const sessions = rangeMs ? allSessions.filter(row => Number(row.last_activity_at ?? row.updated_at ?? row.created_at) >= rangeMs) : allSessions;
         const currentRules = uid
           ? (rulesByUid[uid] || (() => {
               const rules = getAutoCopyRules(DATA_DIR, uid);
@@ -8462,6 +8606,7 @@ function handleApi(req, res) {
           ok: true,
           sessions,
           count: sessions.length,
+          totalBytes,
           uid,
           range,
           autoCopyAll,
@@ -8788,6 +8933,9 @@ function handleApi(req, res) {
       const targetUid = (body.targetUid || '').trim();
       if (!ids.length) return json(res, 400, { ok: false, error: '未选择会话' });
       if (!targetUid) return json(res, 400, { ok: false, error: '未指定目标账号' });
+      if (accountSwitchInProgress) return json(res, 409, { ok: false, error: '账号正在切换，请稍后同步' });
+      const copyOperation = Symbol('manual-session-copy');
+      sessionCopyLocks.set(copyOperation, true);
       try {
         // 1) 取出源会话（含 cwd 用于定位消息文件）
         const srcRows = await sqliteQuery(
@@ -8796,16 +8944,18 @@ function handleApi(req, res) {
         );
         if (!srcRows.length) return json(res, 404, { ok: false, error: '源会话不存在' });
         let copied = 0, skipped = 0, conflicts = 0;
+        let warning = '';
         for (const src of srcRows) {
           const result = await copySessionRecord(src, targetUid);
+          if (result.warning) warning = result.warning;
           if (result.status === 'conflict') conflicts++;
           else if (result.status === 'skipped') skipped++;
           else copied++;
         }
-        return json(res, 200, { ok: true, copied, skipped, conflicts, targetUid });
+        return json(res, 200, { ok: true, copied, skipped, conflicts, targetUid, warning });
       } catch (e) {
         return json(res, 500, { ok: false, error: e.message });
-      }
+      } finally { sessionCopyLocks.delete(copyOperation); }
     });
   }
   // 迁移会话：POST /api/sessions/migrate { ids, targetUid }

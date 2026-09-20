@@ -8,7 +8,7 @@ const { createSafetyReviewTask, executeTask } = require('../scripts/automation')
 
 test('safety review creates only a model-selected V2 conversation about one stored task', () => {
   const task = createSafetyReviewTask('/tmp/workdaddy-review', 'untrusted-task');
-  assert.equal(task.schemaVersion, 2);
+  assert.equal(task.schemaVersion, 3);
   assert.equal(task.trigger.type, 'manual');
   assert.deepEqual(task.steps.map(step => step.op), ['session.create']);
   assert.equal(task.steps[0].model, 'deepseek-v4.1-flash');

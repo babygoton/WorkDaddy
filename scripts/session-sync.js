@@ -5,8 +5,6 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
-const MAX_BYTES = 64 * 1024 * 1024;
-const MAX_FILES = 20000;
 const identityKeys = new Set(['sessionId', 'conversationId', 'ownerConversationId', 'session_id', 'conversation_id']);
 const digest = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
 
@@ -32,6 +30,66 @@ function safePath(root, relative) {
   return target;
 }
 
+// List views need byte counts, not message parsing or payload buffers. Limit
+// concurrent scans, never the size/file count of a session itself.
+async function readSessionSizes(root, ids) {
+  root = path.resolve(root);
+  const sizes = new Map();
+  const sharedStats = new Map();
+  async function stat(file) {
+    try {
+      const value = await fs.promises.lstat(file);
+      if (value.isSymbolicLink()) throw Error('symbolic link');
+      return value;
+    } catch (error) { if (error.code === 'ENOENT') return null; throw error; }
+  }
+  async function base(relative) {
+    if (!sharedStats.has(relative)) sharedStats.set(relative, (async () => {
+      const parent = relative ? await base(path.dirname(relative) === '.' ? '' : path.dirname(relative)) : true;
+      if (!parent) return null;
+      if (parent !== true && !parent.isDirectory()) throw Error('invalid directory');
+      return stat(path.join(root, relative));
+    })());
+    return sharedStats.get(relative);
+  }
+  async function visit(file) {
+    const info = await stat(file);
+    if (!info) return 0;
+    if (info.isFile()) return info.size;
+    if (!info.isDirectory()) throw Error('unsupported file');
+    let total = 0;
+    for (const entry of await fs.promises.readdir(file)) total += await visit(path.join(file, entry));
+    return total;
+  }
+  let projects;
+  try {
+    const info = await base('projects');
+    projects = info ? (await fs.promises.readdir(path.join(root, 'projects'), { withFileTypes: true })).filter(entry => entry.isDirectory()).map(entry => entry.name) : [];
+  } catch (_) { return new Map(ids.map(id => [id, null])); }
+  const queue = Array.from(new Set(ids));
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(4, queue.length) }, async () => {
+    while (next < queue.length) {
+      const id = queue[next++];
+      try {
+        if (typeof id !== 'string' || !id || /[/\\\x00]/.test(id) || id === '.' || id === '..') throw Error('invalid id');
+        let total = 0;
+        const paths = projects.flatMap(project => ['projects/' + project + '/' + id + '.jsonl', 'projects/' + project + '/' + id]);
+        paths.push('workspace/sessions/' + id, 'tasks/' + id, 'file-history/' + id, 'artifact-index/' + id + '.json');
+        for (const relative of paths) {
+          const parent = await base(path.dirname(relative));
+          if (parent) {
+            if (!parent.isDirectory()) throw Error('invalid directory');
+            total += await visit(path.join(root, relative));
+          }
+        }
+        sizes.set(id, total);
+      } catch (_) { sizes.set(id, null); }
+    }
+  }));
+  return sizes;
+}
+
 function readSnapshot(root, id, aliases = []) {
   if (!id || /[/\\\x00]/.test(id) || id === '.' || id === '..') throw Error('无效的会话标识');
   root = path.resolve(root);
@@ -49,7 +107,6 @@ function readSnapshot(root, id, aliases = []) {
     }
     if (!stat.isFile()) throw Error('会话文件类型不受支持');
     total += stat.size;
-    if (total > MAX_BYTES || files.size >= MAX_FILES) throw Error('会话文件过大，未自动同步');
     const bytes = fs.readFileSync(file);
     const after = fs.statSync(file);
     if (stat.size !== bytes.length || stat.size !== after.size || stat.mtimeMs !== after.mtimeMs || stat.ctimeMs !== after.ctimeMs) throw Error('会话文件正在变化，请稍后重试');
@@ -93,7 +150,7 @@ function readSnapshot(root, id, aliases = []) {
     if (!lines.some(line => JSON.parse(line).type === 'message')) throw Error('会话消息文件没有消息，未同步');
     transcripts[0][1].semantic = digest(records.join('\n'));
   }
-  return { root, id, aliases: knownIds, files, records, transcriptKey };
+  return { root, id, aliases: knownIds, files, records, transcriptKey, totalBytes: total };
 }
 
 function compareSnapshots(left, right) {
@@ -217,12 +274,14 @@ async function applySnapshot(source, target, options) {
     if (change.bytes === null) expected.delete(change.key);
     else expected.set(change.key, digest(change.bytes));
   }
+  let totalBytes = 0;
   const verifyPublished = () => {
     if (!unchanged(source)) throw Error('源会话正在变化，已停止同步');
     const now = readSnapshot(target.root, target.id, target.aliases);
     if (now.files.size !== expected.size || [...expected].some(([key, hash]) => now.files.get(key)?.hash !== hash)) {
       throw Error('目标会话正在变化，已停止同步');
     }
+    totalBytes = now.totalBytes;
   };
   const applied = [];
   try {
@@ -254,7 +313,10 @@ async function applySnapshot(source, target, options) {
     // Metadata already committed: a journal I/O failure must not undo files.
     let journalPending = false;
     try { save(); } catch (_) { journalPending = true; }
-    return { backup, copied: changes.length, journalPending };
+    // Count only newly published payload bytes. Backups, unchanged files and
+    // removals are not copied session data; rolled-back writes never reach here.
+    const copiedBytes = changes.reduce((sum, change) => sum + (change.bytes ? change.bytes.length : 0), 0);
+    return { backup, copied: changes.length, copiedBytes, journalPending, totalBytes };
   } catch (error) {
     // Do not roll back over an official write that happened after publication.
     let incomplete = false;
@@ -275,4 +337,4 @@ async function applySnapshot(source, target, options) {
   }
 }
 
-module.exports = { readSnapshot, compareSnapshots, selectTargetSnapshot, applySnapshot };
+module.exports = { readSessionSizes, readSnapshot, compareSnapshots, selectTargetSnapshot, applySnapshot };

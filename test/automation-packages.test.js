@@ -4,7 +4,7 @@ const automation=require('../scripts/automation');
 test('editing another task preserves future-schema documents without executing them',()=>{
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'wd-package-'));
  try {
-  const future={schemaVersion:3,id:'future',name:'Future task',enabled:true,trigger:{type:'panelOpened'},schedule:{type:'interval',minutes:1},steps:[],futureConfig:{value:1}};
+  const future={schemaVersion:4,id:'future',name:'Future task',enabled:true,trigger:{type:'panelOpened'},schedule:{type:'interval',minutes:1},steps:[],futureConfig:{value:1}};
   fs.writeFileSync(path.join(dir,'automations.json'),JSON.stringify([future]));
   const tasks=automation.readAutomations(dir);
   assert.deepEqual(tasks[0],future);
@@ -35,7 +35,7 @@ test('package compatibility rejects newer versions, other profiles/platforms and
 });
 test('future formats are not silently reinterpreted as legacy tasks',()=>{
  for(const patch of [{formatVersion:2},{kind:'other-package'}])assert.equal(previewPackage({...example(),...patch},{runtime}).compatible,false);
- const p=example();p.requires.taskSchemaVersion=2;p.task.schemaVersion=2;assert.equal(previewPackage(p,{runtime}).task,null);
+ const p=example();p.requires.taskSchemaVersion=4;p.task.schemaVersion=4;assert.equal(previewPackage(p,{runtime}).task,null);
 });
 test('legacy JSON remains previewable; hashes identify bytes, not publisher trust',()=>{
  const text='{"id":"legacy","steps":[]}';const p=previewPackage(text,{runtime});assert.equal(p.kind,'legacy-task');assert.equal(p.compatible,true);
@@ -79,7 +79,7 @@ test('published example previews successfully and never enables itself',()=>{
 test('a future larger task list is not truncated by editing another task',()=>{
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'wd-task-list-'));
  try{
-  const tasks=Array.from({length:201},(_,i)=>({schemaVersion:3,id:'future_'+i,steps:[]}));
+  const tasks=Array.from({length:201},(_,i)=>({schemaVersion:4,id:'future_'+i,steps:[]}));
   fs.writeFileSync(path.join(dir,'automations.json'),JSON.stringify(tasks));
   const read=automation.readAutomations(dir);assert.equal(read.length,201);automation.writeAutomations(dir,read);
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir,'automations.json'))),tasks);
