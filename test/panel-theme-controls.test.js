@@ -20,6 +20,25 @@ test('account order is centered in the panel and always shows names without numb
   assert.match(modal, /panel\.appendChild\(mask\)/);
   assert.doesNotMatch(modal, /maskAccountName|wbs-account-order-hint|<small>/);
   assert.match(modal, /esc\(name\)/);
+  assert.match(modal, /账号设置/);
+  assert.match(modal, /data-rotation-reminder/);
+  assert.match(modal, /积分不足时的账号切换建议/);
+  assert.doesNotMatch(modal, /账号备注|data-note-uid/);
+  assert.match(modal, /\/api\/accounts\/order/);
+  assert.match(source, /!rotationReminderEnabled\(\) \|\| state\.open \|\| state\.rotationNotice/);
+});
+test('account switching advice defaults on but keeps explicit opt-out', () => {
+  const fragment = section('    var rotationReminderKey = ', '    // 账号 pane 初始化');
+  const settings = new Map();
+  const context = { PROFILE_ID: 'workbuddy-cn', localStorage: {
+    getItem: key => settings.get(key) ?? null,
+  } };
+  vm.runInNewContext(fragment, context);
+  assert.equal(context.rotationReminderEnabled(), true);
+  settings.set('workdaddy.account.rotationReminder.workbuddy-cn', '0');
+  assert.equal(context.rotationReminderEnabled(), false);
+  settings.set('workdaddy.account.rotationReminder.workbuddy-cn', '1');
+  assert.equal(context.rotationReminderEnabled(), true);
 });
 test('avatar presets retain legacy custom uploads and are safe before official conversion completes', () => {
   const context = {};

@@ -51,17 +51,22 @@ function wasNearestSegmentConsumed(previousSegments, nextSegments, now = Date.no
 }
 
 function selectRotationCandidate(accounts, currentUid, now = Date.now()) {
-  const candidates = (Array.isArray(accounts) ? accounts : [])
+  const list = Array.isArray(accounts) ? accounts : [];
+  const currentAccount = list.find((account) => account && String(account.uid) === String(currentUid || ''));
+  const currentSegment = currentAccount && nearestExpiringSegment(currentAccount.creditSegments || currentAccount.segments, now);
+  const candidates = list
     .filter((account) => account && String(account.uid || '') && String(account.uid) !== String(currentUid || ''))
     .map((account) => ({ account, segment: nearestExpiringSegment(account.creditSegments || account.segments, now) }))
-    .filter((item) => item.segment && item.segment.remaining > 0)
+    .filter((item) => item.segment && item.segment.expiresAt !== null)
     .sort((a, b) => {
       const ae = a.segment.expiresAt === null ? Number.MAX_SAFE_INTEGER : a.segment.expiresAt;
       const be = b.segment.expiresAt === null ? Number.MAX_SAFE_INTEGER : b.segment.expiresAt;
       if (ae !== be) return ae - be;
       return b.segment.remaining - a.segment.remaining;
     });
-  return candidates[0] || null;
+  const nearest = candidates[0];
+  if (!nearest || (currentSegment && currentSegment.expiresAt !== null && currentSegment.expiresAt <= nearest.segment.expiresAt)) return null;
+  return nearest;
 }
 
 function isSameLocalDay(a, b = Date.now()) {

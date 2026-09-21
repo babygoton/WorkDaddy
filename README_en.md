@@ -1,4 +1,4 @@
-<h1><img src="docs/images/workdaddy-app-icon-rounded.svg" alt="" width="40" height="40" align="absmiddle">&nbsp; WorkDaddy</h1>
+<h1><img src="docs/images/workdaddy-app-icon-rounded.svg" alt="" width="40" height="40" align="absmiddle">  WorkDaddy</h1>
 
 **Language:** [简体中文](README.md) · [English](README_en.md)
 
@@ -18,6 +18,10 @@ It injects UI components into the running WorkBuddy renderer without patching or
 
 <img src="docs/images/accounts-light.jpg" width="600">
 <img src="docs/images/accounts-dark.jpg" width="600">
+
+<img src="docs/images/grow-plan.png" width="700">
+
+![用量统计图](docs/images/usage.png)
 
 ![界面预览图](docs/images/pannel-enhance.png)
 ![界面预览图](docs/images/pannel-robot.png)
@@ -58,7 +62,7 @@ It injects UI components into the running WorkBuddy renderer without patching or
    1. Open **System Settings → Privacy & Security**.
    2. Find the blocked WorkDaddy app and choose **Open Anyway**.
    3. Confirm with your login password.
-   ![Installation guide](docs/images/install-guide.png)
+      ![Installation guide](docs/images/install-guide.png)
 4. Launch the app. It starts its local daemon and injects the panel into WorkBuddy.
 5. Once the robot button appears, you are ready to go.
 
@@ -149,17 +153,17 @@ The release scripts produce four packages for the two WorkBuddy clients: `WorkDa
 
 Click the robot button in the lower-right corner of WorkBuddy and choose a tab:
 
-| Tab | Purpose |
-| --- | --- |
-| **Accounts** | View account counts, credits, check-ins, and login status; switch, delete, or add accounts; import/export encrypted backups |
-| **Theme** | Switch between the default and WorkDaddy themes, choose or upload wallpapers, change avatars, and adjust blur and background overlays |
-| **Sessions** | Filter by account and date, copy or delete in bulk, and configure automatic session or workspace copying when switching accounts |
-| **Models** | Manage current and alternative models, including backups, copying, editing, enabling, connectivity tests, and bulk deletion |
-| **Enhance** | Configure quiet approvals, auto-continue, prompt stashing, and quick phrases |
+| Tab            | Purpose                                                                                                                                   |
+| -------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| **Accounts**   | View account counts, credits, check-ins, and login status; switch, delete, or add accounts; import/export encrypted backups               |
+| **Theme**      | Switch between the default and WorkDaddy themes, choose or upload wallpapers, change avatars, and adjust blur and background overlays     |
+| **Sessions**   | Filter by account and date, copy or delete in bulk, and configure automatic session or workspace copying when switching accounts          |
+| **Models**     | Manage current and alternative models, including backups, copying, editing, enabling, connectivity tests, and bulk deletion               |
+| **Enhance**    | Configure quiet approvals, auto-continue, prompt stashing, and quick phrases                                                              |
 | **Automation** | Create and manage tasks, configure event or scheduled triggers, inspect run logs, stop running tasks, and import/export JSON or ZIP files |
-| **Computer** | Allow or prevent sleep, or restore normal sleep after all AI tasks finish |
-| **About** | View version and project information, check for and install updates, and control redacted error diagnostics |
-| **Settings** | Choose Chinese or English; the first launch follows the system language and falls back to English |
+| **Computer**   | Allow or prevent sleep, or restore normal sleep after all AI tasks finish                                                                 |
+| **About**      | View version and project information, check for and install updates, and control redacted error diagnostics                               |
+| **Settings**   | Choose Chinese or English; the first launch follows the system language and falls back to English                                         |
 
 **Composer tools:** enable **Stash prompts** and **Quick phrases** separately in **Enhance** to show their composer toolbar buttons. Stashing adds the current draft to WorkBuddy's own message queue with text, images, files, and quotes **preserved**, and pauses automatic sending. The composer is then cleared. Queued content is kept per conversation and can be sent, edited, or deleted. Quick phrases can be created, edited, and managed in bulk in Enhance, then sent from the composer toolbar; sending does not delete them.
 
@@ -203,6 +207,7 @@ This project is licensed under the **[GNU Affero General Public License v3.0](LI
 - Third-party themes, wallpapers, and background images are provided for demonstration; check their rights before commercial use.
 
 ---
+
 ## Star History
 
 <a href="https://www.star-history.com/?repos=babygoton%2Fworkdaddy&type=date&legend=top-left">
@@ -214,6 +219,7 @@ This project is licensed under the **[GNU Affero General Public License v3.0](LI
 </a>
 
 ---
+
 ## Community
 
 [Linux.do](https://linux.do/)

@@ -5,22 +5,37 @@ const os = require('os');
 const path = require('path');
 const { readWorkBuddyTarget } = require('./workbuddy-target.js');
 
-const home = os.homedir();
-const IS_WIN = process.platform === 'win32';
-const appSupport = IS_WIN
-  ? (process.env.APPDATA || path.join(home, 'AppData', 'Roaming'))
-  : path.join(home, 'Library', 'Application Support');
-const localSupport = IS_WIN
-  ? (process.env.LOCALAPPDATA || path.join(home, 'AppData', 'Local'))
-  : appSupport;
-const extensionAuth = path.join(localSupport, 'CodeBuddyExtension', 'Data', 'Public', 'auth');
+// 注意：此处用 plat 而非 platform，避免与 getProfile 内部的 platform 字符串参数混淆
+const plat = require('./platform.js');
+
+const home = plat.home;
+const IS_WIN = plat.IS_WIN;
+const IS_LINUX = plat.IS_LINUX;
+// 应用支持根：macOS ~/Library/Application Support / Windows %APPDATA% / Linux $XDG_CONFIG_HOME(~/.config)
+const appSupport = plat.appSupport;
+// 扩展数据根：登录凭据就落在 <localSupport>/CodeBuddyExtension/Data/Public/auth 下，
+// 三平台同构，仅根不同（macOS 与 appSupport 相同；Windows 用 %LOCALAPPDATA%；Linux 用 $XDG_DATA_HOME）
+const localSupport = plat.localSupport;
+const extensionAuth = plat.extensionAuth;
+
+// Linux 没有 .app 包，官方包把 Electron 主程序直接铺在安装目录（实测 5.5.4：
+// /opt/WorkBuddy/workbuddy）。海外版常见做法是复制应用副本到 XDG 数据目录。
+const LINUX_APP_KIND = {
+  'WorkBuddy': 'workbuddy',
+  'WorkBuddy AI': 'workbuddy-ai',
+  'CodeBuddy CN': 'codebuddy-cn',
+  'CodeBuddy': 'codebuddy',
+};
+
 // Windows 可执行名与安装目录名不完全一致（AI 国际版 exe 为 WorkBuddyAI.exe，无空格；
 // win-launcher 进程枚举与 PR#8 实机已确认）。winExec 缺省时用安装目录同名 .exe，找不到时
 // win-launcher 仍有进程/注册表兜底。
 const appPath = (name, winExec, winDir) =>
   IS_WIN
     ? path.join(localSupport, 'Programs', winDir || name, winExec || `${winDir || name}.exe`)
-    : `/Applications/${name}.app`;
+    : IS_LINUX
+      ? plat.linuxAppBinary(LINUX_APP_KIND[name] || 'workbuddy')
+      : `/Applications/${name}.app`;
 
 function sharedDataDir() {
   return path.join(appSupport, 'WorkDaddy');
@@ -36,7 +51,7 @@ const PROFILES = {
     modelsFile: path.join(home, '.workbuddy', 'models.json'),
     // billing/积分/签到/无感登录 API host（与 auth.domain 一致；国际版为 www.workbuddy.ai）
     apiHost: 'https://www.codebuddy.cn',
-    capabilities: { accounts: true, sessions: true, models: true, stashPrompt: true, theme: true, checkin: true },
+    capabilities: { accounts: true, sessions: true, models: true, stashPrompt: true, theme: true, checkin: true, growthDaily: true },
     targetHints: ['workbuddy'],
   },
   'workbuddy-ai': {
@@ -50,7 +65,7 @@ const PROFILES = {
     // 两者独立（勿改共用）。“从 XX 导入”即把另一端文件中的模型合并进本端文件。
     modelsFile: path.join(home, '.workbuddy-ai', 'models.json'),
     apiHost: 'https://www.workbuddy.ai',
-    capabilities: { accounts: true, sessions: true, models: true, stashPrompt: true, theme: true, checkin: true },
+    capabilities: { accounts: true, sessions: true, models: true, stashPrompt: true, theme: true, checkin: true, growthDaily: false },
     targetHints: ['workbuddy ai', 'workbuddy'],
   },
   'codebuddy-cn': {

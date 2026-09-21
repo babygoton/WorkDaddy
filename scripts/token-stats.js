@@ -331,6 +331,7 @@ function aggregateCachedBuckets(buckets, options = {}) {
   const byDay = new Map();
   const byModel = new Map();
   const byAccount = new Map();
+  const dailyBreakdown = [];
   for (const bucket of buckets || []) {
     if (!bucket || !bucket.day) continue;
     if (bucket.day < firstDay || bucket.day > lastDay) continue;
@@ -345,6 +346,7 @@ function aggregateCachedBuckets(buckets, options = {}) {
     };
     for (const key of Object.keys(totals)) totals[key] += values[key];
     const day = String(bucket.day);
+    dailyBreakdown.push({ day, account: String(bucket.account || ''), model: String(bucket.model || ''), ...values });
     const dayRow = byDay.get(day) || { day, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, calls: 0 };
     for (const key of Object.keys(values)) dayRow[key] += values[key];
     byDay.set(day, dayRow);
@@ -369,6 +371,7 @@ function aggregateCachedBuckets(buckets, options = {}) {
   return {
     source: 'local-workbuddy-jsonl', since: bounds.from, until: bounds.until, totals,
     daily: Array.from(byDay.values()).sort((a, b) => a.day.localeCompare(b.day)),
+    dailyBreakdown: dailyBreakdown.sort((a, b) => a.day.localeCompare(b.day) || a.account.localeCompare(b.account) || a.model.localeCompare(b.model)),
     models: Array.from(byModel.values()).sort((a, b) => (b.input + b.output) - (a.input + a.output)),
     accounts: Array.from(byAccount.values()).sort((a, b) => (b.input + b.output) - (a.input + a.output)),
   };

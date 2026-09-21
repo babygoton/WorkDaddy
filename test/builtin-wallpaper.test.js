@@ -3,6 +3,7 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { spawnSync } = require('node:child_process');
 const test = require('node:test');
 
 const daemon = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'daemon.js'), 'utf8');
@@ -62,4 +63,12 @@ test('Windows packaging fails closed when the official wallpaper gallery is unav
   assert.match(winInstaller, /内置官方壁纸/);
   assert.match(winWorkflow, /::error::缺少内置资产/);
   assert.doesNotMatch(winWorkflow, /警告: 未找到 builtin/);
+});
+
+test('Windows asset status expands the source path under Bash nounset', () => {
+  const statusLine = winBuild.split('\n').find((line) => line.includes('内置资产来源:'));
+  assert.ok(statusLine);
+  const result = spawnSync('bash', ['-u', '-c', `BUILTIN_SRC=/tmp/builtin; WALLPAPER_COUNT=12; ${statusLine}`], { encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /\/tmp\/builtin（12 张壁纸/);
 });

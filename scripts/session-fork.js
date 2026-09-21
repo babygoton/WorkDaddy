@@ -6,8 +6,7 @@
  * 产出新会话所需的记录文本：**只保留到所选消息为止，之后的不纳入；源会话不被修改**。
  *
  * 本模块只做纯计算（解析 / 锚点 / 切片 / 生成新标题），不写数据库、不改任何文件。
- * 落库与产物复制沿用 daemon.js 里已有的会话复制链路（复制 `projects/<slug>/<id>.jsonl`
- * 与各产物目录、插入一行 sessions 记录），因此这里产出的文本可以直接喂给那条链路。
+ * 落库由 daemon.js 完成：写入新的 `projects/<slug>/<id>.jsonl` 并插入 sessions 记录。
  *
  * 用法:
  *   node scripts/session-fork.js --id <会话ID> --points
@@ -31,7 +30,7 @@ const MAX_ANCHOR = 100000;
 const TITLE_LIMIT = 60;
 const DEFAULT_SUFFIX = '（分支）';
 // harness 注入块的起始标记：这类 user 记录不是用户真说的话
-const INJECTED_PREFIX = /^\s*<(cb_summary|system-reminder|additional_data|identity_context)/;
+const INJECTED_PREFIX = /^\s*<(cb_summary|system-reminder|additional_data|identity_context|task-notification)/;
 // 锚点只计这两种角色的消息
 const ANCHOR_ROLES = new Set(['user', 'assistant']);
 
@@ -182,6 +181,62 @@ function planFork(text, spec, options = {}) {
     droppedRecords: parsed.records.length - kept.length,
     text: kept.map((entry) => entry.line).join('\n') + '\n',
   };
+}
+
+// Renderer message IDs are not the JSONL record IDs. Cross-check the ordered
+// roles and the selected assistant's completion time before using its position.
+function planForkAtMessage(text, selection) {
+  const invalid = (reason) => ({ ok: false, reason });
+  const roles = selection && selection.roles;
+  const index = selection && selection.messageIndex;
+  const finishedAt = selection && selection.finishedAt;
+  if (typeof roles !== 'string' || !/^[ua]{2,10000}$/.test(roles) ||
+      roles[0] !== 'u' || roles[roles.length - 1] !== 'a' ||
+      !Number.isInteger(index) || index < 0 || index >= roles.length ||
+      roles[index] !== 'a' ||
+      !Number.isSafeInteger(finishedAt) || finishedAt <= 0) {
+    return invalid('分支消息参数无效');
+  }
+  const parsed = parseRecords(text);
+  if (parsed.skipped) return invalid('会话记录正在写入或包含损坏的行，请稍后重试');
+
+  // The renderer may hide task-notification user records and merge consecutive
+  // assistant records from one streamed turn. The selected role guards the
+  // index, while finishedAt identifies the exact JSONL assistant record without
+  // assuming the two representations have the same number of records.
+  const messages = parsed.records.map((entry, recordIndex) => ({
+    recordIndex, value: entry.value,
+  })).filter((entry) => entry.value && entry.value.type === 'message' &&
+    ANCHOR_ROLES.has(entry.value.role));
+  const assistantMessages = messages.filter((entry) => entry.value.role === 'assistant');
+  const rawRoles = messages.map((entry) => entry.value.role === 'user' ? 'u' : 'a').join('');
+  let selected;
+  if (rawRoles === roles) {
+    // When both sides expose the same record shape, messageIndex is the
+    // renderer message position. This also handles consecutive assistant
+    // records emitted by streamed replies.
+    selected = messages[index];
+  } else {
+    // In streamed files, the same visible assistant can span several JSONL
+    // records. The completion timestamp is the stable cross-representation key.
+    selected = assistantMessages.find((entry) => Number(entry.value.timestamp) === finishedAt);
+  }
+  if (!selected && rawRoles !== roles) {
+    selected = assistantMessages
+      .filter((entry) => Number.isSafeInteger(Number(entry.value.timestamp)) && Number(entry.value.timestamp) > 0)
+      .map((entry) => ({ entry, distance: Math.abs(Number(entry.value.timestamp) - finishedAt) }))
+      .filter((item) => item.distance <= 30000)
+      .sort((a, b) => a.distance - b.distance)[0]?.entry;
+  }
+  const recordedAt = selected && selected.value.timestamp;
+  if (!selected || selected.value.role !== 'assistant' ||
+      !Number.isSafeInteger(recordedAt) || recordedAt <= 0 ||
+      Math.abs(recordedAt - finishedAt) > 30000) {
+    return invalid('无法确认所选消息的分支位置');
+  }
+  const anchor = buildAnchors(parsed.records).find((item) => item.index === selected.recordIndex);
+  if (!anchor) return invalid('所选消息没有可分支的正文');
+  return planFork(text, anchor.n);
 }
 
 /** 锚点清单的一行文本（CLI 与面板共用同一份格式） */
@@ -341,6 +396,7 @@ module.exports = {
   messageText,
   parseRecords,
   planFork,
+  planForkAtMessage,
   resolveAnchor,
   userQueryText,
 };
