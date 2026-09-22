@@ -793,13 +793,18 @@ function selectLatestAutoCopyMember(members) {
 
 function ensureAutoCopySessions(dataDir, uid, sessionIds, options) {
   const meta = readMeta(dataDir);
+  const previousConfig = meta.autoCopy;
   const config = ensureAutoCopyMeta(meta);
+  let changed = config !== previousConfig;
   const sourceUid = String(uid || '').trim();
   const ids = Array.from(new Set((Array.isArray(sessionIds) ? sessionIds : [sessionIds])
     .map((id) => String(id || '').trim())
     .filter(Boolean)));
   if (!sourceUid || !ids.length) throw new Error('缺少共享会话标识');
-  if (!config.sessionIndex[sourceUid]) config.sessionIndex[sourceUid] = {};
+  if (!config.sessionIndex[sourceUid]) {
+    config.sessionIndex[sourceUid] = {};
+    changed = true;
+  }
   const lineages = {};
   ids.forEach((id) => {
     let lineageId = config.sessionIndex[sourceUid][id];
@@ -807,11 +812,16 @@ function ensureAutoCopySessions(dataDir, uid, sessionIds, options) {
       lineageId = crypto.randomUUID();
       config.sessions[lineageId] = { enabled: !(options && options.enabled === false), members: [], createdAt: Date.now() };
       config.sessionIndex[sourceUid][id] = lineageId;
+      changed = true;
     }
-    addLineageMember(config.sessions[lineageId], sourceUid, id);
+    const lineage = config.sessions[lineageId];
+    const hasMember = Array.isArray(lineage.members)
+      && lineage.members.some((member) => member && member.uid === sourceUid && member.id === id);
+    addLineageMember(lineage, sourceUid, id);
+    if (!hasMember) changed = true;
     lineages[id] = lineageId;
   });
-  writeMeta(dataDir, meta);
+  if (changed) writeMeta(dataDir, meta);
   return lineages;
 }
 
@@ -1118,6 +1128,60 @@ function getAutoCopyMapping(dataDir, lineageOrUid, targetUid, maybeSessionId) {
   const config = readAutoCopyConfig(dataDir);
   const lineageId = resolveMappingLineage(config, lineageOrUid, maybeSessionId);
   return config.copies[autoCopyRuleKey(lineageId, targetUid)] || null;
+}
+
+// Load the mappings for one target account from the memoized auto-copy config
+// in one pass. Automatic switching can have hundreds of selected sessions;
+// callers should not reparse the same metadata JSON once per session.
+function getAutoCopyMappings(dataDir, lineageIds, targetUid) {
+  const config = readAutoCopyConfig(dataDir);
+  const result = new Map();
+  for (const lineageId of new Set(Array.isArray(lineageIds) ? lineageIds : [])) {
+    const mapping = config.copies[autoCopyRuleKey(lineageId, targetUid)];
+    if (mapping) result.set(String(lineageId || ''), mapping);
+  }
+  return result;
+}
+
+function autoCopyTargetRowRevision(row) {
+  return JSON.stringify([
+    String(row && row.id || ''), String(row && row.user_id || ''),
+    Number(row && row.updated_at || 0), Number(row && row.last_activity_at || 0),
+    String(row && row.status || ''), String(row && row.title || ''), String(row && row.custom_title || ''),
+  ]);
+}
+
+function autoCopyTargetStateRevision(row) {
+  return JSON.stringify([
+    Number(row && row.updated_at || 0), Number(row && row.last_activity_at || 0),
+    String(row && row.status || ''), String(row && row.title || ''), String(row && row.custom_title || ''),
+  ]);
+}
+
+// Older daemons persisted the source row's timestamps as the target baseline.
+// Repair those cheap row-level baselines in one metadata write; file snapshots
+// remain the authority for mappings that are actually marked dirty.
+function migrateAutoCopyTargetRevisions(dataDir, rowsByKey) {
+  const meta = readMeta(dataDir);
+  const config = ensureAutoCopyMeta(meta);
+  const changed = [];
+  for (const [key, mapping] of Object.entries(config.copies || {})) {
+    if (!mapping || typeof mapping !== 'object' || !mapping.targetId) continue;
+    let parts;
+    try { parts = JSON.parse(key); } catch (_) { continue; }
+    if (!Array.isArray(parts) || parts.length !== 2) continue;
+    const rowKey = JSON.stringify([String(mapping.targetId), String(parts[1] || '')]);
+    const row = rowsByKey && typeof rowsByKey.get === 'function' ? rowsByKey.get(rowKey) : null;
+    if (!row) continue;
+    const targetRevision = autoCopyTargetRowRevision(row);
+    const targetStateRevision = autoCopyTargetStateRevision(row);
+    if (mapping.targetRevision === targetRevision && mapping.targetStateRevision === targetStateRevision) continue;
+    mapping.targetRevision = targetRevision;
+    mapping.targetStateRevision = targetStateRevision;
+    changed.push(key);
+  }
+  if (changed.length) writeMeta(dataDir, meta);
+  return changed.length;
 }
 
 function setAutoCopyMapping(dataDir, lineageOrUid, targetUid, mappingOrSessionId, maybeMapping) {
@@ -1647,6 +1711,8 @@ module.exports = {
   removeAutoCopyAccount,
   collectLineageMembersForDelete,
   getAutoCopyMapping,
+  getAutoCopyMappings,
+  migrateAutoCopyTargetRevisions,
   setAutoCopyMapping,
   deleteAutoCopyMapping,
   backupCurrent,
