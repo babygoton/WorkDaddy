@@ -73,6 +73,7 @@ function claimHarness({stored=null,cached=null}={}) {
   const ctx={Map,Promise,Date,PROFILE:{capabilities:{accounts:true,checkin:true}},todayStr:()=> '2026-09-08',
     CREDIT_USAGE_STORE:{getDailyCheckin:async()=>stored,saveDailyCheckin:async()=>{}},
     loadCheckinCache:()=>cached?{a:cached}:records,saveCheckinCache:()=>{},
+    wdCompatAuthToken:(auth)=>auth && typeof auth.accessToken==='string' ? auth.accessToken : '',
     classifyCheckinResult:require('../scripts/checkin-result').classifyCheckinResult,
     refreshAccountBackupToken:async()=>{refreshes++;return {root:{auth:{accessToken:'test-token'}}};},
     dailyCheckin:async()=>{requests++;await Promise.resolve();return {ok:true,code:0,message:'ok'};},log:()=>{},

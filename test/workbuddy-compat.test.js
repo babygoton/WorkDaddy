@@ -2,10 +2,12 @@
 
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
 
 const compat = require('../scripts/workbuddy-compat.js');
+const lib = require('../scripts/lib.js');
 
 function visibleElement(className) {
   return {
@@ -68,6 +70,60 @@ test('selected conversation lookup is capability based rather than profile based
     querySelector() { return null; },
   };
   assert.equal(compat.getSelectedConversationId(documentLike), 'conversation-modern');
+});
+
+test('account import accepts legacy plaintext and preserves encrypted token envelopes', () => {
+  const envelope = { $wbEncrypted: 1, envelope: 'opaque-envelope' };
+  const plaintext = {
+    account: { uid: 'legacy-user', nickname: 'Legacy' },
+    auth: { accessToken: 'legacy-access', refreshToken: 'legacy-refresh', domain: 'https://www.workbuddy.cn' },
+  };
+  const encrypted = {
+    account: { uid: 'encrypted-user', nickname: envelope },
+    auth: { accessToken: envelope, refreshToken: envelope, domain: 'https://www.workbuddy.cn' },
+  };
+
+  const plainResult = lib.normalizeAccountImportJson(plaintext);
+  assert.equal(plainResult.uid, 'legacy-user');
+  assert.equal(plainResult.normalized.auth.accessToken, 'legacy-access');
+
+  const encryptedResult = lib.normalizeAccountImportJson(encrypted);
+  assert.equal(encryptedResult.uid, 'encrypted-user');
+  assert.deepEqual(encryptedResult.normalized.auth.accessToken, envelope);
+  assert.deepEqual(encryptedResult.normalized.auth.refreshToken, envelope);
+  assert.deepEqual(encryptedResult.normalized.account.nickname, envelope);
+  assert.equal(lib.wdCompatAuthToken(encryptedResult.normalized.auth), '');
+  assert.equal(lib.wdCompatText(envelope), '(已加密)');
+});
+
+test('account backup keeps both legacy plaintext and encrypted source bytes unchanged', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'workdaddy-compat-'));
+  try {
+    const dataDir = path.join(root, 'WorkDaddy');
+    const authDir = path.join(root, 'auth');
+    fs.mkdirSync(authDir, { recursive: true });
+    lib.ensureDirs(dataDir);
+    const envelope = { $wbEncrypted: 1, envelope: 'opaque-envelope' };
+    const fixtures = [
+      {
+        uid: 'legacy-user',
+        value: { account: { uid: 'legacy-user', nickname: 'Legacy' }, auth: { accessToken: 'legacy-access', domain: 'https://www.workbuddy.cn' } },
+      },
+      {
+        uid: 'encrypted-user',
+        value: { account: { uid: 'encrypted-user', nickname: envelope }, auth: { accessToken: envelope, domain: 'https://www.workbuddy.cn' } },
+      },
+    ];
+    for (const fixture of fixtures) {
+      const source = path.join(authDir, fixture.uid + '.info');
+      const raw = JSON.stringify(fixture.value, null, 2);
+      fs.writeFileSync(source, raw);
+      lib.backupAuthFile(dataDir, source);
+      assert.equal(fs.readFileSync(lib.backupPath(dataDir, fixture.uid), 'utf8'), raw);
+    }
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('injected compatibility is packaged and AI theme access is no longer profile-gated', () => {

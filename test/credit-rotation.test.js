@@ -55,13 +55,13 @@ test('rotation refresh compares every saved account using fresh segments', async
   const accounts = [{ uid: 'current' }, { uid: 'cached-later' }, { uid: 'fresh-sooner' }];
   const queried = [];
   let fail = false;
-  const refresh = new Function('listAccounts', 'DATA_DIR', 'fs', 'accountBackupFile', 'fetchCredits', `return ${source} refreshCreditRotationAccounts;`)(
+  const refresh = new Function('listAccounts', 'DATA_DIR', 'fs', 'accountBackupFile', 'fetchCredits', 'wdCompatDecryptAuthJson', 'wdCompatAuthToken', `return ${source} refreshCreditRotationAccounts;`)(
     () => accounts, '', { readFileSync: (file) => JSON.stringify({ auth: { accessToken: file } }) },
     uid => uid, async token => {
       queried.push(token);
       if (fail && token === 'fresh-sooner') throw new Error('积分查询失败');
       return { segments: [{ remaining: 20, expiresAt: now + (token === 'fresh-sooner' ? 3_600_000 : 86_400_000) }] };
-    }
+    }, (x) => x, (auth) => auth && typeof auth.accessToken === 'string' ? auth.accessToken : ''
   );
   const refreshed = await refresh('current', { segments: [{ remaining: 5, expiresAt: now + 172_800_000 }] });
   assert.deepEqual(queried, ['cached-later', 'fresh-sooner']);

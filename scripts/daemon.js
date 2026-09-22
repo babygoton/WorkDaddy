@@ -82,6 +82,11 @@ const {
   listAccounts,
   switchTo,
   deleteAccount,
+  wdCompatText, // [wd-compat]
+  wdCompatContainsEncryptedFields, // [wd-compat]
+  wdCompatDecryptAuthJson, // [wd-compat] WorkBuddy 5.6+ 字段信封解密
+  wdCompatAuthToken, // [wd-compat] 仅返回可直接发送的明文 token
+  normalizeAccountImportJson, // [wd-compat] 明文/信封账号导入归一化
   backupPath,
   updateMeta,
   canonicalWorkspace,
@@ -402,8 +407,10 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 // 1.2.122：首次复制到没有物理副本的账号使用同步快照路径，避免异步文件校验链路拖慢全量初始化。
 // 1.2.123：自动复制映射保存目标数据库实际 revision，避免未变化会话反复进入完整快照校验。
 // 1.2.124：启动时批量校准旧目标 revision，避免历史映射让未变化会话重复进入规划。
-const DAEMON_VERSION = '1.2.124';
-const DAEMON_BUILD_ID = 'release-1.2.124-20260922-target-revision-migration';
+// 1.2.126：5.6 加密账号改为密文原样备份、内存解密；导入兼容明文 token，
+//          刷新结果不把解密后的 token 写回加密备份。
+const DAEMON_VERSION = '1.2.126';
+const DAEMON_BUILD_ID = 'release-1.2.126-20260922-wbencrypted-opaque-backup';
 const usageReporter = createUsageReporter({ profile: PROFILE.id, version: DAEMON_VERSION });
 configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const automationDiscovery = createAutomationDiscovery({
@@ -446,7 +453,7 @@ const creditHistorySync = createCreditHistorySync({
     const refreshed = await refreshAccountBackupToken(uid);
     if (refreshed.error || !refreshed.root) throw new Error('账号凭据不可用');
     const auth = refreshed.root.auth || {};
-    return auth.accessToken || auth.access_token || auth.token;
+    return wdCompatAuthToken(auth);
   },
 });
 const CREDIT_USAGE_REFRESH_MS = 15000;
@@ -1273,7 +1280,7 @@ function buildSeamlessAuthFile(tokenData, accData) {
   let all = [];
   try {
     const activeAuthFile = currentAuthFile();
-    const cur = activeAuthFile ? JSON.parse(fs.readFileSync(activeAuthFile, 'utf8')) : null;
+    const cur = activeAuthFile ? wdCompatDecryptAuthJson(JSON.parse(fs.readFileSync(activeAuthFile, 'utf8'))) : null; // [wd-compat]
     const arr = cur.allAccounts || cur.accounts;
     if (Array.isArray(arr)) all = arr;
   } catch (_) {}
@@ -2885,14 +2892,14 @@ const CHECKIN_REQUEST_TIMEOUT_MS = 12000;
 // 声明式自动化任务：任务 JSON 只保存步骤，不保存账号 Token；运行时按账号上下文
 // 读取受管备份并把凭据限制在一次 HTTP 请求内。第三方代码执行不在此模块范围内。
 const growthStreakCache = createGrowthStreakCache(async (uid) => {
-  const raw = JSON.parse(fs.readFileSync(accountBackupFile(uid), 'utf8'));
+  const raw = wdCompatDecryptAuthJson(JSON.parse(fs.readFileSync(accountBackupFile(uid), 'utf8'))); // [wd-compat]
   const auth = raw && raw.auth || {};
-  return fetchGrowthStreak(auth.accessToken || auth.access_token || auth.token, { apiHost: PROFILE.apiHost });
+  return fetchGrowthStreak(wdCompatAuthToken(auth), { apiHost: PROFILE.apiHost });
 });
 const dailyProgressCache = createDailyProgressCache(async (uid) => {
-  const raw = JSON.parse(fs.readFileSync(accountBackupFile(uid), 'utf8'));
+  const raw = wdCompatDecryptAuthJson(JSON.parse(fs.readFileSync(accountBackupFile(uid), 'utf8'))); // [wd-compat]
   const auth = raw && raw.auth || {};
-  const token = auth.accessToken || auth.access_token || auth.token;
+  const token = wdCompatAuthToken(auth);
   if (!token) throw new Error('备份中无 accessToken');
   return fetchDailyProgress(token, { apiHost: PROFILE.apiHost });
 });
@@ -2913,7 +2920,7 @@ async function automationAccountStatus(account, fields) {
   if (!target || !target.uid) throw new Error('没有可用账号');
   const file = accountBackupFile(target.uid);
   if (!fs.existsSync(file)) throw new Error('账号备份不存在');
-  const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
+  const raw = wdCompatDecryptAuthJson(JSON.parse(fs.readFileSync(file, 'utf8'))); // [wd-compat]
   const auth = raw && raw.auth && typeof raw.auth === 'object' ? raw.auth : {};
   const result = { uid: target.uid, isPrimary: primaryAccountStore.get() === target.uid, checkin: {}, activity: {}, credits: {} };
   const wanted = Array.isArray(fields) && fields.length ? fields : ['checkin.today', 'activity.today'];
@@ -2926,7 +2933,7 @@ async function automationAccountStatus(account, fields) {
     result.checkin = { today: !!(hit && hit.date === today && hit.ok && (hit.verified === true || classifyCheckinResult({ httpOk: true, code: hit.code, message: hit.message }).ok)), verified: !!(hit && hit.date === today && hit.verified === true), source: mark ? 'sqlite' : 'cache' };
   }
   if (wanted.includes('activity.today')) {
-    const token = auth.accessToken || auth.access_token || auth.token;
+    const token = wdCompatAuthToken(auth);
     if (!token) throw new Error('备份中无 accessToken');
     result.activity = Object.assign({ source: 'server' }, await fetchGrowthTodayActive(token, { apiHost: PROFILE.apiHost }));
   }
@@ -2935,7 +2942,7 @@ async function automationAccountStatus(account, fields) {
     result.activity.streak = { days: Number.isFinite(streak && streak.days) ? streak.days : null, status: streak && streak.status || 'unavailable' };
   }
   if (wanted.includes('credits')) {
-    const token = auth.accessToken || auth.access_token || auth.token;
+    const token = wdCompatAuthToken(auth);
     if (!token) throw new Error('备份中无 accessToken');
     const credits = await fetchCredits(token, raw.account || {});
     result.credits = { total: credits.credits, unlimited: !!credits.unlimited, cycleResetTime: credits.cycleResetTime || null };
@@ -3046,8 +3053,8 @@ async function automationHttpRequest(request, account) {
   if (request.headers && typeof request.headers === 'object') Object.keys(request.headers).slice(0, 40).forEach((key) => { if (!/^(authorization|cookie|proxy-authorization)$/i.test(key)) headers[key] = String(request.headers[key]).slice(0, 2000); });
   if (account && account.uid) {
     assertAccountRequestUrl(url, PROFILE.apiHost);
-    const raw = JSON.parse(fs.readFileSync(accountBackupFile(account.uid), 'utf8')); const auth = raw && raw.auth && typeof raw.auth === 'object' ? raw.auth : {};
-    const token = auth.accessToken || auth.access_token || auth.token; if (!token) throw new Error('账号没有 accessToken'); headers.authorization = 'Bearer ' + token;
+    const raw = wdCompatDecryptAuthJson(JSON.parse(fs.readFileSync(accountBackupFile(account.uid), 'utf8'))); const auth = raw && raw.auth && typeof raw.auth === 'object' ? raw.auth : {}; // [wd-compat]
+    const token = wdCompatAuthToken(auth); if (!token) throw new Error('账号凭据暂不可用'); headers.authorization = 'Bearer ' + token;
   }
   if (request.isCancelled && request.isCancelled()) throw new Error('任务已停止');
   if (request.body && typeof request.body === 'object' && !Object.keys(headers).some(k => k.toLowerCase() === 'content-type')) headers['content-type'] = 'application/json';
@@ -3460,9 +3467,9 @@ function startAutomationRun(task, event = null) {
         },
         send: async (uid, message) => {
           if (isCancelled()) throw new Error('用户停止任务');
-          const raw = JSON.parse(fs.readFileSync(accountBackupFile(uid), 'utf8'));
+          const raw = wdCompatDecryptAuthJson(JSON.parse(fs.readFileSync(accountBackupFile(uid), 'utf8'))); // [wd-compat]
           const auth = raw.auth || {};
-          const token = auth.accessToken || auth.access_token || auth.token;
+          const token = wdCompatAuthToken(auth);
           if (!token) throw new Error('主账号凭据不可用');
           try { return await activateGrowthAccount(token, { apiHost: PROFILE.apiHost, prompt: message, purpose: 'completion-report', timeoutMs: 60000 }); }
           catch (_) { throw new Error('云端汇报未确认成功，请检查主账号云端会话；不会自动重试，避免重复发送'); }
@@ -3537,12 +3544,24 @@ function saveCheckinCache(cache) {
   }
 }
 
+// 加密备份的刷新结果只在 daemon 生命周期内缓存，绝不把解密后的 token 写回磁盘。
+const backupAuthRuntimeCache = new Map();
+
 /** 刷新备份账号凭证：临期惰性刷新，或距上次刷新超过一天时执行保活。 */
 async function refreshAccountBackupToken(uid, options = {}) {
   const file = path.join(DATA_DIR, 'accounts', uid + '.info');
   let root;
+  let encryptedAtRest = false;
+  let sourceSignature = '';
   try {
-    root = JSON.parse(fs.readFileSync(file, 'utf8'));
+    const stat = fs.statSync(file);
+    sourceSignature = `${stat.mtimeMs}:${stat.size}`;
+    const stored = JSON.parse(fs.readFileSync(file, 'utf8'));
+    encryptedAtRest = wdCompatContainsEncryptedFields(stored);
+    const cached = backupAuthRuntimeCache.get(uid);
+    root = cached && cached.signature === sourceSignature
+      ? cached.root
+      : wdCompatDecryptAuthJson(stored); // [wd-compat]
   } catch (e) {
     return { root: null, error: 'read-account-failed: ' + e.message };
   }
@@ -3560,6 +3579,11 @@ async function refreshAccountBackupToken(uid, options = {}) {
     return { root, refreshed: false, error: result.error };
   }
   const nextRoot = Object.assign({}, root, { auth: result.auth });
+  if (encryptedAtRest) {
+    backupAuthRuntimeCache.set(uid, { signature: sourceSignature, root: nextRoot });
+    log(`[token-refresh] 账号 ${uid} 已刷新（加密备份仅保存在内存）`);
+    return { root: nextRoot, refreshed: true, persisted: false };
+  }
   const tmp = file + '.tmp';
   try {
     fs.writeFileSync(tmp, JSON.stringify(nextRoot, null, 2), { mode: 0o600 });
@@ -3570,7 +3594,8 @@ async function refreshAccountBackupToken(uid, options = {}) {
     log(`[token-refresh] 账号 ${uid} 刷新结果落盘失败: ${e.message}`);
     return { root, refreshed: false, error: 'write-account-failed: ' + e.message };
   }
-  return { root: nextRoot, refreshed: true };
+  backupAuthRuntimeCache.delete(uid);
+  return { root: nextRoot, refreshed: true, persisted: true };
 }
 
 /**
@@ -3663,7 +3688,7 @@ async function performAccountCheckin(uid) {
   const refreshError = refreshed.error || '';
   if (!accountRoot) return { uid, ok: false, reason: refreshed.error || 'no-backup' };
   const auth = accountRoot.auth && typeof accountRoot.auth === 'object' ? accountRoot.auth : {};
-  const tk = auth.accessToken || auth.access_token || auth.token;
+  const tk = wdCompatAuthToken(auth);
   if (!tk) return { uid, ok: false, reason: 'no-accessToken' };
   const account = { uid, domain: auth.domain || '' };
   const r = await dailyCheckin(tk, account);
@@ -7610,8 +7635,8 @@ async function refreshCreditRotationAccounts(currentUid, currentResult) {
     const results = await Promise.all(batch.map(async (account) => {
       const uid = String(account.uid);
       if (uid === currentUid) return { uid, nickname: account.nickname || '', creditSegments: currentResult.segments };
-      const raw = JSON.parse(fs.readFileSync(accountBackupFile(uid), 'utf8'));
-      const token = raw && raw.auth && (raw.auth.accessToken || raw.auth.access_token || raw.auth.token);
+      const raw = wdCompatDecryptAuthJson(JSON.parse(fs.readFileSync(accountBackupFile(uid), 'utf8'))); // [wd-compat]
+      const token = wdCompatAuthToken(raw && raw.auth);
       if (!token) throw new Error('账号凭证不可用');
       const result = await fetchCredits(token, raw.account || {});
       if (!Array.isArray(result.segments) || result.meterError || result.packageError) throw new Error('积分段不可用');
@@ -8392,8 +8417,8 @@ function handleApi(req, res) {
       try {
         const file = accountBackupFile(uid);
         if (!fs.existsSync(file)) return json(res, 404, { ok: false, error: '账号备份不存在' });
-        const j = JSON.parse(fs.readFileSync(file, 'utf8'));
-        const tk = j.auth && j.auth.accessToken;
+        const j = wdCompatDecryptAuthJson(JSON.parse(fs.readFileSync(file, 'utf8'))); // [wd-compat]
+        const tk = wdCompatAuthToken(j.auth);
         if (!tk) return json(res, 400, { ok: false, error: '备份中无 accessToken' });
         const current = currentAccount();
         const shouldSyncUsage = !!(current && current.uid === uid);
@@ -8443,8 +8468,8 @@ function handleApi(req, res) {
       try {
         const file = accountBackupFile(uid);
         if (!fs.existsSync(file)) return json(res, 404, { ok: false, error: '账号备份不存在' });
-        const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
-        const token = raw && raw.auth && (raw.auth.accessToken || raw.auth.access_token || raw.auth.token);
+        const raw = wdCompatDecryptAuthJson(JSON.parse(fs.readFileSync(file, 'utf8'))); // [wd-compat]
+        const token = wdCompatAuthToken(raw && raw.auth);
         if (!token) return json(res, 400, { ok: false, error: '备份中无 accessToken' });
         const refreshed = await fetchCredits(token, raw.account || {});
         let accounts;
@@ -8588,8 +8613,8 @@ function handleApi(req, res) {
       try {
         const file = accountBackupFile(uid);
         if (!fs.existsSync(file)) return json(res, 404, { ok: false, error: '账号备份不存在' });
-        const j = JSON.parse(fs.readFileSync(file, 'utf8'));
-        const tk = j.auth && j.auth.accessToken;
+        const j = wdCompatDecryptAuthJson(JSON.parse(fs.readFileSync(file, 'utf8'))); // [wd-compat]
+        const tk = wdCompatAuthToken(j.auth);
         if (!tk) return json(res, 400, { ok: false, error: '备份中无 accessToken' });
         const today = await fetchGrowthTodayActive(tk, { apiHost: PROFILE.apiHost });
         return json(res, 200, { ok: true, uid, ...today });
@@ -8610,8 +8635,8 @@ function handleApi(req, res) {
       try {
         const file = accountBackupFile(uid);
         if (!fs.existsSync(file)) return json(res, 404, { ok: false, error: '账号备份不存在' });
-        const j = JSON.parse(fs.readFileSync(file, 'utf8'));
-        const tk = j.auth && j.auth.accessToken;
+        const j = wdCompatDecryptAuthJson(JSON.parse(fs.readFileSync(file, 'utf8'))); // [wd-compat]
+        const tk = wdCompatAuthToken(j.auth);
         if (!tk) return json(res, 400, { ok: false, error: '备份中无 accessToken' });
         const before = await fetchGrowthTodayActive(tk, { apiHost: PROFILE.apiHost });
         if (before.is_active) return json(res, 200, { ok: true, uid, activated: false, alreadyActive: true, ...before });
@@ -8686,28 +8711,25 @@ function handleApi(req, res) {
           ensureDirs(DATA_DIR);
           const imported = [];
           for (const candidate of candidates) {
-            const j = candidate && typeof candidate === 'object' ? candidate : null;
-            const acct = j && j.account && typeof j.account === 'object' ? j.account : j;
-            const auth = j && j.auth && typeof j.auth === 'object' ? j.auth : null;
-            const uid = String(acct && acct.uid || '').trim();
-            const accessToken = String(auth && (auth.accessToken || auth.access_token || auth.token) || '').trim();
-            if (!/^[A-Za-z0-9_-]{1,128}$/.test(uid) || !accessToken) continue;
-            const normalized = {
-              account: { ...acct, uid },
-              auth: { ...auth, accessToken },
-            };
-            const authRecord = parseAuthJson(normalized);
-            if (!authRecord || authRecord.uid !== uid) continue;
+            const normalizedImport = normalizeAccountImportJson(candidate);
+            if (!normalizedImport) continue;
+            const { uid, normalized } = normalizedImport;
+            const acct = normalized.account;
             const dest = backupPath(DATA_DIR, uid);
             const tmp = dest + '.tmp';
             fs.writeFileSync(tmp, JSON.stringify(normalized), { mode: 0o600 });
             fs.renameSync(tmp, dest);
             try { fs.chmodSync(dest, 0o600); } catch (_) {}
-            updateMeta(DATA_DIR, { uid, nickname: normalized.account.nickname || '', uin: normalized.account.uin || '', phone: normalized.account.phoneNumber || '' });
+            updateMeta(DATA_DIR, {
+              uid,
+              nickname: wdCompatText(normalized.account.nickname),
+              uin: typeof normalized.account.uin === 'string' || typeof normalized.account.uin === 'number' ? normalized.account.uin : '',
+              phone: wdCompatText(normalized.account.phoneNumber),
+            });
             imported.push(uid);
           }
           if (!imported.length) throw new Error('没有找到符合格式的账号，请先让 WorkBuddy 整理 JSON');
-          log(`[import] 明文 JSON 导入 ${imported.length}/${candidates.length} 个账号`);
+          log(`[import] JSON 导入 ${imported.length}/${candidates.length} 个账号`);
           return json(res, 200, { ok: true, imported, count: imported.length });
         }
         if (!envelope || envelope.wbsExport !== 'WorkDaddy') throw new Error('不是 WorkDaddy 的账号导出文件');
@@ -8743,9 +8765,9 @@ function handleApi(req, res) {
           try { fs.chmodSync(dest, 0o600); } catch (_) {}
           updateMeta(DATA_DIR, {
             uid,
-            nickname: acct.nickname || '',
-            uin: acct.uin || '',
-            phone: acct.phoneNumber || '',
+            nickname: wdCompatText(acct.nickname),
+            uin: typeof acct.uin === 'string' || typeof acct.uin === 'number' ? acct.uin : '',
+            phone: wdCompatText(acct.phoneNumber),
           });
           imported.push(uid);
         }

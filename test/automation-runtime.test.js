@@ -30,7 +30,7 @@ test('completion is bound to user request, conversation and assistant identity',
 const fs=require('node:fs'),vm=require('node:vm');
 const daemon=fs.readFileSync(require('node:path').join(__dirname,'../scripts/daemon.js'),'utf8');
 function httpHarness(fetchImpl,read=()=>'{"auth":{"accessToken":"fake-test-token"}}') {
- const scope={URL,Buffer,AbortController,setTimeout,clearTimeout,setInterval,clearInterval,fetch:fetchImpl,fs:{readFileSync:read},accountBackupFile:()=>'/fake',PROFILE:{apiHost:'https://www.codebuddy.cn'},assertAccountRequestUrl};
+ const scope={URL,Buffer,AbortController,setTimeout,clearTimeout,setInterval,clearInterval,fetch:fetchImpl,fs:{readFileSync:read},accountBackupFile:()=>'/fake',PROFILE:{apiHost:'https://www.codebuddy.cn'},assertAccountRequestUrl,wdCompatDecryptAuthJson:(x)=>x,wdCompatAuthToken:(auth)=>auth && typeof auth.accessToken==='string' ? auth.accessToken : ''};
  vm.runInNewContext(daemon.slice(daemon.indexOf('async function automationHttpRequest('),daemon.indexOf('\nfunction automationPublicRun(')),scope);return scope.automationHttpRequest;
 }
 test('HTTP daemon denies token access before reading backups; aborts fetch on stop',async()=>{
