@@ -164,6 +164,19 @@ test('automatic repeat sync rechecks persisted content and reports no writes', a
   }
 });
 
+test('reverse sync skips an activation-only append after the first account copy', async t => {
+  const h = harness(t);
+  const first = await h.copy();
+  assert.equal(first.status, 'skipped');
+  h.write('b', [...base, { type: 'session-meta', id: 'activation-b', sessionId: 'b', timestamp: 99, meta: { 'codebuddy.ai/hostKind': 'unopted' } }]);
+  const reverse = await h.ctx.copySessionRecord(h.rows.get('b'), 'one', {
+    auto: true, sourceUid: 'two', lineageId: h.lineage,
+  });
+  assert.equal(reverse.status, 'skipped');
+  assert.equal(reverse.copiedBytes, 0);
+  assert.equal(reverse.targetId, 'a');
+});
+
 test('automatic sync falls back to snapshots when a session row revision changes', async t => {
   const h = harness(t);
   assert.equal((await h.copy()).status, 'skipped');

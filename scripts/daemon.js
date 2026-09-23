@@ -416,11 +416,12 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 // 1.2.142：忽略激活引起的会话生命周期漂移，拒绝切号后的旧脏通知，并按目标账号恢复同步状态。
 // 1.2.143：内容相同的激活会话刷新映射并清除旧脏标记；缺失映射时复用已有目标会话，避免重复创建。
 // 1.2.144：删除会话允许一次处理超过 100 个 ID；其他批量接口仍保留原有上限。
+// 1.2.147：忽略会话激活日志的 session-meta 记录，避免反向切换误报导入；刷新指纹缓存版本。
 // 1.2.145：识别仅 updated_at 的激活漂移，清除无变更脏标记；无结果任务不再弹同步进度窗口。
 // 1.2.126：5.6 加密账号改为密文原样备份、内存解密；导入兼容明文 token，
 //          刷新结果不把解密后的 token 写回加密备份。
-const DAEMON_VERSION = '1.2.146';
-const DAEMON_BUILD_ID = 'release-1.2.146-20260923-sync-meta-stability';
+const DAEMON_VERSION = '1.2.147';
+const DAEMON_BUILD_ID = 'release-1.2.147-20260923-ignore-activation-records';
 const usageReporter = createUsageReporter({ profile: PROFILE.id, version: DAEMON_VERSION });
 configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const automationDiscovery = createAutomationDiscovery({
@@ -4506,6 +4507,7 @@ async function importSessionArchives(payload, targetUid, staged = false) {
 // cover every session file on disk (tens of thousands), or active sessions
 // evict each other and the cache never warms up.
 const SESSION_SYNC_CACHE_LIMIT = 100000;
+const SESSION_SYNC_CACHE_VERSION = 2;
 let sessionSyncCacheState = null;
 function getSessionSyncCache() {
   if (sessionSyncCacheState) return sessionSyncCacheState.map;
@@ -4513,7 +4515,7 @@ function getSessionSyncCache() {
   const map = new Map();
   try {
     const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
-    if (raw && raw.version === 1 && raw.entries && typeof raw.entries === 'object') {
+    if (raw && raw.version === SESSION_SYNC_CACHE_VERSION && raw.entries && typeof raw.entries === 'object') {
       for (const [key, entry] of Object.entries(raw.entries)) {
         if (!entry || typeof entry !== 'object') continue;
         if (typeof entry.hash !== 'string' || !entry.hash) continue;
@@ -4538,7 +4540,7 @@ function scheduleSessionSyncCacheSave() {
     try {
       while (state.map.size > SESSION_SYNC_CACHE_LIMIT) state.map.delete(state.map.keys().next().value);
       fs.mkdirSync(path.dirname(state.file), { recursive: true });
-      replaceFileWithRetry(state.file, JSON.stringify({ version: 1, entries: Object.fromEntries(state.map) }), 0o600);
+      replaceFileWithRetry(state.file, JSON.stringify({ version: SESSION_SYNC_CACHE_VERSION, entries: Object.fromEntries(state.map) }), 0o600);
     } catch (_) { state.dirty = true; }
   }, 1000);
   if (typeof state.timer.unref === 'function') state.timer.unref();

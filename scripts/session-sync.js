@@ -257,8 +257,13 @@ function readSnapshot(root, id, aliases = [], cache = null) {
         let record;
         try { record = JSON.parse(line); } catch (_) { throw Error('会话消息文件未写完或已损坏，未同步'); }
         if (!record || typeof record !== 'object' || Array.isArray(record) || typeof record.type !== 'string') throw Error('会话消息格式不受支持，未同步');
+        // session-meta is an activation journal entry. It may be appended on
+        // only one account after navigation, so it must not change the
+        // conversation continuation shape used for sync decisions.
+        if (record.type === 'session-meta') return null;
         return digest(JSON.stringify(canonicalTranscriptRecord(record, knownIds)));
       });
+      entry.records = entry.records.filter(Boolean);
       // Require actual messages: a metadata-only journal is not an empty base.
       if (!lines.some(line => JSON.parse(line).type === 'message')) throw Error('会话消息文件没有消息，未同步');
       entry.semantic = digest(entry.records.join('\n'));
@@ -332,6 +337,7 @@ async function readTranscriptAsync(file, stat, knownIds) {
     if (!record || typeof record !== 'object' || Array.isArray(record) || typeof record.type !== 'string') {
       throw Error('会话消息格式不受支持，未同步');
     }
+    if (record.type === 'session-meta') return;
     const recordHash = digest(JSON.stringify(canonicalTranscriptRecord(record, knownIds)));
     if (lineCount++) semanticHash.update('\n');
     semanticHash.update(recordHash);
