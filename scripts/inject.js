@@ -1175,7 +1175,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '(无标题)': 'Untitled', 'GitHub 仓库': 'GitHub repository', '去 GitHub Issues 反馈问题': 'Report an issue on GitHub', '在 GitHub 上给 WorkDaddy 点 Star': 'Star WorkDaddy on GitHub', 'WorkDaddy，点击打开面板，可拖动': 'WorkDaddy – click to open the panel, draggable', '如果 WorkDaddy 对你有帮助，欢迎在 GitHub 点个 Star。你的支持会让这个小项目持续更新。': 'If WorkDaddy helps you, please star it on GitHub. Your support keeps this small project alive.',
     '元素检查': 'Inspect element', '元素检查不可用：内部模块未加载': 'Element inspector unavailable: internal module not loaded', '元素拾取器尚未加载': 'Element picker is not loaded',
     'DOM 元素检查器': 'DOM element inspector', '复制元素': 'Copy element', '关闭元素检查器': 'Close element inspector', '已复制元素': 'Element copied', '未找到可检查元素': 'No inspectable element found', '检查失败：': 'Inspection failed: ', '拾取模式：移动鼠标高亮元素，点击选中（Esc 退出）': 'Pick mode: move to highlight an element, click to select (Esc to exit)',
-    '到期时间': 'Expiry', '剩余': 'Remaining', '剩余时间计算中': 'Calculating remaining time', '积分': 'Credits', '积分节点': 'Credit node', '积分查询超时': 'Credit query timed out', '个人版': 'Personal', '企业': 'Enterprise', '基础用量': 'Base usage', '赠送与加量包': 'Gift & bonus packs', '其他积分': 'Other credits', '即将过期': 'Expiring soon', '已过期': 'Expired',
+    '到期时间': 'Expiry', '备注': 'Note', '上次使用': 'Last used', '编辑备注': 'Edit note', '备注保存失败': 'Failed to save note', '剩余': 'Remaining', '剩余时间计算中': 'Calculating remaining time', '积分': 'Credits', '积分节点': 'Credit node', '积分查询超时': 'Credit query timed out', '个人版': 'Personal', '企业': 'Enterprise', '基础用量': 'Base usage', '赠送与加量包': 'Gift & bonus packs', '其他积分': 'Other credits', '即将过期': 'Expiring soon', '已过期': 'Expired',
     '昨天': 'Yesterday', '分钟': ' min', '小时': ' h', '定位到第': 'Jump to message ', '条用户消息': ' user message', '发送中': 'Sending', '附件': 'Attachment', '疑似未完成': 'Possibly incomplete',
     '已开启': 'Enabled', '已关闭': 'Disabled', '已领取': 'Claimed', '立即领取,今日可领': 'Claim now, available today', '继续执行': 'Continue',
     '下载': 'Download', '安装': 'Install', '校验': 'Verify', '检查': 'Check', '重启': 'Restart', '即将打开安装包…': 'Opening installer…', '安装包已打开': 'Installer opened', '安装失败': 'Install failed', '更新出错': 'Update error', '更新失败': 'Update failed', '检查更新失败': 'Update check failed', '已是最新版本': 'Already up to date',
@@ -1661,6 +1661,9 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '<path d="M3 6h18"/><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/>' +
     '<path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>' +
     '<path d="M10 11v6"/><path d="M14 11v6"/></svg>';
+  var PENCIL_SVG =
+    '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+    '<path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>';
   var MODEL_BACKUP_SVG =
     '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>';
   var MODEL_TEST_SVG =
@@ -13728,7 +13731,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     function accountCardLayoutKey() {
       // 积分/签到刷新不应重建切换按钮，保留焦点和两击确认状态。
       var rows = state.accounts.map(function (a) {
-        return [a.uid, a.nickname, a.phone, a.uin, a.type, a.enterpriseName, a.tokenExpiresAt, a.authValid, isIdentityExpired(a)];
+        return [a.uid, a.nickname, a.note || '', a.lastSwitchAt || 0, a.phone, a.uin, a.type, a.enterpriseName, a.tokenExpiresAt, a.authValid, isIdentityExpired(a)];
       }).sort(function (a, b) { return String(a[0]).localeCompare(String(b[0])); });
       return JSON.stringify([state.current && state.current.uid, rows]);
     }
@@ -14235,6 +14238,8 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       }
       state.accountLayoutKey = layoutKey;
       if (!list) { list = el('div', 'wbs-acct-list'); accountsPane.insertBefore(list, accountsPane.firstChild); }
+      // 备注输入进行中：推迟本轮重建，避免焦点/未保存内容丢失（下轮轮询会补上）。
+      if (list.querySelector('.wbs-name-input:focus')) { state.accountLayoutKey = null; return; }
       list.innerHTML = '';
       if (!state.accounts.length) {
         list.appendChild(el('div', 'wbs-empty', '还没有备份账号。打开/登录一次 WorkBuddy 后会自动备份，稍后再来查看。'));
@@ -14251,24 +14256,32 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         var badge = editionBadge ? '<span class="wbs-badge">' + esc(editionBadge) + '</span>' : '';
         var checkinBadge = checkinBadgeHtml(a);
         var invalidAuthBadge = a.authValid === false ? '<span class="wbs-badge wbs-auth-invalid">认证数据无效</span>' : '';
-        // 当前登录账号隐藏操作；认证已过期的账号保留删除，但隐藏切换，避免进入登录页。
+        // 上次使用时间（切换按钮左侧）：仅统计手动切换；静默签到不经过切换接口，不计入。
+        var lastUseHtml = a.lastSwitchAt ? '<span class="wbs-last-use" title="上次使用">' + esc(fmtDateTime(a.lastSwitchAt)) + '</span>' : '';
+        // 当前登录账号隐藏操作按钮（时间保留显示）；认证已过期的账号保留删除，但隐藏切换，避免进入登录页。
         var expired = isIdentityExpired(a);
-        var ops = (isCur
-          ? ''
-          : (expired || a.authValid === false ? '' : '<button class="wbs-icon-btn wbs-acc-switch" type="button" title="切换" data-uid="' + escAttr(a.uid) + '" data-name="' + escAttr(a.nickname || '未命名') + '">' + SWITCH_SVG + '</button>') +
-            '<button class="wbs-icon-btn wbs-del" type="button" title="删除" data-uid="' + escAttr(a.uid) + '" data-name="' + escAttr(a.nickname || '未命名') + '">' + TRASH_SVG + '</button>');
-        ops = '<div class="wbs-ops"' + (isCur ? ' hidden' : '') + '>' + ops + '</div>';
+        var ops = (!isCur
+          ? lastUseHtml +
+            (expired || a.authValid === false ? '' : '<button class="wbs-icon-btn wbs-acc-switch" type="button" title="切换" data-uid="' + escAttr(a.uid) + '" data-name="' + escAttr(a.nickname || '未命名') + '">' + SWITCH_SVG + '</button>') +
+            '<button class="wbs-icon-btn wbs-del" type="button" title="删除" data-uid="' + escAttr(a.uid) + '" data-name="' + escAttr(a.nickname || '未命名') + '">' + TRASH_SVG + '</button>'
+          : lastUseHtml);
+        ops = '<div class="wbs-ops"' + (isCur && !a.lastSwitchAt ? ' hidden' : '') + '>' + ops + '</div>';
         // 国际版没有手机号：用 UIN（账号唯一数字标识）替代展示；国内版仍显示手机。
         // UIN 与手机号共用同一标签和值间距，确保与“剩余”额度列对齐。
         var isUinMode = !a.phone;
         var idLbl = a.phone ? '手机' : (a.uin ? 'UIN' : '账号');
         var rawName = a.nickname || '(未命名)';
         var rawId = a.phone ? a.phone : (a.uin ? a.uin : '-');
-        var nameVal = state.mask ? maskAccountName(rawName) : rawName;
+        // 名字显示备注优先：有备注显示备注（完整内容在 title），无备注显示原昵称。
+        var noteVal = typeof a.note === 'string' ? a.note : '';
+        var displayName = noteVal || rawName;
+        var nameVal = state.mask ? maskAccountName(displayName) : displayName;
         var idVal = state.mask ? maskAccountId(rawId) : rawId;
         card.innerHTML =
           '<div class="wbs-info">' +
-          '<div class="wbs-row1"><div class="wbs-name-group"><span class="wbs-name">' + esc(nameVal) + '</span>' + badge + dailyRingsHtml(a) + checkinBadge + invalidAuthBadge + '</div>' + ops + '</div>' +
+          '<div class="wbs-row1"><div class="wbs-name-group"><span class="wbs-name"' + (noteVal ? ' title="' + escAttr(noteVal) + '"' : '') + '>' + esc(nameVal) + '</span>' +
+          '<button class="wbs-icon-btn wbs-name-edit" type="button" title="编辑备注" data-uid="' + escAttr(a.uid) + '">' + PENCIL_SVG + '</button>' +
+          badge + dailyRingsHtml(a) + checkinBadge + invalidAuthBadge + '</div>' + ops + '</div>' +
           '<div class="wbs-meta wbs-secondary-row">' +
           '<div class="wbs-mi wbs-phone-cell' + (isUinMode ? ' wbs-uin-cell' : '') + '"><span class="wbs-lbl">' + idLbl + '</span><span class="wbs-val">' + esc(idVal) + '</span></div>' +
           '<div class="wbs-mi wbs-token-cell"><span class="wbs-lbl">有效期至</span><span class="wbs-val' + (ts.warn ? ' wbs-warn' : '') + '">' + esc(ts.label) + '</span></div>' +
@@ -14278,6 +14291,56 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         list.appendChild(card);
       });
       applyAccountMask();
+      // 备注编辑：点击铅笔 → 名字原位变输入框；Enter/失焦保存，Esc 还原；清空即删除备注
+      function noteAccount(uid) {
+        return state.accounts.filter(function (x) { return String(x.uid) === String(uid); })[0];
+      }
+      function attachNameNoteInput(input) {
+        var uid = input.getAttribute('data-uid');
+        var saved = (noteAccount(uid) || {}).note || '';
+        var done = false;
+        var commit = function () {
+          if (done) return;
+          done = true;
+          var val = input.value.trim().slice(0, 32);
+          if (val === saved) { refresh(); return; }
+          input.disabled = true;
+          api('/api/account-note', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ uid: uid, note: val }) })
+            .then(function (r) {
+              if (r && r.ok) {
+                var acc = noteAccount(uid);
+                if (acc) acc.note = r.meta && typeof r.meta.note === 'string' ? r.meta.note : val;
+                refresh();
+              } else { toast('备注保存失败', true, root); refresh(); }
+            })
+            .catch(function () { toast('备注保存失败', true, root); refresh(); });
+        };
+        input.addEventListener('keydown', function (e) {
+          if (e.key === 'Enter') input.blur();
+          else if (e.key === 'Escape') { done = true; refresh(); }
+        });
+        input.addEventListener('blur', commit);
+      }
+      list.querySelectorAll('.wbs-name-edit').forEach(function (pencil) {
+        pencil.addEventListener('click', function (ev) {
+          ev.stopPropagation();
+          var card = pencil.closest('.wbs-card');
+          var nameSpan = card && card.querySelector('.wbs-name');
+          if (!card || !nameSpan || card.querySelector('.wbs-name-input')) return;
+          var uid = pencil.getAttribute('data-uid') || '';
+          var input = el('input', 'wbs-name-input');
+          input.setAttribute('type', 'text');
+          input.setAttribute('maxlength', '32');
+          input.setAttribute('placeholder', '备注');
+          input.setAttribute('data-uid', uid);
+          input.value = (noteAccount(uid) || {}).note || '';
+          nameSpan.replaceWith(input);
+          pencil.hidden = true;
+          attachNameNoteInput(input);
+          input.focus();
+          input.select();
+        });
+      });
       // 切换按钮：两击确认（第一次点击进入确认态，3s 内再点才真正切换，防止误触）
       list.querySelectorAll('.wbs-acc-switch').forEach(function (btn) {
         var armed = false;
@@ -14402,7 +14465,11 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         }
         if (!account) continue;
         var nameEl = cards[c].querySelector('.wbs-name');
-        if (nameEl) nameEl.textContent = state.mask ? maskAccountName(account.nickname || '(未命名)') : (account.nickname || '(未命名)');
+        if (nameEl) {
+          // 与卡片渲染一致：备注优先于昵称。
+          var shown = (typeof account.note === 'string' && account.note) || account.nickname || '(未命名)';
+          nameEl.textContent = state.mask ? maskAccountName(shown) : shown;
+        }
         var valEl = cards[c].querySelector('.wbs-phone-cell .wbs-val');
         if (valEl) {
           var raw = account.phone ? account.phone : (account.uin ? account.uin : '-');
@@ -15281,7 +15348,15 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '.wbs-info{min-width:0}',
     '.wbs-row1{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:7px;min-height:26px}',
     '.wbs-name-group{display:flex;align-items:center;flex-wrap:wrap;gap:6px;min-width:0}.wbs-checkin-slot{display:inline-flex;align-items:center;flex-wrap:wrap;gap:5px}',
-    '.wbs-name{font-size:14px;font-weight:600;color:var(--wb-color-text-primary,#1f1f1f)}',
+    '.wbs-name{font-size:14px;font-weight:600;color:var(--wb-color-text-primary,#1f1f1f);max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+    /* 名字备注：铅笔编辑按钮 + 行内输入框 */
+    '.wbs-name-edit{width:20px;height:20px;min-width:20px;padding:0;border:none;background:transparent;color:var(--wb-icon-tertiary,#b8b9bd);display:inline-flex;align-items:center;justify-content:center;cursor:pointer;border-radius:4px;flex-shrink:0}',
+    '.wbs-name-edit:hover{background:var(--wb-bg-hover,#e8e9eb);color:var(--wb-color-text-primary,#1f1f1f)}',
+    '.wbs-name-input{height:24px;min-height:24px;width:130px;box-sizing:border-box;padding:2px 8px;font-size:13px;font-weight:600;line-height:1;border-radius:6px;border:1px solid var(--wb-border-strong,#bbb);background:var(--wb-bg-popover,#fff);color:var(--wb-color-text-primary,#1f1f1f);outline:none}',
+    '.wbs-name-input::placeholder{color:var(--wb-icon-tertiary,#aaa);font-weight:400}',
+    'html.cb-dark .wbs-name-input,html[data-theme="dark"] .wbs-name-input{background:rgba(255,255,255,.07);color:rgba(235,236,240,.9);border-color:rgba(255,255,255,.2)}',
+    /* 上次使用时间：切换按钮左侧，与「有效期至」同格式 */
+    '.wbs-last-use{font-size:11px;color:var(--wb-color-text-secondary,#8a8b8f);white-space:nowrap;flex-shrink:0;margin-right:2px}',
     '.wbs-daily-rings{display:inline-flex;width:auto;height:22px;flex:0 0 auto;box-sizing:border-box;align-items:center;justify-content:center;gap:5px;padding:1px 7px 1px 2px;border:0;border-radius:999px;outline:none;cursor:pointer;transition:background-color .15s,box-shadow .15s,color .15s}',
     '.wbs-daily-rings:hover,.wbs-daily-rings[aria-expanded="true"]{background:var(--wbs-primary-soft-hover);box-shadow:0 2px 8px rgba(var(--wbs-primary-rgb),.13),inset 0 1px 0 rgba(255,255,255,.28)}',
     '.wbs-daily-rings:focus-visible{background:color-mix(in srgb,var(--wb-bg-hover,#eef0f3) 86%,transparent);box-shadow:0 0 0 2px color-mix(in srgb,var(--wbs-liquid-fill) 45%,transparent)}',

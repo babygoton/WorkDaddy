@@ -30,7 +30,7 @@ function harness() {
     el, esc: String, escAttr: String, tokenState: () => ({ label: '-' }), isIdentityExpired: a => !!a.identityExpired,
     checkinBadgeHtml: () => '', creditBlockHtml: () => '', applyAccountMask() {}, updateAccountSummary() {},
     updateCheckinCells() {}, updateCreditCell() {}, fetchActivityForAccounts() {}, toast() {}, root: {},
-    PRIMARY_ACCOUNT_SVG: '', SWITCH_SVG: '', TRASH_SVG: '',
+    PRIMARY_ACCOUNT_SVG: '', SWITCH_SVG: '', TRASH_SVG: '', PENCIL_SVG: '',
     setBuildTimeout: fn => fn(), setTimeout: () => 1, clearTimeout() {},
     checkForUpdate() {}, acCheckPromptOnOpen() {}, syncSessionModule() {}, fetchDailyProgressForAccounts() {}, pollActiveSessionCopyNotice() {},
   });
