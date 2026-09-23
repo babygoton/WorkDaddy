@@ -945,8 +945,14 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
   // panes and toasts follow the same language without touching WorkBuddy's DOM.
   var WBS_LANGUAGE_KEY = 'workdaddy.ui.language';
   var WBS_ACCOUNT_MASK_KEY = 'workdaddy.account.mask.' + PROFILE_ID;
+  var WBS_INITIAL_AUTO_COPY_ALL_KEY = 'workdaddy.initial.autoCopyAllSessions.' + PROFILE_ID;
   var WBS_I18N_EN = {
     '总大小': 'Total size',
+    '初始化设置': 'Initial setup',
+    '切换账号自动同步所有会话': 'Automatically sync all sessions when switching accounts',
+    '开启后，切换账号时会自动同步当前账号的全部会话，包括之后新增的会话。': 'When enabled, switching accounts automatically syncs all sessions for the current account, including new sessions added later.',
+    '选择切换账号时是否自动同步会话。此设置之后也可以在「会话」页面修改。': 'Choose whether to sync sessions automatically when switching accounts. You can change this later on the “Sessions” page.',
+    '保存失败，请重试': 'Save failed, please try again',
     '所选账号全部会话的大小，不受时间和大小筛选影响': 'Total size of all sessions for the selected account, regardless of time and size filters',
     '会话大小（消息和附件）': 'Session size (messages and attachments)',
     '筛选会话大小': 'Filter session size',
@@ -5571,6 +5577,78 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       root.querySelector('#wbs-import-file').addEventListener('change', onImportFile);
     }
 
+    function initialAutoCopyAllSeen() {
+      try { return localStorage.getItem(WBS_INITIAL_AUTO_COPY_ALL_KEY) === '1'; } catch (_) { return false; }
+    }
+
+    function openInitialAutoCopyAllModal() {
+      if (!CAPS.sessions || !panel || initialAutoCopyAllSeen() || panel.querySelector('#wbs-initial-auto-copy-all-mask')) return;
+      var previousFocus = document.activeElement;
+      var mask = el('div', 'wbs-modal-mask wbs-modal-mask-panel');
+      mask.id = 'wbs-initial-auto-copy-all-mask';
+      mask.innerHTML = '<div class="wbs-modal wbs-initial-sync-modal" role="dialog" aria-modal="true" aria-labelledby="wbs-initial-sync-title">' +
+        '<div class="wbs-modal-title" id="wbs-initial-sync-title">初始化设置</div>' +
+        '<div class="wbs-initial-sync-copy">选择切换账号时是否自动同步会话。此设置之后也可以在「会话」页面修改。</div>' +
+        '<label class="wbs-account-settings-toggle wbs-initial-sync-toggle"><span>切换账号自动同步所有会话</span><span class="wbs-switch"><input type="checkbox" data-initial-auto-copy-all checked><span class="wbs-switch-slider"></span></span></label>' +
+        '<div class="wbs-password-error wbs-initial-sync-error" role="alert"></div>' +
+        '<div class="wbs-modal-actions"><button class="wbs-modal-btn wbs-modal-ok" type="button" data-initial-auto-copy-all-save>确定</button></div>' +
+        '</div>';
+      panel.appendChild(mask);
+      applyI18n(mask);
+      var save = mask.querySelector('[data-initial-auto-copy-all-save]');
+      var busy = false;
+      function close() {
+        if (busy) return;
+        mask.remove();
+        if (previousFocus && previousFocus.isConnected && typeof previousFocus.focus === 'function') previousFocus.focus();
+      }
+      function showError(message) {
+        var error = mask.querySelector('.wbs-initial-sync-error');
+        if (error) error.textContent = message || '保存失败，请重试';
+      }
+      function saveSetting() {
+        if (busy) return;
+        busy = true;
+        save.disabled = true;
+        save.textContent = wbsTranslateString('保存中…', WBS_LANGUAGE);
+        var enabled = !!mask.querySelector('[data-initial-auto-copy-all]').checked;
+        api('/api/sessions/auto-copy-all', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ enabled: enabled }),
+        }).then(function (response) {
+          if (!response || response.autoCopyAll !== enabled) throw new Error('daemon 未确认设置');
+          try { localStorage.setItem(WBS_INITIAL_AUTO_COPY_ALL_KEY, '1'); } catch (_) {}
+          if (typeof sessionsState !== 'undefined' && sessionsState) sessionsState.autoCopyAll = enabled;
+          if (sessionsPane && sessionsPane.dataset.built) {
+            updateAutoCopyAllButton();
+            updateSessCount();
+          }
+          busy = false;
+          close();
+        }).catch(function (error) {
+          busy = false;
+          save.disabled = false;
+          save.textContent = wbsTranslateString('确定', WBS_LANGUAGE);
+          showError(error && error.message ? error.message : '保存失败，请重试');
+        });
+      }
+      mask.addEventListener('keydown', function (event) {
+        event.stopPropagation();
+        if (event.key !== 'Tab') return;
+        var focusable = Array.from(mask.querySelectorAll('button,input')).filter(function (node) { return !node.disabled && node.getClientRects().length; });
+        if (!focusable.length) return;
+        var first = focusable[0], last = focusable[focusable.length - 1];
+        if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+        if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+      });
+      ['click', 'dblclick', 'pointerdown', 'pointerup', 'mousedown', 'mouseup', 'keyup', 'keypress', 'wheel', 'touchstart', 'touchmove'].forEach(function (type) {
+        mask.addEventListener(type, function (event) { event.stopPropagation(); });
+      });
+      save.addEventListener('click', saveSetting);
+      save.focus();
+    }
+
     function openAccountOrderModal() {
       var existing = root.querySelector('#wbs-account-order-mask');
       if (existing) return;
@@ -9767,6 +9845,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         checkForUpdate(); // 打开面板即检测更新（每次打开都强制查一次新版本）
         try { acCheckPromptOnOpen(); } catch (e) {} // 每次打开面板：指令块丢失则请求 daemon 补写（无 toast）
         try { syncSessionModule(); } catch (e) {} // 每次打开面板刷新会话模块（开关+快捷短语，含外部修改）
+        if (newlyOpened && CAPS.sessions) setBuildTimeout(function () { if (state.open) openInitialAutoCopyAllModal(); }, 0);
       } else {
         if (typeof hideCreditTooltip === 'function') hideCreditTooltip();
         if (typeof closeDailyProgressPopover === 'function') closeDailyProgressPopover();
@@ -14337,7 +14416,11 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         if (closeButton) closeButton.textContent = '关闭（' + Math.max(0, remaining) + '）';
         if (remaining <= 0) closeRotationNotice();
       }, 1000);
-      state.rotationNotice = { node: node, timer: timer, uid: candidate.uid };
+      // Capture the official active conversation while the suggestion is
+      // created. The popup itself is outside the WorkBuddy conversation tree,
+      // and a later renderer refresh may briefly expose a null currentId.
+      var rotationConversationId = typeof acActiveConversationId === 'function' ? acActiveConversationId() : '';
+      state.rotationNotice = { node: node, timer: timer, uid: candidate.uid, conversationId: rotationConversationId };
       fab.classList.add('wbs-fab-credit-alert');
       node.querySelector('.wbs-credit-rotation-close').addEventListener('click', closeRotationNotice);
       var todayBtn = node.querySelector('.wbs-credit-rotation-today');
@@ -14350,7 +14433,9 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         if (button.disabled) return;
         button.disabled = true;
         button.textContent = '切换中…';
-        api('/api/switch', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ uid: candidate.uid, reload: true }) })
+        var currentConversationId = state.rotationNotice && state.rotationNotice.conversationId;
+        if (!currentConversationId && typeof acActiveConversationId === 'function') currentConversationId = acActiveConversationId();
+        api('/api/switch', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ uid: candidate.uid, reload: true, currentConversationId: currentConversationId || '' }) })
           .then(function (result) {
             closeRotationNotice();
             toast('已切换为「' + (result.nickname || candidate.nickname || candidate.uid) + '」', false, root);
@@ -15690,6 +15775,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '.wbs-account-order-list{margin-top:12px;max-height:min(280px,40vh);overflow:auto;overscroll-behavior:contain;display:flex;flex-direction:column;gap:5px}',
     '.wbs-account-order-row{display:flex;align-items:center;gap:8px;min-height:34px;padding:3px 8px;border:1px solid var(--wb-border-subtle);border-radius:8px;background:var(--wb-bg-secondary);font-size:12px}.wbs-account-order-row>span{flex:1;min-width:0;overflow-wrap:anywhere}.wbs-account-order-row button{cursor:grab}.wbs-account-order-row.dragging{opacity:.45}.wbs-account-order-row.drop-target{border-color:var(--wb-accent-blue);background:var(--wb-bg-hover)}',
     '.wbs-account-order-modal :is(button,input):focus-visible{outline:2px solid var(--wb-accent-blue);outline-offset:2px}.wbs-account-order-modal button:disabled{opacity:.5;cursor:default}',
+    '.wbs-initial-sync-modal{box-sizing:border-box;width:380px;max-width:calc(100% - 28px)}.wbs-initial-sync-copy{margin:-2px 0 12px;color:var(--wb-color-text-secondary,#666);font-size:11.5px;line-height:1.6;overflow-wrap:anywhere}.wbs-initial-sync-toggle{margin:0 0 10px}.wbs-initial-sync-error{min-height:17px;margin:0 0 2px}.wbs-initial-sync-modal .wbs-modal-actions{justify-content:flex-end}.wbs-initial-sync-modal .wbs-modal-ok{min-width:66px}',
     '.wbs-credit-summary-popover{position:fixed;z-index:2147483647;box-sizing:border-box;width:300px;max-width:calc(100vw - 16px);padding:12px;background:var(--wb-bg-popover,var(--wb-bg-primary));color:var(--wb-color-text-primary);border:1px solid var(--wb-border-default);border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,.18);font:12px/1.5 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;overflow:auto;overscroll-behavior:contain;pointer-events:auto}',
     '.wbs-credit-summary-head{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:10px}.wbs-credit-summary-head strong{font-size:13px}.wbs-credit-summary-head span,.wbs-credit-summary-foot{font-size:10px;color:var(--wb-color-text-secondary)}',
     '.wbs-credit-summary-chart{max-height:230px;overflow:auto;overscroll-behavior:contain}.wbs-credit-summary-row{display:grid;grid-template-columns:68px minmax(30px,1fr) 58px;align-items:center;gap:8px;min-height:28px}.wbs-credit-summary-row>span{font-size:11px;color:var(--wb-color-text-secondary)}.wbs-credit-summary-row>b{text-align:right;font-size:11px;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}.wbs-credit-summary-track{display:flex;align-items:stretch;gap:2px;height:8px;border-radius:4px;background:var(--wb-bg-tertiary);overflow:visible}.wbs-credit-summary-track .wbs-credit-segment{height:8px;min-width:3px}.wbs-credit-summary-track i{display:block;height:100%;border-radius:4px;}.wbs-credit-summary-foot{border-top:1px solid var(--wb-border-subtle);padding-top:8px;margin-top:8px}',

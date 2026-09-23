@@ -1258,6 +1258,18 @@ test('session copy-all is a separate override with a distinct toggle and hidden 
   assert.match(inject, /\.wbs-sess-summary-tag\{[^}]*border:0[^}]*background:transparent/);
 });
 
+test('first panel open presents the session sync initialization modal once per profile', () => {
+  const inject = read('inject.js');
+  assert.match(inject, /WBS_INITIAL_AUTO_COPY_ALL_KEY = 'workdaddy\.initial\.autoCopyAllSessions\.' \+ PROFILE_ID/);
+  assert.match(inject, /function initialAutoCopyAllSeen\(\)[\s\S]*localStorage\.getItem\(WBS_INITIAL_AUTO_COPY_ALL_KEY\) === '1'/);
+  assert.match(inject, /function openInitialAutoCopyAllModal\(\)[\s\S]*id = 'wbs-initial-auto-copy-all-mask'/);
+  assert.match(inject, /切换账号自动同步所有会话[\s\S]*data-initial-auto-copy-all checked/);
+  assert.match(inject, /api\('\/api\/sessions\/auto-copy-all'[\s\S]*JSON\.stringify\(\{ enabled: enabled \}\)/);
+  assert.match(inject, /localStorage\.setItem\(WBS_INITIAL_AUTO_COPY_ALL_KEY, '1'\)/);
+  assert.match(inject, /newlyOpened && CAPS\.sessions\) setBuildTimeout\(function \(\) \{ if \(state\.open\) openInitialAutoCopyAllModal\(\); \}, 0\)/);
+  assert.match(inject, /\.wbs-initial-sync-modal\{[^}]*width:380px/);
+});
+
 test('session auto-copy plans preserve physical source rows while list APIs deduplicate display', () => {
   const daemon = read('daemon.js');
   const lib = read('lib.js');

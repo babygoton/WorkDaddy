@@ -100,6 +100,8 @@ test('rotation completion request uses real segment detection and keeps the veri
   assert.match(daemon, /await refreshCreditRotationAccounts\(uid, refreshed\)/);
   assert.match(daemon, /catch \(_\) \{ return json\(res, 200, \{ ok: true, shouldSuggest: false/);
   assert.match(inject, /检测到积分到期时间最临近的账号/);
+  assert.match(inject, /rotationConversationId = typeof acActiveConversationId === 'function' \? acActiveConversationId\(\) : ''/);
+  assert.match(inject, /currentConversationId: currentConversationId \|\| ''/);
   assert.doesNotMatch(inject, /action === 'remove'[\s\S]{0,500}checkCreditRotationAfterSession/);
   assert.match(inject, /Account rotation must wait for an actual reply/);
   assert.match(inject, /Use the untransformed fixed position/);
