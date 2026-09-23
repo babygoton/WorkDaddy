@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
+const vm = require('node:vm');
 
 const repoRoot = path.resolve(__dirname, '..');
 const read = (name) => fs.readFileSync(path.join(repoRoot, 'scripts', name), 'utf8').replace(/\r\n/g, '\n');
@@ -158,20 +159,146 @@ test('account switching refreshes WorkBuddy after replacing auth without restart
   const lib = read('lib.js');
   const routeStart = script.indexOf("if (req.method === 'POST' && p === '/api/switch')");
   assert.notEqual(routeStart, -1);
-  const route = script.slice(routeStart, routeStart + 2600);
+  const route = script.slice(routeStart, routeStart + 5200);
   const copy = route.indexOf('switchTo(DATA_DIR, uid, log)');
   assert.notEqual(copy, -1);
-  assert.match(route, /await reloadWorkBuddyPage\(\)/);
+  assert.match(route, /await reloadWorkBuddyPage\(\{ waitForInjection: false \}\)/);
   assert.doesNotMatch(route, /await quitWorkBuddy\(\)/);
   assert.doesNotMatch(route, /await relaunchWorkBuddy\(\)/);
   assert.match(lib, /function retireLogoutMarker/);
   assert.match(lib, /retireLogoutMarker\(log\);/);
 });
 
+test('account switching carries the active conversation and opens its copied target', () => {
+  const script = read('daemon.js');
+  const inject = read('inject.js');
+  const compat = read('workbuddy-compat.js');
+  const routeStart = script.indexOf("if (req.method === 'POST' && p === '/api/switch')");
+  const route = script.slice(routeStart, routeStart + 9000);
+  assert.match(route, /currentConversationId/);
+  assert.match(route, /SELECT user_id FROM sessions WHERE id = \? AND deleted_at IS NULL LIMIT 1;/);
+  assert.match(route, /不属于源账号的当前会话/);
+  const dirtyStart = script.indexOf("if (req.method === 'POST' && p === '/api/sessions/dirty')");
+  const dirtyRoute = script.slice(dirtyStart);
+  assert.match(dirtyRoute.slice(0, 900), /claimedUid && claimedUid !== currentUid/);
+  assert.match(dirtyRoute.slice(0, 900), /忽略旧会话通知/);
+  assert.match(route, /openSessionId/);
+  assert.match(inject, /conversations\.currentId/);
+  assert.match(inject, /currentConversationId: acSwitchConversationId\(\)/);
+  assert.match(inject, /function acSwitchConversationId()/);
+  assert.match(inject, /openCopiedSession/);
+  assert.match(compat, /function findConversationActivationApi\(doc\)/);
+  assert.match(compat, /setCurrentConversation/);
+  assert.match(compat, /sdkNavigateKind/);
+  assert.match(compat, /adapter\.emit\('jump-to-conversation'/);
+  assert.match(inject, /activationApi\.hasSession\(id\)/);
+  assert.match(inject, /job\.openSessionId\) setBuildTimeout\(function \(\) \{ openCopiedSession\(job\.openSessionId\); \}, 1000\)/);
+  assert.match(inject, /OPEN_SESSION_TIMEOUT = 15000/);
+  assert.match(inject, /String\(acActiveConversationId\(\) \|\| ''\) === id/);
+  assert.match(inject, /activationApi\.activate\(id\)/);
+  assert.match(inject, /if \(isActive\(\)\) \{/);
+  assert.match(inject, /\[session-activation\]/);
+  assert.match(inject, /activationLog\('has-session'/);
+  assert.match(inject, /activationLog\('activate-called'/);
+  assert.match(inject, /'confirmed' : 'not-confirmed'/);
+  assert.match(inject, /activationLog\('timeout'/);
+  assert.match(inject, /setBuildTimeout\(function \(\) \{ openCopiedSession\(id, started, attempt \+ 1\); \}, 500\)/);
+});
+
+test('copied-session activation trusts the official handler even when projection ids are empty', async () => {
+  const inject = read('inject.js');
+  const start = inject.indexOf('    function openCopiedSession(sessionId, startedAt) {');
+  const end = inject.indexOf('\n    // token 过期状态', start);
+  assert.ok(start >= 0 && end > start);
+  let activeId = '';
+  let activations = 0;
+  const logs = [];
+  const context = {
+    Date,
+    String,
+    Promise,
+    console: { log: (...args) => logs.push(args.join(' ')) },
+    setBuildTimeout: setTimeout,
+    acActiveConversationId: () => activeId,
+    WBS_COMPAT: {
+      findConversationActivationApi() {
+        return {
+          authoritative: true,
+          hasSession: () => Promise.resolve(null),
+          activate() {
+            activations++;
+            return true;
+          },
+        };
+      },
+    },
+    document: {
+      querySelector() { return null; },
+      querySelectorAll() { return []; },
+    },
+  };
+  vm.runInNewContext(inject.slice(start, end), context);
+  context.openCopiedSession('copied-session');
+  await new Promise((resolve) => setTimeout(resolve, 800));
+  assert.equal(activations, 1, 'an authoritative handler must not be called repeatedly when projection ids are unavailable');
+  assert.equal(activeId, '');
+  assert.ok(logs.some((line) => line.includes('[session-activation]') && line.includes('has-session')));
+  assert.ok(logs.some((line) => line.includes('official-dispatched')));
+});
+
+test('copied-session activation retries an unverified official dispatch', async () => {
+  const inject = read('inject.js');
+  const start = inject.indexOf('    function openCopiedSession(sessionId, startedAt) {');
+  const end = inject.indexOf('\n    // token 过期状态', start);
+  let activeId = '';
+  let activations = 0;
+  const logs = [];
+  const context = {
+    Date,
+    String,
+    Promise,
+    console: { log: (...args) => logs.push(args.join(' ')) },
+    setBuildTimeout: setTimeout,
+    acActiveConversationId: () => activeId,
+    WBS_COMPAT: {
+      findConversationActivationApi() {
+        return {
+          authoritative: true,
+          hasSession: () => Promise.resolve(false),
+          activate() {
+            activations++;
+            if (activations >= 2) activeId = 'copied-session';
+            return true;
+          },
+        };
+      },
+    },
+    document: {
+      querySelector() { return null; },
+      querySelectorAll() { return []; },
+    },
+  };
+  vm.runInNewContext(inject.slice(start, end), context);
+  context.openCopiedSession('copied-session');
+  await new Promise((resolve) => setTimeout(resolve, 3800));
+  assert.ok(activations >= 2, 'an unverified official dispatch must be confirmed and retried');
+  assert.equal(activeId, 'copied-session');
+  assert.ok(logs.some((line) => line.includes('official-dispatched-unverified')));
+  assert.ok(logs.some((line) => line.includes('not-confirmed')));
+  assert.ok(logs.some((line) => line.includes('confirmed')));
+});
+
+test('account switching does not auto-select a session by title after reload', () => {
+  const script = read('daemon.js');
+  assert.doesNotMatch(script, /autoFocusSessionByTitle/);
+  assert.doesNotMatch(script, /sourceSessionTitle/);
+  assert.doesNotMatch(script, /\[auto-focus\]/);
+});
+
 test('WorkDaddy-triggered reload injects on the new main execution context before page load', () => {
   const script = read('daemon.js');
-  const reloadStart = script.indexOf('async function reloadWorkBuddyPage()');
-  const reloadEnd = script.indexOf('\n// 切换账号后自动打开', reloadStart);
+  const reloadStart = script.indexOf('async function reloadWorkBuddyPage(');
+  const reloadEnd = script.indexOf('\nconst WORKBUDDY_TARGET', reloadStart);
   const reload = script.slice(reloadStart, reloadEnd);
   const eventsStart = script.indexOf('function onCdpEvent(method, params)');
   const eventsEnd = script.indexOf('\nasync function cdpLoop()', eventsStart);
@@ -196,13 +323,13 @@ test('WorkDaddy-triggered reload injects on the new main execution context befor
   const switchWrite = switchRoute.indexOf('switchTo(DATA_DIR, uid, log)');
   assert.notEqual(switchWrite, -1);
   assert.doesNotMatch(switchRoute.slice(0, switchWrite), /buildAutoCopyPlan\(/, 'session planning must not delay auth replacement and renderer reload');
-  assert.ok(switchRoute.indexOf('await reloadWorkBuddyPage()') < switchRoute.indexOf('startAutoCopyJob('), 'widget readiness must precede the synchronous auto-copy queue');
+  assert.ok(switchRoute.indexOf('await reloadWorkBuddyPage({ waitForInjection: false })') < switchRoute.indexOf('startAutoCopyJob('), 'renderer reload must precede the background auto-copy queue');
   const autoCopyStart = script.indexOf('function startAutoCopyJob(');
   const autoCopyEnd = script.indexOf('\nfunction publicAutoCopyJob(', autoCopyStart);
   const autoCopy = script.slice(autoCopyStart, autoCopyEnd);
-  assert.ok((autoCopy.match(/await yieldAutoCopyToRenderer\(\)/g) || []).length >= 2, 'auto-copy must yield before planning and each synchronous file batch');
+  assert.ok((autoCopy.match(/await yieldAutoCopyToRenderer\([^)]*\)/g) || []).length >= 2, 'auto-copy must yield before planning and each synchronous file batch');
 
-  const yieldStart = script.indexOf('async function yieldAutoCopyToRenderer()');
+  const yieldStart = script.indexOf('async function yieldAutoCopyToRenderer(');
   const syncStart = script.indexOf('const MAX_SESSION_EXPORT_FILES', yieldStart);
   const yieldHelper = script.slice(yieldStart, syncStart);
   assert.match(yieldHelper, /setImmediate/);
@@ -882,7 +1009,10 @@ test('robot button decorations remain visible alongside the eye states', () => {
 
 test('robot button defaults to the window bottom-right and snaps right after free dragging', () => {
   const script = read('inject.js');
-  assert.match(script, /FAB_POSITION_KEY = 'wbs-fab-bottom-' \+ PROFILE_ID/);
+  assert.match(script, /FAB_POSITION_KEY = 'wbs-fab-bottom-v2-' \+ PROFILE_ID/);
+  assert.match(script, /FAB_LEGACY_POSITION_KEY = 'wbs-fab-bottom-' \+ PROFILE_ID/);
+  assert.match(script, /raw !== null && raw !== '' && isFinite\(value\)/);
+  assert.match(script, /localStorage\.removeItem\(FAB_LEGACY_POSITION_KEY\)/);
   assert.match(script, /setPointerCapture\(e\.pointerId\)/);
   assert.match(script, /FAB_DRAG_THRESHOLD = 6/);
   assert.match(script, /fabDrag\.startRight - deltaX/);
@@ -892,6 +1022,9 @@ test('robot button defaults to the window bottom-right and snaps right after fre
   assert.match(script, /touchAction = 'none'/);
   assert.match(script, /is-snapping/);
   assert.match(script, /cubic-bezier\(\.22,1\.35,\.36,1\)/);
+  const pointerDown = script.slice(script.indexOf("listen(handle, 'pointerdown'"), script.indexOf("listen(handle, 'pointermove'"));
+  assert.match(pointerDown, /e\.stopPropagation\(\)/);
+  assert.doesNotMatch(pointerDown, /e\.preventDefault\(\)/);
   assert.doesNotMatch(script, /homeComposerCorner|aiHomeComposerCorner|cb-message-queue\.cb-expand/);
 });
 
@@ -997,6 +1130,30 @@ test('cached update metadata is rechecked against the running daemon version', (
   assert.match(checkUpdate, /const cachedLatest = String\(c\.latest \|\| ''\)\.replace\(\/\^v\//);
   assert.match(checkUpdate, /updateState\.hasUpdate = semverCompare\(cachedLatest, DAEMON_VERSION\) > 0/);
   assert.doesNotMatch(checkUpdate, /updateState\.hasUpdate = !!c\.hasUpdate/);
+});
+
+test('update release selection uses the highest source version and a packaged asset as tie-breaker', () => {
+  const daemon = read('daemon.js');
+  const checkStart = daemon.indexOf('function checkUpdate(force)');
+  const downloadStart = daemon.indexOf('\nfunction downloadUpdate()', checkStart);
+  const checkUpdate = daemon.slice(checkStart, downloadStart);
+  assert.match(checkUpdate, /const attempts = order\.map/);
+  assert.match(checkUpdate, /return Promise\.all\(attempts\)/);
+  const start = daemon.indexOf('function semverCompare');
+  const end = daemon.indexOf('\n// 检查更新：', start);
+  assert.ok(start >= 0 && end > start);
+  const context = {};
+  vm.runInNewContext(daemon.slice(start, end) + '\nthis.selectBestUpdateCandidate = selectBestUpdateCandidate;', context);
+  const select = context.selectBestUpdateCandidate;
+  assert.equal(typeof select, 'function');
+  assert.equal(select([
+    { source: 'github', order: 0, latest: '1.2.4', asset: { name: 'WorkDaddy-1.2.4-win64.zip' } },
+    { source: 'gitee', order: 1, latest: '1.2.5', asset: { name: 'WorkDaddy-Setup-1.2.5.exe' } },
+  ]).source, 'gitee');
+  assert.equal(select([
+    { source: 'github', order: 0, latest: '1.2.5', asset: null },
+    { source: 'gitee', order: 1, latest: '1.2.5', asset: { name: 'WorkDaddy-Setup-1.2.5.exe' } },
+  ]).source, 'gitee');
 });
 
 test('about page clears stale update UI when no newer version exists', () => {
@@ -1155,10 +1312,23 @@ test('automatic session copy includes workspace-only rules when the initial plan
   assert.match(daemon, /startAutoCopyJob\(sourceUid, uid, \[\]/);
   assert.match(daemon, /copySessionRecord\(src, targetUid/);
   assert.match(daemon, /sessionSync\.compareSnapshots\(left, right\)/);
-  assert.match(daemon, /ensureAutoCopySessions\(DATA_DIR, source, lineageSessionIds, \{ enabled: !rules\.allSessions \}\)/);
+  assert.match(daemon, /ensureAutoCopySessions\(DATA_DIR, source, missingLineageIds, \{ enabled: !rules\.allSessions \}\)/);
   assert.match(inject, /data-auto-kind="' \+ kind \+ '"/);
   assert.match(inject, /autoCopyButton\('workspace'/);
   assert.match(inject, /autoCopyButton\('session'/);
+});
+
+test('automatic session copy filters clean sessions before target queries and snapshot work', () => {
+  const daemon = read('daemon.js');
+  const inject = read('inject.js');
+  assert.match(daemon, /const dirtyIndex = (?:getSessionDirtyIndex\(\)|typeof getSessionDirtyIndex === 'function'[\s\S]*?getSessionDirtyIndex\(\))[\s\S]*const dirtyRows = selectedRows\.filter\(\(\) => false\);[\s\S]*for \(const row of selectedRows\)[\s\S]*dirtyIndex\.shouldSync\(source, row\.id\)[\s\S]*mappingSourceRevisionMatches/);
+  assert.match(daemon, /const SESSION_DIRTY_FILE = (?:path\.join\(DATA_DIR, 'session-dirty\.json'\)|typeof DATA_DIR !== 'undefined'[\s\S]*?session-dirty\.json)/);
+  assert.match(daemon, /POST' && p === '\/api\/sessions\/dirty'/);
+  assert.match(daemon, /clearAutoDirty\(\);/);
+  assert.match(inject, /function sessionCopyIsNoop\(job\)/);
+  assert.match(inject, /if \(sessionCopyIsNoop\(job\)\) \{[\s\S]*closeSessionCopyNotice\(\);/);
+  assert.match(inject, /createSessionDirtyTracker\(function \(payload\)/);
+  assert.match(inject, /sessionDirtyTracker\.baseline\(records\)/);
 });
 
 test('session copy-all is a separate override with a distinct toggle and hidden row controls', () => {
@@ -1190,6 +1360,18 @@ test('session copy-all is a separate override with a distinct toggle and hidden 
   assert.match(inject, /\.wbs-sess-summary-tag\{[^}]*border:0[^}]*background:transparent/);
 });
 
+test('first panel open presents the session sync initialization modal once per profile', () => {
+  const inject = read('inject.js');
+  assert.match(inject, /WBS_INITIAL_AUTO_COPY_ALL_KEY = 'workdaddy\.initial\.autoCopyAllSessions\.' \+ PROFILE_ID/);
+  assert.match(inject, /function initialAutoCopyAllSeen\(\)[\s\S]*localStorage\.getItem\(WBS_INITIAL_AUTO_COPY_ALL_KEY\) === '1'/);
+  assert.match(inject, /function openInitialAutoCopyAllModal\(\)[\s\S]*id = 'wbs-initial-auto-copy-all-mask'/);
+  assert.match(inject, /切换账号自动同步所有会话[\s\S]*data-initial-auto-copy-all checked/);
+  assert.match(inject, /api\('\/api\/sessions\/auto-copy-all'[\s\S]*JSON\.stringify\(\{ enabled: enabled \}\)/);
+  assert.match(inject, /localStorage\.setItem\(WBS_INITIAL_AUTO_COPY_ALL_KEY, '1'\)/);
+  assert.match(inject, /newlyOpened && CAPS\.sessions\) setBuildTimeout\(function \(\) \{ if \(state\.open\) openInitialAutoCopyAllModal\(\); \}, 0\)/);
+  assert.match(inject, /\.wbs-initial-sync-modal\{[^}]*width:380px/);
+});
+
 test('session auto-copy plans preserve physical source rows while list APIs deduplicate display', () => {
   const daemon = read('daemon.js');
   const lib = read('lib.js');
@@ -1204,13 +1386,16 @@ test('session pane restores and renders persistent auto-copy progress', () => {
   const daemon = read('daemon.js');
   const inject = read('inject.js');
   assert.match(daemon, /GET' && p === '\/api\/sessions\/auto-copy\/active'/);
-  assert.match(daemon, /function activeAutoCopyJob\(\)/);
+  assert.match(daemon, /function activeAutoCopyJob\(targetUid = ''\)/);
   assert.match(inject, /id="wbs-sess-copy-progress"/);
   assert.match(inject, /function renderSessionCopyProgress\(job\)/);
+  assert.match(inject, /if \(!active && job\.status !== 'error'\) \{ box\.hidden = true; return; \}/);
   assert.match(inject, /\/api\/sessions\/auto-copy\/active/);
   assert.match(inject, /aria-valuenow/);
   assert.match(inject, /\.wbs-sess-copy-progress\{/);
   assert.match(inject, /html\.cb-dark \.wbs-sess-copy-progress/);
+  assert.doesNotMatch(inject, /wbs-session-copy-count["']/);
+  assert.doesNotMatch(inject, /wbs-sess-copy-count["']/);
 });
 
 test('account switching shows a compact copy notice and defers conflict feedback until completion', () => {
@@ -1229,11 +1414,14 @@ test('account switching shows a compact copy notice and defers conflict feedback
   assert.match(inject, /wbs-session-copy-notice/);
   assert.match(inject, /function pollSessionCopyNotice\(jobId, accountName\)/);
   assert.match(inject, /sessionCopySummaryText\(job\)/);
+  assert.match(inject, /return '同步 ' \+ \(Number\(job && job\.copied\) \|\| 0\) \+/);
+  assert.doesNotMatch(inject, /return '同步 ' \+ \(Number\(job && job\.copied\) \|\| 0\) \+ ' · 跳过 '/);
   assert.match(inject, /会话同步完成，已保留分叉/);
   assert.match(inject, /会话同步明细/);
   assert.match(inject, /会话同步结果筛选/);
   assert.match(inject, /正在同步已标记会话/);
-  assert.match(inject, /setBuildTimeout\(closeSessionCopyNotice, 5000\)/);
+  assert.match(inject, /var countdownSeconds = copiedCount \|\| failedCount \? 5 : 3;/);
+  assert.match(inject, /setBuildTimeout\(closeSessionCopyNotice, countdownSeconds \* 1000\)/);
   assert.match(inject, /sessionCopyNoticeChecked/);
   assert.match(inject, /sessionCopyNoticeActiveAttempts < 10/);
   assert.match(inject, /data-session-copy-details/);
@@ -1242,12 +1430,20 @@ test('account switching shows a compact copy notice and defers conflict feedback
   assert.match(inject, /data-session-copy-tab/);
   assert.match(inject, /wbs-session-copy-detail-tabs/);
   assert.match(inject, /wbs-model-tabs wbs-session-copy-detail-tabs/);
+  assert.doesNotMatch(inject, /\{ id: 'skipped', label: '跳过'/);
   assert.match(inject, /grid-template-rows:auto auto minmax\(0,1fr\) auto/);
   assert.match(inject, /sourceLabel = sessionCopyAccountLabel/);
   assert.match(inject, /\.wbs-session-copy-status'\)\.hidden = !active/);
   assert.match(inject, /setBuildTimeout\(pollActiveSessionCopyNotice, 250\)/);
   assert.match(inject, /renderer before the daemon enqueues/);
   assert.match(inject, /html\.cb-dark \.wbs-session-copy-notice/);
+});
+
+test('new profiles initialize with the light theme without overwriting saved themes', () => {
+  const daemon = read('daemon.js');
+  assert.match(daemon, /if \(!fs\.existsSync\(curFile\)\) \{[\s\S]*JSON\.stringify\(\{ id: 'default'/);
+  assert.match(daemon, /首次初始化：默认主题 -> 浅色主题（default）/);
+  assert.doesNotMatch(daemon, /首次初始化：默认主题 -> WorkDaddy 壁纸主题（nebula）/);
 });
 
 test('session conflict reset is retired and details stay at the left', () => {

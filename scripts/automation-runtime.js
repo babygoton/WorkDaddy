@@ -68,7 +68,7 @@ function createRendererGate() {
 }
 
 // Executed read-only inside the renderer. Never returns composer or message text.
-function probeSessionReceipt() {
+function probeSessionReceipt(expectedReceipt) {
   const compat = window.__wbsWorkBuddyCompat;
   if (!compat) return null;
   const selected = compat.getSelectedConversationId(document);
@@ -79,8 +79,16 @@ function probeSessionReceipt() {
     const session = controller.getSessionViewState();
     const messages = Array.isArray(state.messages) ? state.messages : [];
     const users = messages.filter(m => (m.messageType || m.role) === 'user');
-    const user = users[users.length-1];
-    const last = [...messages].reverse().find(m => (m.messageType || m.role) === 'assistant' && !/^timeline:/.test(String(m.id || '')));
+    const expectedUserMessageId = String(expectedReceipt && expectedReceipt.userMessageId || '');
+    const expectedRequestId = String(expectedReceipt && expectedReceipt.requestId || '');
+    const user = (expectedUserMessageId || expectedRequestId)
+      ? users.find(m => String(m.id || m.requestId || '') === expectedUserMessageId || String(m.requestId || '') === expectedRequestId) || users[users.length-1]
+      : users[users.length-1];
+    const userRequestId = String(user && user.requestId || expectedRequestId || '');
+    const assistants = messages.filter(m => (m.messageType || m.role) === 'assistant' && !/^timeline:/.test(String(m.id || '')));
+    const last = (expectedRequestId || userRequestId)
+      ? [...assistants].reverse().find(m => String(m.requestId || '') === (expectedRequestId || userRequestId)) || assistants[assistants.length-1]
+      : assistants[assistants.length-1];
     const error = typeof controller.getErrorViewState === 'function' ? controller.getErrorViewState() : {};
     const extra = last && last.extra || {};
     return {
@@ -92,13 +100,14 @@ function probeSessionReceipt() {
       complete:!!(last && (Object.prototype.hasOwnProperty.call(extra,'isRequestTerminal') ? extra.isRequestTerminal === true : last.complete === true)),
       cancelled:extra.isCancelled === true,
       error:!!(error && (error.error || error.hasError)),
-      busy:!!(state.streamingRequestId || state.streamingMessageId || session && (session.isBusy || session.isRunActive || session.isTurnActive || session.isSending || session.isPending || session.isHydrating)),
+      busy:!!((state.streamingRequestId && (!userRequestId || String(state.streamingRequestId) === userRequestId)) || (state.streamingMessageId && (!userRequestId || String(state.streamingMessageId) === userRequestId)) || last && !((Object.prototype.hasOwnProperty.call(extra,'isRequestTerminal') ? extra.isRequestTerminal === true : last.complete === true)) || !user && session && (session.isBusy || session.isRunActive || session.isTurnActive || session.isSending || session.isPending || session.isHydrating)),
     };
   } catch (_) { return null; }
 }
 function receiptComplete(receipt, snapshot) {
   if (!snapshot || snapshot.conversationId !== receipt.conversationId) throw new Error('目标会话不再可见，已停止等待');
-  if (snapshot.userMessageId !== receipt.userMessageId) throw new Error('会话已有其他请求，已停止等待');
+  const snapshotRequestId = snapshot.requestId || snapshot.assistantRequestId || '';
+  if (snapshot.userMessageId !== receipt.userMessageId && snapshotRequestId !== receipt.requestId) throw new Error('会话已有其他请求，已停止等待');
   if (snapshot.error || snapshot.cancelled) throw new Error('会话回复失败或已取消');
   if (receipt.requestId && snapshot.assistantRequestId && snapshot.assistantRequestId !== receipt.requestId) return false;
   return !!snapshot.assistantId && snapshot.assistantId !== receipt.baselineAssistantId && snapshot.complete && !snapshot.busy;

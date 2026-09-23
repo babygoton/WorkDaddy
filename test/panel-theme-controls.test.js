@@ -13,6 +13,8 @@ test('theme choices do not activate official data-theme scopes and robot radios 
   assert.match(pane, /class="wbs-theme-seg wbs-robot-seg"/);
   assert.match(pane, /class="wbs-theme-opt wbs-robot-option"/);
   assert.match(source, /closest\('#wbs-theme-seg \.wbs-theme-opt'\)/);
+  assert.match(pane, /wbs-avatar-default-option/);
+  assert.match(pane, /value="default"/);
 });
 test('account order is centered in the panel and always shows names without numbered rows', () => {
   const modal = section('function openAccountOrderModal()', 'function setupCreditSummary()');
@@ -47,8 +49,10 @@ test('avatar presets retain legacy custom uploads and are safe before official c
   assert.equal(choose(null, 'official', 'brand').src, 'official');
   assert.equal(choose('workbuddy', 'official', 'brand').preset, 'workbuddy');
   assert.equal(choose('workdaddy', 'official', 'brand').src, 'brand');
+  assert.equal(choose('default', 'official', 'brand', 'default-avatar').src, 'default-avatar');
   assert.equal(choose('data:image/png;base64,upload', 'official', 'brand').src, 'data:image/png;base64,upload');
   assert.equal(choose(null, null, 'brand').src, null);
   assert.equal(choose('javascript:bad', 'official', 'brand').src, 'official');
+  assert.match(source, /if \(!target\) \{\s*restoreAvatarDom\(\);\s*return;/);
   assert.doesNotMatch(source, /id="wbs-avatar-reset"/);
 });

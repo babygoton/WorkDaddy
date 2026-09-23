@@ -15,9 +15,12 @@ test('Linux release builds a versioned, self-contained Debian package without ro
   assert.match(source, /CROSS_PACKAGE=1/);
   assert.match(source, /tarfile\.open\(control, 'w:xz'\)/);
   assert.match(source, /tarfile\.open\(data, 'w:xz'\)/);
-  assert.match(source, /node != b'\\x7fELF\\x02'/);
-  assert.match(source, /node-v22\.23\.1-linux-x64\.tar\.xz/);
-  assert.match(source, /9749e988f437343b7fa832c69ded82a312e41a03116d766797ac14f6f9eee578/);
+  assert.match(source, /expected_machine = \{'amd64': 62, 'arm64': 183\}/);
+  assert.match(source, /actual_machine = int\.from_bytes\(node\[18:20\], 'little'\)/);
+  assert.match(source, /WORKDADDY_BUILD_ARCH/);
+  assert.match(source, /node-v22\.23\.1-linux-\$NODE_ARCH\.tar\.xz/);
+  assert.match(source, /amd64[\s\S]*x64[\s\S]*9749e988f437343b7fa832c69ded82a312e41a03116d766797ac14f6f9eee578/);
+  assert.match(source, /arm64[\s\S]*arm64[\s\S]*NODE_SHA256/);
   assert.match(source, /ws-8\.18\.3\.tgz/);
   assert.match(source, /424be604c8e7926fc29a1f067bf2dac256af3bcea62fe30395018bbaf8a9be2a/);
   assert.match(source, /scripts\/runtime\/node\/node/);
@@ -26,8 +29,9 @@ test('Linux release builds a versioned, self-contained Debian package without ro
   assert.match(source, /scripts\/assets\/workdaddy-logo\.svg/);
   assert.match(source, /build_package cn workdaddy \/opt\/workdaddy/);
   assert.match(source, /build_package ai workdaddy-ai \/opt\/workdaddy-ai/);
-  assert.match(source, /WorkDaddy_\$\{VERSION\}_amd64\.deb/);
-  assert.match(source, /WorkDaddy-AI_\$\{VERSION\}_amd64\.deb/);
+  assert.match(source, /WorkDaddy_\$\{VERSION\}_\$\{DEB_ARCH\}\.deb/);
+  assert.match(source, /WorkDaddy-AI_\$\{VERSION\}_\$\{DEB_ARCH\}\.deb/);
+  assert.match(source, /Architecture: \$DEB_ARCH/);
   assert.match(source, /Exec=\$install_root\/scripts\/launch-gui-linux\.sh \$profile/);
   assert.match(source, /workdaddy-\$profile\.png/);
   assert.match(source, /Icon=workdaddy-\$profile/);
@@ -58,8 +62,8 @@ test('built Linux packages have matching metadata and isolated payloads', { skip
   const debs = process.env.WORKDADDY_LINUX_DEBS.split(path.delimiter).filter(Boolean);
   assert.equal(debs.length, 2);
   const expected = new Map([
-    ['WorkDaddy_', { packageName: 'workdaddy', root: 'opt/workdaddy', desktop: 'workdaddy-cn.desktop', filePattern: /^WorkDaddy_\d+\.\d+\.\d+_amd64\.deb$/ }],
-    ['WorkDaddy-AI_', { packageName: 'workdaddy-ai', root: 'opt/workdaddy-ai', desktop: 'workdaddy-ai.desktop', filePattern: /^WorkDaddy-AI_\d+\.\d+\.\d+_amd64\.deb$/ }],
+    ['WorkDaddy_', { packageName: 'workdaddy', root: 'opt/workdaddy', desktop: 'workdaddy-cn.desktop', filePattern: /^WorkDaddy_\d+\.\d+\.\d+_(?:amd64|arm64)\.deb$/ }],
+    ['WorkDaddy-AI_', { packageName: 'workdaddy-ai', root: 'opt/workdaddy-ai', desktop: 'workdaddy-ai.desktop', filePattern: /^WorkDaddy-AI_\d+\.\d+\.\d+_(?:amd64|arm64)\.deb$/ }],
   ]);
   for (const deb of debs) {
     const fileName = path.basename(deb);
@@ -88,7 +92,9 @@ test('built Linux packages have matching metadata and isolated payloads', { skip
   } finally {
     fs.rmSync(extracted, { recursive: true, force: true });
   }
-  assert.match(path.basename(deb), new RegExp(version.stdout.trim().replace(/\./g, '\\.') + '_amd64\\.deb$'));
+  const architecture = spawnSync('dpkg-deb', ['-f', deb, 'Architecture'], { encoding: 'utf8' }).stdout.trim();
+  assert.ok(['amd64', 'arm64'].includes(architecture));
+  assert.match(path.basename(deb), new RegExp(version.stdout.trim().replace(/\./g, '\\.') + '_' + architecture + '\\.deb$'));
   }
 });
 
@@ -102,9 +108,10 @@ test('cross-built Debian archives expose standard member names and control metad
   assert.equal(control.status, 0, String(control.stderr));
   const metadata = spawnSync('tar', ['-xOJf', '-', './control'], { input: control.stdout, encoding: 'utf8' });
   assert.equal(metadata.status, 0, metadata.stderr);
-  const version = path.basename(deb).match(/^(?:WorkDaddy|WorkDaddy-AI)_(\d+\.\d+\.\d+)_amd64\.deb$/)?.[1];
-  assert.ok(version);
+  const match = path.basename(deb).match(/^(?:WorkDaddy|WorkDaddy-AI)_(\d+\.\d+\.\d+)_(amd64|arm64)\.deb$/);
+  assert.ok(match);
+  const [, version, architecture] = match;
   assert.ok(metadata.stdout.split('\n').includes(`Version: ${version}`));
-  assert.match(metadata.stdout, /^Architecture: amd64$/m);
+  assert.match(metadata.stdout, new RegExp('^Architecture: ' + architecture + '$', 'm'));
   }
 });

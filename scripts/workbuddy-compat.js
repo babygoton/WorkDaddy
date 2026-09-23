@@ -365,6 +365,45 @@
     return findModernQueueAdapter(doc) || findLegacyQueueAdapter(doc);
   }
 
+  function functionLooksLikeConversationNavigation(value) {
+    if (typeof value !== 'function') return false;
+    try {
+      var source = Function.prototype.toString.call(value);
+      return source.indexOf('dismissHoverPeek') >= 0 &&
+        source.indexOf('syncTaskRouteFromClick') >= 0;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function findConversationNavigationHandler(doc) {
+    if (!doc || typeof doc.querySelector !== 'function') return null;
+    var roots = [
+      doc.querySelector('#root > div'),
+      doc.querySelector('.conversation-list'),
+      doc.querySelector('.conversation-shell'),
+      doc.querySelector('.conversation-item'),
+    ];
+    for (var ri = 0; ri < roots.length; ri++) {
+      var root = roots[ri];
+      var fiber = reactFiber(root);
+      var fiberSeen = 0;
+      while (fiber && fiberSeen++ < 700) {
+        var hook = fiber.memoizedState;
+        var hookSeen = 0;
+        while (hook && hookSeen++ < 700) {
+          var state = hook.memoizedState;
+          var candidate = state && typeof state === 'object' ? state.current : null;
+          if (functionLooksLikeConversationNavigation(candidate)) return candidate;
+          if (functionLooksLikeConversationNavigation(state)) return state;
+          hook = hook.next;
+        }
+        fiber = fiber.return;
+      }
+    }
+    return null;
+  }
+
   function isSessionsResource(value) {
     return !!value && typeof value === 'object' &&
       typeof value.on === 'function' && typeof value.off === 'function' &&
@@ -377,6 +416,73 @@
     var found = findQueueAdapter(doc);
     var resource = found && found.adapter && found.adapter.sessionsResource;
     return isSessionsResource(resource) ? resource : null;
+  }
+
+  // WorkBuddy's conversation list owns the real navigation path. Prefer the
+  // official SDK/navigation handler; adapter.emit is retained for older builds
+  // whose list did not expose the handler through React hooks.
+  function findConversationActivationApi(doc) {
+    var found = findQueueAdapter(doc);
+    var adapter = found && found.adapter;
+    var resource = findSessionsResource(doc);
+    var handler = findConversationNavigationHandler(doc);
+    var sdkNavigate = null;
+    var sdkNavigateKind = '';
+    try {
+      var conversations = typeof window !== 'undefined' && window.wb && window.wb.conversations;
+      if (conversations && typeof conversations.navigateToSession === 'function') {
+        sdkNavigate = conversations.navigateToSession;
+        sdkNavigateKind = 'navigateToSession';
+      } else if (conversations && typeof conversations.setCurrentConversation === 'function') {
+        // Current WorkBuddy exposes the official route transition under this
+        // SDK name. It is authoritative even while React has not mounted the
+        // sidebar handler yet, which is the common post-reload window.
+        sdkNavigate = conversations.setCurrentConversation;
+        sdkNavigateKind = 'setCurrentConversation';
+      }
+    } catch (_) {}
+    if (!handler && !sdkNavigate && (!adapter || typeof adapter.emit !== 'function')) return null;
+    return {
+      authoritative: !!(handler || sdkNavigate),
+      hasSession: function (sessionId) {
+        var id = String(sessionId || '').trim();
+        if (!id || !resource || typeof resource.getByIds !== 'function') return Promise.resolve(null);
+        try {
+          return Promise.resolve(resource.getByIds([id])).then(function (result) {
+            // The renderer adapter normalizes the session resource response to
+            // `conversations`; lower-level/test adapters may expose `sessions`
+            // or return the array directly.
+            var sessions = result && Array.isArray(result.conversations) ? result.conversations :
+              result && Array.isArray(result.sessions) ? result.sessions :
+              Array.isArray(result) ? result : [];
+            return sessions.some(function (item) { return String(item && (item.id || item.sessionId) || '') === id; });
+          });
+        } catch (_) {
+          return Promise.resolve(false);
+        }
+      },
+      activate: function (sessionId) {
+        var id = String(sessionId || '').trim();
+        if (!id) return false;
+        try {
+          if (handler) {
+            Promise.resolve(handler(id, '', false, false, {})).catch(function () {});
+          } else if (sdkNavigate) {
+            var conversationsApi = (typeof window !== 'undefined' && window.wb && window.wb.conversations) || null;
+            Promise.resolve(sdkNavigate.call(conversationsApi, id, sdkNavigateKind === 'navigateToSession' ? { ensureLoaded: true } : undefined)).catch(function () {});
+          } else {
+            adapter.emit('jump-to-conversation', {
+              source: 'tencent-docs',
+              sessionId: id,
+              reason: 'already-active',
+            });
+          }
+          return true;
+        } catch (_) {
+          return false;
+        }
+      },
+    };
   }
 
   // Sidebar records are an initial/reconciliation snapshot only. Live updates
@@ -450,6 +556,7 @@
     findModernQueueAdapter: findModernQueueAdapter,
     findQueueAdapter: findQueueAdapter,
     findSessionsResource: findSessionsResource,
+    findConversationActivationApi: findConversationActivationApi,
     findConversationListRecords: findConversationListRecords,
     findMessageNavigationAdapter: findMessageNavigationAdapter,
     findMessageNavigationSurface: findMessageNavigationSurface,

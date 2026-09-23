@@ -170,7 +170,7 @@ test('theme tab is capability-gated and available to WorkBuddy AI', () => {
 test('daemon stash restore has an AI composer fallback when voice-mic-wrap is absent', () => {
   const daemon = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'daemon.js'), 'utf8');
   assert.match(daemon, /const clearExpr = `\(function\(\)\{[\s\S]*?if \(!ed\) \{[\s\S]*?contenteditable/);
-  assert.match(daemon, /var allEd = document\.querySelectorAll\('\[contenteditable="true"\]'\)/);
+  assert.match(daemon, /var allEd = document\.querySelectorAll\('\[contenteditable="true"\],textarea'\)/);
 });
 
 test('modern conversation id comes from the selected sidebar card, not message req ids', () => {

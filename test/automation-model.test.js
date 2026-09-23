@@ -157,9 +157,10 @@ test('daemon selects and checks the model before sending, and ships the renderer
   const selectAt = daemon.indexOf('modelSelection = await withInput(() => selectAutomationModelById(');
   const sendAt = daemon.indexOf("await withInput(() => acSendPhrase(String(detail.message || '')");
   assert.ok(selectAt > 0 && sendAt > selectAt);
-  assert.match(daemon, /if \(modelId\) await confirmAutomationModel\(modelId/);
+  assert.match(daemon, /if \(modelId && !sendSubmitted\) await confirmAutomationModel\(modelId/);
   assert.match(daemon, /restoreAutomationNewTaskPreference\(modelSelection\)/);
-  assert.match(daemon, /const DAEMON_VERSION = '1\.2\.95'/);
+  assert.match(daemon, /selected && selected\.conversationId \? \{ conversationId: selected\.conversationId, accountUid \}/);
+  assert.match(daemon, /const DAEMON_VERSION = '\d+\.\d+\.\d+'/);
   const staging = fs.readFileSync(path.join(__dirname, '../scripts/build-mac-dmg.sh'), 'utf8');
   assert.match(staging, /automation-model\.js/);
 });

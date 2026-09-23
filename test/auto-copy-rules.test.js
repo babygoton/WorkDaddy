@@ -29,6 +29,7 @@ const {
   collectLineageMembersForDelete,
   setAutoCopyMapping,
   getAutoCopyMapping,
+  migrateAutoCopyTargetRevisions,
   getAutoCopySessionMemberRecords,
   selectLatestAutoCopyMember,
   listOfficialModels,
@@ -117,6 +118,20 @@ test('marked session keeps one lineage through migration and repeated account sw
   setAutoCopyRule(dataDir, { uid: 'x', kind: 'session', key: 'session-a', enabled: false });
   assert.equal(getAutoCopySession(dataDir, 's', 'session-s').enabled, false);
   assert.equal(getAutoCopySession(dataDir, 'x', 'session-a').enabled, false);
+});
+
+test('historical target revisions are migrated in one metadata update', () => {
+  const dataDir = tempDataDir();
+  setAutoCopyRule(dataDir, { uid: 'source', kind: 'session', key: 'session-a', enabled: true });
+  const lineageId = getAutoCopySession(dataDir, 'source', 'session-a').lineageId;
+  addAutoCopySessionMember(dataDir, lineageId, 'target', 'session-b');
+  setAutoCopyMapping(dataDir, lineageId, 'target', { targetId: 'session-b', fingerprintVersion: 2, targetStateRevision: 'legacy' });
+  const row = { id: 'session-b', user_id: 'target', updated_at: 20, last_activity_at: 21, status: 'Done', title: 'title', custom_title: '' };
+  assert.equal(migrateAutoCopyTargetRevisions(dataDir, new Map([[JSON.stringify(['session-b', 'target']), row]])), 1);
+  const mapping = getAutoCopyMapping(dataDir, lineageId, 'target');
+  assert.equal(mapping.targetStateRevision, JSON.stringify([20, 21, 'Done', 'title', '']));
+  assert.equal(mapping.targetRevision, JSON.stringify(['session-b', 'target', 20, 21, 'Done', 'title', '']));
+  assert.equal(migrateAutoCopyTargetRevisions(dataDir, new Map([[JSON.stringify(['session-b', 'target']), row]])), 0);
 });
 
 test('deleting the last lineage member removes mappings, while other members retain them', () => {
@@ -272,6 +287,16 @@ test('copy-all can prepare hidden lineages for a session batch without enabling 
   assert.deepEqual(Object.keys(lineages).sort(), ['new-a', 'new-b']);
   assert.notEqual(lineages['new-a'], lineages['new-b']);
   assert.deepEqual(getAutoCopyRules(dataDir, 'source').sessionIds, []);
+});
+
+test('preparing an unchanged auto-copy batch does not rewrite metadata', () => {
+  const dataDir = tempDataDir();
+  ensureAutoCopySessions(dataDir, 'source', ['new-a', 'new-b'], { enabled: false });
+  const before = fs.statSync(metaFile(dataDir));
+  ensureAutoCopySessions(dataDir, 'source', ['new-a', 'new-b'], { enabled: false });
+  const after = fs.statSync(metaFile(dataDir));
+  assert.equal(after.ino, before.ino);
+  assert.equal(after.size, before.size);
 });
 
 test('duplicate session rows sharing one lineage collapse per account without deleting rows', () => {

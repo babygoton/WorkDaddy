@@ -33,6 +33,175 @@ const LEGACY_DATA_DIR = IS_MAC
   ? path.join(os.homedir(), 'Library', 'Application Support', 'HelloBuddy')
   : null;
 
+// ===================== [wd-compat] WorkBuddy 5.6+ $wbEncrypted 字段信封解密适配 =====================
+// WorkBuddy 5.6 起对 workbuddy.cn 域账号启用 at-rest 字段级加密（编译期策略，无用户开关）：
+//   auth/account 文件中 nickname/phoneNumber/accessToken/refreshToken 等写为
+//   {"$wbEncrypted":1,"envelope":"<base64(JSON)>"}，内层 AES-256-GCM（sym-v1 帧 + AAD）。
+// 方案：读取端解密——经 WorkBuddy 自带 Electron（ELECTRON_RUN_AS_NODE=1）子进程调用原生
+//   绑定取密钥负载并派生密钥；密钥只经管道回传、内存缓存、绝不落盘、绝不写日志。
+// 失败语义：任何一步失败保留原值、60s 后允许重试——不阻断账号管理，界面以「(已加密)」占位降级。
+const WD_COMPAT = { key: null, keyFailAt: 0, keyFailReason: '', decOk: 0, decFail: 0 };
+const WD_COMPAT_KEY_RETRY_MS = 60000;
+
+// 被 wdCompatStaticKey 以 ELECTRON_RUN_AS_NODE=1 方式再次执行本文件时派生密钥并退出。
+// 密钥只写父子进程管道；该绑定仅存在于 WorkBuddy 的 Electron 运行时内。
+if (process.argv.includes('--wd-compat-print-key')) {
+  try {
+    const binding = process._linkedBinding('electron_browser_workbuddy_storage');
+    const payload = JSON.parse(binding.loggerGet());
+    if (payload && payload.version === 1 && typeof payload.atRestSecretKey === 'string') {
+      const key = crypto.createHash('sha256').update(payload.atRestSecretKey, 'utf8').digest();
+      process.stdout.write(`WD_COMPAT_KEY ${key.toString('base64')}\n`);
+      key.fill(0);
+      process.exit(0);
+    }
+    process.stderr.write('payload schema mismatch');
+    process.exit(4);
+  } catch (e) { process.stderr.write(String(e.message || e).slice(0, 200)); process.exit(3); }
+}
+
+function isWbEncryptedEnvelope(v) {
+  return !!v && typeof v === 'object' && !Array.isArray(v) && v.$wbEncrypted === 1 && typeof v.envelope === 'string';
+}
+
+function wdCompatContainsEncryptedFields(value) {
+  if (isWbEncryptedEnvelope(value)) return true;
+  if (Array.isArray(value)) return value.some(wdCompatContainsEncryptedFields);
+  if (!value || typeof value !== 'object') return false;
+  return Object.values(value).some(wdCompatContainsEncryptedFields);
+}
+
+/** 信封字段的展示兜底：取钥不可用时显示占位而非整段密文/[object Object]。 */
+function wdCompatText(v) {
+  if (typeof v === 'string') return v;
+  return isWbEncryptedEnvelope(v) ? '(已加密)' : '';
+}
+
+/** 只返回可直接用于 HTTP 的明文 token；信封不可用时返回空字符串。 */
+function wdCompatAuthToken(auth) {
+  if (!auth || typeof auth !== 'object') return '';
+  const value = auth.accessToken ?? auth.access_token ?? auth.token;
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function wdCompatHasAuthCredential(auth) {
+  if (!auth || typeof auth !== 'object') return false;
+  const value = auth.accessToken ?? auth.access_token ?? auth.token;
+  return typeof value === 'string' ? value.trim().length > 0 : isWbEncryptedEnvelope(value);
+}
+
+function wdCompatLog(msg) {
+  try { fs.appendFileSync(path.join(PLATFORM_DATA_DIR, 'daemon.log'), `[wd-compat] ${msg}\n`); } catch (_) {}
+}
+
+// Windows 安装目录可以由用户选择，不能只依赖默认的 %LOCALAPPDATA% 路径。
+// profiles.js 会读取当前 profile 的 workbuddy-target.json，并返回已经过 profile
+// 校验的主程序路径；只在 Node/daemon 侧读取，注入到 renderer 的 compat 脚本不会触发。
+function wdCompatConfiguredExe() {
+  if (!IS_WIN || typeof module === 'undefined' || !module.exports) return '';
+  try {
+    const { getProfile } = require('./profiles.js');
+    const profile = getProfile(process.env.WBSWITCH_PROFILE || 'workbuddy-cn', {
+      dataDir: process.env.WBSWITCH_DATA_DIR || undefined,
+      env: process.env,
+      platform: process.platform,
+    });
+    return profile && typeof profile.appPath === 'string' ? profile.appPath : '';
+  } catch (_) {
+    return '';
+  }
+}
+
+function wdCompatExeCandidates() {
+  if (process.env.WORKDADDY_WB_EXE) return [process.env.WORKDADDY_WB_EXE];
+  const home = os.homedir();
+  if (IS_MAC) {
+    const apps = [];
+    for (const root of ['/Applications', path.join(home, 'Applications')]) {
+      for (const name of ['WorkBuddy.app', 'WorkBuddy AI.app']) {
+        apps.push(path.join(root, name, 'Contents', 'MacOS', 'Electron'));
+      }
+    }
+    return apps;
+  }
+  if (IS_WIN) {
+    const base = process.env.LOCALAPPDATA || '';
+    const configured = wdCompatConfiguredExe();
+    return [
+      ...(configured ? [configured] : []),
+      path.join(base, 'Programs', 'WorkBuddy', 'WorkBuddy.exe'),
+      path.join(base, 'Programs', 'WorkBuddy AI', 'WorkBuddy AI.exe'),
+    ].filter(Boolean);
+  }
+  return ['/opt/WorkBuddy/workbuddy', '/opt/WorkBuddy/workbuddy-ai'];
+}
+
+function wdCompatStaticKey() {
+  if (WD_COMPAT.key) return WD_COMPAT.key;
+  if (WD_COMPAT.keyFailAt && Date.now() - WD_COMPAT.keyFailAt < WD_COMPAT_KEY_RETRY_MS) {
+    throw new Error(WD_COMPAT.keyFailReason || '取钥暂不可用');
+  }
+  let lastErr = '未找到 WorkBuddy 可执行文件';
+  for (const exe of wdCompatExeCandidates()) {
+    if (!fs.existsSync(exe)) continue;
+    const r = require('child_process').spawnSync(exe, [__filename, '--wd-compat-print-key'], {
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+      timeout: 15000, encoding: 'utf8',
+    });
+    const m = r.stdout && r.stdout.match(/WD_COMPAT_KEY ([A-Za-z0-9+/=]+)/);
+    if (m) {
+      WD_COMPAT.key = Buffer.from(m[1], 'base64');
+      WD_COMPAT.keyFailAt = 0;
+      WD_COMPAT.keyFailReason = '';
+      return WD_COMPAT.key;
+    }
+    lastErr = (r.stderr && String(r.stderr).trim().slice(0, 120)) || `exit=${r.status}`;
+  }
+  WD_COMPAT.keyFailAt = Date.now();
+  WD_COMPAT.keyFailReason = lastErr;
+  wdCompatLog(`取钥失败（60s 后重试）: ${lastErr}`);
+  throw new Error(lastErr);
+}
+
+function wdCompatOpenEnvelope(env, key) {
+  const FRAMING_FIELD = 2, FMT_FIELD = 'WBEV1', AAD_DOMAIN = Buffer.from('WB-AAD\0', 'ascii');
+  const lp = (s) => { const b = Buffer.from(s, 'utf8'); const l = Buffer.alloc(4); l.writeUInt32BE(b.length); return Buffer.concat([l, b]); };
+  const u32 = (n) => { const b = Buffer.alloc(4); b.writeUInt32BE(n); return b; };
+  const aad = Buffer.concat([
+    AAD_DOMAIN, Buffer.from([1]), lp(FMT_FIELD), lp('sym-v1'), u32(env.suite || 1),
+    lp(env.keyId || ''), Buffer.from([FRAMING_FIELD]), Buffer.from([0]), Buffer.from([0]),
+  ]);
+  const d = crypto.createDecipheriv('aes-256-gcm', key, Buffer.from(env.nonce, 'base64'), { authTagLength: 16 });
+  d.setAAD(aad);
+  d.setAuthTag(Buffer.from(env.authTag, 'base64'));
+  return Buffer.concat([d.update(Buffer.from(env.ciphertext, 'base64')), d.final()]).toString('utf8');
+}
+
+/** 原地解密 JSON 中的全部 $wbEncrypted 信封字段；失败字段保留原值，不抛错。 */
+function wdCompatDecryptAuthJson(json) {
+  if (!json || typeof json !== 'object') return json;
+  const walk = (node) => {
+    if (Array.isArray(node)) { node.forEach(walk); return; }
+    if (!node || typeof node !== 'object') return;
+    for (const k of Object.keys(node)) {
+      const v = node[k];
+      if (isWbEncryptedEnvelope(v)) {
+        try {
+          const env = JSON.parse(Buffer.from(v.envelope, 'base64').toString('utf8'));
+          node[k] = wdCompatOpenEnvelope(env, wdCompatStaticKey());
+          WD_COMPAT.decOk++;
+        } catch (e) {
+          WD_COMPAT.decFail++;
+          wdCompatLog(`解密失败 ${k}: ${String(e.message || e).slice(0, 80)}`);
+        }
+      } else if (v && typeof v === 'object') walk(v);
+    }
+  };
+  walk(json);
+  return json;
+}
+// ===================== [wd-compat] 适配层结束 =====================
+
 function samePath(a, b) {
   return !!a && !!b && path.resolve(a) === path.resolve(b);
 }
@@ -110,25 +279,30 @@ function authRecordFromJson(file, json, { strict = DYNAMIC_AUTH_DISCOVERY } = {}
   const acct = json.account || (Array.isArray(json.accounts) && json.accounts[0]) || null;
   if (!acct || !acct.uid) return null;
   const auth = json.auth && typeof json.auth === 'object' ? json.auth : {};
-  const accessToken = String(auth.accessToken || auth.access_token || auth.token || '');
+  const rawToken = auth.accessToken ?? auth.access_token ?? auth.token;
+  // [wd-compat] 信封对象不能 String()——避免 "[object Object]" 污染 issuer 校验
+  const accessToken = wdCompatAuthToken(auth);
+  const encryptedToken = isWbEncryptedEnvelope(rawToken);
   const authDomain = normalizeAuthDomain(auth.domain || auth.issuer || '');
   const authIssuer = tokenIssuerOrigin(accessToken);
   if (strict) {
-    if (!accessToken) return null;
+    if (!wdCompatHasAuthCredential(auth)) return null;
     const allowed = allowedAuthOrigins();
+    // 无法取钥时无法从信封解析 issuer；此时只接受明确属于当前客户端的 domain。
     if (![authDomain, authIssuer].some((origin) => origin && allowed.has(origin))) return null;
   }
   return {
     uid: String(acct.uid),
-    nickname: acct.nickname || '',
-    uin: acct.uin || '',
-    phone: acct.phoneNumber || '',
-    type: acct.type || '',
+    nickname: wdCompatText(acct.nickname),
+    uin: typeof acct.uin === 'string' || typeof acct.uin === 'number' ? acct.uin : '',
+    phone: wdCompatText(acct.phoneNumber),
+    type: typeof acct.type === 'string' ? acct.type : '',
     raw: json,
     file,
     authFileName: file ? path.basename(file) : '',
     authDomain,
     authIssuer,
+    tokenEncrypted: encryptedToken,
     lastLogin: acct.lastLogin === true,
     lastRefreshTime: Number(auth.lastRefreshTime) || 0,
   };
@@ -138,6 +312,7 @@ function parseAuthFile(file, options = {}) {
   if (!file || !fs.existsSync(file)) return null;
   try {
     const json = JSON.parse(fs.readFileSync(file, 'utf8'));
+    wdCompatDecryptAuthJson(json); // [wd-compat] 5.6+ 字段信封读取端解密
     return authRecordFromJson(file, json, options);
   } catch (_) {
     return null;
@@ -145,7 +320,35 @@ function parseAuthFile(file, options = {}) {
 }
 
 function parseAuthJson(json, options = {}) {
+  json = wdCompatDecryptAuthJson(json); // [wd-compat]
   return authRecordFromJson(null, json, options);
+}
+
+/**
+ * Normalize a user-supplied account JSON without destroying encrypted fields.
+ * Validation runs on a deep clone because parseAuthJson may decrypt in place.
+ */
+function normalizeAccountImportJson(candidate) {
+  const source = candidate && typeof candidate === 'object' && !Array.isArray(candidate) ? candidate : null;
+  if (!source) return null;
+  const acct = source.account && typeof source.account === 'object' ? source.account : source;
+  const auth = source.auth && typeof source.auth === 'object' ? source.auth : null;
+  const uid = String(acct && acct.uid || '').trim();
+  const rawToken = auth && (auth.accessToken ?? auth.access_token ?? auth.token);
+  const accessToken = typeof rawToken === 'string' ? rawToken.trim() : rawToken;
+  if (!/^[A-Za-z0-9_-]{1,128}$/.test(uid)) return null;
+  if (!(typeof accessToken === 'string' ? accessToken : isWbEncryptedEnvelope(accessToken))) return null;
+  const normalized = {
+    account: { ...acct, uid },
+    auth: { ...auth, accessToken },
+  };
+  let authRecord;
+  try {
+    authRecord = parseAuthJson(JSON.parse(JSON.stringify(normalized)));
+  } catch (_) {
+    return null;
+  }
+  return authRecord && authRecord.uid === uid ? { uid, normalized, authRecord } : null;
 }
 
 function listAuthRecords() {
@@ -793,13 +996,18 @@ function selectLatestAutoCopyMember(members) {
 
 function ensureAutoCopySessions(dataDir, uid, sessionIds, options) {
   const meta = readMeta(dataDir);
+  const previousConfig = meta.autoCopy;
   const config = ensureAutoCopyMeta(meta);
+  let changed = config !== previousConfig;
   const sourceUid = String(uid || '').trim();
   const ids = Array.from(new Set((Array.isArray(sessionIds) ? sessionIds : [sessionIds])
     .map((id) => String(id || '').trim())
     .filter(Boolean)));
   if (!sourceUid || !ids.length) throw new Error('缺少共享会话标识');
-  if (!config.sessionIndex[sourceUid]) config.sessionIndex[sourceUid] = {};
+  if (!config.sessionIndex[sourceUid]) {
+    config.sessionIndex[sourceUid] = {};
+    changed = true;
+  }
   const lineages = {};
   ids.forEach((id) => {
     let lineageId = config.sessionIndex[sourceUid][id];
@@ -807,11 +1015,16 @@ function ensureAutoCopySessions(dataDir, uid, sessionIds, options) {
       lineageId = crypto.randomUUID();
       config.sessions[lineageId] = { enabled: !(options && options.enabled === false), members: [], createdAt: Date.now() };
       config.sessionIndex[sourceUid][id] = lineageId;
+      changed = true;
     }
-    addLineageMember(config.sessions[lineageId], sourceUid, id);
+    const lineage = config.sessions[lineageId];
+    const hasMember = Array.isArray(lineage.members)
+      && lineage.members.some((member) => member && member.uid === sourceUid && member.id === id);
+    addLineageMember(lineage, sourceUid, id);
+    if (!hasMember) changed = true;
     lineages[id] = lineageId;
   });
-  writeMeta(dataDir, meta);
+  if (changed) writeMeta(dataDir, meta);
   return lineages;
 }
 
@@ -1120,6 +1333,60 @@ function getAutoCopyMapping(dataDir, lineageOrUid, targetUid, maybeSessionId) {
   return config.copies[autoCopyRuleKey(lineageId, targetUid)] || null;
 }
 
+// Load the mappings for one target account from the memoized auto-copy config
+// in one pass. Automatic switching can have hundreds of selected sessions;
+// callers should not reparse the same metadata JSON once per session.
+function getAutoCopyMappings(dataDir, lineageIds, targetUid) {
+  const config = readAutoCopyConfig(dataDir);
+  const result = new Map();
+  for (const lineageId of new Set(Array.isArray(lineageIds) ? lineageIds : [])) {
+    const mapping = config.copies[autoCopyRuleKey(lineageId, targetUid)];
+    if (mapping) result.set(String(lineageId || ''), mapping);
+  }
+  return result;
+}
+
+function autoCopyTargetRowRevision(row) {
+  return JSON.stringify([
+    String(row && row.id || ''), String(row && row.user_id || ''),
+    Number(row && row.updated_at || 0), Number(row && row.last_activity_at || 0),
+    String(row && row.status || ''), String(row && row.title || ''), String(row && row.custom_title || ''),
+  ]);
+}
+
+function autoCopyTargetStateRevision(row) {
+  return JSON.stringify([
+    Number(row && row.updated_at || 0), Number(row && row.last_activity_at || 0),
+    String(row && row.status || ''), String(row && row.title || ''), String(row && row.custom_title || ''),
+  ]);
+}
+
+// Older daemons persisted the source row's timestamps as the target baseline.
+// Repair those cheap row-level baselines in one metadata write; file snapshots
+// remain the authority for mappings that are actually marked dirty.
+function migrateAutoCopyTargetRevisions(dataDir, rowsByKey) {
+  const meta = readMeta(dataDir);
+  const config = ensureAutoCopyMeta(meta);
+  const changed = [];
+  for (const [key, mapping] of Object.entries(config.copies || {})) {
+    if (!mapping || typeof mapping !== 'object' || !mapping.targetId) continue;
+    let parts;
+    try { parts = JSON.parse(key); } catch (_) { continue; }
+    if (!Array.isArray(parts) || parts.length !== 2) continue;
+    const rowKey = JSON.stringify([String(mapping.targetId), String(parts[1] || '')]);
+    const row = rowsByKey && typeof rowsByKey.get === 'function' ? rowsByKey.get(rowKey) : null;
+    if (!row) continue;
+    const targetRevision = autoCopyTargetRowRevision(row);
+    const targetStateRevision = autoCopyTargetStateRevision(row);
+    if (mapping.targetRevision === targetRevision && mapping.targetStateRevision === targetStateRevision) continue;
+    mapping.targetRevision = targetRevision;
+    mapping.targetStateRevision = targetStateRevision;
+    changed.push(key);
+  }
+  if (changed.length) writeMeta(dataDir, meta);
+  return changed.length;
+}
+
 function setAutoCopyMapping(dataDir, lineageOrUid, targetUid, mappingOrSessionId, maybeMapping) {
   const meta = readMeta(dataDir);
   const config = ensureAutoCopyMeta(meta);
@@ -1286,7 +1553,10 @@ function backupAuthFile(dataDir, file, log = () => {}) {
   const info = readAuthFile(file);
   const dest = backupPath(dataDir, info.uid);
   const tmp = dest + '.tmp';
-  fs.writeFileSync(tmp, fs.readFileSync(file), { mode: 0o600 });
+  // [wd-compat] 密文信封原样落盘；需要查询/刷新时才在内存中解密。
+  // 这样不会在 WorkDaddy 目录制造明文 token 副本，也能保留旧版明文 auth 文件。
+  fs.copyFileSync(file, tmp);
+  fs.chmodSync(tmp, 0o600);
   fs.renameSync(tmp, dest);
   fs.chmodSync(dest, 0o600);
   updateMeta(dataDir, info, { preserveBinding: true });
@@ -1412,13 +1682,13 @@ function listAccounts(dataDir) {
       authValid: false,
     };
     try {
-      const j = JSON.parse(fs.readFileSync(path.join(dir, n), 'utf8'));
+      const j = wdCompatDecryptAuthJson(JSON.parse(fs.readFileSync(path.join(dir, n), 'utf8'))); // [wd-compat]
       item.authValid = !!parseAuthJson(j);
       const acct = j.account || (Array.isArray(j.accounts) && j.accounts[0]);
       if (acct) {
-        item.nickname = acct.nickname || '';
-        item.phone = acct.phoneNumber || '';
-        item.uin = acct.uin || '';
+        item.nickname = wdCompatText(acct.nickname);
+        item.phone = wdCompatText(acct.phoneNumber);
+        item.uin = typeof acct.uin === 'string' || typeof acct.uin === 'number' ? acct.uin : '';
         item.type = typeof acct.type === 'string' ? acct.type : '';
         item.enterpriseName = typeof acct.enterpriseName === 'string' ? acct.enterpriseName.trim() : '';
       }
@@ -1526,7 +1796,7 @@ function switchTo(dataDir, uid, log = () => {}) {
     throw new Error(`未找到账号 ${uid} 的备份文件`);
   }
   const raw = fs.readFileSync(src, 'utf8');
-  const json = JSON.parse(raw);
+  const json = wdCompatDecryptAuthJson(JSON.parse(raw)); // [wd-compat] 校验前解密；写回仍用 raw 原字节
   const acct = json.account || (Array.isArray(json.accounts) && json.accounts[0]);
   if (!acct || acct.uid !== uid) {
     throw new Error('备份文件校验失败：uid 不匹配，已中止切换');
@@ -1570,18 +1840,27 @@ function switchTo(dataDir, uid, log = () => {}) {
   retireLogoutMarker(log, target);
   updateMeta(dataDir, {
     uid: acct.uid,
-    nickname: acct.nickname || '',
-    uin: acct.uin || '',
-    phone: acct.phoneNumber || '',
+    nickname: wdCompatText(acct.nickname),
+    uin: typeof acct.uin === 'string' || typeof acct.uin === 'number' ? acct.uin : '',
+    phone: wdCompatText(acct.phoneNumber),
     authFileName: path.basename(target),
     authDomain: normalizeAuthDomain(json.auth && json.auth.domain),
     authIssuer: tokenIssuerOrigin(json.auth && (json.auth.accessToken || json.auth.access_token)),
   });
-  log(`[switch] 已切换登录账号为 ${acct.nickname || uid} (${uid})`);
-  return { uid: acct.uid, nickname: acct.nickname || '', uin: acct.uin || '', authFile: target };
+  const switchName = wdCompatText(acct.nickname) || uid;
+  log(`[switch] 已切换登录账号为 ${switchName} (${uid})`);
+  return { uid: acct.uid, nickname: wdCompatText(acct.nickname), uin: typeof acct.uin === 'string' || typeof acct.uin === 'number' ? acct.uin : '', authFile: target };
 }
 
 module.exports = {
+  isWbEncryptedEnvelope, // [wd-compat]
+  wdCompatExeCandidates, // [wd-compat]
+  wdCompatContainsEncryptedFields, // [wd-compat]
+  wdCompatText, // [wd-compat]
+  wdCompatAuthToken, // [wd-compat]
+  wdCompatHasAuthCredential, // [wd-compat]
+  normalizeAccountImportJson, // [wd-compat]
+  wdCompatDecryptAuthJson, // [wd-compat]
   getAccountOrder,
   setAccountOrder,
   readModelsFile,
@@ -1622,6 +1901,7 @@ module.exports = {
   importModels,
   logFile,
   backupPath,
+  backupAuthFile,
   retireLogoutMarker,
   ensureDirs,
   readAuthFile,
@@ -1647,6 +1927,8 @@ module.exports = {
   removeAutoCopyAccount,
   collectLineageMembersForDelete,
   getAutoCopyMapping,
+  getAutoCopyMappings,
+  migrateAutoCopyTargetRevisions,
   setAutoCopyMapping,
   deleteAutoCopyMapping,
   backupCurrent,

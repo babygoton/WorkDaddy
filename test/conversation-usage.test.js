@@ -78,3 +78,19 @@ test('conversation usage UI uses a body-fixed mount, bottom spacer and message s
   assert.match(source, /wbs-session-usage-summary\.is-hidden/);
   assert.doesNotMatch(source, /conversation-finished-footer[\s\S]{0,120}usage/);
 });
+
+test('usage trend reserves horizontal label space so endpoint values stay visible', () => {
+  const source = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'inject.js'), 'utf8');
+  const chart = source.slice(source.indexOf('function renderUsageTrendChart'), source.indexOf('function usageTimeSegmentHtml'));
+  assert.match(chart, /measureText\(/);
+  assert.match(chart, /chartInset = Math\.max\(/);
+  assert.match(chart, /chartRight = cssWidth - chartInset/);
+});
+
+test('credit model breakdown follows the selected account filter', () => {
+  const source = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'inject.js'), 'utf8');
+  const start = source.indexOf('var byModel = Object.create(null);');
+  const end = source.indexOf("creditBody.innerHTML =", start);
+  assert.ok(start >= 0 && end > start);
+  assert.match(source.slice(start, end), /if \(ids\.indexOf\(item\.uid\) < 0\) return;/);
+});

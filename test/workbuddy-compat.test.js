@@ -2,10 +2,12 @@
 
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
 
 const compat = require('../scripts/workbuddy-compat.js');
+const lib = require('../scripts/lib.js');
 
 function visibleElement(className) {
   return {
@@ -55,6 +57,63 @@ test('queue adapter selection prefers prototype-capable modern adapter and retai
   assert.deepEqual(compat.findQueueAdapter(legacyDocument), { kind: 'legacy', adapter: legacyAdapter });
 });
 
+test('conversation activation exposes the official session lookup and jump event', async () => {
+  const emitted = [];
+  const modernAdapter = Object.create({
+    enqueueConversationMessageQueueItem() {},
+    pauseConversationMessageQueue() {},
+    emit(name, payload) { emitted.push({ name, payload }); },
+  });
+  modernAdapter.sessionsResource = {
+    on() {}, off() {},
+    getByIds(ids) { return Promise.resolve({ conversations: ids.map(id => ({ id })), missingIds: [] }); },
+  };
+  const modernRoot = visibleElement();
+  modernRoot.__reactFiber$test = { memoizedProps: { adapter: modernAdapter }, return: null };
+  const documentLike = { querySelector(selector) { return selector === '#root > div' ? modernRoot : null; } };
+
+  const activation = compat.findConversationActivationApi(documentLike);
+  assert.ok(activation);
+  assert.equal(await activation.hasSession('copied-session'), true);
+  activation.activate('copied-session');
+  assert.deepEqual(emitted, [{
+    name: 'jump-to-conversation',
+    payload: { source: 'tencent-docs', sessionId: 'copied-session', reason: 'already-active' },
+  }]);
+});
+
+test('conversation activation prefers the official React navigation handler', async () => {
+  const calls = [];
+  const navigate = async function handleConversationClick(id, cwd, skipLocalCheck, preserveListView, options) {
+    // The markers mirror WorkBuddy's current handler without depending on its
+    // minified component names.
+    function dismissHoverPeek() {}
+    function syncTaskRouteFromClick() {}
+    dismissHoverPeek();
+    syncTaskRouteFromClick();
+    calls.push([id, cwd, skipLocalCheck, preserveListView, options]);
+  };
+  const adapter = {
+    enqueueConversationMessageQueueItem() {},
+    pauseConversationMessageQueue() {},
+    emit() { throw new Error('legacy activation must not be used'); },
+  };
+  const root = visibleElement();
+  root.__reactFiber$test = {
+    memoizedProps: {},
+    memoizedState: { memoizedState: { current: navigate }, next: null },
+    return: null,
+  };
+  const documentLike = {
+    querySelector(selector) { return selector === '#root > div' ? root : null; },
+  };
+  const activation = compat.findConversationActivationApi(documentLike);
+  assert.ok(activation);
+  assert.equal(activation.activate('official-session'), true);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(calls, [['official-session', '', false, false, {}]]);
+});
+
 test('selected conversation lookup is capability based rather than profile based', () => {
   const selected = {
     className: 'conversation-item',
@@ -68,6 +127,86 @@ test('selected conversation lookup is capability based rather than profile based
     querySelector() { return null; },
   };
   assert.equal(compat.getSelectedConversationId(documentLike), 'conversation-modern');
+});
+
+test('account import accepts legacy plaintext and preserves encrypted token envelopes', () => {
+  const envelope = { $wbEncrypted: 1, envelope: 'opaque-envelope' };
+  const plaintext = {
+    account: { uid: 'legacy-user', nickname: 'Legacy' },
+    auth: { accessToken: 'legacy-access', refreshToken: 'legacy-refresh', domain: 'https://www.workbuddy.cn' },
+  };
+  const encrypted = {
+    account: { uid: 'encrypted-user', nickname: envelope },
+    auth: { accessToken: envelope, refreshToken: envelope, domain: 'https://www.workbuddy.cn' },
+  };
+
+  const plainResult = lib.normalizeAccountImportJson(plaintext);
+  assert.equal(plainResult.uid, 'legacy-user');
+  assert.equal(plainResult.normalized.auth.accessToken, 'legacy-access');
+
+  const encryptedResult = lib.normalizeAccountImportJson(encrypted);
+  assert.equal(encryptedResult.uid, 'encrypted-user');
+  assert.deepEqual(encryptedResult.normalized.auth.accessToken, envelope);
+  assert.deepEqual(encryptedResult.normalized.auth.refreshToken, envelope);
+  assert.deepEqual(encryptedResult.normalized.account.nickname, envelope);
+  assert.equal(lib.wdCompatAuthToken(encryptedResult.normalized.auth), '');
+  assert.equal(lib.wdCompatText(envelope), '(已加密)');
+});
+
+test('Windows encrypted-field key lookup honors the configured WorkBuddy target path', { skip: process.platform !== 'win32' }, () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'workdaddy-compat-target-'));
+  const previousProfile = process.env.WBSWITCH_PROFILE;
+  const previousDataDir = process.env.WBSWITCH_DATA_DIR;
+  const target = 'Z:\\custom-workbuddy\\WorkBuddy.exe';
+  try {
+    fs.writeFileSync(path.join(root, 'workbuddy-target.json'), JSON.stringify({
+      schemaVersion: 1,
+      clientType: 'official',
+      profileId: 'workbuddy-cn',
+      binary: target,
+      processNames: ['WorkBuddy.exe'],
+      cdp: { mode: 'argument', port: 9222 },
+    }));
+    process.env.WBSWITCH_PROFILE = 'workbuddy-cn';
+    process.env.WBSWITCH_DATA_DIR = root;
+    assert.equal(lib.wdCompatExeCandidates()[0], target);
+  } finally {
+    if (previousProfile === undefined) delete process.env.WBSWITCH_PROFILE;
+    else process.env.WBSWITCH_PROFILE = previousProfile;
+    if (previousDataDir === undefined) delete process.env.WBSWITCH_DATA_DIR;
+    else process.env.WBSWITCH_DATA_DIR = previousDataDir;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('account backup keeps both legacy plaintext and encrypted source bytes unchanged', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'workdaddy-compat-'));
+  try {
+    const dataDir = path.join(root, 'WorkDaddy');
+    const authDir = path.join(root, 'auth');
+    fs.mkdirSync(authDir, { recursive: true });
+    lib.ensureDirs(dataDir);
+    const envelope = { $wbEncrypted: 1, envelope: 'opaque-envelope' };
+    const fixtures = [
+      {
+        uid: 'legacy-user',
+        value: { account: { uid: 'legacy-user', nickname: 'Legacy' }, auth: { accessToken: 'legacy-access', domain: 'https://www.workbuddy.cn' } },
+      },
+      {
+        uid: 'encrypted-user',
+        value: { account: { uid: 'encrypted-user', nickname: envelope }, auth: { accessToken: envelope, domain: 'https://www.workbuddy.cn' } },
+      },
+    ];
+    for (const fixture of fixtures) {
+      const source = path.join(authDir, fixture.uid + '.info');
+      const raw = JSON.stringify(fixture.value, null, 2);
+      fs.writeFileSync(source, raw);
+      lib.backupAuthFile(dataDir, source);
+      assert.equal(fs.readFileSync(lib.backupPath(dataDir, fixture.uid), 'utf8'), raw);
+    }
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('injected compatibility is packaged and AI theme access is no longer profile-gated', () => {
