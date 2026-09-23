@@ -90,6 +90,22 @@ test('only identity fields normalize; literal session IDs inside messages remain
   f.write('a', [message('user', 'a')]); f.write('b', [message('user', 'b')]);
   assert.equal(compareSnapshots(f.read('a'), f.read('b')).kind, 'conflict');
 });
+
+test('activation-only session-meta records do not conflict across account copies', t => {
+  const f = fixture(t);
+  const stable = { type: 'session-meta', meta: { 'codebuddy.ai/hostKind': 'unopted' } };
+  f.write('a', [{ ...stable, id: 'event-a', sessionId: 'a', timestamp: 100 }, ...base]);
+  f.write('b', [{ ...stable, id: 'event-b', sessionId: 'b', timestamp: 200 }, ...base]);
+  assert.equal(compareSnapshots(f.read('a'), f.read('b')).kind, 'equal');
+});
+
+test('an activation-only session-meta append does not become an imported continuation', t => {
+  const f = fixture(t);
+  const stable = { type: 'session-meta', meta: { 'codebuddy.ai/hostKind': 'unopted' } };
+  f.write('a', base);
+  f.write('b', [...base, { ...stable, id: 'event-b', sessionId: 'b', timestamp: 200 }]);
+  assert.equal(compareSnapshots(f.read('b'), f.read('a')).kind, 'equal');
+});
 test('missing payload is repairable and symlinked files are skipped without following them', async t => {
   const f = fixture(t); f.write('a', base);
   assert.equal(compareSnapshots(f.read('a'), f.read('b')).kind, 'left-extends');

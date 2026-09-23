@@ -29,9 +29,39 @@ test('renderer dirty tracker ignores the initial snapshot and unchanged lifecycl
   tracker.baseline([{ id: 'session-a', status: 'completed', title: 'A' }]);
   assert.deepEqual(sent, [{ ready: true }]);
   assert.equal(tracker.observe({ id: 'session-a', status: 'completed', title: 'A' }), false);
-  assert.equal(tracker.observe({ id: 'session-a', status: 'running', title: 'A', event: 'sessionUpdated' }), true);
+  assert.equal(tracker.observe({ id: 'session-a', status: 'running', title: 'A', updatedAt: 11, event: 'sessionUpdated' }), true);
   tracker.flush();
   assert.deepEqual(sent[1], [{ id: 'session-a', event: 'sessionUpdated' }]);
+  tracker.destroy();
+});
+
+test('renderer dirty tracker ignores account-switch lifecycle churn', () => {
+  const sent = [];
+  const tracker = inject.createSessionDirtyTracker((payload) => sent.push(payload), { delay: 0 });
+  tracker.baseline([{
+    id: 'session-a', title: 'A', status: 'completed', state: 'idle',
+    active: false, terminal: true, updatedAt: 10, lastActivityAt: 10,
+  }]);
+  assert.equal(tracker.observe({
+    id: 'session-a', title: 'A', status: 'running', state: 'hydrating',
+    active: true, terminal: false, updatedAt: 10, lastActivityAt: 10,
+    event: 'sessionUpdated',
+  }), false);
+  tracker.flush();
+  assert.deepEqual(sent, [{ ready: true }]);
+  tracker.destroy();
+});
+
+test('renderer dirty tracker ignores activation-only last-activity changes', () => {
+  const sent = [];
+  const tracker = inject.createSessionDirtyTracker((payload) => sent.push(payload), { delay: 0 });
+  tracker.baseline([{ id: 'session-a', title: 'A', updatedAt: 10, lastActivityAt: 10 }]);
+  assert.equal(tracker.observe({
+    id: 'session-a', title: 'A', updatedAt: 10, lastActivityAt: 11,
+    status: 'completed', event: 'sessionUpdated',
+  }), false);
+  tracker.flush();
+  assert.deepEqual(sent, [{ ready: true }]);
   tracker.destroy();
 });
 

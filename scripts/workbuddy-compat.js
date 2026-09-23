@@ -427,12 +427,23 @@
     var resource = findSessionsResource(doc);
     var handler = findConversationNavigationHandler(doc);
     var sdkNavigate = null;
+    var sdkNavigateKind = '';
     try {
       var conversations = typeof window !== 'undefined' && window.wb && window.wb.conversations;
-      if (conversations && typeof conversations.navigateToSession === 'function') sdkNavigate = conversations.navigateToSession;
+      if (conversations && typeof conversations.navigateToSession === 'function') {
+        sdkNavigate = conversations.navigateToSession;
+        sdkNavigateKind = 'navigateToSession';
+      } else if (conversations && typeof conversations.setCurrentConversation === 'function') {
+        // Current WorkBuddy exposes the official route transition under this
+        // SDK name. It is authoritative even while React has not mounted the
+        // sidebar handler yet, which is the common post-reload window.
+        sdkNavigate = conversations.setCurrentConversation;
+        sdkNavigateKind = 'setCurrentConversation';
+      }
     } catch (_) {}
     if (!handler && !sdkNavigate && (!adapter || typeof adapter.emit !== 'function')) return null;
     return {
+      authoritative: !!(handler || sdkNavigate),
       hasSession: function (sessionId) {
         var id = String(sessionId || '').trim();
         if (!id || !resource || typeof resource.getByIds !== 'function') return Promise.resolve(null);
@@ -457,7 +468,8 @@
           if (handler) {
             Promise.resolve(handler(id, '', false, false, {})).catch(function () {});
           } else if (sdkNavigate) {
-            Promise.resolve(sdkNavigate.call((typeof window !== 'undefined' && window.wb && window.wb.conversations) || null, id, { ensureLoaded: true })).catch(function () {});
+            var conversationsApi = (typeof window !== 'undefined' && window.wb && window.wb.conversations) || null;
+            Promise.resolve(sdkNavigate.call(conversationsApi, id, sdkNavigateKind === 'navigateToSession' ? { ensureLoaded: true } : undefined)).catch(function () {});
           } else {
             adapter.emit('jump-to-conversation', {
               source: 'tencent-docs',

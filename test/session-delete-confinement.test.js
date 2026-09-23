@@ -255,6 +255,41 @@ test('delete route validates before SQL and deletes the matched set only', () =>
     'filesystem and rule cleanup must succeed before the retry anchor is removed from the database');
 });
 
+test('delete route accepts more than 100 session IDs in one request', async (t) => {
+  const { createSessionDb, normalizeSessionIdBatch } = require('../scripts/session-db.js');
+  const root = tempDir(t);
+  const db = createSessionDb({ dbPath: path.join(root, 'sessions.db') });
+  await db.run('CREATE TABLE sessions (id TEXT PRIMARY KEY, user_id TEXT)');
+  const ids = Array.from({ length: 101 }, (_, index) => `00000000-0000-0000-0000-${String(index).padStart(12, '0')}`);
+  for (const id of ids) await db.run('INSERT INTO sessions (id, user_id) VALUES (?, ?)', [id, 'owner']);
+
+  const source = fs.readFileSync(daemonPath, 'utf8');
+  const start = source.indexOf("  if (req.method === 'POST' && p === '/api/sessions/delete')");
+  const end = source.indexOf('  // 恢复会话：', start);
+  const ctx = vm.createContext({
+    ...loadSessionDeleteHelpers(),
+    normalizeSessionIdBatch,
+    collectLineageMembersForDelete: (_dataDir, requested) => requested.map((id) => ({ id })),
+    removeAutoCopySession: () => false,
+    DATA_DIR: root,
+    PROFILE: { dataRoot: root },
+    req: { method: 'POST' },
+    res: {},
+    p: '/api/sessions/delete',
+    readBody: async () => ({ ids }),
+    sqliteQuery: (sql, params) => db.all(sql, Array.from(params)),
+    sqliteRun: (sql, params) => db.run(sql, Array.from(params)),
+    sqlPlaceholders: (values) => values.map(() => '?').join(','),
+    json: (_, status, body) => ({ status, body }),
+    log() {},
+  });
+
+  const result = await vm.runInContext('(async function () {\n' + source.slice(start, end) + '\n})()', ctx);
+  assert.equal(result.status, 200);
+  assert.equal(result.body.deleted, ids.length);
+  assert.deepEqual(await db.all('SELECT id FROM sessions'), []);
+});
+
 test('delete route removes recorded copies across accounts from both DB and files', async (t) => {
   const lib = require('../scripts/lib.js');
   const { createSessionDb, normalizeSessionIdBatch } = require('../scripts/session-db.js');

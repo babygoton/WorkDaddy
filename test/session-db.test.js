@@ -242,6 +242,11 @@ test('session ID batches validate raw input, cap work, and deduplicate in order'
   );
 });
 
+test('session ID batches can opt out of the cap for deletion-style operations', () => {
+  const ids = Array.from({ length: 101 }, (_, index) => `session-${index}`);
+  assert.deepEqual(normalizeSessionIdBatch(ids, { maxBatch: null }), ids);
+});
+
 test('daemon session SQL uses bound parameters without delimiter serialization', () => {
   const daemon = fs.readFileSync(path.join(repoRoot, 'scripts', 'daemon.js'), 'utf8');
   const verifyWin = fs.readFileSync(path.join(repoRoot, 'scripts', 'verify-win.cmd'), 'utf8');
@@ -250,7 +255,8 @@ test('daemon session SQL uses bound parameters without delimiter serialization',
   assert.doesNotMatch(daemon, /function sqlQuote\(/);
   assert.doesNotMatch(daemon, /id IN \(['"]?\s*\+\s*esc/);
   assert.match(daemon, /createSessionDb/);
-  assert.equal((daemon.match(/normalizeSessionIdBatch\(body\s*&&\s*body\.ids\)/g) || []).length, 4);
+  assert.equal((daemon.match(/normalizeSessionIdBatch\(body\s*&&\s*body\.ids\)/g) || []).length, 3);
+  assert.match(daemon, /normalizeSessionIdBatch\(body\s*&&\s*body\.ids,\s*\{\s*maxBatch:\s*null\s*\}\)/);
   assert.ok((daemon.match(/catch \(e\) \{ return json\(res, 400, \{ ok: false, error: e\.message \}\); \}/g) || []).length >= 4);
   assert.doesNotMatch(daemon, /body\.ids\.filter\(/);
   assert.match(daemon, /sqliteQuery\([^,]+,\s*\[[^\]]/s);
