@@ -153,6 +153,32 @@ test('account import accepts legacy plaintext and preserves encrypted token enve
   assert.equal(lib.wdCompatText(envelope), '(已加密)');
 });
 
+test('Windows encrypted-field key lookup honors the configured WorkBuddy target path', { skip: process.platform !== 'win32' }, () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'workdaddy-compat-target-'));
+  const previousProfile = process.env.WBSWITCH_PROFILE;
+  const previousDataDir = process.env.WBSWITCH_DATA_DIR;
+  const target = 'Z:\\custom-workbuddy\\WorkBuddy.exe';
+  try {
+    fs.writeFileSync(path.join(root, 'workbuddy-target.json'), JSON.stringify({
+      schemaVersion: 1,
+      clientType: 'official',
+      profileId: 'workbuddy-cn',
+      binary: target,
+      processNames: ['WorkBuddy.exe'],
+      cdp: { mode: 'argument', port: 9222 },
+    }));
+    process.env.WBSWITCH_PROFILE = 'workbuddy-cn';
+    process.env.WBSWITCH_DATA_DIR = root;
+    assert.equal(lib.wdCompatExeCandidates()[0], target);
+  } finally {
+    if (previousProfile === undefined) delete process.env.WBSWITCH_PROFILE;
+    else process.env.WBSWITCH_PROFILE = previousProfile;
+    if (previousDataDir === undefined) delete process.env.WBSWITCH_DATA_DIR;
+    else process.env.WBSWITCH_DATA_DIR = previousDataDir;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('account backup keeps both legacy plaintext and encrypted source bytes unchanged', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'workdaddy-compat-'));
   try {

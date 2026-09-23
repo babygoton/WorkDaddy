@@ -94,6 +94,24 @@ function wdCompatLog(msg) {
   try { fs.appendFileSync(path.join(PLATFORM_DATA_DIR, 'daemon.log'), `[wd-compat] ${msg}\n`); } catch (_) {}
 }
 
+// Windows 安装目录可以由用户选择，不能只依赖默认的 %LOCALAPPDATA% 路径。
+// profiles.js 会读取当前 profile 的 workbuddy-target.json，并返回已经过 profile
+// 校验的主程序路径；只在 Node/daemon 侧读取，注入到 renderer 的 compat 脚本不会触发。
+function wdCompatConfiguredExe() {
+  if (!IS_WIN || typeof module === 'undefined' || !module.exports) return '';
+  try {
+    const { getProfile } = require('./profiles.js');
+    const profile = getProfile(process.env.WBSWITCH_PROFILE || 'workbuddy-cn', {
+      dataDir: process.env.WBSWITCH_DATA_DIR || undefined,
+      env: process.env,
+      platform: process.platform,
+    });
+    return profile && typeof profile.appPath === 'string' ? profile.appPath : '';
+  } catch (_) {
+    return '';
+  }
+}
+
 function wdCompatExeCandidates() {
   if (process.env.WORKDADDY_WB_EXE) return [process.env.WORKDADDY_WB_EXE];
   const home = os.homedir();
@@ -108,10 +126,12 @@ function wdCompatExeCandidates() {
   }
   if (IS_WIN) {
     const base = process.env.LOCALAPPDATA || '';
-    return base ? [
+    const configured = wdCompatConfiguredExe();
+    return [
+      ...(configured ? [configured] : []),
       path.join(base, 'Programs', 'WorkBuddy', 'WorkBuddy.exe'),
       path.join(base, 'Programs', 'WorkBuddy AI', 'WorkBuddy AI.exe'),
-    ] : [];
+    ].filter(Boolean);
   }
   return ['/opt/WorkBuddy/workbuddy', '/opt/WorkBuddy/workbuddy-ai'];
 }
@@ -1834,6 +1854,7 @@ function switchTo(dataDir, uid, log = () => {}) {
 
 module.exports = {
   isWbEncryptedEnvelope, // [wd-compat]
+  wdCompatExeCandidates, // [wd-compat]
   wdCompatContainsEncryptedFields, // [wd-compat]
   wdCompatText, // [wd-compat]
   wdCompatAuthToken, // [wd-compat]
