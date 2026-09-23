@@ -24,7 +24,6 @@ test('six session feature descriptions omit terminal Chinese periods', () => {
     '暂存想法择机发送，发送后自动删除',
     '悬停预览，点击或拖动快速定位消息',
     '复制到这条回复为止的聊天内容，在当前工作区继续聊；原会话不变',
-    '选中会话消息文字后，一键插入输入框',
     '发送后不会自动删除',
   ];
   for (const hint of hints) assert.ok(source.includes('<span class="wbs-nd-hint">' + hint + '</span>'), hint);

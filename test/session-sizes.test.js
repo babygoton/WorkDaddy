@@ -23,14 +23,26 @@ test('session size counts only its complete sync payload, using metadata even fo
   assert.equal(result.get('../escape'), null);
 });
 
-test('symlinked paths are unknown, never followed or reported as complete sizes', async t => {
+test('symlinked paths are skipped, never followed or counted as payload sizes', async t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wd-sizes-links-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   fs.mkdirSync(path.join(root, 'projects/p'), { recursive: true });
   fs.writeFileSync(path.join(root, 'projects/p/good.jsonl'), 'ok');
   fs.symlinkSync('good.jsonl', path.join(root, 'projects/p/link.jsonl'));
   const sizes = await readSessionSizes(root, ['good', 'link']);
-  assert.equal(sizes.get('good'), 2); assert.equal(sizes.get('link'), null);
+  assert.equal(sizes.get('good'), 2); assert.equal(sizes.get('link'), 0);
   fs.symlinkSync(path.join(root, 'projects'), path.join(root, 'tasks'), 'dir');
-  assert.equal((await readSessionSizes(root, ['good'])).get('good'), null);
+  assert.equal((await readSessionSizes(root, ['good'])).get('good'), 2);
+});
+
+test('session size excludes local modify backups from workspace sessions', async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wd-sizes-modify-backup-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const sessionRoot = path.join(root, 'workspace', 'sessions', 'a');
+  fs.mkdirSync(path.join(sessionRoot, 'modify_backup'), { recursive: true });
+  fs.mkdirSync(path.join(sessionRoot, '.modify_backup_meta'), { recursive: true });
+  fs.writeFileSync(path.join(sessionRoot, 'keep.bin'), 'keep');
+  fs.writeFileSync(path.join(sessionRoot, 'modify_backup', '12.m.a1b2c3.original'), 'ignored backup');
+  fs.writeFileSync(path.join(sessionRoot, '.modify_backup_meta', 'meta.json'), 'ignored metadata');
+  assert.equal((await readSessionSizes(root, ['a'])).get('a'), 4);
 });

@@ -64,7 +64,10 @@ test('export detects files changed after collection and removes partial output',
 
 test('real session export/import routes round-trip binary archives and retain ownership', async t => {
   const vm = require('node:vm'), http = require('node:http');
-  const dir = fixture(t), home = path.join(dir, 'home');
+  const dir = fixture(t), realHome = path.join(dir, 'real-home'), home = path.join(dir, 'home');
+  fs.mkdirSync(realHome, { recursive: true });
+  try { fs.symlinkSync(realHome, home, process.platform === 'win32' ? 'junction' : 'dir'); }
+  catch (error) { if (['EPERM', 'EACCES'].includes(error.code)) return t.skip('symlinks unavailable'); throw error; }
   const original = path.join(home, 'tasks', id, '测试附件.bin');
   fs.mkdirSync(path.dirname(original), { recursive: true });
   fs.writeFileSync(original, crypto.randomBytes(100001));

@@ -176,6 +176,31 @@ test('automatic copy planning reuses a stable cross-account mapping without a wo
   assert.equal((await ctx.buildAutoCopyPlan('one', 'two')).length, 1, 'a changed cross-account source revision should be planned');
 });
 
+test('explicitly requested open session is planned without regular auto-copy rules', async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wd-plan-requested-session-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const sourceRow = {
+    id: 'open-session', user_id: 'one', cwd: '/fixture', title: 'Open conversation',
+    custom_title: '', status: 'completed', created_at: 1, updated_at: 7, last_activity_at: 7,
+  };
+  const targetRow = { ...sourceRow, id: 'other-session', user_id: 'two' };
+  const ctx = {
+    ...lib, fs, path, DATA_DIR: root,
+    SESSION_COPY_COLUMNS: ['id', 'user_id', 'cwd', 'title', 'custom_title', 'status', 'updated_at', 'last_activity_at'],
+    sessionCopyRowRevision: row => JSON.stringify([
+      String(row.id), String(row.user_id), Number(row.updated_at || 0), Number(row.last_activity_at || 0),
+      String(row.status || ''), String(row.title || ''), String(row.custom_title || ''),
+    ]),
+    sqliteQuery: async (_, params) => String(params[0]) === 'one' ? [{ ...sourceRow }] : [{ ...targetRow }],
+  };
+  const start = source.indexOf('function sessionCopyContentRevision(');
+  vm.runInNewContext(source.slice(start, source.indexOf('const autoCopyJobs', start)), ctx);
+
+  const plan = await ctx.buildAutoCopyPlan('one', 'two', ['open-session']);
+  assert.deepEqual(plan.map(row => row.id), ['open-session']);
+  assert.equal(plan[0].lineageId, null, 'an explicitly requested session need not already have a copy lineage');
+});
+
 test('sessions over 100 MiB copy completely and report only an advisory, including on repeat sync', async t => {
   const h = harness(t);
   const file = path.join(h.root, 'workspace/sessions/a/large.bin');

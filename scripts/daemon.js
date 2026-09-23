@@ -411,10 +411,11 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 // 1.2.129：自动同步跳过会话内符号链接；归档导入允许配置的数据根是目录链接。
 // 1.2.130：自动化等待按本轮会话回执绑定消息；空消息会话复制失败不阻断自动化切号。
 // 1.2.131：WorkBuddy 5.6 乐观 user 消息换正式 ID 时按稳定 requestId 继续等待。
+// 1.2.132：账号切换后恢复切换前的当前会话，并通过官方导航通道激活。
 // 1.2.126：5.6 加密账号改为密文原样备份、内存解密；导入兼容明文 token，
 //          刷新结果不把解密后的 token 写回加密备份。
-const DAEMON_VERSION = '1.2.131';
-const DAEMON_BUILD_ID = 'release-1.2.131-20260923-automation-request-id';
+const DAEMON_VERSION = '1.2.132';
+const DAEMON_BUILD_ID = 'release-1.2.132-20260923-conversation-restore';
 const usageReporter = createUsageReporter({ profile: PROFILE.id, version: DAEMON_VERSION });
 configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const automationDiscovery = createAutomationDiscovery({
@@ -4282,10 +4283,14 @@ function collectSessionArchiveFiles(wbHome, sessionId) {
 }
 
 function ensureArchiveParentNoFollow(wbHome, target) {
-  const root = path.resolve(wbHome);
+  // The configured WorkBuddy root may itself be a junction/symlink. Resolve
+  // only that boundary; every managed child component remains no-follow.
+  const configuredRoot = path.resolve(wbHome);
+  const root = fs.realpathSync(configuredRoot);
   const rootStat = fs.lstatSync(root);
-  if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) throw new Error('WorkBuddy 数据目录不是受管目录');
-  const parent = path.dirname(resolveArchiveTarget(root, archiveRelativePath(root, target)));
+  if (!rootStat.isDirectory()) throw new Error('WorkBuddy 数据目录不是受管目录');
+  const relativeTarget = archiveRelativePath(configuredRoot, path.resolve(target));
+  const parent = path.dirname(resolveArchiveTarget(root, relativeTarget));
   const relative = path.relative(root, parent);
   let current = root;
   for (const part of relative.split(path.sep).filter(Boolean)) {
@@ -4877,20 +4882,24 @@ async function copySessionRecord(src, targetUid, options = {}) {
   }
 }
 
-async function buildAutoCopyPlan(sourceUid, targetUid) {
+async function buildAutoCopyPlan(sourceUid, targetUid, requestedSessionIds = []) {
   const source = String(sourceUid || '').trim();
   const target = String(targetUid || '').trim();
   if (!source || !target || source === target) return [];
   normalizeAutoCopyLineages(DATA_DIR);
   const rules = getAutoCopyRules(DATA_DIR, source);
-  if (!rules.allSessions && !rules.sessionIds.length && !rules.workspaces.length) return [];
+  const requested = new Set((Array.isArray(requestedSessionIds) ? requestedSessionIds : [])
+    .map((id) => String(id || '').trim())
+    .filter((id) => id && id.length <= 200 && id !== '.' && id !== '..' &&
+      !/[\\/\x00-\x1f\x7f]/.test(id) && !/^[ .]|[ .]$/.test(id) && !/[<>:"|?*]/.test(id)));
+  if (!rules.allSessions && !rules.sessionIds.length && !rules.workspaces.length && !requested.size) return [];
   const rows = await sqliteQuery(
     'SELECT id, cwd, user_id, title, custom_title, status, created_at, updated_at, last_activity_at, is_playground, source_mode, is_background_automation, mode, model, expert_id, expert_locale, expert_runtime_identity, expert_marketplace, permission_mode, use_sandbox_cli, project_id ' +
     'FROM sessions WHERE deleted_at IS NULL AND user_id = ? ORDER BY created_at DESC;',
     [source]
   );
   const workspaceSet = new Set(rules.workspaces.map(canonicalWorkspace));
-  const selectedRows = rows.filter((row) => isAutoCopySessionSelected(rules, row));
+  const selectedRows = rows.filter((row) => requested.has(String(row.id || '')) || isAutoCopySessionSelected(rules, row));
   const mappings = getAutoCopyMappings(
     DATA_DIR,
     selectedRows.map((row) => rules.allLineages && rules.allLineages[String(row.id)]).filter(Boolean),
@@ -4905,6 +4914,10 @@ async function buildAutoCopyPlan(sourceUid, targetUid) {
   // Do the source-side check before reading the target account: the common
   // no-op switch should be a single sessions query plus metadata lookup.
   const dirtyRows = selectedRows.filter((row) => {
+    // The session that was visible during an account switch must be resolved
+    // even when its persisted copy is already up to date: the worker needs to
+    // return the target id so the renderer can restore the active view.
+    if (requested.has(String(row.id || ''))) return true;
     if (dirtyIndex.shouldSync(source, row.id)) return true;
     const lineageId = rules.allLineages && rules.allLineages[String(row.id)];
     const mapping = lineageId ? mappings.get(String(lineageId)) : null;
@@ -5039,6 +5052,8 @@ function startAutoCopyJob(sourceUid, targetUid, plan, labels) {
     targetUid,
     sourceName: String(accountLabels.sourceName || ''),
     targetName: String(accountLabels.targetName || ''),
+    openSessionId: String(accountLabels.openSessionId || '').trim(),
+    openSessionTargetId: '',
     plan: Array.isArray(plan) ? plan : [],
     total: Array.isArray(plan) ? plan.length : 0,
     processed: 0,
@@ -5069,7 +5084,7 @@ function startAutoCopyJob(sourceUid, targetUid, plan, labels) {
     // A rapid switch chain may enqueue this job before the previous copy has
     // created the target rows. Re-plan after the queue reaches this job.
     job.copyStartedAt = Date.now();
-    job.plan = await buildAutoCopyPlan(sourceUid, targetUid);
+    job.plan = await buildAutoCopyPlan(sourceUid, targetUid, job.openSessionId ? [job.openSessionId] : []);
     job.total = job.plan.length;
     // Each source snapshot already computes its byte total. Avoid a separate
     // full directory walk here: the old pre-scan doubled metadata I/O before
@@ -5112,6 +5127,9 @@ function startAutoCopyJob(sourceUid, targetUid, plan, labels) {
             : result.status === 'conflict' ? 'conflict'
             : result.status === 'skipped' ? 'skipped' : 'copied';
           detail.branched = result.branched === true;
+          if (job.openSessionId && String(result.sourceId || '') === job.openSessionId) {
+            job.openSessionTargetId = String(result.targetId || '');
+          }
           detail.totalBytes = result.totalBytes;
           // Test doubles and older adapters may not call onProgress. Add only
           // the unreported remainder so a real callback is never double-counted.
@@ -5180,6 +5198,7 @@ function publicAutoCopyJob(job) {
     error: job.error,
     sourceUid: job.sourceUid,
     targetUid: job.targetUid,
+    openSessionId: job.openSessionTargetId || '',
     sourceName: job.sourceName,
     targetName: job.targetName,
     currentLabel: job.currentLabel,
@@ -10028,6 +10047,8 @@ function handleApi(req, res) {
         releaseAccountSwitch = await assertAccountSwitchIdle();
         const sourceAccount = currentAccount() || {};
         const sourceUid = String(sourceAccount.uid || '').trim();
+        const currentConversationId = isValidSessionId(String(body.currentConversationId || '').trim())
+          ? String(body.currentConversationId).trim() : '';
         const acct = switchTo(DATA_DIR, uid, log);
         const hint = '登录文件已切换，请重启 WorkBuddy 使新账号生效';
         let reloaded = false;
@@ -10059,10 +10080,11 @@ function handleApi(req, res) {
         // 任务规则通常能直接命中，所以旧逻辑只表现为“任务能复制、空间不复制”。
         const sourceRules = sourceUid ? getAutoCopyRules(DATA_DIR, sourceUid) : { allSessions: false, sessionIds: [], workspaces: [] };
         const hasSourceAutoCopyRules = !!(sourceRules.allSessions || sourceRules.sessionIds.length || sourceRules.workspaces.length);
-        const autoCopyJob = (hasSourceAutoCopyRules || hasPendingAutoCopyTo(sourceUid))
+        const autoCopyJob = (hasSourceAutoCopyRules || hasPendingAutoCopyTo(sourceUid) || currentConversationId)
           ? startAutoCopyJob(sourceUid, uid, [], {
             sourceName: sourceAccount.nickname || '',
             targetName: acct.nickname || '',
+            openSessionId: currentConversationId,
           })
           : null;
         return json(res, 200, {
@@ -10070,7 +10092,7 @@ function handleApi(req, res) {
           uid: acct.uid,
           nickname: acct.nickname,
           reloaded,
-          autoCopy: autoCopyJob ? { jobId: autoCopyJob.id, total: autoCopyJob.total } : { total: 0 },
+          autoCopy: autoCopyJob ? { jobId: autoCopyJob.id, total: autoCopyJob.total, openSessionId: autoCopyJob.openSessionId || '' } : { total: 0 },
           hint: reloaded ? '已切换并触发窗口刷新' : hint,
         });
       } catch (e) {

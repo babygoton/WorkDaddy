@@ -8,6 +8,32 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const injectSource = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'inject.js'), 'utf8');
+const { createDirtyIndex } = require('../scripts/session-dirty.js');
+
+test('session dirty index uses the renderer baseline and preserves concurrent changes', () => {
+  const index = createDirtyIndex();
+  assert.equal(index.shouldSync('account-a', 'session-a'), true, 'uninitialized accounts use the safe fallback');
+  assert.equal(index.markBaseline('account-a'), true);
+  assert.equal(index.shouldSync('account-a', 'session-a'), false);
+  const marker = index.mark('account-a', 'session-a', 'sessionUpdated', 100);
+  assert.deepEqual(marker, { at: 100, event: 'sessionUpdated' });
+  assert.equal(index.shouldSync('account-a', 'session-a'), true);
+  assert.equal(index.clear('account-a', 'session-a', 99), false, 'a newer event must remain dirty');
+  assert.equal(index.clear('account-a', 'session-a', 100), true);
+  assert.equal(index.shouldSync('account-a', 'session-a'), false);
+});
+
+test('renderer dirty tracker ignores the initial snapshot and unchanged lifecycle events', async () => {
+  const sent = [];
+  const tracker = inject.createSessionDirtyTracker((payload) => sent.push(payload), { delay: 0 });
+  tracker.baseline([{ id: 'session-a', status: 'completed', title: 'A' }]);
+  assert.deepEqual(sent, [{ ready: true }]);
+  assert.equal(tracker.observe({ id: 'session-a', status: 'completed', title: 'A' }), false);
+  assert.equal(tracker.observe({ id: 'session-a', status: 'running', title: 'A', event: 'sessionUpdated' }), true);
+  tracker.flush();
+  assert.deepEqual(sent[1], [{ id: 'session-a', event: 'sessionUpdated' }]);
+  tracker.destroy();
+});
 
 test('approval gate accepts attached background approval cards without visibility checks', () => {
   const classify = inject.classifyNoDisturbApprovalCandidate;
@@ -69,6 +95,75 @@ test('session monitor progress gate excludes completed and idle snapshots', () =
   assert.equal(inProgress({ state: 'done', busy: false }), false);
 });
 
+test('session monitor interrupted gate accepts exactly what the judge would continue', () => {
+  const interrupted = inject.isSessionMonitorInterrupted;
+  const decision = inject.controllerAutoContinueDecision;
+  // 空闲 + 判定层愿意续跑 = 必须绑定。旧版绑定闸门只按 in-progress 过滤，
+  // 这些会话在绑定阶段就被丢掉，判定层一次都走不到。
+  const continuable = [
+    { assistantId: 'req-a-assistant', error: true },                              // 错误 UI
+    { assistantId: 'req-a-assistant', networkFailure: true },                     // 网络类错误
+    { assistantId: 'req-a-assistant', complete: false, terminal: false },         // 结构化中断（无错误 UI 也常见）
+    { assistantId: 'req-a-assistant', terminalKnown: true, terminal: false, complete: true }, // 明确未终局
+  ];
+  continuable.forEach((snapshot) => {
+    assert.equal(decision(snapshot).trigger, true, 'judge should continue ' + JSON.stringify(snapshot));
+    assert.equal(interrupted(snapshot), true, 'gate should bind ' + JSON.stringify(snapshot));
+  });
+  // 仍在运行 / 等决策 / 恢复中：交给 in-progress 分支，不重复绑定
+  assert.equal(interrupted({ assistantId: 'a', error: true, busy: true }), false);
+  assert.equal(interrupted({ assistantId: 'a', error: true, blocked: true }), false);
+  assert.equal(interrupted({ assistantId: 'a', error: true, hydrating: true }), false);
+  // 判定层不续跑的空闲会话：闸门同样不绑定，避免对正常历史回复多发一次续跑
+  const finished = [
+    { assistantId: 'a', manualStop: true, error: true },                 // 用户主动取消
+    { assistantId: 'a', complete: true, terminal: true },                // 结构化完成
+    { assistantId: 'a', terminalKnown: true, terminal: true, complete: true },
+    { assistantId: 'a', complete: true },                                // 旧版无 terminal 字段
+    { assistantId: 'a', completionMarker: true, complete: false, terminal: false },
+    { assistantId: '', error: true },                                    // 没有助手回复
+    null,
+  ];
+  finished.forEach((snapshot) => {
+    assert.equal(decision(snapshot).trigger, false, 'judge should not continue ' + JSON.stringify(snapshot));
+    assert.equal(interrupted(snapshot), false, 'gate should not bind ' + JSON.stringify(snapshot));
+  });
+});
+
+test('interrupted sessions enter auto-continue instead of waiting for a new reply', () => {
+  // 判定层对同一份快照确实会触发续跑（error-ui）：缺口只在「能否进入判定」
+  assert.deepEqual(
+    inject.classifyAutoContinueControllerSnapshot({ assistantId: 'req-a-assistant', error: true }),
+    { trigger: true, reason: 'error-ui' },
+  );
+  // 两条绑定路径都必须接纳已中断会话，而不是无限等待不会到来的新回复
+  assert.match(
+    injectSource,
+    /if \(!existing && !isSessionMonitorInProgress\(initialSnapshot\) && !isSessionMonitorInterrupted\(initialSnapshot\)\) return null;/,
+  );
+  assert.match(injectSource, /session\.awaitingNewReply = false;[\s\S]{0,80}session\.baselineAssistantKey = '';/);
+  assert.match(
+    injectSource,
+    /c\.awaitingNewReply = preserve[\s\S]{0,100}!!carry\.awaitingNewReply && !isSessionMonitorInterrupted\(snap\)[\s\S]{0,60}: !isSessionMonitorInterrupted\(snap\);/,
+  );
+  assert.match(injectSource, /acLog\('baseline-established', \{ via: 'controller', awaitingNewReply: c\.awaitingNewReply \}\);/);
+  // 控制器快照必须自带完成标记，判定与绑定闸门共用同一份证据
+  assert.match(injectSource, /completionMarker: acHasMarker\(text\),/);
+  // 判定路径与绑定闸门必须走同一个映射，否则两条规则会再次错位
+  assert.match(injectSource, /var decision = controllerAutoContinueDecision\(snap\);/);
+  assert.match(injectSource, /var decision = controllerAutoContinueDecision\(snapshot\);/);
+  assert.equal(
+    (injectSource.match(/classifyAutoContinueControllerSnapshot\(\{/g) || []).length,
+    1,
+    '控制器/多会话判定不得各自内联一份映射',
+  );
+  assert.match(
+    injectSource,
+    /function controllerAutoContinueDecision\(snapshot\) \{[\s\S]{0,400}return classifyAutoContinueControllerSnapshot\(\{/,
+  );
+  assert.match(injectSource, /return controllerAutoContinueDecision\(s\)\.trigger === true;/);
+});
+
 test('session resource normalizer treats background terminal updates as final', () => {
   const normalize = inject.normalizeSessionMonitorResourceRecord;
   assert.deepEqual(normalize({
@@ -81,6 +176,12 @@ test('session resource normalizer treats background terminal updates as final', 
     title: '任务 B',
     status: 'completed',
     pendingInputKind: '',
+    protocolStatus: 'completed',
+    state: '',
+    activePromptStartedAt: 0,
+    queueRevision: null,
+    updatedAt: 0,
+    lastActivityAt: 0,
     active: false,
     terminal: true,
     event: 'sessionUpdated',
@@ -95,6 +196,9 @@ test('session resource normalizer treats background terminal updates as final', 
     status: 'pending',
     messageQueueRuntime: { pendingItemCount: 1, paused: false },
   }, 'sessionUpdated').active, true);
+  const revision = normalize({ id: 'task-b', status: 'running', updated_at: 10, last_activity_at: 9,
+    messageQueueRuntime: { inflightItemId: 'q1', pendingItemCount: 2, paused: false } });
+  assert.deepEqual([revision.updatedAt, revision.lastActivityAt, revision.queueRevision], [10, 9, ['q1', 2, 0, false]]);
 });
 
 test('session lifecycle adds unknown background work and removes terminal sessions', () => {
@@ -110,6 +214,12 @@ test('multi-session monitor subscribes while idle and detaches switched controll
   assert.match(injectSource, /function acStartMultiMonitor\(\)[\s\S]*var hasResource = acMultiBindSessionResource\(\);[\s\S]*if \(!hasResource && !hasSidebar && !Object\.keys\(acMulti\.sessions\)\.length\)/);
   assert.match(injectSource, /function acMultiDetachController\(session\)[\s\S]*session\.controller = null;/);
   assert.match(injectSource, /function acMultiFinishSession\(session\)[\s\S]*delete acMulti\.sessions\[session\.id\];/);
+});
+
+test('sync idle probe can scope busy checks to the sessions being copied', () => {
+  assert.match(injectSource, /function isAnySessionBusyForIds\(ids\)/);
+  assert.match(injectSource, /window\.__wbsSessionsBusy = sessionBusyIdsProbe/);
+  assert.match(injectSource, /discoverSleepSessionBusy\(wanted\)/);
 });
 
 test('session resource subscription delivers non-active completion without controller changes', () => {

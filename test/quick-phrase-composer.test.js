@@ -11,9 +11,35 @@ const start = source.indexOf('async function sendStashToComposer(record) {');
 const end = source.indexOf('\n/**', start);
 assert.ok(start >= 0 && end > start);
 
-function harness(hasContent, failSelect = false) {
+const busyStart = source.indexOf('function buildBusyExpr() {');
+const busyEnd = source.indexOf('\n/**', busyStart);
+assert.ok(busyStart >= 0 && busyEnd > busyStart);
+
+function evaluateBusy(elements) {
+  const context = {};
+  vm.runInNewContext(source.slice(busyStart, busyEnd), context);
+  return vm.runInNewContext(context.buildBusyExpr(), {
+    document: { querySelectorAll: () => elements },
+  });
+}
+
+test('AI busy detection ignores WorkDaddy controls but keeps official stop controls', () => {
+  const ownStop = {
+    closest: selector => selector === '.wbs-root' ? {} : null,
+    getBoundingClientRect: () => ({ width: 96, height: 32 }),
+  };
+  const officialStop = {
+    closest: () => null,
+    getBoundingClientRect: () => ({ width: 32, height: 32 }),
+  };
+  assert.equal(evaluateBusy([ownStop]), false);
+  assert.equal(evaluateBusy([officialStop]), true);
+});
+
+function harness(hasContent, failSelect = false, postClickHasContent = false) {
   const calls = [];
   let evaluations = 0;
+  let submitted = false;
   const context = {
     cdp: { connected: true },
     log() {},
@@ -25,17 +51,23 @@ function harness(hasContent, failSelect = false) {
         evaluations++;
         const value = evaluations === 1 ? { ok: true }
           : evaluations === 2 ? { ok: true, hasContent }
+          : params.expression.includes('composer-after-submit') ? { ok: true, hasContent: postClickHasContent || !submitted }
           : { ok: true, x: 100, y: 100 };
         return { result: { value } };
       }
       if (failSelect && params.commands?.includes('selectAll')) throw new Error('selection failed');
       return {};
     },
-    cdpMouseClick: async () => calls.push({ method: 'submit' }),
+    cdpMouseClick: async () => { submitted = true; calls.push({ method: 'submit' }); },
   };
   vm.runInNewContext(source.slice(start, end), context);
   return { calls, send: (text) => context.sendStashToComposer({ content: { text, items: [] } }) };
 }
+
+test('quick phrase rejects a click when the composer still contains text', async () => {
+  const { send } = harness(false, false, true);
+  await assert.rejects(send('replacement'), /输入框仍有内容|未确认发送/);
+});
 
 test('quick phrase replaces a draft using a renderer edit command without macOS menu shortcuts', async () => {
   const { calls, send } = harness(true);
@@ -70,11 +102,14 @@ test('failed selection aborts before deleting, inserting or submitting', async (
   assert.equal(calls.some(({ method, params }) => method === 'submit' || method === 'Input.insertText' || params?.key === 'Backspace'), false);
 });
 
-function guardedComposerHarness({ draft = '', attachment = false } = {}) {
+function guardedComposerHarness({ draft = '', attachment = false, textarea = false } = {}) {
   const calls = [];
   const editor = {
+    tagName: textarea ? 'TEXTAREA' : 'DIV',
+    value: textarea ? draft : undefined,
     innerText: 'Ask WorkBuddy anything\u200b' + draft,
     focus() {}, scrollIntoView() {},
+    closest: selector => selector.includes('.cr-input-box') ? {} : null,
     getBoundingClientRect: () => ({ width: 400, height: 80, bottom: 400 }),
     querySelector: () => attachment ? {} : null,
     cloneNode() {
@@ -83,7 +118,12 @@ function guardedComposerHarness({ draft = '', attachment = false } = {}) {
       return clone;
     },
   };
-  const dom = { document: { querySelector: () => null, querySelectorAll: () => [editor] }, window: { getSelection: () => null } };
+  const dom = { document: { querySelector: () => null, querySelectorAll: selector => {
+    if (selector.includes('[contenteditable') && selector.includes('textarea')) return [editor];
+    if (selector.includes('textarea')) return textarea ? [editor] : [];
+    if (selector.includes('[contenteditable')) return textarea ? [] : [editor];
+    return [editor];
+  } }, window: { getSelection: () => null }, getComputedStyle: () => ({ display: 'block', visibility: 'visible' }) };
   const context = { cdp: { connected: true }, log() {}, waitAiIdle: async () => true, setTimeout: fn => fn(),
     cdpSend: async (method, params) => {
       calls.push(method);
@@ -102,8 +142,18 @@ test('automation sends from an empty Slate editor containing a visible placehold
   const h = guardedComposerHarness();
   assert.equal((await h.send()).sent, true);
   assert.ok(h.calls.includes('Input.insertText'));
-  assert.equal(h.calls.at(-1), 'submit');
+  const submit = h.calls.indexOf('submit');
+  assert.ok(submit >= 0);
+  assert.equal(h.calls.filter(method => method === 'submit').length, 1);
+  assert.ok(h.calls.slice(submit + 1).includes('Runtime.evaluate'), 'must confirm the composer cleared after submitting');
   assert.ok(!h.calls.includes('Input.dispatchKeyEvent'), 'placeholder must not trigger draft deletion');
+});
+
+test('automation sends from the modern textarea composer after model selection', async () => {
+  const h = guardedComposerHarness({ textarea: true });
+  assert.equal((await h.send()).sent, true);
+  assert.ok(h.calls.includes('Input.insertText'));
+  assert.equal(h.calls.filter(method => method === 'submit').length, 1);
 });
 
 test('automation still rejects real drafts and attachment-only editors before input', async () => {
@@ -117,6 +167,7 @@ test('automation still rejects real drafts and attachment-only editors before in
 function delayedButtonHarness({ enableAfter = 3, cancelAfter = Infinity, disabledBy = 'property', probeCost = 0, scoped = false, missing = false, stop = false } = {}) {
   const calls = [];
   let probes = 0, evaluations = 0, guardChecks = 0, clock = 0;
+  let submitted = false;
   const waits = [], probeTimes = [];
   const button = {
     tagName: 'BUTTON',
@@ -136,6 +187,9 @@ function delayedButtonHarness({ enableAfter = 3, cancelAfter = Infinity, disable
       if (method !== 'Runtime.evaluate') return {};
       evaluations++;
       if (evaluations <= 2) return { result: { value: { ok: true, hasContent: false } } };
+      if (params.expression.includes('composer-after-submit')) {
+        return { result: { value: { ok: true, hasContent: !submitted } } };
+      }
       probes++; probeTimes.push(clock); clock += probeCost;
       const foreign = { ...button, disabled: false, hasAttribute: () => false, getAttribute: () => null };
       const dom = {
@@ -143,7 +197,7 @@ function delayedButtonHarness({ enableAfter = 3, cancelAfter = Infinity, disable
         getComputedStyle: () => ({ display: 'block', visibility: 'visible', borderRadius: '50%' }),
       };
       return { result: { value: vm.runInNewContext(params.expression, dom) } };
-    }, cdpMouseClick: async () => calls.push('submit'),
+    }, cdpMouseClick: async () => { submitted = true; calls.push('submit'); },
   };
   vm.runInNewContext(source.slice(start, end), context);
   return { calls, waits, probeTimes, elapsed: () => clock, probes: () => probes, send: () => context.sendStashToComposer({ requireEmpty: true, content: { text: '1+1=', items: [] }, guard: async () => { if (++guardChecks >= cancelAfter) throw Error('account changed'); } }) };

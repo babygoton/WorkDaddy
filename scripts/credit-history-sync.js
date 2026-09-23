@@ -33,7 +33,8 @@ function createCreditHistorySync(options) {
       if (typeof row.uid !== 'string' || !/^\d{4}-\d\d-\d\d$/.test(row.date) ||
           !Number.isFinite(row.used) || row.used < 0 || !Number.isSafeInteger(row.count) || row.count < 0 ||
           !Number.isFinite(row.queriedAt) || typeof row.final !== 'boolean') continue;
-      cache.set(key(row.uid, row.date), row);
+      const models = row.models && typeof row.models === 'object' && !Array.isArray(row.models) ? row.models : {};
+      cache.set(key(row.uid, row.date), { ...row, models });
     }
   } catch (_) { /* Absent or invalid cache: query the official API. */ }
   function persist() {
@@ -78,7 +79,7 @@ function createCreditHistorySync(options) {
     });
     function readDaily() {
       return selected.flatMap(a => dates.map(date => cache.get(key(a.uid, dateString(date)))).filter(Boolean)
-        .map(row => ({ uid: row.uid, date: row.date, used: row.used, count: row.count, complete: true })));
+        .map(row => ({ uid: row.uid, date: row.date, used: row.used, count: row.count, models: row.models || {}, complete: true })));
     }
     const initial = readDaily();
     const cacheHit = plans.every(plan => !plan.gaps.length);
@@ -111,7 +112,7 @@ function createCreditHistorySync(options) {
             const daily = new Map();
             for (const date = new Date(gap.startTime); date <= gap.endTime; date.setDate(date.getDate() + 1)) {
               const day = dateString(date);
-              daily.set(day, { uid: account.uid, date: day, used: 0, count: 0,
+              daily.set(day, { uid: account.uid, date: day, used: 0, count: 0, models: {},
                 queriedAt: range.endTime.getTime(), final: day < range.to });
             }
             const seen = new Set();
@@ -120,9 +121,18 @@ function createCreditHistorySync(options) {
               if (!day || seen.has(record.requestId)) continue;
               seen.add(record.requestId);
               day.used += record.credit; day.count++;
+              const model = String(record.model || '').trim();
+              if (model) {
+                const modelUsage = day.models[model] || (day.models[model] = { used: 0, count: 0 });
+                modelUsage.used += record.credit;
+                modelUsage.count++;
+              }
             }
             for (const day of daily.values()) {
               day.used = Math.round(day.used * 100) / 100;
+              Object.values(day.models).forEach(modelUsage => {
+                modelUsage.used = Math.round(modelUsage.used * 100) / 100;
+              });
               cache.set(key(day.uid, day.date), day);
             }
             persist();
