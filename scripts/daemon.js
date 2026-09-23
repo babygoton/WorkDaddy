@@ -411,11 +411,16 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 // 1.2.129：自动同步跳过会话内符号链接；归档导入允许配置的数据根是目录链接。
 // 1.2.130：自动化等待按本轮会话回执绑定消息；空消息会话复制失败不阻断自动化切号。
 // 1.2.131：WorkBuddy 5.6 乐观 user 消息换正式 ID 时按稳定 requestId 继续等待。
-// 1.2.132：账号切换后恢复切换前的当前会话，并通过官方导航通道激活。
+// 1.2.140：稳定映射自动清理历史生命周期脏标记，避免无变化切换进入同步 worker。
+// 1.2.141：已建立 dirty baseline 后忽略历史 lineage revision 漂移，并确认官方会话导航结果。
+// 1.2.142：忽略激活引起的会话生命周期漂移，拒绝切号后的旧脏通知，并按目标账号恢复同步状态。
+// 1.2.143：内容相同的激活会话刷新映射并清除旧脏标记；缺失映射时复用已有目标会话，避免重复创建。
+// 1.2.144：删除会话允许一次处理超过 100 个 ID；其他批量接口仍保留原有上限。
+// 1.2.145：识别仅 updated_at 的激活漂移，清除无变更脏标记；无结果任务不再弹同步进度窗口。
 // 1.2.126：5.6 加密账号改为密文原样备份、内存解密；导入兼容明文 token，
 //          刷新结果不把解密后的 token 写回加密备份。
-const DAEMON_VERSION = '1.2.132';
-const DAEMON_BUILD_ID = 'release-1.2.132-20260923-conversation-restore';
+const DAEMON_VERSION = '1.2.146';
+const DAEMON_BUILD_ID = 'release-1.2.146-20260923-sync-meta-stability';
 const usageReporter = createUsageReporter({ profile: PROFILE.id, version: DAEMON_VERSION });
 configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const automationDiscovery = createAutomationDiscovery({
@@ -4642,6 +4647,32 @@ function mappingSourceRevisionMatches(mapping, sourceUid, sourceRow) {
   return false;
 }
 
+// WorkBuddy may advance only updated_at while restoring/activating a
+// conversation. That row change is a renderer lifecycle event; a real message
+// edit also advances last_activity_at (or changes status/title metadata). Keep
+// this narrower check separate from the full revision check so message edits
+// still enter the snapshot worker.
+function mappingSourceLifecycleRevisionMatches(mapping, sourceRow) {
+  if (!mapping || !sourceRow) return false;
+  const candidates = [];
+  if (typeof mapping.sourceRevision === 'string') candidates.push(mapping.sourceRevision);
+  if (typeof mapping.sourceStateRevision === 'string') candidates.push(mapping.sourceStateRevision);
+  if (typeof mapping.sourceContentRevision === 'string') candidates.push(mapping.sourceContentRevision);
+  const current = JSON.stringify([
+    Number(sourceRow.last_activity_at || 0), String(sourceRow.status || ''),
+    String(sourceRow.title || ''), String(sourceRow.custom_title || ''),
+  ]);
+  for (const value of candidates) {
+    try {
+      const parsed = JSON.parse(value);
+      if (!Array.isArray(parsed)) continue;
+      const offset = parsed.length >= 7 ? 2 : 0;
+      if (parsed.length >= offset + 5 && JSON.stringify(parsed.slice(offset + 1, offset + 5)) === current) return true;
+    } catch (_) {}
+  }
+  return false;
+}
+
 function mappingWithSourceRevision(mapping, sourceUid, sourceRow) {
   const sourceRevision = sessionCopyRowRevision(sourceRow);
   const sourceRevisions = mapping && mapping.sourceRevisions && typeof mapping.sourceRevisions === 'object'
@@ -4666,6 +4697,31 @@ function mappingTargetRevisionMatches(mapping, targetRow) {
     if (Array.isArray(legacy) && JSON.stringify(legacy.slice(2)) === stable) return true;
   } catch (_) {}
   return mapping.targetRevision === sessionCopyRowRevision(targetRow);
+}
+
+// Opening a copied conversation can refresh its status/last-activity fields
+// without changing any session files. Treat that lifecycle-only drift as a
+// stable target when planning incremental sync; actual content/title revision
+// changes still go through the normal worker path.
+function mappingTargetLifecycleRevisionMatches(mapping, targetRow) {
+  if (!mapping || !targetRow) return false;
+  const candidates = [];
+  if (typeof mapping.targetRevision === 'string') candidates.push(mapping.targetRevision);
+  if (typeof mapping.targetStateRevision === 'string') candidates.push(mapping.targetStateRevision);
+  for (const value of candidates) {
+    try {
+      const parsed = JSON.parse(value);
+      if (!Array.isArray(parsed) || parsed.length < 5) continue;
+      // Revisions are [updatedAt, lastActivityAt, status, title, customTitle]
+      // or their row form with the id/user prefix. Activation can rewrite all
+      // lifecycle fields; title/custom title remain the user-facing identity.
+      const offset = parsed.length >= 7 ? 2 : 0;
+      const comparable = JSON.stringify([parsed[offset + 3], parsed[offset + 4]]);
+      const now = JSON.stringify([String(targetRow.title || ''), String(targetRow.custom_title || '')]);
+      if (comparable === now) return true;
+    } catch (_) {}
+  }
+  return false;
 }
 
 async function copySessionRecord(src, targetUid, options = {}) {
@@ -4703,6 +4759,23 @@ async function copySessionRecord(src, targetUid, options = {}) {
     for (const id of ids) {
       const row = await readRow(id, targetUid);
       if (row) candidates.push(row);
+    }
+    // A previous daemon could have created the target row and crashed before
+    // persisting its lineage member/mapping. Repeated account switches must
+    // recover that exact content instead of allocating another physical row.
+    // Restrict the recovery probe to the same workspace/title so unrelated
+    // sessions are never merged by a fuzzy match; the snapshot comparison
+    // below remains the final proof of identity.
+    if (!candidates.length && (!mapping || !mapping.targetId) && sourceRow.cwd) {
+      try {
+        const fallbackRows = await sqliteQuery(
+          'SELECT ' + SESSION_COPY_COLUMNS.join(',') + ' FROM sessions WHERE deleted_at IS NULL AND user_id = ? AND cwd = ? AND title = ? AND custom_title = ?;',
+          [targetUid, sourceRow.cwd, sourceRow.title || '', sourceRow.custom_title || '']
+        );
+        for (const row of fallbackRows || []) {
+          if (row && String(row.id || '') !== String(sourceRow.id || '')) candidates.push(row);
+        }
+      } catch (_) {}
     }
     const targetIds = candidates.length ? candidates.map(row => row.id) : [crypto.randomUUID()];
     const aliases = getAutoCopySessionMemberRecords(DATA_DIR, lineageId).map(member => member.id).concat(targetIds);
@@ -4902,37 +4975,171 @@ async function buildAutoCopyPlan(sourceUid, targetUid, requestedSessionIds = [])
   const selectedRows = rows.filter((row) => requested.has(String(row.id || '')) || isAutoCopySessionSelected(rules, row));
   const mappings = getAutoCopyMappings(
     DATA_DIR,
-    selectedRows.map((row) => rules.allLineages && rules.allLineages[String(row.id)]).filter(Boolean),
+    selectedRows.map((row) => {
+      const known = rules.allLineages && rules.allLineages[String(row.id)];
+      if (known) return known;
+      if (!requested.has(String(row.id || '')) || typeof getAutoCopySession !== 'function') return null;
+      try { return getAutoCopySession(DATA_DIR, source, row.id).lineageId; } catch (_) { return null; }
+    }).filter(Boolean),
     target
   );
   const dirtyIndex = typeof getSessionDirtyIndex === 'function'
     ? getSessionDirtyIndex()
     : { shouldSync: () => true };
+  const clearStableDirtyMarker = (row, mapping, provenEqual = false) => {
+    if (!mapping || mapping.fingerprintVersion !== 2 || !mapping.targetId ||
+        (!provenEqual && !mappingSourceRevisionMatches(mapping, source, row))) return false;
+    if (typeof dirtyIndex.get !== 'function' || typeof clearSessionDirty !== 'function') return false;
+    const marker = dirtyIndex.get(source, row.id);
+    if (!marker) return false;
+    // Markers written by the pre-1.2.139 lifecycle signature can survive a
+    // reload even though both persisted revisions prove the mapping is clean.
+    // Clear only that proven no-op; a changed source revision remains dirty.
+    clearSessionDirty(source, row.id, marker.at);
+    return true;
+  };
+  const refreshStableMappedPayload = async (row, mapping, targetRow, lineageId) => {
+    if (!mapping || !mapping.targetId || !targetRow || !lineageId ||
+        typeof sessionSync === 'undefined' || typeof sessionSync.readSnapshotAsync !== 'function' ||
+        typeof sessionSync.compareSnapshots !== 'function') return false;
+    try {
+      const members = typeof getAutoCopySessionMemberRecords === 'function'
+        ? getAutoCopySessionMemberRecords(DATA_DIR, lineageId).map((member) => member && member.id).filter(Boolean)
+        : [];
+      const aliases = Array.from(new Set([String(row.id), String(targetRow.id), ...members]));
+      const cache = typeof getSessionSyncCache === 'function' ? getSessionSyncCache() : null;
+      const sourceSnapshot = await sessionSync.readSnapshotAsync(PROFILE.dataRoot, row.id, aliases, cache);
+      const targetSnapshot = await sessionSync.readSnapshotAsync(PROFILE.dataRoot, targetRow.id, aliases, cache);
+      if (sessionSync.compareSnapshots(sourceSnapshot, targetSnapshot).kind !== 'equal') return false;
+      setAutoCopyMapping(DATA_DIR, lineageId, target,
+        Object.assign({}, mapping, mappingWithSourceRevision(mapping, source, row), {
+          targetRevision: sessionCopyRowRevision(targetRow),
+          targetStateRevision: sessionCopyStableStateRevision(targetRow),
+          sourceBytes: sourceSnapshot.totalBytes,
+          totalBytes: sourceSnapshot.totalBytes,
+        }));
+      return true;
+    } catch (_) {
+      return false;
+    }
+  };
+  // A requested active session still needs its target id for post-switch
+  // navigation, but it must not force a full snapshot when the renderer did
+  // not report that session as dirty. Read target rows only for this narrow
+  // requested-session check; regular no-op plans keep the original hot path.
+  let targetRows = null;
+  let targetById = null;
+  const loadTargetRows = async () => {
+    if (targetRows) return;
+    targetRows = await sqliteQuery(
+      'SELECT ' + SESSION_COPY_COLUMNS.join(',') + ' FROM sessions WHERE deleted_at IS NULL AND user_id = ?;',
+      [target]
+    );
+    targetById = new Map(targetRows.map((row) => [String(row.id), row]));
+  };
+  if (requested.size) await loadTargetRows();
+  const hasDirtyMarker = (row) => typeof dirtyIndex.get === 'function' && !!dirtyIndex.get(source, row.id);
+  const initializedClean = (row) => typeof dirtyIndex.isInitialized === 'function' &&
+    dirtyIndex.isInitialized(source) && !hasDirtyMarker(row);
+  const stableTargetExists = (mapping) => !!(mapping && mapping.targetId && targetById &&
+    targetById.has(String(mapping.targetId)) && (() => {
+      const targetRow = targetById.get(String(mapping.targetId));
+      return mappingTargetRevisionMatches(mapping, targetRow) ||
+        mappingTargetLifecycleRevisionMatches(mapping, targetRow);
+    })());
+  // A lineage may contain several historical physical copies. Their persisted
+  // source revision can refer to a different member even though the renderer
+  // has established a clean baseline for the current account. Resolve target
+  // rows once so that this legacy drift can stay on the metadata-only path.
+  if (!targetRows && typeof dirtyIndex.isInitialized === 'function' && dirtyIndex.isInitialized(source)) {
+    const hasRevisionDrift = selectedRows.some((row) => {
+      if (!initializedClean(row)) return false;
+      const lineageId = rules.allLineages && rules.allLineages[String(row.id)];
+      const mapping = lineageId ? mappings.get(String(lineageId)) : null;
+      return mapping && mapping.fingerprintVersion === 2 && mapping.targetId &&
+        !mappingSourceRevisionMatches(mapping, source, row);
+    });
+    if (hasRevisionDrift) await loadTargetRows();
+  }
+  // Dirty lifecycle notifications need the target row to prove that the
+  // mapped copy still exists before they can be cleared without a worker.
+  if (!targetRows && selectedRows.some((row) => {
+    if (!dirtyIndex.shouldSync(source, row.id)) return false;
+    const lineageId = rules.allLineages && rules.allLineages[String(row.id)];
+    const mapping = lineageId ? mappings.get(String(lineageId)) : null;
+    return !!(mapping && mapping.targetId);
+  })) await loadTargetRows();
   // Once the renderer has established a baseline, only sessions reported by
   // its lifecycle feed enter the copy worker. Before that first baseline the
   // conservative fallback keeps existing installations fully synchronised.
   // Do the source-side check before reading the target account: the common
   // no-op switch should be a single sessions query plus metadata lookup.
-  const dirtyRows = selectedRows.filter((row) => {
-    // The session that was visible during an account switch must be resolved
-    // even when its persisted copy is already up to date: the worker needs to
-    // return the target id so the renderer can restore the active view.
-    if (requested.has(String(row.id || ''))) return true;
-    if (dirtyIndex.shouldSync(source, row.id)) return true;
+  // Keep the array realm of the SQLite result. Some embedders execute this
+  // planner in a VM context; returning a foreign-realm array breaks callers'
+  // strict structural comparisons even when the plan is empty. `filter`
+  // preserves the source array's realm in both the daemon and VM harness.
+  const dirtyRows = selectedRows.filter(() => false);
+  for (const row of selectedRows) {
+    const requestedRow = requested.has(String(row.id || ''));
+    if (requestedRow) {
+      const lineageId = (rules.allLineages && rules.allLineages[String(row.id)]) ||
+        (typeof getAutoCopySession === 'function' && getAutoCopySession(DATA_DIR, source, row.id)?.lineageId);
+      const mapping = lineageId ? mappings.get(String(lineageId)) : null;
+      // The target mapping is enough to restore the active view. Only enter
+      // the worker when it is missing, its row disappeared, or the renderer
+      // explicitly marked the source session dirty.
+      if (!mapping || mapping.fingerprintVersion !== 2 || !mapping.targetId ||
+          !targetById || !targetById.has(String(mapping.targetId))) {
+        dirtyRows.push(row);
+        continue;
+      }
+      if (mappingSourceRevisionMatches(mapping, source, row) &&
+          mappingTargetRevisionMatches(mapping, targetById.get(String(mapping.targetId)))) {
+        clearStableDirtyMarker(row, mapping);
+        continue;
+      }
+      if (mappingSourceLifecycleRevisionMatches(mapping, row) && stableTargetExists(mapping)) {
+        clearStableDirtyMarker(row, mapping, true);
+        continue;
+      }
+      if (!mappingSourceRevisionMatches(mapping, source, row) && stableTargetExists(mapping)) {
+        const refreshed = await refreshStableMappedPayload(
+          row, mapping, targetById.get(String(mapping.targetId)), lineageId
+        );
+        if (initializedClean(row) || refreshed) {
+          clearStableDirtyMarker(row, mapping, refreshed);
+          continue;
+        }
+      }
+      dirtyRows.push(row);
+      continue;
+    }
     const lineageId = rules.allLineages && rules.allLineages[String(row.id)];
     const mapping = lineageId ? mappings.get(String(lineageId)) : null;
-    if (!mapping || mapping.fingerprintVersion !== 2 || !mapping.targetId) return true;
-    return !mappingSourceRevisionMatches(mapping, source, row);
-  });
+    if (dirtyIndex.shouldSync(source, row.id)) {
+      if (clearStableDirtyMarker(row, mapping)) continue;
+      if (mappingSourceLifecycleRevisionMatches(mapping, row) && targetById && stableTargetExists(mapping)) {
+        clearStableDirtyMarker(row, mapping, true);
+        continue;
+      }
+      dirtyRows.push(row);
+      continue;
+    }
+    if (!mapping || mapping.fingerprintVersion !== 2 || !mapping.targetId) { dirtyRows.push(row); continue; }
+    if (mappingSourceRevisionMatches(mapping, source, row)) continue;
+    // Once the renderer has supplied a baseline, a persisted revision drift
+    // without a dirty event is historical lineage churn, not a content edit.
+    // Keep missing target rows on the worker path so first-time recovery still
+    // creates the physical copy.
+    if (!(initializedClean(row) && stableTargetExists(mapping))) dirtyRows.push(row);
+  }
   if (!dirtyRows.length) return [];
 
   // Only dirty/new source rows need target state to resolve an existing copy,
   // repair a missing row, or detect a divergent continuation.
-  const targetRows = await sqliteQuery(
-    'SELECT ' + SESSION_COPY_COLUMNS.join(',') + ' FROM sessions WHERE deleted_at IS NULL AND user_id = ?;',
-    [target]
-  );
-  const targetById = new Map(targetRows.map((row) => [String(row.id), row]));
+  if (!targetRows) {
+    await loadTargetRows();
+  }
   // Full-copy and workspace matches need stable hidden lineages for idempotent
   // repeated switches. Prepare the whole batch with one metadata write.
   const lineageSessionIds = dirtyRows
@@ -4958,7 +5165,8 @@ async function buildAutoCopyPlan(sourceUid, targetUid, requestedSessionIds = [])
     if (!mapping || mapping.fingerprintVersion !== 2 || !mapping.targetId) return true;
     const targetRow = targetById.get(String(mapping.targetId));
     return !targetRow || !mappingSourceRevisionMatches(mapping, source, row) ||
-      !mappingTargetRevisionMatches(mapping, targetRow);
+      (!mappingTargetRevisionMatches(mapping, targetRow) &&
+       !mappingTargetLifecycleRevisionMatches(mapping, targetRow));
   });
 }
 
@@ -5016,6 +5224,22 @@ function pruneAutoCopyJobs() {
   while (completed.length > 100) {
     const oldest = completed.shift();
     autoCopyJobs.delete(oldest.id);
+  }
+}
+
+function resolveAutoCopyTargetId(sourceUid, targetUid, sessionId) {
+  const source = String(sourceUid || '').trim();
+  const target = String(targetUid || '').trim();
+  const id = String(sessionId || '').trim();
+  if (!source || !target || !id || typeof getAutoCopyRules !== 'function' || typeof getAutoCopyMapping !== 'function') return '';
+  try {
+    const rules = getAutoCopyRules(DATA_DIR, source);
+    const lineageId = (rules.allLineages && rules.allLineages[id]) ||
+      (typeof getAutoCopySession === 'function' && getAutoCopySession(DATA_DIR, source, id)?.lineageId);
+    const mapping = lineageId ? getAutoCopyMapping(DATA_DIR, lineageId, target) : null;
+    return mapping && mapping.targetId ? String(mapping.targetId) : '';
+  } catch (_) {
+    return '';
   }
 }
 
@@ -5086,6 +5310,9 @@ function startAutoCopyJob(sourceUid, targetUid, plan, labels) {
     job.copyStartedAt = Date.now();
     job.plan = await buildAutoCopyPlan(sourceUid, targetUid, job.openSessionId ? [job.openSessionId] : []);
     job.total = job.plan.length;
+    if (job.openSessionId && !job.plan.some((row) => String(row && row.id || '') === job.openSessionId)) {
+      job.openSessionTargetId = resolveAutoCopyTargetId(sourceUid, targetUid, job.openSessionId);
+    }
     // Each source snapshot already computes its byte total. Avoid a separate
     // full directory walk here: the old pre-scan doubled metadata I/O before
     // the per-session snapshot pass, especially on Windows with many files.
@@ -5095,7 +5322,29 @@ function startAutoCopyJob(sourceUid, targetUid, plan, labels) {
     // directory metadata I/O, while keeping the disk pressure bounded on
     // lower-end Windows machines.
     const concurrency = Math.min(4, Math.max(1, job.plan.length));
+    // The active conversation is still flushed by WorkBuddy for a short
+    // period after account navigation. Give that one requested session a
+    // bounded backoff retry window; ordinary sessions remain fail-fast.
+    const activeSessionRetryDelays = [350, 700, 1200];
     let nextIndex = 0;
+    const recoverOpenSessionTarget = (src) => {
+      if (!job.openSessionId || String(src && src.id || '') !== job.openSessionId || job.openSessionTargetId) return;
+      if (typeof DATA_DIR === 'undefined' || typeof getAutoCopyMapping !== 'function') return;
+      try {
+        let lineageId = src && src.lineageId;
+        if (!lineageId && typeof getAutoCopySession === 'function') {
+          const record = getAutoCopySession(DATA_DIR, sourceUid, src.id);
+          lineageId = record && record.lineageId;
+        }
+        const mapping = lineageId ? getAutoCopyMapping(DATA_DIR, lineageId, targetUid) : null;
+        if (mapping && mapping.targetId) {
+          job.openSessionTargetId = String(mapping.targetId);
+          log(`[sessions-auto-copy] 已恢复当前会话目标映射 source=${src.id} target=${job.openSessionTargetId}`);
+        }
+      } catch (error) {
+        log(`[sessions-auto-copy] 恢复当前会话目标映射失败: ${error.message}`);
+      }
+    };
     const processNext = async () => {
       for (;;) {
         const index = nextIndex++;
@@ -5115,14 +5364,29 @@ function startAutoCopyJob(sourceUid, targetUid, plan, labels) {
           // bytes while this one is awaiting the copy, so a shared before/after
           // comparison can mistake another worker's progress for this one's.
           let reportedBytes = 0;
-          const result = await copySessionRecord(src, targetUid, {
-            sourceUid, lineageId: src.lineageId, auto: true,
-            onProgress: (progress) => {
-              const bytes = Math.max(0, Number(progress && progress.bytes) || 0);
-              reportedBytes += bytes;
-              job.copiedBytes += bytes;
-            },
-          });
+          const activeSession = job.openSessionId && String(src.id || '') === job.openSessionId;
+          let result;
+          let copyAttempt = 0;
+          for (;;) {
+            try {
+              result = await copySessionRecord(src, targetUid, {
+                sourceUid, lineageId: src.lineageId, auto: true,
+                onProgress: (progress) => {
+                  const bytes = Math.max(0, Number(progress && progress.bytes) || 0);
+                  reportedBytes += bytes;
+                  job.copiedBytes += bytes;
+                },
+              });
+              break;
+            } catch (error) {
+              if (!activeSession || copyAttempt >= activeSessionRetryDelays.length) throw error;
+              const retryDelay = activeSessionRetryDelays[copyAttempt];
+              copyAttempt++;
+              log(`[sessions-auto-copy] 当前会话复制失败，${retryDelay}ms 后重试 attempt=${copyAttempt}: ${error.message}`);
+              await new Promise((resolve) => setTimeout(resolve, retryDelay));
+              await yieldAutoCopyToRenderer();
+            }
+          }
           detail.status = result.status === 'partial' ? 'partial'
             : result.status === 'conflict' ? 'conflict'
             : result.status === 'skipped' ? 'skipped' : 'copied';
@@ -5146,11 +5410,26 @@ function startAutoCopyJob(sourceUid, targetUid, plan, labels) {
           else job.copied++;
           if (result.failedFiles) job.failed += result.failedFiles;
         } catch (e) {
-          job.failed++;
-          job.failedItems++;
-          detail.status = 'failed';
-          detail.error = String(e.message || e).slice(0, 240);
-          log(`[sessions-auto-copy] ${sourceUid} -> ${targetUid} 会话 ${src.id} 失败: ${e.message}`);
+          recoverOpenSessionTarget(src);
+          const errorText = String(e.message || e).slice(0, 240);
+          if (errorText === '会话消息文件没有消息，未同步') {
+            // Empty metadata-only sessions are normal transient WorkBuddy
+            // rows (for example a newly opened draft), not sync failures.
+            if (typeof getSessionDirtyIndex === 'function' && typeof clearSessionDirty === 'function') {
+              const dirty = getSessionDirtyIndex().get(sourceUid, src.id);
+              if (dirty) clearSessionDirty(sourceUid, src.id, dirty.at);
+            }
+            detail.status = 'skipped';
+            detail.skipReason = 'empty-message-file';
+            job.skipped++;
+            log(`[sessions-auto-copy] ${sourceUid} -> ${targetUid} 会话 ${src.id} 跳过: ${errorText}`);
+          } else {
+            job.failed++;
+            job.failedItems++;
+            detail.status = 'failed';
+            detail.error = errorText;
+            log(`[sessions-auto-copy] ${sourceUid} -> ${targetUid} 会话 ${src.id} 失败: ${e.message}`);
+          }
         }
         if (index < 500) job.details[index] = detail;
         job.processed++;
@@ -5207,9 +5486,11 @@ function publicAutoCopyJob(job) {
   };
 }
 
-function activeAutoCopyJob() {
+function activeAutoCopyJob(targetUid = '') {
+  const wantedTarget = String(targetUid || '').trim();
   const jobs = Array.from(autoCopyJobs.values());
   const active = jobs
+    .filter((job) => !wantedTarget || String(job.targetUid || '') === wantedTarget)
     .filter((job) => job.status === 'running' || job.status === 'queued')
     .sort((a, b) => {
       if (a.status !== b.status) return a.status === 'running' ? -1 : 1;
@@ -5217,6 +5498,7 @@ function activeAutoCopyJob() {
     })[0];
   if (active) return active;
   const recent = jobs
+    .filter((job) => !wantedTarget || String(job.targetUid || '') === wantedTarget)
     .filter((job) => job.finishedAt && Date.now() - job.finishedAt < 15000)
     .sort((a, b) => Number(b.finishedAt || 0) - Number(a.finishedAt || 0))[0];
   return recent || null;
@@ -9292,8 +9574,14 @@ function handleApi(req, res) {
       try {
         const currentUid = String((currentAccount() || {}).uid || '').trim();
         const claimedUid = String(body && body.uid || '').trim();
-        const uid = /^[A-Za-z0-9_-]{1,128}$/.test(claimedUid) && fs.existsSync(accountBackupFile(claimedUid))
-          ? claimedUid : currentUid;
+        // A renderer can flush a debounced dirty batch while an account switch
+        // is replacing its auth file. Never let that old page mark the newly
+        // active account (or keep the old account dirty) after the switch.
+        if (currentUid && claimedUid && claimedUid !== currentUid) {
+          return json(res, 409, { ok: false, error: '账号已切换，忽略旧会话通知' });
+        }
+        const uid = currentUid ||
+          (/^[A-Za-z0-9_-]{1,128}$/.test(claimedUid) && fs.existsSync(accountBackupFile(claimedUid)) ? claimedUid : '');
         if (!uid) return json(res, 409, { ok: false, error: '当前账号不可用' });
         if (!body || typeof body !== 'object' || Array.isArray(body)) return json(res, 400, { ok: false, error: '脏会话通知格式无效' });
         if (body.ready === true) markSessionDirtyBaseline(uid);
@@ -9324,7 +9612,8 @@ function handleApi(req, res) {
   }
   // 当前任务或刚完成的任务：renderer 重载后仍可恢复复制进度。
   if (req.method === 'GET' && p === '/api/sessions/auto-copy/active') {
-    return json(res, 200, { ok: true, job: publicAutoCopyJob(activeAutoCopyJob()) });
+    const currentUid = String((currentAccount() || {}).uid || '').trim();
+    return json(res, 200, { ok: true, job: publicAutoCopyJob(activeAutoCopyJob(currentUid)) });
   }
   // Stream the completed encrypted archive; clean up even if the download disconnects.
   if (req.method === 'POST' && p === '/api/sessions/export') {
@@ -9479,7 +9768,7 @@ function handleApi(req, res) {
   if (req.method === 'POST' && p === '/api/sessions/delete') {
     return readBody(req).then(async (body) => {
       let ids;
-      try { ids = normalizeSessionIdBatch(body && body.ids); }
+      try { ids = normalizeSessionIdBatch(body && body.ids, { maxBatch: null }); }
       catch (e) { return json(res, 400, { ok: false, error: e.message }); }
       if (!ids.length) return json(res, 400, { ok: false, error: '未选择会话' });
       if (!ids.every(isValidSessionId)) return json(res, 400, { ok: false, error: '包含无效的会话 ID' });
@@ -10047,8 +10336,21 @@ function handleApi(req, res) {
         releaseAccountSwitch = await assertAccountSwitchIdle();
         const sourceAccount = currentAccount() || {};
         const sourceUid = String(sourceAccount.uid || '').trim();
-        const currentConversationId = isValidSessionId(String(body.currentConversationId || '').trim())
+        let currentConversationId = isValidSessionId(String(body.currentConversationId || '').trim())
           ? String(body.currentConversationId).trim() : '';
+        // Renderer projection state can briefly retain the destination id from
+        // the previous rotation. Never carry an id into the next account unless
+        // the session index proves it belongs to the account being replaced.
+        if (currentConversationId && sourceUid) {
+          const ownerRows = await sqliteQuery(
+            'SELECT user_id FROM sessions WHERE id = ? AND deleted_at IS NULL LIMIT 1;',
+            [currentConversationId]
+          );
+          if (!ownerRows.length || String(ownerRows[0].user_id || '') !== sourceUid) {
+            log(`[switch] 丢弃不属于源账号的当前会话 source=${sourceUid} session=${currentConversationId}`);
+            currentConversationId = '';
+          }
+        }
         const acct = switchTo(DATA_DIR, uid, log);
         const hint = '登录文件已切换，请重启 WorkBuddy 使新账号生效';
         let reloaded = false;

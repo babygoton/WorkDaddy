@@ -722,11 +722,17 @@ function createSessionDirtyTracker(send, options) {
   var delay = Math.max(0, Number(opts.delay == null ? 120 : opts.delay));
   function signature(update) {
     var value = update && typeof update === 'object' ? update : {};
+    // Account reloads emit status/state/active/terminal churn for every row.
+    // Those fields describe the renderer lifecycle, not session content. Keep
+    // only the persisted metadata revisions that can represent an edit; the
+    // daemon still uses its row-revision fallback when a content event is
+    // missed.
     return JSON.stringify([
-      String(value.id || ''), String(value.title || ''), String(value.status || ''),
-      String(value.pendingInputKind || ''), String(value.protocolStatus || ''), String(value.state || ''),
-      Number(value.activePromptStartedAt || 0), value.queueRevision || null,
-      Number(value.updatedAt || 0), Number(value.lastActivityAt || 0), !!value.active, !!value.terminal,
+      String(value.id || ''), String(value.title || ''), String(value.customTitle || ''),
+      // Opening/activating a copied conversation updates lastActivityAt on
+      // some WorkBuddy builds. That is renderer lifecycle churn, not a
+      // message edit; updatedAt remains the content-side revision fallback.
+      Number(value.updatedAt || 0),
     ]);
   }
   function flush() {
@@ -11655,6 +11661,30 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       return '';
     }
 
+    // Account switching runs immediately before a renderer reload. During the
+    // SDK's null-hydration window `acActiveConversationId()` intentionally
+    // returns empty for monitor safety, but the mounted document/sidebar still
+    // identifies the conversation the user is looking at. Capture that
+    // concrete id only for the switch request; never use it for monitor logic.
+    function acSwitchConversationId() {
+      var id = acActiveConversationId();
+      if (id) return String(id);
+      try {
+        var root = document.querySelector('.cr-document[data-root-id]');
+        id = root && root.getAttribute('data-root-id');
+        if (id) return String(id);
+      } catch (_) {}
+      try {
+        var selected = document.querySelector(
+          '[data-conversation-id].active,[data-conversation-id][aria-selected="true"],' +
+          '[data-conversation-id][class*="active"]'
+        );
+        id = selected && (selected.getAttribute('data-conversation-id') || selected.getAttribute('data-id'));
+        if (id) return String(id);
+      } catch (_) {}
+      return '';
+    }
+
     /** 会话身份签名：当前激活会话的官方 conversation ID（SDK 优先，其次旧版回退通道）。
      *  取不到返回 '' → 调用方保守跳过判定（绝不回退任意会话/标题/文本） */
     function acSessionSig(sessionRoot) {
@@ -13728,6 +13758,18 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       return Math.max(0, (Number(job.partial) || 0) + (Number(job.failed) || 0));
     }
 
+    function sessionCopyIsNoop(job) {
+      if (!job || job.status !== 'done') return false;
+      if ((Number(job.copied) || 0) || (Number(job.failed) || 0) ||
+          (Number(job.failedItems) || 0) || (Number(job.partial) || 0) ||
+          (Number(job.conflicts) || 0)) return false;
+      var details = Array.isArray(job.details) ? job.details : [];
+      return !details.some(function (item) {
+        var status = String(item && item.status || '');
+        return status === 'copied' || status === 'failed' || status === 'partial' || status === 'conflict';
+      });
+    }
+
     function sessionCopySummaryText(job) {
       return '同步 ' + (Number(job && job.copied) || 0) +
         ' · 失败 ' + (sessionCopyFailedItems(job) + (Number(job && job.conflicts) || 0)) +
@@ -13986,6 +14028,12 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         }
         state.sessionCopyNoticeChecked = true;
         state.sessionCopyNoticeActiveAttempts = 0;
+        if (sessionCopyIsNoop(job)) {
+          closeSessionCopyNotice();
+          if (job.openSessionId) setBuildTimeout(function () { openCopiedSession(job.openSessionId); }, 1000);
+          setBuildTimeout(refresh, 900);
+          return;
+        }
         renderSessionCopyNotice(job, accountName);
         renderSessionCopyProgress(job);
         if (job.status === 'queued' || job.status === 'running') {
@@ -14016,7 +14064,50 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     function openCopiedSession(sessionId, startedAt) {
       var id = String(sessionId || '').trim();
       var started = Number(startedAt) || Date.now();
-      if (!id || Date.now() - started >= 5000) return;
+      var attempt = Number(arguments[2]) || 0;
+      // A copied row can become visible only after the post-reload session
+      // store hydrates. Keep this bounded, but do not treat an emitted jump
+      // event as success until the renderer reports the requested session.
+      var OPEN_SESSION_TIMEOUT = 15000;
+      function shortId(value) {
+        var text = String(value || '');
+        return text.length > 12 ? text.slice(0, 8) + '…' + text.slice(-4) : text;
+      }
+      function activationLog(event, extra) {
+        try {
+          var payload = Object.assign({ event: event, target: shortId(id), attempt: attempt, elapsedMs: Math.max(0, Date.now() - started) }, extra || {});
+          console.log('[session-activation] ' + JSON.stringify(payload));
+        } catch (_) {}
+      }
+      if (!id) {
+        activationLog('skip-empty-id');
+        return;
+      }
+      if (Date.now() - started >= OPEN_SESSION_TIMEOUT) {
+        activationLog('timeout');
+        return;
+      }
+
+      function isActive() {
+        try {
+          if (typeof acActiveConversationId === 'function' && String(acActiveConversationId() || '') === id) return true;
+        } catch (_) {}
+        try {
+          var root = document.querySelector('.cr-document[data-root-id]');
+          if (root && String(root.getAttribute('data-root-id') || '') === id) return true;
+        } catch (_) {}
+        return false;
+      }
+
+      function currentIds() {
+        var sdk = '', dom = '';
+        try { sdk = typeof acActiveConversationId === 'function' ? String(acActiveConversationId() || '') : ''; } catch (_) {}
+        try {
+          var root = document.querySelector('.cr-document[data-root-id]');
+          dom = root ? String(root.getAttribute('data-root-id') || '') : '';
+        } catch (_) {}
+        return { sdk: shortId(sdk), dom: shortId(dom) };
+      }
 
       // The official adapter owns route/state activation. Its session resource
       // becomes aware of copied rows slightly after the daemon reports done, so
@@ -14026,17 +14117,60 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         activationApi = WBS_COMPAT && typeof WBS_COMPAT.findConversationActivationApi === 'function'
           ? WBS_COMPAT.findConversationActivationApi(document) : null;
       } catch (_) {}
+      function confirmActivation() {
+        setBuildTimeout(function () {
+          var active = isActive();
+          activationLog(active ? 'confirmed' : 'not-confirmed', { current: currentIds() });
+          if (active) return;
+          if (Date.now() - started < OPEN_SESSION_TIMEOUT) openCopiedSession(id, started, attempt + 1);
+        }, 350);
+      }
+      activationLog('probe', { activationApi: !!activationApi, current: currentIds() });
       if (activationApi) {
         Promise.resolve(activationApi.hasSession(id)).then(function (found) {
+          activationLog('has-session', { found: found, current: currentIds() });
           if (found === true || found === null) {
-            if (activationApi.activate(id)) return;
+            if (isActive()) {
+              activationLog('already-active', { current: currentIds() });
+              return;
+            }
+            var activated = false;
+            try { activated = activationApi.activate(id); } catch (_) { activated = false; }
+            activationLog('activate-called', { returned: activated, current: currentIds() });
+            if (activated && activationApi.authoritative === true) {
+              // The official navigation handler emits the renderer's session
+              // switch itself. Older WorkBuddy builds do not expose the active
+              // id through either projection used by this injector, so a
+              // second call is only attempted when a modern resource claimed
+              // the target but the active projection did not confirm it.
+              activationLog('official-dispatched', { current: currentIds() });
+              if (found === true) confirmActivation();
+              return;
+            }
+            // Navigation handlers update the SDK/DOM asynchronously. Confirm
+            // the resulting current ID before stopping; otherwise a no-op
+            // adapter.emit can make account switching appear successful.
+            confirmActivation();
+            return;
           }
-          if (Date.now() - started < 5000) {
-            setBuildTimeout(function () { openCopiedSession(id, started); }, 500);
+          if (found === false && activationApi.authoritative === true && attempt >= 4) {
+            var lateActivated = false;
+            try { lateActivated = activationApi.activate(id); } catch (_) { lateActivated = false; }
+            activationLog(lateActivated ? 'official-dispatched-unverified' : 'activate-failed', { current: currentIds() });
+            if (lateActivated) {
+              // A false resource probe can race session hydration. Confirm the
+              // dispatch and retry if the target is still not active.
+              confirmActivation();
+              return;
+            }
+          }
+          if (Date.now() - started < OPEN_SESSION_TIMEOUT) {
+            setBuildTimeout(function () { openCopiedSession(id, started, attempt + 1); }, 500);
           }
         }).catch(function () {
-          if (Date.now() - started < 5000) {
-            setBuildTimeout(function () { openCopiedSession(id, started); }, 500);
+          activationLog('has-session-error', { current: currentIds() });
+          if (Date.now() - started < OPEN_SESSION_TIMEOUT) {
+            setBuildTimeout(function () { openCopiedSession(id, started, attempt + 1); }, 500);
           }
         });
         return;
@@ -14049,12 +14183,20 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         if (String(nodes[i].getAttribute('data-conversation-id') || '') !== id) continue;
         var rect = nodes[i].getBoundingClientRect();
         if (rect.width > 0 && rect.height > 0) {
-          nodes[i].click();
+          var clicked = false;
+          try { nodes[i].click(); clicked = true; } catch (_) {}
+          activationLog('dom-click', { returned: clicked, current: currentIds() });
+          setBuildTimeout(function () {
+            var active = isActive();
+            activationLog(active ? 'confirmed' : 'not-confirmed', { source: 'dom', current: currentIds() });
+            if (!active && Date.now() - started < OPEN_SESSION_TIMEOUT) openCopiedSession(id, started, attempt + 1);
+          }, 350);
           return;
         }
       }
-      if (Date.now() - started < 5000) {
-        setBuildTimeout(function () { openCopiedSession(id, started); }, 500);
+      if (Date.now() - started < OPEN_SESSION_TIMEOUT) {
+        activationLog('target-not-mounted', { current: currentIds() });
+        setBuildTimeout(function () { openCopiedSession(id, started, attempt + 1); }, 500);
       }
     }
 
@@ -14167,7 +14309,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
             body: JSON.stringify({
               uid: btn.dataset.uid,
               reload: true,
-              currentConversationId: (typeof acActiveConversationId === 'function' ? acActiveConversationId() : ''),
+              currentConversationId: acSwitchConversationId(),
             }),
           })
             .then(function (r) {
@@ -14420,6 +14562,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       // created. The popup itself is outside the WorkBuddy conversation tree,
       // and a later renderer refresh may briefly expose a null currentId.
       var rotationConversationId = typeof acActiveConversationId === 'function' ? acActiveConversationId() : '';
+      if (!rotationConversationId) rotationConversationId = acSwitchConversationId();
       state.rotationNotice = { node: node, timer: timer, uid: candidate.uid, conversationId: rotationConversationId };
       fab.classList.add('wbs-fab-credit-alert');
       node.querySelector('.wbs-credit-rotation-close').addEventListener('click', closeRotationNotice);
@@ -14434,7 +14577,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         button.disabled = true;
         button.textContent = '切换中…';
         var currentConversationId = state.rotationNotice && state.rotationNotice.conversationId;
-        if (!currentConversationId && typeof acActiveConversationId === 'function') currentConversationId = acActiveConversationId();
+        if (!currentConversationId) currentConversationId = acSwitchConversationId();
         api('/api/switch', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ uid: candidate.uid, reload: true, currentConversationId: currentConversationId || '' }) })
           .then(function (result) {
             closeRotationNotice();

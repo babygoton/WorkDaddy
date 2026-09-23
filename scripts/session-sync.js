@@ -10,6 +10,23 @@ const identityKeys = new Set(['sessionId', 'conversationId', 'ownerConversationI
 const SKIP_LOCAL_DIR = /^workspace\/sessions\/[^/]+\/(?:modify_backup|\.modify_backup_meta)$/;
 const digest = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
 
+// WorkBuddy appends session-meta lifecycle records when a conversation is
+// opened or restored. Their generated id, session id and timestamp describe
+// that local activation event, not a user message. Keep the stable metadata
+// fields in the semantic fingerprint while ignoring those per-account event
+// fields so an account round-trip does not become a false content conflict.
+function canonicalTranscriptRecord(record, aliases) {
+  if (record && record.type === 'session-meta') {
+    const stable = {};
+    for (const key of Object.keys(record)) {
+      if (key === 'id' || key === 'sessionId' || key === 'timestamp') continue;
+      stable[key] = record[key];
+    }
+    return canonical(stable, aliases);
+  }
+  return canonical(record, aliases);
+}
+
 function canonical(value, aliases) {
   if (Array.isArray(value)) return value.map(item => canonical(item, aliases));
   if (!value || typeof value !== 'object') return value;
@@ -240,7 +257,7 @@ function readSnapshot(root, id, aliases = [], cache = null) {
         let record;
         try { record = JSON.parse(line); } catch (_) { throw Error('会话消息文件未写完或已损坏，未同步'); }
         if (!record || typeof record !== 'object' || Array.isArray(record) || typeof record.type !== 'string') throw Error('会话消息格式不受支持，未同步');
-        return digest(JSON.stringify(canonical(record, knownIds)));
+        return digest(JSON.stringify(canonicalTranscriptRecord(record, knownIds)));
       });
       // Require actual messages: a metadata-only journal is not an empty base.
       if (!lines.some(line => JSON.parse(line).type === 'message')) throw Error('会话消息文件没有消息，未同步');
@@ -315,7 +332,7 @@ async function readTranscriptAsync(file, stat, knownIds) {
     if (!record || typeof record !== 'object' || Array.isArray(record) || typeof record.type !== 'string') {
       throw Error('会话消息格式不受支持，未同步');
     }
-    const recordHash = digest(JSON.stringify(canonical(record, knownIds)));
+    const recordHash = digest(JSON.stringify(canonicalTranscriptRecord(record, knownIds)));
     if (lineCount++) semanticHash.update('\n');
     semanticHash.update(recordHash);
     records.push(recordHash);

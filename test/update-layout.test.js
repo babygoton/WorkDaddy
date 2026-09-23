@@ -176,16 +176,116 @@ test('account switching carries the active conversation and opens its copied tar
   const routeStart = script.indexOf("if (req.method === 'POST' && p === '/api/switch')");
   const route = script.slice(routeStart, routeStart + 9000);
   assert.match(route, /currentConversationId/);
+  assert.match(route, /SELECT user_id FROM sessions WHERE id = \? AND deleted_at IS NULL LIMIT 1;/);
+  assert.match(route, /不属于源账号的当前会话/);
+  const dirtyStart = script.indexOf("if (req.method === 'POST' && p === '/api/sessions/dirty')");
+  const dirtyRoute = script.slice(dirtyStart);
+  assert.match(dirtyRoute.slice(0, 900), /claimedUid && claimedUid !== currentUid/);
+  assert.match(dirtyRoute.slice(0, 900), /忽略旧会话通知/);
   assert.match(route, /openSessionId/);
   assert.match(inject, /conversations\.currentId/);
-  assert.match(inject, /currentConversationId:.*acActiveConversationId/);
+  assert.match(inject, /currentConversationId: acSwitchConversationId\(\)/);
+  assert.match(inject, /function acSwitchConversationId()/);
   assert.match(inject, /openCopiedSession/);
   assert.match(compat, /function findConversationActivationApi\(doc\)/);
+  assert.match(compat, /setCurrentConversation/);
+  assert.match(compat, /sdkNavigateKind/);
   assert.match(compat, /adapter\.emit\('jump-to-conversation'/);
   assert.match(inject, /activationApi\.hasSession\(id\)/);
   assert.match(inject, /job\.openSessionId\) setBuildTimeout\(function \(\) \{ openCopiedSession\(job\.openSessionId\); \}, 1000\)/);
-  assert.match(inject, /Date\.now\(\) - started >= 5000/);
-  assert.match(inject, /setBuildTimeout\(function \(\) \{ openCopiedSession\(id, started\); \}, 500\)/);
+  assert.match(inject, /OPEN_SESSION_TIMEOUT = 15000/);
+  assert.match(inject, /String\(acActiveConversationId\(\) \|\| ''\) === id/);
+  assert.match(inject, /activationApi\.activate\(id\)/);
+  assert.match(inject, /if \(isActive\(\)\) \{/);
+  assert.match(inject, /\[session-activation\]/);
+  assert.match(inject, /activationLog\('has-session'/);
+  assert.match(inject, /activationLog\('activate-called'/);
+  assert.match(inject, /'confirmed' : 'not-confirmed'/);
+  assert.match(inject, /activationLog\('timeout'/);
+  assert.match(inject, /setBuildTimeout\(function \(\) \{ openCopiedSession\(id, started, attempt \+ 1\); \}, 500\)/);
+});
+
+test('copied-session activation trusts the official handler even when projection ids are empty', async () => {
+  const inject = read('inject.js');
+  const start = inject.indexOf('    function openCopiedSession(sessionId, startedAt) {');
+  const end = inject.indexOf('\n    // token 过期状态', start);
+  assert.ok(start >= 0 && end > start);
+  let activeId = '';
+  let activations = 0;
+  const logs = [];
+  const context = {
+    Date,
+    String,
+    Promise,
+    console: { log: (...args) => logs.push(args.join(' ')) },
+    setBuildTimeout: setTimeout,
+    acActiveConversationId: () => activeId,
+    WBS_COMPAT: {
+      findConversationActivationApi() {
+        return {
+          authoritative: true,
+          hasSession: () => Promise.resolve(null),
+          activate() {
+            activations++;
+            return true;
+          },
+        };
+      },
+    },
+    document: {
+      querySelector() { return null; },
+      querySelectorAll() { return []; },
+    },
+  };
+  vm.runInNewContext(inject.slice(start, end), context);
+  context.openCopiedSession('copied-session');
+  await new Promise((resolve) => setTimeout(resolve, 800));
+  assert.equal(activations, 1, 'an authoritative handler must not be called repeatedly when projection ids are unavailable');
+  assert.equal(activeId, '');
+  assert.ok(logs.some((line) => line.includes('[session-activation]') && line.includes('has-session')));
+  assert.ok(logs.some((line) => line.includes('official-dispatched')));
+});
+
+test('copied-session activation retries an unverified official dispatch', async () => {
+  const inject = read('inject.js');
+  const start = inject.indexOf('    function openCopiedSession(sessionId, startedAt) {');
+  const end = inject.indexOf('\n    // token 过期状态', start);
+  let activeId = '';
+  let activations = 0;
+  const logs = [];
+  const context = {
+    Date,
+    String,
+    Promise,
+    console: { log: (...args) => logs.push(args.join(' ')) },
+    setBuildTimeout: setTimeout,
+    acActiveConversationId: () => activeId,
+    WBS_COMPAT: {
+      findConversationActivationApi() {
+        return {
+          authoritative: true,
+          hasSession: () => Promise.resolve(false),
+          activate() {
+            activations++;
+            if (activations >= 2) activeId = 'copied-session';
+            return true;
+          },
+        };
+      },
+    },
+    document: {
+      querySelector() { return null; },
+      querySelectorAll() { return []; },
+    },
+  };
+  vm.runInNewContext(inject.slice(start, end), context);
+  context.openCopiedSession('copied-session');
+  await new Promise((resolve) => setTimeout(resolve, 3800));
+  assert.ok(activations >= 2, 'an unverified official dispatch must be confirmed and retried');
+  assert.equal(activeId, 'copied-session');
+  assert.ok(logs.some((line) => line.includes('official-dispatched-unverified')));
+  assert.ok(logs.some((line) => line.includes('not-confirmed')));
+  assert.ok(logs.some((line) => line.includes('confirmed')));
 });
 
 test('account switching does not auto-select a session by title after reload', () => {
@@ -1221,10 +1321,12 @@ test('automatic session copy includes workspace-only rules when the initial plan
 test('automatic session copy filters clean sessions before target queries and snapshot work', () => {
   const daemon = read('daemon.js');
   const inject = read('inject.js');
-  assert.match(daemon, /const dirtyIndex = (?:getSessionDirtyIndex\(\)|typeof getSessionDirtyIndex === 'function'[\s\S]*?getSessionDirtyIndex\(\))[\s\S]*const dirtyRows = selectedRows\.filter\(\(row\) => \{[\s\S]*dirtyIndex\.shouldSync\(source, row\.id\)[\s\S]*mappingSourceRevisionMatches/);
+  assert.match(daemon, /const dirtyIndex = (?:getSessionDirtyIndex\(\)|typeof getSessionDirtyIndex === 'function'[\s\S]*?getSessionDirtyIndex\(\))[\s\S]*const dirtyRows = selectedRows\.filter\(\(\) => false\);[\s\S]*for \(const row of selectedRows\)[\s\S]*dirtyIndex\.shouldSync\(source, row\.id\)[\s\S]*mappingSourceRevisionMatches/);
   assert.match(daemon, /const SESSION_DIRTY_FILE = (?:path\.join\(DATA_DIR, 'session-dirty\.json'\)|typeof DATA_DIR !== 'undefined'[\s\S]*?session-dirty\.json)/);
   assert.match(daemon, /POST' && p === '\/api\/sessions\/dirty'/);
   assert.match(daemon, /clearAutoDirty\(\);/);
+  assert.match(inject, /function sessionCopyIsNoop\(job\)/);
+  assert.match(inject, /if \(sessionCopyIsNoop\(job\)\) \{[\s\S]*closeSessionCopyNotice\(\);/);
   assert.match(inject, /createSessionDirtyTracker\(function \(payload\)/);
   assert.match(inject, /sessionDirtyTracker\.baseline\(records\)/);
 });
@@ -1284,7 +1386,7 @@ test('session pane restores and renders persistent auto-copy progress', () => {
   const daemon = read('daemon.js');
   const inject = read('inject.js');
   assert.match(daemon, /GET' && p === '\/api\/sessions\/auto-copy\/active'/);
-  assert.match(daemon, /function activeAutoCopyJob\(\)/);
+  assert.match(daemon, /function activeAutoCopyJob\(targetUid = ''\)/);
   assert.match(inject, /id="wbs-sess-copy-progress"/);
   assert.match(inject, /function renderSessionCopyProgress\(job\)/);
   assert.match(inject, /if \(!active && job\.status !== 'error'\) \{ box\.hidden = true; return; \}/);
