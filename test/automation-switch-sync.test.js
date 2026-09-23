@@ -24,7 +24,7 @@ function harness() {
       let complete;
       const job = { id: 'job-' + jobs.length, targetUid: to, status: 'running', total: 1, processed: 0,
         failed: 0, partial: 0, conflicts: 0, completion: new Promise(resolve => { complete = resolve; }) };
-      job.finish = (status = 'done') => { job.status = status; job.processed = 1; ctx.autoCopyWorkerRunning = false; if (ctx.recordAccountSyncResult) ctx.recordAccountSyncResult(job); complete(job); };
+      job.finish = (status = 'done', details = []) => { job.status = status; job.processed = 1; job.details = details; ctx.autoCopyWorkerRunning = false; if (ctx.recordAccountSyncResult) ctx.recordAccountSyncResult(job); complete(job); };
       ctx.autoCopyWorkerRunning = true; ctx.autoCopyJobs.set(job.id, job); jobs.push(job); return job;
     },
   };
@@ -106,5 +106,14 @@ test('pruning public job history cannot erase failed synchronization; successful
   const retry = h.ctx.startAutoCopyJob('other', 'a'); retry.finish();
   const run = h.ctx.automationSwitchAccount({ uid: 'b' });
   await tick(); await tick(); h.jobs[2].finish(); await run;
+  assert.deepEqual(h.switches, ['b']);
+});
+
+test('an empty message-file session does not block automation account switching', async () => {
+  const h = harness();
+  const run = h.ctx.automationSwitchAccount({ uid: 'b' }, h.options);
+  await tick(); await tick();
+  h.jobs[0].finish('partial', [{ status: 'failed', error: '会话消息文件没有消息，未同步' }]);
+  await run;
   assert.deepEqual(h.switches, ['b']);
 });

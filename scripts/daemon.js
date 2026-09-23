@@ -407,10 +407,14 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 // 1.2.122：首次复制到没有物理副本的账号使用同步快照路径，避免异步文件校验链路拖慢全量初始化。
 // 1.2.123：自动复制映射保存目标数据库实际 revision，避免未变化会话反复进入完整快照校验。
 // 1.2.124：启动时批量校准旧目标 revision，避免历史映射让未变化会话重复进入规划。
+// 1.2.128：5.6 会话同步对瞬态冲突进行延迟重读，避免一次投影抖动生成 branchCopy 重复会话。
+// 1.2.129：自动同步跳过会话内符号链接；归档导入允许配置的数据根是目录链接。
+// 1.2.130：自动化等待按本轮会话回执绑定消息；空消息会话复制失败不阻断自动化切号。
+// 1.2.131：WorkBuddy 5.6 乐观 user 消息换正式 ID 时按稳定 requestId 继续等待。
 // 1.2.126：5.6 加密账号改为密文原样备份、内存解密；导入兼容明文 token，
 //          刷新结果不把解密后的 token 写回加密备份。
-const DAEMON_VERSION = '1.2.126';
-const DAEMON_BUILD_ID = 'release-1.2.126-20260922-wbencrypted-opaque-backup';
+const DAEMON_VERSION = '1.2.131';
+const DAEMON_BUILD_ID = 'release-1.2.131-20260923-automation-request-id';
 const usageReporter = createUsageReporter({ profile: PROFILE.id, version: DAEMON_VERSION });
 configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const automationDiscovery = createAutomationDiscovery({
@@ -3143,6 +3147,11 @@ async function automationNotifyToast(detail) {
 }
 let accountSwitchInProgress = false;
 const accountSyncFailures = new Map();
+function isIgnorableAutomationSyncFailure(job) {
+  if (!job || job.status === 'done' || !Array.isArray(job.details) || !job.details.length) return false;
+  const failed = job.details.filter(item => item && item.status === 'failed');
+  return failed.length > 0 && failed.every(item => item.error === '会话消息文件没有消息，未同步');
+}
 async function assertSessionSyncIdle(sessionIds = []) {
   if (PROFILE.kind !== 'workbuddy') return;
   if (!cdp.connected) throw new Error('无法确认会话状态，请连接 WorkBuddy 后重试');
@@ -3168,7 +3177,7 @@ async function assertAccountSwitchIdle() {
 
 let automationAccountSwitchTail = Promise.resolve();
 function assertAutoCopySucceeded(job) {
-  if (job && (job.status !== 'done' || job.processed !== job.total || job.failed || job.failedItems || job.partial || job.conflicts)) {
+  if (job && !isIgnorableAutomationSyncFailure(job) && (job.status !== 'done' || job.processed !== job.total || job.failed || job.failedItems || job.partial || job.conflicts)) {
     throw new Error('会话同步未成功完成，已停止自动切换（同步任务 ' + job.id + '，状态 ' + job.status + '）');
   }
 }
@@ -3325,9 +3334,12 @@ function startAutomationRun(task, event = null) {
     }
   };
   let lastReceipt = null;
-  const readSession = async () => {
+  const readSession = async (expectedReceipt = null) => {
     if (isCancelled()) throw new Error('任务已停止');
-    const response = await cdpSend('Runtime.evaluate', { expression: '(' + probeSessionReceipt.toString() + ')()', returnByValue: true });
+    const expected = expectedReceipt && typeof expectedReceipt === 'object'
+      ? { userMessageId: String(expectedReceipt.userMessageId || ''), requestId: String(expectedReceipt.requestId || '') }
+      : null;
+    const response = await cdpSend('Runtime.evaluate', { expression: '(' + probeSessionReceipt.toString() + ')(' + JSON.stringify(expected) + ')', returnByValue: true });
     return response && response.result && response.result.value || null;
   };
   const sessionAction = async (op, detail) => {
@@ -3338,7 +3350,7 @@ function startAutomationRun(task, event = null) {
       const end = Date.now() + Math.min(300000,Math.max(1000,Number(detail.timeoutMs)||120000));
       while (Date.now() < end) {
         if ((currentAccount() || {}).uid !== receipt.accountUid) throw new Error('账号已变化，已停止等待');
-        const snapshot = await readSession();
+        const snapshot = await readSession(receipt);
         if (receiptComplete(receipt,snapshot)) {
           if (detail.contains) {
             const response = await cdpSend('Runtime.evaluate', {expression: `(function(){var c=window.__wbsWorkBuddyCompat.findConversationControllers(document).find(c=>String(c.conversationId)===${JSON.stringify(receipt.conversationId)});if(!c)return false;var m=c.messageStore.getState().messages.find(m=>String(m.id||m.requestId||'')===${JSON.stringify(snapshot.assistantId)});return !!m&&JSON.stringify(m.content||[]).includes(${JSON.stringify(String(detail.contains))});})()`,returnByValue:true});
