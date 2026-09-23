@@ -22,7 +22,8 @@ test('completion is bound to user request, conversation and assistant identity',
  assert.equal(receiptComplete(receipt,snap),true);
  assert.equal(receiptComplete(receipt,{...snap,assistantId:'a0'}),false);
  assert.equal(receiptComplete(receipt,{...snap,busy:true}),false);
- assert.throws(()=>receiptComplete(receipt,{...snap,userMessageId:'u2'}));
+ assert.throws(()=>receiptComplete(receipt,{...snap,userMessageId:'u2',requestId:'r2'}));
+ assert.equal(receiptComplete(receipt,{...snap,userMessageId:'u2'}),true,'5.6 may replace the optimistic user id while retaining requestId');
  assert.throws(()=>receiptComplete(receipt,{...snap,conversationId:'other'}));
  assert.throws(()=>receiptComplete(receipt,{...snap,cancelled:true}));
 });
@@ -54,4 +55,18 @@ test('renderer receipt probe uses real messageType shape without returning priva
  const result=vm.runInNewContext('('+probeSessionReceipt.toString()+')()',{window:{__wbsWorkBuddyCompat:compat},document:{}});
  assert.equal(result.userMessageId,'u');assert.equal(result.requestId,'r');assert.equal(result.complete,false,'explicit non-terminal wins over interim complete');
  assert.ok(!JSON.stringify(result).includes('private'));
+});
+test('renderer receipt probe stays bound to the requested message in a 5.6 message list',()=>{
+ const {probeSessionReceipt}=require('../scripts/automation-runtime');
+ const state={messages:[
+  {messageType:'user',id:'u1',requestId:'r1'},
+  {messageType:'assistant',id:'a1',requestId:'r1',complete:true,extra:{isRequestTerminal:true}},
+  {messageType:'user',id:'u2',requestId:'r2'},
+  {messageType:'assistant',id:'a2',requestId:'r2',complete:true,extra:{isRequestTerminal:true}},
+ ]};
+ const compat={getSelectedConversationId:()=> 'c',findConversationControllers:()=>[{conversationId:'c',messageStore:{getState:()=>state},getSessionViewState:()=>({})}]};
+ const result=vm.runInNewContext('('+probeSessionReceipt.toString()+')({userMessageId:"u1",requestId:"r1"})',{window:{__wbsWorkBuddyCompat:compat},document:{}});
+ assert.equal(result.userMessageId,'u1');
+ assert.equal(result.requestId,'r1');
+ assert.equal(result.assistantId,'a1');
 });

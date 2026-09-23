@@ -57,6 +57,63 @@ test('queue adapter selection prefers prototype-capable modern adapter and retai
   assert.deepEqual(compat.findQueueAdapter(legacyDocument), { kind: 'legacy', adapter: legacyAdapter });
 });
 
+test('conversation activation exposes the official session lookup and jump event', async () => {
+  const emitted = [];
+  const modernAdapter = Object.create({
+    enqueueConversationMessageQueueItem() {},
+    pauseConversationMessageQueue() {},
+    emit(name, payload) { emitted.push({ name, payload }); },
+  });
+  modernAdapter.sessionsResource = {
+    on() {}, off() {},
+    getByIds(ids) { return Promise.resolve({ conversations: ids.map(id => ({ id })), missingIds: [] }); },
+  };
+  const modernRoot = visibleElement();
+  modernRoot.__reactFiber$test = { memoizedProps: { adapter: modernAdapter }, return: null };
+  const documentLike = { querySelector(selector) { return selector === '#root > div' ? modernRoot : null; } };
+
+  const activation = compat.findConversationActivationApi(documentLike);
+  assert.ok(activation);
+  assert.equal(await activation.hasSession('copied-session'), true);
+  activation.activate('copied-session');
+  assert.deepEqual(emitted, [{
+    name: 'jump-to-conversation',
+    payload: { source: 'tencent-docs', sessionId: 'copied-session', reason: 'already-active' },
+  }]);
+});
+
+test('conversation activation prefers the official React navigation handler', async () => {
+  const calls = [];
+  const navigate = async function handleConversationClick(id, cwd, skipLocalCheck, preserveListView, options) {
+    // The markers mirror WorkBuddy's current handler without depending on its
+    // minified component names.
+    function dismissHoverPeek() {}
+    function syncTaskRouteFromClick() {}
+    dismissHoverPeek();
+    syncTaskRouteFromClick();
+    calls.push([id, cwd, skipLocalCheck, preserveListView, options]);
+  };
+  const adapter = {
+    enqueueConversationMessageQueueItem() {},
+    pauseConversationMessageQueue() {},
+    emit() { throw new Error('legacy activation must not be used'); },
+  };
+  const root = visibleElement();
+  root.__reactFiber$test = {
+    memoizedProps: {},
+    memoizedState: { memoizedState: { current: navigate }, next: null },
+    return: null,
+  };
+  const documentLike = {
+    querySelector(selector) { return selector === '#root > div' ? root : null; },
+  };
+  const activation = compat.findConversationActivationApi(documentLike);
+  assert.ok(activation);
+  assert.equal(activation.activate('official-session'), true);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(calls, [['official-session', '', false, false, {}]]);
+});
+
 test('selected conversation lookup is capability based rather than profile based', () => {
   const selected = {
     className: 'conversation-item',

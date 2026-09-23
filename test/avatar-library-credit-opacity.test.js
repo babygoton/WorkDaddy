@@ -26,13 +26,15 @@ test('legacy upload survives selecting either preset and adding multiple avatars
   const { createAvatarLibrary } = load(), cache = storage({wbsAvatar:png});
   const lib = createAvatarLibrary(cache);
   assert.equal(lib.snapshot().items[0].src,png);
-  lib.select('workbuddy'); lib.select('workdaddy');
+  lib.select('default'); lib.select('workbuddy'); lib.select('workdaddy');
   const added = lib.add(webp);
   assert.equal(lib.snapshot().items.length,2);
   assert.equal(lib.snapshot().selected,added);
   const restored = createAvatarLibrary(cache);
   assert.equal(restored.snapshot().selected,added);
   assert.equal(restored.snapshot().items[0].src,png);
+  restored.select('default');
+  assert.equal(createAvatarLibrary(cache).snapshot().selected,'default');
   restored.select('workbuddy');
   restored.remove(added);
   assert.equal(restored.snapshot().selected,'workdaddy');

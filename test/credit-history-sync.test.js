@@ -74,6 +74,21 @@ test('repeated credit queries reuse complete daily API results', async () => {
   assert.equal(second.daily.find(d => d.date === '2026-09-12').used, 1);
 });
 
+test('historical credit results retain model totals when the official usage rows provide a model', async () => {
+  const sync = createCreditHistorySync({ now: () => now, getAccessToken: async () => 'test', fetchUsage: async () => ({ records: [
+    { usageDate: '2026-09-12', credit: 1.25, requestId: 'a', model: 'Model A' },
+    { usageDate: '2026-09-12', credit: 2.5, requestId: 'b', model: 'Model B' },
+    { usageDate: '2026-09-12', credit: 0.75, requestId: 'c', model: 'Model A' },
+  ] }) });
+  sync.start({ accounts: [{ uid: 'one' }] });
+  const result = await settle(sync);
+  const day = result.daily.find(item => item.date === '2026-09-12');
+  assert.deepEqual(day.models, {
+    'Model A': { used: 2, count: 2 },
+    'Model B': { used: 2.5, count: 1 },
+  });
+});
+
 test('failed account contributes no cached values or false zero records', async () => {
   const sync = createCreditHistorySync({ now: () => now, getAccessToken: async uid => uid,
     fetchUsage: async o => { if (o.accessToken === 'bad') throw Error('timeout'); return { records: [] }; }

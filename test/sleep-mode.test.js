@@ -74,6 +74,8 @@ test('until-done waits for every discovered session, including blocked and recen
   vm.createContext(ctx);
   vm.runInContext(ui.slice(ui.indexOf('    function discoverSleepSessionBusy()'), ui.indexOf('    // 同步防休眠状态：三模式')), ctx);
   assert.equal(ctx.window.__wbsAnySessionBusy(), true);
+  assert.equal(ctx.window.__wbsSessionsBusy(['a']), true);
+  assert.equal(ctx.window.__wbsSessionsBusy(['unrelated']), false);
   ctx.startUntilDoneCheck();
   poll(); assert.equal(posts.length, 0);
   controllers[0].busy = false;
