@@ -86,15 +86,20 @@ test('model, wallpaper, and account cards escape each dynamic HTML sink', () => 
   assert.doesNotMatch(wallpapers, /(?:data-wp|title|data-src|alt)="' \+ (?:w\.|wallpaperUrl)/);
 
   const accounts = sourceBetween('function render(data)', 'function updateAccountSummary()');
-  assert.equal((accounts.match(/escAttr\(a\.uid\)/g) || []).length, 2);
+  assert.equal((accounts.match(/escAttr\(a\.uid\)/g) || []).length, 3);
   assert.doesNotMatch(accounts, /data-primary-uid/);
   assert.equal((accounts.match(/escAttr\(a\.nickname \|\| '未命名'\)/g) || []).length, 2);
-  assert.match(accounts, /var nameVal = state\.mask \? maskAccountName\(rawName\) : rawName;/);
+  assert.match(accounts, /var nameVal = state\.mask \? maskAccountName\(displayName\) : displayName;/);
+  assert.match(accounts, /var displayName = noteVal \|\| rawName;/);
   assert.match(accounts, /var idVal = state\.mask \? maskAccountId\(rawId\) : rawId;/);
-  assert.match(accounts, /wbs-name">' \+ esc\(nameVal\)/);
+  assert.match(accounts, /title="' \+ escAttr\(noteVal\)/);
+  assert.match(accounts, /'>' \+ esc\(nameVal\)/);
   assert.match(accounts, /wbs-val">' \+ esc\(idVal\)/);
-  assert.match(accounts, /wbs-val[^\n]+esc\(ts\.label\)/);
+  assert.match(accounts, /wbs-val">' \+ esc\(fmtDateTime\(a\.lastSwitchAt\)\)/);
   assert.doesNotMatch(accounts, /data-(?:uid|name)="' \+ a\./);
+  const creditBlock = sourceBetween('function creditBlockHtml(', 'function nearestCreditExpiry(');
+  assert.match(creditBlock, /wbs-token-cell wbs-right-col"><span class="wbs-lbl">有效期至<\/span><span class="wbs-val' \+ \(tsExp\.warn \? ' wbs-warn' : ''\) \+ '">' \+ esc\(tsExp\.label\)/);
+  assert.match(creditBlock, /' \+ usage \+ '<\/div>' \+ expiryCell \+ '<\/div>'/);
   assert.doesNotMatch(accounts, /var idVal = a\.phone \? a\.phone/);
 });
 

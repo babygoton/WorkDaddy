@@ -30,6 +30,7 @@ const crypto = require('crypto');
 const net = require('net');
 const sessionSync = require('./session-sync.js');
 const { createAccountCreditCache } = require('./account-credit-cache.js');
+const { createAccountMetaStore } = require('./account-meta.js');
 const { spawn, spawnSync } = require('child_process');
 const {
   assertSameProcessIdentity,
@@ -216,6 +217,7 @@ const { createPrimaryAccountStore } = require('./primary-account.js');
 const PROFILE = getProfile();
 const DATA_DIR = defaultDataDir();
 const accountCreditCache = createAccountCreditCache(DATA_DIR);
+const accountMeta = createAccountMetaStore(DATA_DIR);
 const thirdPartyModels = createThirdPartyImport({ targetFile: workbuddyModelsFile(), dataDir: DATA_DIR });
 const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.existsSync(accountBackupFile(uid)));
 // 版本号：改动 daemon/inject/theme-patches/builtin 资产后递增，launcher 检测到运行中版本不一致会强制用 app 内置代码重启
@@ -420,8 +422,8 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 // 1.2.145：识别仅 updated_at 的激活漂移，清除无变更脏标记；无结果任务不再弹同步进度窗口。
 // 1.2.126：5.6 加密账号改为密文原样备份、内存解密；导入兼容明文 token，
 //          刷新结果不把解密后的 token 写回加密备份。
-const DAEMON_VERSION = '1.2.148';
-const DAEMON_BUILD_ID = 'release-1.2.148-20260923-windows-compat-target';
+const DAEMON_VERSION = '1.2.149';
+const DAEMON_BUILD_ID = 'release-1.2.149-20260924-account-note';
 const usageReporter = createUsageReporter({ profile: PROFILE.id, version: DAEMON_VERSION });
 configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const automationDiscovery = createAutomationDiscovery({
@@ -8664,6 +8666,17 @@ function handleApi(req, res) {
     });
   }
 
+  if (req.method === 'POST' && p === '/api/account-note') {
+    return readBody(req).then((body) => {
+      try {
+        const uid = String((body && body.uid) || '').trim();
+        if (!uid) return json(res, 400, { ok: false, error: '缺少 uid' });
+        const meta = accountMeta.setNote(uid, body.note);
+        return json(res, 200, { ok: true, meta });
+      } catch (error) { return json(res, 400, { ok: false, error: error.message }); }
+    });
+  }
+
   // The official check-in endpoint is idempotent and reports "already
   // checked in" for a check-in completed outside WorkDaddy.  Reconcile only
   // the currently logged-in account when the panel asks for a fresh account
@@ -8704,7 +8717,7 @@ function handleApi(req, res) {
           const checked = c && c.ok && (c.verified === true || classifyCheckinResult({ httpOk: true, code: c.code, message: c.message }).ok)
             ? c
             : null;
-          return Object.assign({}, a, { creditSegments: [] }, accountCreditCache.get(a.uid), {
+          return Object.assign({}, a, { creditSegments: [] }, accountCreditCache.get(a.uid), accountMeta.get(a.uid), {
             checkin: checkinDisplayValue(checked, today),
             activityStreak: growthStreakCache.peek(a.uid),
           });
@@ -10354,6 +10367,7 @@ function handleApi(req, res) {
           }
         }
         const acct = switchTo(DATA_DIR, uid, log);
+        try { accountMeta.markSwitch(uid); } catch (_) { /* 元数据失败不影响切换 */ }
         const hint = '登录文件已切换，请重启 WorkBuddy 使新账号生效';
         let reloaded = false;
         if (body.reload) {
