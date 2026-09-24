@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const vm = require('vm');
 const { scanTokenStats, scanTokenStatsCached, dateBounds, tokenStatsCacheReady } = require('../scripts/token-stats.js');
 
 test('scans usage metadata without reading message semantics into the result', () => {
@@ -66,6 +67,22 @@ test('daily breakdown keeps account and model dimensions without changing totals
     ['a', 'alpha', 12], ['a', 'beta', 3], ['b', 'alpha', 4],
   ]);
   assert.deepEqual(scanTokenStatsCached(root, { now, days: 1, account: 'b' }).dailyBreakdown.map(row => row.account), ['b']);
+});
+
+test('credit model trend ignores account-total records without a model dimension', () => {
+  const source = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'inject.js'), 'utf8');
+  const start = source.indexOf('function usageTrendGroups');
+  const end = source.indexOf('\n    function renderUsageBreakdown', start);
+  const usageTrendGroups = vm.runInNewContext('(' + source.slice(start, end).trim() + ')');
+  const groups = usageTrendGroups([{ title: '2026-09-20' }], [
+    { day: '2026-09-20', account: 'account-a', value: 1365.17 },
+    { day: '2026-09-20', model: 'kimi-k3-1', value: 1291.88 },
+    { day: '2026-09-20', model: 'deepseek-v4.1-flash', value: 73.29 },
+  ], 'model', { 'kimi-k3-1': 'kimi-k3-1', 'deepseek-v4.1-flash': 'deepseek-v4.1-flash' });
+  assert.deepEqual(JSON.parse(JSON.stringify(groups.map(group => [group.key, group.total]))), [
+    ['kimi-k3-1', 1291.88],
+    ['deepseek-v4.1-flash', 73.29],
+  ]);
 });
 
 test('date range is limited to 90 days', () => {

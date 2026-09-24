@@ -420,8 +420,8 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 // 1.2.145：识别仅 updated_at 的激活漂移，清除无变更脏标记；无结果任务不再弹同步进度窗口。
 // 1.2.126：5.6 加密账号改为密文原样备份、内存解密；导入兼容明文 token，
 //          刷新结果不把解密后的 token 写回加密备份。
-const DAEMON_VERSION = '1.2.152';
-const DAEMON_BUILD_ID = 'release-1.2.152-20260924-linux-sleep-open-url';
+const DAEMON_VERSION = '1.2.153';
+const DAEMON_BUILD_ID = 'release-1.2.153-20260924-respect-active-session-sync-rule';
 const usageReporter = createUsageReporter({ profile: PROFILE.id, version: DAEMON_VERSION });
 configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const automationDiscovery = createAutomationDiscovery({
@@ -10358,6 +10358,7 @@ function handleApi(req, res) {
         releaseAccountSwitch = await assertAccountSwitchIdle();
         const sourceAccount = currentAccount() || {};
         const sourceUid = String(sourceAccount.uid || '').trim();
+        let currentConversationRow = null;
         let currentConversationId = isValidSessionId(String(body.currentConversationId || '').trim())
           ? String(body.currentConversationId).trim() : '';
         // Renderer projection state can briefly retain the destination id from
@@ -10365,12 +10366,14 @@ function handleApi(req, res) {
         // the session index proves it belongs to the account being replaced.
         if (currentConversationId && sourceUid) {
           const ownerRows = await sqliteQuery(
-            'SELECT user_id FROM sessions WHERE id = ? AND deleted_at IS NULL LIMIT 1;',
+            'SELECT user_id, cwd FROM sessions WHERE id = ? AND deleted_at IS NULL LIMIT 1;',
             [currentConversationId]
           );
           if (!ownerRows.length || String(ownerRows[0].user_id || '') !== sourceUid) {
             log(`[switch] 丢弃不属于源账号的当前会话 source=${sourceUid} session=${currentConversationId}`);
             currentConversationId = '';
+          } else {
+            currentConversationRow = { ...ownerRows[0], id: currentConversationId };
           }
         }
         const acct = switchTo(DATA_DIR, uid, log);
@@ -10403,11 +10406,15 @@ function handleApi(req, res) {
         // 空间规则可能因切换前后的会话索引时序暂时无法生成初始计划，但规则本身仍需触发复制任务；
         // 任务规则通常能直接命中，所以旧逻辑只表现为“任务能复制、空间不复制”。
         const sourceRules = sourceUid ? getAutoCopyRules(DATA_DIR, sourceUid) : { allSessions: false, sessionIds: [], workspaces: [] };
+        // An unrelated workspace rule may start a job, but must never opt the
+        // open conversation into copying. Use the planner's exact selection rule.
+        const autoCopyOpenSessionId = currentConversationRow && isAutoCopySessionSelected(sourceRules, currentConversationRow)
+          ? currentConversationId : '';
         const autoCopyJob = shouldStartAutoCopyJob(sourceRules, hasPendingAutoCopyTo(sourceUid))
           ? startAutoCopyJob(sourceUid, uid, [], {
             sourceName: sourceAccount.nickname || '',
             targetName: acct.nickname || '',
-            openSessionId: currentConversationId,
+            openSessionId: autoCopyOpenSessionId,
           })
           : null;
         return json(res, 200, {
