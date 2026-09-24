@@ -97,6 +97,57 @@ function collectConversationUsage(messages) {
   };
 }
 
+// 将官方消息 store 中的用户/助手消息还原成可直接粘贴的 Markdown。
+// 消息列表可能被虚拟化，复制必须依赖完整 store，而不是当前 DOM 中的节点。
+function conversationMessagesToMarkdown(messages) {
+  var source = Array.isArray(messages) ? messages : [];
+  function roleOf(message) {
+    var role = String(message && (message.messageType || message.role || message.type) || '').toLowerCase();
+    if (role === 'user' || role.indexOf('user') >= 0) return 'user';
+    if (role === 'assistant' || role.indexOf('assistant') >= 0) return 'assistant';
+    return '';
+  }
+  function blocksToMarkdown(content) {
+    var parts = [];
+    function visit(value) {
+      if (typeof value === 'string') {
+        parts.push(value);
+        return;
+      }
+      if (Array.isArray(value)) {
+        for (var i = 0; i < value.length; i++) visit(value[i]);
+        return;
+      }
+      if (!value || typeof value !== 'object') return;
+      var type = String(value.type || '').toLowerCase();
+      if (typeof value.text === 'string' && (!type || type === 'text' || type === 'markdown')) {
+        parts.push(value.text);
+        return;
+      }
+      if (typeof value.content === 'string') {
+        parts.push(value.content);
+        return;
+      }
+      if (value.content) visit(value.content);
+      else if (value.children) visit(value.children);
+    }
+    visit(content);
+    return parts.join('\n');
+  }
+  var turns = [];
+  for (var i = 0; i < source.length; i++) {
+    var message = source[i];
+    var role = roleOf(message);
+    if (!role || /^timeline:/.test(String(message && message.id || ''))) continue;
+    var markdown = blocksToMarkdown(message && message.content);
+    if (!markdown) continue;
+    // WorkDaddy 的完成标记是内部 Markdown 定义，不属于用户看到的回复正文。
+    if (role === 'assistant') markdown = markdown.replace(/\n?\[wbs-reply-done\]:\s*#\s*$/, '');
+    turns.push((role === 'user' ? '用户' : '助手') + '：\n\n' + markdown);
+  }
+  return turns.join('\n\n---\n\n');
+}
+
 // Activity signals contain no key, text, target or pointer coordinates.
 function createUsageActivity(options) {
   var doc = options.document, win = options.window;
@@ -861,6 +912,7 @@ function findLatestManualAutomationRun(tasks, runs) {
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     collectConversationUsage: collectConversationUsage,
+    conversationMessagesToMarkdown: conversationMessagesToMarkdown,
     createUsageActivity: createUsageActivity,
     createBuildLifecycle: createBuildLifecycle,
     createBrandClickAction: createBrandClickAction,
@@ -1193,7 +1245,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     // —— 第二批补齐（inject 剩余 + daemon 端会进入 UI/API 的文案）——
     '没有找到符合格式的账号，请先让 WorkBuddy 整理 JSON': 'No compatible accounts found. Ask WorkBuddy to format the JSON first.',
     '免打扰': 'Quiet mode', 'WorkBuddy 即将退出并重新打开到登录页': 'WorkBuddy will exit and reopen to the login page', 'WorkBuddy 队列尚未准备完成': 'WorkBuddy queue is not ready yet', 'WorkBuddy 队列排序接口不可用': 'WorkBuddy queue sort API unavailable', 'WorkBuddy 队列立即发送接口不可用': 'WorkBuddy queue send-now API unavailable', '未找到 WorkBuddy 队列接口': 'WorkBuddy queue API not found',
-    '一个基于': 'A ', '个备选': 'standby', '备选': 'standby', '个失败': ' failed', '个已不存在': ' no longer exist', '项失败': ' failed', '已选': ' selected', '例如 deepseek-v4-flash': 'e.g. deepseek-v4-flash', '例如我的 DeepSeek': 'e.g. my DeepSeek', '加载失败': 'Load failed', '发起授权失败:': 'Authorization failed:', '开启': 'Enable', '关闭': 'Close', '失败': 'Failed', '用户消息': 'User message',
+    '一个基于': 'A ', '个备选': 'standby', '备选': 'standby', '个失败': ' failed', '个已不存在': ' no longer exist', '项失败': ' failed', '已选': ' selected', '例如 deepseek-v4-flash': 'e.g. deepseek-v4-flash', '例如我的 DeepSeek': 'e.g. my DeepSeek', '加载失败': 'Load failed', '发起授权失败:': 'Authorization failed:', '开启': 'Enable', '关闭': 'Close', '失败': 'Failed', '用户消息': 'User message', '用户': 'User', '助手': 'Assistant', '复制整个会话': 'Copy entire conversation', '当前会话暂无可复制内容': 'No copyable content in the current conversation', '会话已复制到剪贴板': 'Conversation copied to clipboard', '剪贴板不可用': 'Clipboard unavailable',
     'OLED 纯黑': 'OLED Pure Black', '未发现 CDP 端口（WorkBuddy 需以 --remote-debugging-port 启动）': 'No CDP port found (start WorkBuddy with --remote-debugging-port)', '本地 API 未授权': 'Local API unauthorized', '仅支持 http(s) 链接': 'Only http(s) links are supported', '图片不能超过 10MB': 'Image must not exceed 10MB', '图片必须是 PNG/JPEG/WebP base64': 'Image must be PNG/JPEG/WebP base64', '遥测开关值必须是布尔值': 'Telemetry switch must be a boolean', 'blur 必须是数字': 'Blur must be a number', 'opacity 必须是数字': 'Opacity must be a number', '查询返回空结果': 'Query returned empty results',
     '正在解包新应用…': 'Unpacking new app…', '挂载 dmg 失败:': 'Failed to mount dmg:', '缺少解包后的新应用': 'Unpacked new app missing', '解包应用失败': 'Failed to unpack app', '缺少 apply-update.sh': 'apply-update.sh missing', '（仓库暂无 Release）': ' (no Releases in the repository yet)', 'auth/state 响应缺少 state': 'auth/state response is missing state',
     'WBSWITCH_WORKBUDDY_BIN 不是可验证的当前 profile 主程序；登录信息未修改': 'WBSWITCH_WORKBUDDY_BIN is not a verified main program for the current profile; login info unchanged', '无法以普通用户权限安全退出 WorkBuddy。请手动关闭该程序；若它以管理员身份运行，请先退出后再重试。登录信息未修改': 'Cannot safely quit WorkBuddy at standard user privilege. Please close it manually; if it runs as admin, quit it first and retry. Login info unchanged', '未找到 WorkBuddy 可执行文件，无法安全退出；登录信息未修改': 'WorkBuddy executable not found; cannot quit safely. Login info unchanged', 'workbuddy-target.json 指定的路径不是可验证的当前 profile 主程序；登录信息未修改': 'The path in workbuddy-target.json is not a verified main program for the current profile; login info unchanged', '存在当前 profile 进程，但没有进程属于已验证安装目录；登录信息未修改': 'A current profile process exists, but none belongs to a verified install directory; login info unchanged', '检测到当前 profile 正从另一安装目录运行，登录信息未修改': 'The current profile is running from another install directory; login info unchanged', '检测到多个 dormant WorkBuddy 安装目录，按发现优先级选择:': 'Multiple dormant WorkBuddy installs found; selecting by discovery priority:', 'WorkBuddy 数据目录不是受管目录': 'WorkBuddy data directory is not managed', 'WorkBuddy 页面尚未完成加载': 'WorkBuddy page has not finished loading', '刷新 WorkBuddy 页面': 'Refresh WorkBuddy page', '注入脚本页面抛错': 'Injected script page threw an error', '读取注入脚本失败:': 'Failed to read the injected script:', '运行时桥接文件未生成': 'Runtime bridge file was not created',
@@ -2189,6 +2241,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       popoverTimer: null,
       observer: null,
       state: null,
+      messages: null,
       // 性能缓存：避免 800ms 轮询反复全量扫描/强制布局
       ctrlCacheId: null,
       ctrlCache: null,
@@ -2334,6 +2387,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       if (!summary || !surface || !conversationUsageEnabled) return;
       var contentRect = surface.content.getBoundingClientRect();
       if (!contentRect || contentRect.width <= 0) return;
+      var documentRect = surface.conversation && surface.conversation.getBoundingClientRect ? surface.conversation.getBoundingClientRect() : null;
       // 元素引用缓存（断连才重新 querySelector）
       var geo = conversationUsage.geoEls;
       if (!geo || !geo.inputArea || !document.contains(geo.inputArea) || (geo.bottomMask && !document.contains(geo.bottomMask)) || (geo.viewport && !document.contains(geo.viewport))) {
@@ -2349,13 +2403,16 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       var maskRect = geo.bottomMask && geo.bottomMask.getBoundingClientRect();
       var anchorRect = maskRect && maskRect.width > 0 && maskRect.height > 0 ? maskRect : inputRect;
       var anchorBottom = anchorRect && anchorRect.bottom > 0 ? anchorRect.bottom : (viewportRect && viewportRect.bottom) || window.innerHeight;
-      var left = anchorRect && anchorRect.width > 0 ? anchorRect.left : contentRect.left;
-      var maxWidth = anchorRect && anchorRect.width > 0 ? anchorRect.width : contentRect.width;
+      // 水平基准使用真实消息文档，避免跟随外层 message-list-content 的内缩留白。
+      var alignmentRect = documentRect && documentRect.width > 0 ? documentRect : contentRect;
+      var left = alignmentRect.left;
+      var maxWidth = alignmentRect.width;
       left = Math.max(8, left);
       var write = {
         left: Math.round(left),
         maxWidth: Math.round(Math.min(maxWidth, window.innerWidth - left - 8)),
-        bottom: Math.round(Math.max(0, window.innerHeight - anchorBottom)),
+        // 与底部保留少量间距，避免组件紧贴输入区/窗口边缘。
+        bottom: Math.round(Math.max(4, window.innerHeight - anchorBottom + 4)),
       };
       var last = conversationUsage.lastWrite;
       // 几何未变化时跳过样式写入，避免每次都触发 style invalidation
@@ -2380,7 +2437,18 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         write.spacerH = sh2;
       }
     }
-    function showUsagePopover() {
+    function showUsagePopover(event) {
+      var copyButton = conversationUsage.summary && conversationUsage.summary.querySelector('.wbs-session-usage-copy');
+      // The copy action has its own expanded state; never let the usage tooltip
+      // reappear while the pointer or keyboard focus is on that control.
+      if (copyButton && (copyButton.matches(':hover') || copyButton.matches(':focus'))) {
+        hideUsagePopover();
+        return;
+      }
+      if (event && event.target && event.target.closest && event.target.closest('.wbs-session-usage-copy')) {
+        hideUsagePopover();
+        return;
+      }
       if (!conversationUsage.summary || !conversationUsage.popover) return;
       if (conversationUsage.popoverTimer) clearTimeout(conversationUsage.popoverTimer);
       conversationUsage.popover.classList.add('is-visible');
@@ -2394,6 +2462,52 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         if (conversationUsage.popover && conversationUsage.popover.matches(':hover')) return;
         hideUsagePopover();
       }, 120);
+    }
+    function writeConversationClipboard(text) {
+      var clipboard = window.navigator && window.navigator.clipboard;
+      if (clipboard && typeof clipboard.writeText === 'function') return clipboard.writeText(text);
+      return new Promise(function (resolve, reject) {
+        var area = document.createElement('textarea');
+        area.value = text;
+        area.setAttribute('readonly', '');
+        area.style.position = 'fixed';
+        area.style.left = '-9999px';
+        area.style.top = '0';
+        document.body.appendChild(area);
+        area.select();
+        var copied = false;
+        try { copied = document.execCommand('copy'); } catch (_) { copied = false; }
+        area.remove();
+        if (copied) resolve();
+        else reject(new Error('剪贴板不可用'));
+      });
+    }
+    function copyConversation(button) {
+      var state = null;
+      try {
+        if (conversationUsage.controller && conversationUsage.controller.messageStore) {
+          state = conversationUsage.controller.messageStore.getState();
+        }
+      } catch (_) {}
+      if (!state) state = conversationUsage.state;
+      var messages = state && Array.isArray(state.messages) && state.messages.length ? state.messages : conversationUsage.messages;
+      var text = conversationMessagesToMarkdown(messages);
+      if (!text) {
+        toast('当前会话暂无可复制内容', true);
+        return;
+      }
+      button.disabled = true;
+      writeConversationClipboard(text).then(function () {
+        button.classList.add('is-copied');
+        toast('会话已复制到剪贴板', false, null, 'success');
+        setBuildTimeout(function () {
+          button.disabled = false;
+          button.classList.remove('is-copied');
+        }, 1400);
+      }).catch(function (error) {
+        button.disabled = false;
+        toast('复制失败: ' + (error && error.message ? error.message : '剪贴板不可用'), true);
+      });
     }
     function usageDetailRows(state) {
       var models = (state && state.models || []).slice().sort(function (a, b) { return b.tokens - a.tokens; });
@@ -2424,13 +2538,13 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       body.textContent = '';
       var calls = state && state.calls || 0;
       if (!state) {
-        main.appendChild(el('span', 'wbs-session-usage-label', '会话用量'));
+        main.appendChild(el('span', 'wbs-session-usage-label', '共'));
         main.appendChild(el('span', 'wbs-session-usage-loading', '读取中…'));
       } else if (!calls) {
-        main.appendChild(el('span', 'wbs-session-usage-label', '会话用量'));
+        main.appendChild(el('span', 'wbs-session-usage-label', '共'));
         main.appendChild(el('span', 'wbs-session-usage-loading', '暂无已完成用量'));
       } else {
-        main.appendChild(el('span', 'wbs-session-usage-label', '会话用量'));
+        main.appendChild(el('span', 'wbs-session-usage-label', '共'));
         main.appendChild(el('span', 'wbs-session-usage-number', formatUsageTokens(state.tokens) + ' Token'));
         main.appendChild(el('span', 'wbs-session-usage-separator', '·'));
         main.appendChild(el('span', 'wbs-session-usage-number', formatUsageCredit(state.credit, state.creditKnown) + ' 积分'));
@@ -2457,7 +2571,25 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         summary.setAttribute('aria-label', '本会话用量');
         summary.setAttribute('aria-describedby', 'wbs-session-usage-popover');
         summary.appendChild(el('div', 'wbs-session-usage-main'));
+        var copyButton = el('button', 'wbs-session-usage-copy');
+        copyButton.type = 'button';
+        copyButton.title = '复制整个会话';
+        copyButton.setAttribute('aria-label', '复制整个会话');
+        copyButton.innerHTML = '<span class="wbs-session-usage-copy-icon" aria-hidden="true"><svg class="wbs-session-usage-copy-glyph" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg><svg class="wbs-session-usage-check-glyph" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 4 4L19 6"/></svg></span>';
+        copyButton.appendChild(el('span', 'wbs-session-usage-copy-label', '复制整个会话'));
+        summary.appendChild(copyButton);
         conversationUsage.summary = summary;
+        listen(copyButton, 'mouseenter', hideUsagePopover);
+        listen(copyButton, 'focusin', hideUsagePopover);
+        listen(copyButton, 'mouseleave', function (event) {
+          var next = event.relatedTarget;
+          if (next && summary.contains(next) && !(next.closest && next.closest('.wbs-session-usage-copy'))) showUsagePopover();
+        });
+        listen(copyButton, 'click', function (event) {
+          event.preventDefault();
+          event.stopPropagation();
+          copyConversation(copyButton);
+        });
         listen(summary, 'mouseenter', showUsagePopover);
         listen(summary, 'mouseleave', scheduleHideUsagePopover);
         listen(summary, 'focusin', showUsagePopover);
@@ -2506,6 +2638,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         (usage.total_tokens != null ? usage.total_tokens : (usage.totalTokens != null ? usage.totalTokens : ''));
     }
     function maybeRenderUsage(messages) {
+      conversationUsage.messages = Array.isArray(messages) ? messages : [];
       var sig = usageSignature(messages);
       if (sig === conversationUsage.lastSig) return;
       conversationUsage.lastSig = sig;
@@ -2525,6 +2658,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         conversationUsage.unsubscribe = null;
       }
       conversationUsage.controller = controller || null;
+      conversationUsage.messages = null;
       conversationUsage.lastSig = '';
       renderConversationUsage(null);
       if (!controller || !controller.messageStore) return;
@@ -2614,9 +2748,9 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     var toastRuntime = window.__wbsToastRuntime;
     if (!toastRuntime) throw new Error('通知组件未加载');
     registerDisposer(function () { toastRuntime.destroy(); });
-    function toast(msg, isErr, targetRoot) {
+    function toast(msg, isErr, targetRoot, level) {
       if (!alive) return;
-      return toastRuntime.show({ message: wbsTranslateString(String(msg == null ? '' : msg), WBS_LANGUAGE), level: isErr ? 'error' : 'info' });
+      return toastRuntime.show({ message: wbsTranslateString(String(msg == null ? '' : msg), WBS_LANGUAGE), level: level || (isErr ? 'error' : 'info') });
     }
     function receiveToast(detail) {
       if (!alive) throw new Error('通知组件已关闭');
@@ -15115,12 +15249,25 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '.wbs-root{position:fixed;right:22px;bottom:22px;z-index:2147483647;font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;font-size:13px;color:#1f1f1f;-webkit-font-smoothing:antialiased}',
     '.wbs-root,.wbs-status-popover,.wbs-credit-summary-popover,#wbs-token-stats-modal{--wbs-primary:#22c55e;--wbs-primary-rgb:34,197,94;--wbs-primary-ink:#22c55e;--wbs-primary-soft:rgba(34,197,94,.09);--wbs-primary-soft-hover:rgba(34,197,94,.14)}',
     'html[data-wbs-theme-id="dark"] .wbs-root,html[data-wbs-theme-id="dark"] .wbs-status-popover,html[data-wbs-theme-id="dark"] .wbs-credit-summary-popover,html[data-wbs-theme-id="dark"] #wbs-token-stats-modal,html[data-wbs-theme-id="cyber-purple"] .wbs-root,html[data-wbs-theme-id="cyber-purple"] .wbs-status-popover,html[data-wbs-theme-id="cyber-purple"] .wbs-credit-summary-popover,html[data-wbs-theme-id="cyber-purple"] #wbs-token-stats-modal,html[data-wbs-theme-id="nebula"] .wbs-root,html[data-wbs-theme-id="nebula"] .wbs-status-popover,html[data-wbs-theme-id="nebula"] .wbs-credit-summary-popover,html[data-wbs-theme-id="nebula"] #wbs-token-stats-modal{--wbs-primary:#7f77dd;--wbs-primary-rgb:127,119,221;--wbs-primary-ink:#7f77dd;--wbs-primary-soft:rgba(127,119,221,.12);--wbs-primary-soft-hover:rgba(127,119,221,.18)}',
-    '.wbs-session-usage-summary{position:fixed;z-index:20;display:block;box-sizing:border-box;min-height:28px;padding:4px 8px 2px;border:0;border-radius:8px;background:color-mix(in srgb,var(--wb-bg-popover,#fff) 52%,transparent);color:var(--wb-color-text-primary,#1f1f1f);font-size:13px;font-weight:400;line-height:1.35;opacity:.72;box-shadow:none;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);outline:none;cursor:pointer;transition:opacity .15s ease}',
-    '.wbs-session-usage-summary:hover,.wbs-session-usage-summary:focus-visible{opacity:.96}',
+    '.wbs-session-usage-summary{position:fixed;z-index:20;display:flex;align-items:center;justify-content:flex-start;gap:10px;box-sizing:border-box;min-height:37px;padding:3px 0 2px;border:0;border-radius:0;background:transparent;color:var(--wb-color-text-primary,#1f1f1f);font-size:14px;font-weight:400;line-height:18px;outline:none;cursor:pointer}',
+    '.wbs-session-usage-summary:hover,.wbs-session-usage-summary:focus-visible{background:transparent}',
     '.wbs-session-usage-summary.is-hidden{visibility:hidden;opacity:0;pointer-events:none}',
-    '.wbs-session-usage-main{display:flex;align-items:center;justify-content:flex-start;gap:7px;min-width:0;overflow:hidden;text-align:left;white-space:nowrap}',
+    '.wbs-session-usage-main{display:flex;align-items:center;justify-content:flex-start;gap:9px;min-width:0;flex:0 1 auto;overflow:hidden;text-overflow:ellipsis;text-align:left;white-space:nowrap;color:var(--wb-color-text-secondary,#68686d);opacity:1}',
+    '.wbs-session-usage-copy{display:inline-flex;align-items:center;justify-content:flex-start;gap:6px;width:auto;min-width:34px;height:30px;box-sizing:border-box;overflow:hidden;padding:0 9px;border:0;border-radius:0;background:transparent;color:var(--wb-color-text-primary,#1d1d1f);font:inherit;font-size:11px;line-height:1;cursor:pointer;box-shadow:none;transition:border-radius .2s ease,background .15s ease,box-shadow .15s ease;white-space:nowrap}',
+    '.wbs-session-usage-copy:hover,.wbs-session-usage-copy:focus-visible{border-radius:999px;background:var(--wb-bg-hover,#f2f2f7);color:var(--wb-color-text-primary,#1d1d1f);box-shadow:0 2px 8px rgba(0,0,0,.12)}',
+    '.wbs-session-usage-copy-icon{display:inline-flex;align-items:center;justify-content:center;width:16px;height:28px;flex:0 0 16px}',
+    '.wbs-session-usage-copy-icon svg{display:block;width:16px;height:16px;flex:0 0 16px}',
+    '.wbs-session-usage-copy-glyph{opacity:1;transition:opacity .12s ease,transform .18s ease}',
+    '.wbs-session-usage-copy-icon .wbs-session-usage-check-glyph{display:none;opacity:0;transform:scale(.55)}',
+    '.wbs-session-usage-copy-label{display:block;box-sizing:border-box;width:auto;max-width:0;overflow:hidden;padding:0;opacity:0;text-align:left;font-size:12px;font-weight:500;transition:max-width .2s ease,opacity .15s ease}',
+    '.wbs-session-usage-copy:hover .wbs-session-usage-copy-label,.wbs-session-usage-copy:focus-visible .wbs-session-usage-copy-label{max-width:72px;opacity:1}',
+    '.wbs-session-usage-copy:focus-visible{outline:2px solid color-mix(in srgb,var(--wb-color-text-primary,#1f1f1f) 50%,transparent);outline-offset:2px}',
+    '.wbs-session-usage-copy:disabled{opacity:.58;cursor:wait}',
+    '.wbs-session-usage-copy.is-copied .wbs-session-usage-copy-glyph{display:none}.wbs-session-usage-copy.is-copied .wbs-session-usage-check-glyph{display:block;opacity:1;transform:scale(1);animation:wbs-session-copy-check .24s ease-out}.wbs-session-usage-copy.is-copied .wbs-session-usage-check-glyph path{stroke-dasharray:24;stroke-dashoffset:24;animation:wbs-session-copy-check-draw .3s ease-out .02s forwards}.wbs-session-usage-copy.is-copied{color:var(--wb-color-text-primary,#1f1f1f)}',
+    '@keyframes wbs-session-copy-check{from{opacity:0;transform:scale(.55)}to{opacity:1;transform:scale(1)}}',
+    '@keyframes wbs-session-copy-check-draw{from{stroke-dashoffset:24}to{stroke-dashoffset:0}}',
     '.wbs-session-usage-label{flex:0 0 auto;color:var(--wb-color-text-secondary,#5f6368);font-weight:400}',
-    '.wbs-session-usage-number{flex:0 0 auto;color:var(--wb-color-text-primary,#1f1f1f);font-variant-numeric:tabular-nums;font-weight:400}',
+    '.wbs-session-usage-number{flex:0 0 auto;color:var(--wb-color-text-primary,#1d1d1f);font-variant-numeric:tabular-nums;font-weight:500}',
     '.wbs-session-usage-separator{flex:0 0 auto;color:var(--wb-icon-tertiary,#969aa3)}',
     '.wbs-session-usage-models{min-width:0;overflow:hidden;color:var(--wb-color-text-secondary,#5f6368);text-overflow:ellipsis;white-space:nowrap}',
     '.wbs-session-usage-loading{color:var(--wb-icon-secondary,#667085);font-weight:400}',
@@ -15138,9 +15285,9 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '.wbs-session-usage-model{min-width:0;overflow:hidden;color:var(--wb-color-text-primary,#1f1f1f);text-overflow:ellipsis;white-space:nowrap}',
     '.wbs-session-usage-empty{padding:10px 0;color:var(--wb-color-text-secondary,#5f6368);font-size:12px}',
     '.wbs-session-usage-spacer{display:block;width:100%;height:28px;min-height:28px;pointer-events:none;visibility:hidden}',
-    'html.cb-dark .wbs-session-usage-summary,html[data-theme="dark"] .wbs-session-usage-summary,body[data-vscode-theme-name*="dark" i] .wbs-session-usage-summary{background:color-mix(in srgb,var(--wb-bg-popover,#202126) 80%,transparent);color:var(--wb-color-text-primary,#f2f3f5);box-shadow:0 5px 18px rgba(0,0,0,.2)}',
+    'html.cb-dark .wbs-session-usage-summary,html[data-theme="dark"] .wbs-session-usage-summary,body[data-vscode-theme-name*="dark" i] .wbs-session-usage-summary{background:transparent;color:var(--wb-color-text-primary,#f2f3f5)}html.cb-dark .wbs-session-usage-main,html[data-theme="dark"] .wbs-session-usage-main,body[data-vscode-theme-name*="dark" i] .wbs-session-usage-main{color:var(--wb-color-text-secondary,#b7bbc5)}html.cb-dark .wbs-session-usage-copy,html[data-theme="dark"] .wbs-session-usage-copy,body[data-vscode-theme-name*="dark" i] .wbs-session-usage-copy{border:0;background:transparent;color:var(--wb-color-text-primary,#f2f3f5);box-shadow:none}html.cb-dark .wbs-session-usage-copy:hover,html[data-theme="dark"] .wbs-session-usage-copy:hover,body[data-vscode-theme-name*="dark" i] .wbs-session-usage-copy:hover{background:var(--wb-bg-hover,#34363b);color:var(--wb-color-text-primary,#f2f3f5);box-shadow:0 2px 8px rgba(0,0,0,.25)}',
     'html.cb-dark .wbs-session-usage-popover,html[data-theme="dark"] .wbs-session-usage-popover,body[data-vscode-theme-name*="dark" i] .wbs-session-usage-popover{background:color-mix(in srgb,var(--wb-bg-popover,#202126) 92%,transparent);color:var(--wb-color-text-primary,#f2f3f5);box-shadow:0 8px 22px rgba(0,0,0,.32)}',
-    '@media(max-width:620px){.wbs-session-usage-summary{padding-left:8px;padding-right:8px}.wbs-session-usage-main{gap:5px}.wbs-session-usage-popover{width:calc(100vw - 16px)}}',
+    '@media(max-width:620px){.wbs-session-usage-summary{padding-left:0;padding-right:0}.wbs-session-usage-main{gap:9px}.wbs-session-usage-popover{width:calc(100vw - 16px)}}',
     '.wbs-daily-rings,.wbs-status-popover{--wbs-ring-growth:var(--wbs-primary-ink);--wbs-ring-rewards:var(--wbs-primary-ink);--wbs-ring-cat:var(--wbs-primary-ink);--wbs-tip-credit:var(--wbs-primary-ink);--wbs-liquid-fill:var(--wbs-primary);--wbs-liquid-bg:color-mix(in srgb,var(--wbs-primary) 12%,var(--wb-bg-secondary,#f6f7f8));--wbs-liquid-ink:color-mix(in srgb,var(--wbs-primary-ink) 72%,var(--wb-color-text-primary,#1f1f1f))}',
     '.wbs-root.wbs-no-stash .wbs-stash-inline{display:none !important}',
     '.wbs-fork-button{display:flex;flex:0 0 24px;align-items:center;justify-content:center;width:24px;height:24px;box-sizing:border-box;padding:0;border:0;border-radius:8px;background:transparent;color:var(--wb-icon-secondary,rgba(0,0,0,.7));cursor:pointer;transition:color .15s ease,background-color .15s ease}',
