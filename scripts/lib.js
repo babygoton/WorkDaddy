@@ -18,189 +18,26 @@ const path = require('path');
 const crypto = require('crypto');
 const { getProfile, profileDataDir, sharedDataDir } = require('./profiles.js');
 
-const plat = require('./platform.js');
+const IS_WIN = process.platform === 'win32';
+const IS_LINUX = process.platform === 'linux';
+// Linux：Electron userData 遵循 XDG，落在 $XDG_DATA_HOME（默认 ~/.local/share）
+const linuxDataHome = () => process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share');
 
-const IS_WIN = plat.IS_WIN;
-const IS_MAC = plat.IS_MAC;
-const IS_LINUX = plat.IS_LINUX;
-
-// 备份数据目录：macOS ~/Library/Application Support/WorkDaddy
-//             Linux $XDG_CONFIG_HOME/WorkDaddy (~/.config/WorkDaddy)
-//             Windows %APPDATA%\WorkDaddy
-const PLATFORM_DATA_DIR = path.join(plat.appSupport, 'WorkDaddy');
-// 旧版 HelloBuddy 目录只存在于 macOS 历史版本，仅 macOS 需要做隐式迁移
-const LEGACY_DATA_DIR = IS_MAC
-  ? path.join(os.homedir(), 'Library', 'Application Support', 'HelloBuddy')
-  : null;
-
-// ===================== [wd-compat] WorkBuddy 5.6+ $wbEncrypted 字段信封解密适配 =====================
-// WorkBuddy 5.6 起对 workbuddy.cn 域账号启用 at-rest 字段级加密（编译期策略，无用户开关）：
-//   auth/account 文件中 nickname/phoneNumber/accessToken/refreshToken 等写为
-//   {"$wbEncrypted":1,"envelope":"<base64(JSON)>"}，内层 AES-256-GCM（sym-v1 帧 + AAD）。
-// 方案：读取端解密——经 WorkBuddy 自带 Electron（ELECTRON_RUN_AS_NODE=1）子进程调用原生
-//   绑定取密钥负载并派生密钥；密钥只经管道回传、内存缓存、绝不落盘、绝不写日志。
-// 失败语义：任何一步失败保留原值、60s 后允许重试——不阻断账号管理，界面以「(已加密)」占位降级。
-const WD_COMPAT = { key: null, keyFailAt: 0, keyFailReason: '', decOk: 0, decFail: 0 };
-const WD_COMPAT_KEY_RETRY_MS = 60000;
-
-// 被 wdCompatStaticKey 以 ELECTRON_RUN_AS_NODE=1 方式再次执行本文件时派生密钥并退出。
-// 密钥只写父子进程管道；该绑定仅存在于 WorkBuddy 的 Electron 运行时内。
-if (process.argv.includes('--wd-compat-print-key')) {
-  try {
-    const binding = process._linkedBinding('electron_browser_workbuddy_storage');
-    const payload = JSON.parse(binding.loggerGet());
-    if (payload && payload.version === 1 && typeof payload.atRestSecretKey === 'string') {
-      const key = crypto.createHash('sha256').update(payload.atRestSecretKey, 'utf8').digest();
-      process.stdout.write(`WD_COMPAT_KEY ${key.toString('base64')}\n`);
-      key.fill(0);
-      process.exit(0);
-    }
-    process.stderr.write('payload schema mismatch');
-    process.exit(4);
-  } catch (e) { process.stderr.write(String(e.message || e).slice(0, 200)); process.exit(3); }
-}
-
-function isWbEncryptedEnvelope(v) {
-  return !!v && typeof v === 'object' && !Array.isArray(v) && v.$wbEncrypted === 1 && typeof v.envelope === 'string';
-}
-
-function wdCompatContainsEncryptedFields(value) {
-  if (isWbEncryptedEnvelope(value)) return true;
-  if (Array.isArray(value)) return value.some(wdCompatContainsEncryptedFields);
-  if (!value || typeof value !== 'object') return false;
-  return Object.values(value).some(wdCompatContainsEncryptedFields);
-}
-
-/** 信封字段的展示兜底：取钥不可用时显示占位而非整段密文/[object Object]。 */
-function wdCompatText(v) {
-  if (typeof v === 'string') return v;
-  return isWbEncryptedEnvelope(v) ? '(已加密)' : '';
-}
-
-/** 只返回可直接用于 HTTP 的明文 token；信封不可用时返回空字符串。 */
-function wdCompatAuthToken(auth) {
-  if (!auth || typeof auth !== 'object') return '';
-  const value = auth.accessToken ?? auth.access_token ?? auth.token;
-  return typeof value === 'string' ? value.trim() : '';
-}
-
-function wdCompatHasAuthCredential(auth) {
-  if (!auth || typeof auth !== 'object') return false;
-  const value = auth.accessToken ?? auth.access_token ?? auth.token;
-  return typeof value === 'string' ? value.trim().length > 0 : isWbEncryptedEnvelope(value);
-}
-
-function wdCompatLog(msg) {
-  try { fs.appendFileSync(path.join(PLATFORM_DATA_DIR, 'daemon.log'), `[wd-compat] ${msg}\n`); } catch (_) {}
-}
-
-// Windows 安装目录可以由用户选择，不能只依赖默认的 %LOCALAPPDATA% 路径。
-// profiles.js 会读取当前 profile 的 workbuddy-target.json，并返回已经过 profile
-// 校验的主程序路径；只在 Node/daemon 侧读取，注入到 renderer 的 compat 脚本不会触发。
-function wdCompatConfiguredExe() {
-  if (!IS_WIN || typeof module === 'undefined' || !module.exports) return '';
-  try {
-    const { getProfile } = require('./profiles.js');
-    const profile = getProfile(process.env.WBSWITCH_PROFILE || 'workbuddy-cn', {
-      dataDir: process.env.WBSWITCH_DATA_DIR || undefined,
-      env: process.env,
-      platform: process.platform,
-    });
-    return profile && typeof profile.appPath === 'string' ? profile.appPath : '';
-  } catch (_) {
-    return '';
-  }
-}
-
-function wdCompatExeCandidates() {
-  if (process.env.WORKDADDY_WB_EXE) return [process.env.WORKDADDY_WB_EXE];
-  const home = os.homedir();
-  if (IS_MAC) {
-    const apps = [];
-    for (const root of ['/Applications', path.join(home, 'Applications')]) {
-      for (const name of ['WorkBuddy.app', 'WorkBuddy AI.app']) {
-        apps.push(path.join(root, name, 'Contents', 'MacOS', 'Electron'));
-      }
-    }
-    return apps;
-  }
-  if (IS_WIN) {
-    const base = process.env.LOCALAPPDATA || '';
-    const configured = wdCompatConfiguredExe();
-    return [
-      ...(configured ? [configured] : []),
-      path.join(base, 'Programs', 'WorkBuddy', 'WorkBuddy.exe'),
-      path.join(base, 'Programs', 'WorkBuddy AI', 'WorkBuddy AI.exe'),
-    ].filter(Boolean);
-  }
-  return ['/opt/WorkBuddy/workbuddy', '/opt/WorkBuddy/workbuddy-ai'];
-}
-
-function wdCompatStaticKey() {
-  if (WD_COMPAT.key) return WD_COMPAT.key;
-  if (WD_COMPAT.keyFailAt && Date.now() - WD_COMPAT.keyFailAt < WD_COMPAT_KEY_RETRY_MS) {
-    throw new Error(WD_COMPAT.keyFailReason || '取钥暂不可用');
-  }
-  let lastErr = '未找到 WorkBuddy 可执行文件';
-  for (const exe of wdCompatExeCandidates()) {
-    if (!fs.existsSync(exe)) continue;
-    const r = require('child_process').spawnSync(exe, [__filename, '--wd-compat-print-key'], {
-      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
-      timeout: 15000, encoding: 'utf8',
-    });
-    const m = r.stdout && r.stdout.match(/WD_COMPAT_KEY ([A-Za-z0-9+/=]+)/);
-    if (m) {
-      WD_COMPAT.key = Buffer.from(m[1], 'base64');
-      WD_COMPAT.keyFailAt = 0;
-      WD_COMPAT.keyFailReason = '';
-      return WD_COMPAT.key;
-    }
-    lastErr = (r.stderr && String(r.stderr).trim().slice(0, 120)) || `exit=${r.status}`;
-  }
-  WD_COMPAT.keyFailAt = Date.now();
-  WD_COMPAT.keyFailReason = lastErr;
-  wdCompatLog(`取钥失败（60s 后重试）: ${lastErr}`);
-  throw new Error(lastErr);
-}
-
-function wdCompatOpenEnvelope(env, key) {
-  const FRAMING_FIELD = 2, FMT_FIELD = 'WBEV1', AAD_DOMAIN = Buffer.from('WB-AAD\0', 'ascii');
-  const lp = (s) => { const b = Buffer.from(s, 'utf8'); const l = Buffer.alloc(4); l.writeUInt32BE(b.length); return Buffer.concat([l, b]); };
-  const u32 = (n) => { const b = Buffer.alloc(4); b.writeUInt32BE(n); return b; };
-  const aad = Buffer.concat([
-    AAD_DOMAIN, Buffer.from([1]), lp(FMT_FIELD), lp('sym-v1'), u32(env.suite || 1),
-    lp(env.keyId || ''), Buffer.from([FRAMING_FIELD]), Buffer.from([0]), Buffer.from([0]),
-  ]);
-  const d = crypto.createDecipheriv('aes-256-gcm', key, Buffer.from(env.nonce, 'base64'), { authTagLength: 16 });
-  d.setAAD(aad);
-  d.setAuthTag(Buffer.from(env.authTag, 'base64'));
-  return Buffer.concat([d.update(Buffer.from(env.ciphertext, 'base64')), d.final()]).toString('utf8');
-}
-
-/** 原地解密 JSON 中的全部 $wbEncrypted 信封字段；失败字段保留原值，不抛错。 */
-function wdCompatDecryptAuthJson(json) {
-  if (!json || typeof json !== 'object') return json;
-  const walk = (node) => {
-    if (Array.isArray(node)) { node.forEach(walk); return; }
-    if (!node || typeof node !== 'object') return;
-    for (const k of Object.keys(node)) {
-      const v = node[k];
-      if (isWbEncryptedEnvelope(v)) {
-        try {
-          const env = JSON.parse(Buffer.from(v.envelope, 'base64').toString('utf8'));
-          node[k] = wdCompatOpenEnvelope(env, wdCompatStaticKey());
-          WD_COMPAT.decOk++;
-        } catch (e) {
-          WD_COMPAT.decFail++;
-          wdCompatLog(`解密失败 ${k}: ${String(e.message || e).slice(0, 80)}`);
-        }
-      } else if (v && typeof v === 'object') walk(v);
-    }
-  };
-  walk(json);
-  return json;
-}
-// ===================== [wd-compat] 适配层结束 =====================
+const PLATFORM_DATA_DIR = IS_WIN
+  ? path.join(
+      process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'),
+      'WorkDaddy'
+    )
+  : IS_LINUX
+    ? path.join(linuxDataHome(), 'WorkDaddy')
+    : path.join(os.homedir(), 'Library', 'Application Support', 'WorkDaddy');
+// HelloBuddy 是旧版目录名：macOS 在 ~/Library/Application Support，
+// Linux 无历史版本（保持与 XDG 一致的形状即可），Windows 不使用。
+const LEGACY_DATA_DIR = IS_WIN
+  ? null
+  : IS_LINUX
+    ? path.join(linuxDataHome(), 'HelloBuddy')
+    : path.join(os.homedir(), 'Library', 'Application Support', 'HelloBuddy');
 
 function samePath(a, b) {
   return !!a && !!b && path.resolve(a) === path.resolve(b);
@@ -210,16 +47,30 @@ function isLegacyDataDir(dataDir) {
   return !!LEGACY_DATA_DIR && samePath(dataDir, LEGACY_DATA_DIR);
 }
 
-// 登录凭据文件：<扩展数据根>/CodeBuddyExtension/Data/Public/auth/workbuddy-desktop.info
-//   macOS: ~/Library/Application Support/...   Windows: %LOCALAPPDATA%\...   Linux: ~/.local/share/...
-// 正常路径已由 profile 给出；此处的兜底仅在 profile 未提供 authFile 时使用。
+// macOS: ~/Library/Application Support/CodeBuddyExtension/Data/Public/auth/workbuddy-desktop.info
+// Windows: %LOCALAPPDATA%\CodeBuddyExtension\Data\Public\auth\workbuddy-desktop.info（真机已确认）
+// Linux: $XDG_DATA_HOME/CodeBuddyExtension/Data/Public/auth/workbuddy-desktop.info（本机实测已确认）
 const ACTIVE_PROFILE = getProfile();
+const defaultAuthFile = () => {
+  if (IS_WIN) {
+    return path.join(
+      process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'),
+      'CodeBuddyExtension', 'Data', 'Public', 'auth', 'workbuddy-desktop.info'
+    );
+  }
+  if (IS_LINUX) {
+    return path.join(
+      linuxDataHome(), 'CodeBuddyExtension', 'Data', 'Public', 'auth', 'workbuddy-desktop.info'
+    );
+  }
+  return path.join(
+    os.homedir(),
+    'Library/Application Support/CodeBuddyExtension/Data/Public/auth/workbuddy-desktop.info'
+  );
+};
 const AUTH_FILE = process.env.WBSWITCH_AUTH_FILE !== undefined
   ? process.env.WBSWITCH_AUTH_FILE
-  : (ACTIVE_PROFILE.authFile === null ? null : (ACTIVE_PROFILE.authFile || path.join(
-      plat.extensionAuth,
-      'workbuddy-desktop.info'
-    )));
+  : (ACTIVE_PROFILE.authFile === null ? null : (ACTIVE_PROFILE.authFile || defaultAuthFile()));
 
 const LOGOUT_MARKER = `${AUTH_FILE}.logged-out`;
 const EXPLICIT_AUTH_FILE = process.env.WBSWITCH_AUTH_FILE !== undefined;

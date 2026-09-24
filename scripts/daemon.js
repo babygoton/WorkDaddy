@@ -433,11 +433,21 @@ const automationLikes = createAutomationLikesClient({
   getActorId: persistentInstallationId,
 });
 const HOST = '127.0.0.1';
-// 平台分支开关。上游历史代码把「非 Windows」一律当 macOS，Linux 适配时拆成
-// IS_MAC / IS_LINUX 两个显式常量，避免 Linux 走进 /Applications、osascript 等分支。
-const IS_WIN = process.platform === 'win32';
-const IS_MAC = process.platform === 'darwin';
-const IS_LINUX = process.platform === 'linux';
+const IS_WIN = process.platform === 'win32'; // Windows 移植：平台分支开关（macOS 行为保持不变）
+const IS_LINUX = process.platform === 'linux'; // Linux 移植：平台分支开关（macOS/Windows 行为保持不变）
+const IS_MAC = !IS_WIN && !IS_LINUX;
+
+/**
+ * 跨平台「用系统默认程序打开」一个路径或 URL。
+ * macOS: open / Linux: xdg-open / Windows: cmd start
+ * （Linux 上 /usr/bin/open 不存在，必须走 xdg-open，否则打开目录/外链会静默失败。）
+ */
+function openPath(target) {
+  if (IS_WIN) {
+    return spawn('cmd', ['/c', 'start', '', String(target)], { detached: true, stdio: 'ignore', windowsHide: true });
+  }
+  return spawn(IS_LINUX ? 'xdg-open' : 'open', [String(target)], { detached: true, stdio: 'ignore' });
+}
 // Windows 安装目录（install.ps1 铺、launcher 用、更新替换目标），对应 macOS 的 /Applications/WorkDaddy.app
 const WORKDADDY_INSTALL_NAME = PROFILE.id === 'workbuddy-ai' ? 'WorkDaddy AI' : 'WorkDaddy';
 const WORKDADDY_DIR_WIN = process.env.WBSWITCH_APP_DIR || path.resolve(__dirname, '..');
@@ -874,35 +884,51 @@ function checkUpdate(force) {
   }
   updateState.status = 'checking';
   updateState.message = '正在检查更新…';
-  const order = updateSourceOrder();
-  updateDebug('check-start', { force: !!force, current: DAEMON_VERSION, sources: order.map((s) => s.id) });
-  const attempts = order.map((source, orderIndex) => httpsGet(source.api).then(({ status, body }) => {
-    if (status !== 200) {
-      throw new Error('Releases API ' + status + (status === 404 ? '（仓库暂无 Release）' : ''));
-    }
-    return makeUpdateCandidate(source, JSON.parse(body), orderIndex);
-  }).catch((err) => {
-    log(`[update] ${source.id} 源检查失败: ${err.message}`);
-    updateDebug('check-source-failed', { source: source.id, api: source.api, error: err.message });
-    return null;
-  }));
-  return Promise.all(attempts)
-    .then((candidates) => {
-      const latestCandidate = selectBestUpdateCandidate(candidates);
-      if (!latestCandidate) throw new Error('所有更新源均不可用');
-      const packageCandidate = selectBestUpdateCandidate(candidates.filter((candidate) =>
-        candidate && candidate.asset && semverCompare(candidate.latest, latestCandidate.latest) === 0
-      ));
-      const selectedCandidate = packageCandidate || latestCandidate;
-      updateState.latest = latestCandidate.latest;
-      updateState.hasUpdate = semverCompare(latestCandidate.latest, DAEMON_VERSION) > 0;
-      updateState.source = selectedCandidate.source.id;
-      updateState.releaseUrl = selectedCandidate.rel.html_url || (selectedCandidate.source.id === 'gitee' ? `https://gitee.com/${UPDATE_REPO}/releases` : null);
-      updateState.notes = latestCandidate.notes;
-      updateState.dmgUrl = packageCandidate ? packageCandidate.dmgUrl : null;
-      updateState.dmgSize = packageCandidate ? packageCandidate.dmgSize : 0;
-      updateState.dmgSha256 = packageCandidate ? packageCandidate.dmgSha256 : null;
-      updateState.assetName = packageCandidate && packageCandidate.asset ? packageCandidate.asset.name : null;
+  updateDebug('check-start', { force: !!force, current: DAEMON_VERSION, updateApi: UPDATE_API });
+  return httpsGet(UPDATE_API)
+    .then(({ status, body }) => {
+      if (status !== 200) {
+        throw new Error('Releases API ' + status + (status === 404 ? '（仓库暂无 Release）' : ''));
+      }
+      const rel = JSON.parse(body);
+      const latest = String(rel.tag_name || '').replace(/^v/, '');
+      updateState.latest = latest;
+      updateState.hasUpdate = semverCompare(latest, DAEMON_VERSION) > 0;
+      updateState.releaseUrl = rel.html_url || null;
+      updateState.notes = (rel.body || '').slice(0, 2000);
+      // 资产按平台选取：macOS 找 .dmg；Windows 新版本优先同 profile 的 Setup.exe，
+      // 旧版本仍只识别 ZIP，因此没有 EXE 时回退到对应的 -win64.zip。
+      const assets = rel.assets || [];
+      const profileAsset = PROFILE.id === 'workbuddy-ai'
+        ? /^(?:WorkDaddy-AI-Setup-|WorkDaddy-AI-).*\.(?:exe|zip|dmg)$/i
+        : /^WorkDaddy-(?!AI-)(?:Setup-|).*\.(?:exe|zip|dmg)$/i;
+      const profileSetup = PROFILE.id === 'workbuddy-ai'
+        ? /^WorkDaddy-AI-Setup-\d+\.\d+\.\d+\.exe$/i
+        : /^WorkDaddy-Setup-\d+\.\d+\.\d+\.exe$/i;
+      const profileZip = PROFILE.id === 'workbuddy-ai'
+        ? /^WorkDaddy-AI-\d+\.\d+\.\d+-win64\.zip$/i
+        : /^WorkDaddy-\d+\.\d+\.\d+-win64\.zip$/i;
+      // Linux：WorkDaddy-<ver>-linux-x64.tar.gz / WorkDaddy-AI-<ver>-linux-x64.tar.gz
+      const profileLinux = PROFILE.id === 'workbuddy-ai'
+        ? /^WorkDaddy-AI-\d+\.\d+\.\d+-linux-(?:x64|amd64)\.tar\.gz$/i
+        : /^WorkDaddy-\d+\.\d+\.\d+-linux-(?:x64|amd64)\.tar\.gz$/i;
+      const asset = IS_WIN
+        ? (assets.find((a) => profileSetup.test(a.name || '')) ||
+           assets.find((a) => profileZip.test(a.name || '')) ||
+           // tolerate older release naming while keeping profile isolation
+           assets.find((a) => profileAsset.test(a.name || '') && /\.(?:exe|zip)$/i.test(a.name || '')) || null)
+        : (assets.find((a) => profileAsset.test(a.name || '') && /\.dmg$/i.test(a.name || '')) ||
+           assets.find((a) => /\.dmg$/i.test(a.name || '') && (PROFILE.id !== 'workbuddy-ai' || !/WorkDaddy-AI-/i.test(a.name || ''))) || null);
+      if (IS_LINUX) {
+        const linuxAsset = assets.find((a) => profileLinux.test(a.name || '')) || null;
+        updateState.dmgUrl = linuxAsset ? linuxAsset.browser_download_url : null;
+        updateState.dmgSize = linuxAsset ? linuxAsset.size : 0;
+        updateState.assetName = linuxAsset ? linuxAsset.name : null;
+      }
+      updateState.dmgUrl = asset ? asset.browser_download_url : null;
+      updateState.dmgSize = asset ? asset.size : 0;
+      updateState.dmgSha256 = asset ? normalizeAssetSha256(asset.digest) : parseSha256(updateState.notes);
+      updateState.assetName = asset ? asset.name : null;
       updateState.checkedAt = Date.now();
       updateState.status = 'idle';
       updateState.message = updateState.hasUpdate ? '发现新版本 v' + latestCandidate.latest : '已是最新版本';
@@ -960,7 +986,7 @@ function downloadUpdateInternal() {
   updateState.totalBytes = Number(updateState.dmgSize) || 0;
   updateState.downloadRate = 0;
   updateState.etaSeconds = null;
-  const ext = IS_WIN ? (/\.exe$/i.test(updateState.assetName || '') ? '.exe' : '.zip') : '.dmg';
+  const ext = IS_WIN ? (/\.exe$/i.test(updateState.assetName || '') ? '.exe' : '.zip') : (IS_LINUX ? '.tar.gz' : '.dmg');
   const updatePrefix = PROFILE.id === 'workbuddy-ai' ? 'WorkDaddy-AI-' : 'WorkDaddy-';
   const target = path.join(UPDATE_DIR, updatePrefix + updateState.latest + ext);
   const tempTarget = target + '.part.' + process.pid + '.' + crypto.randomBytes(8).toString('hex');
@@ -1101,20 +1127,50 @@ function sha256File(file) {
   return crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
 }
 
+/** Linux：把 .tar.gz 解到目标目录（用 tar，不引第三方依赖） */
+function unpackLinuxTarball(tarball, dest) {
+  return new Promise((resolve, reject) => {
+    if (!fs.existsSync(tarball)) return reject(new Error('缺少安装包（未找到已下载的 tar.gz）'));
+    fs.rmSync(dest, { recursive: true, force: true });
+    fs.mkdirSync(dest, { recursive: true });
+    // 归档内层可能带一层顶层目录，解出后若只有一个目录则以其为根
+    const child = spawn('tar', ['-xzf', tarball, '-C', dest], { stdio: 'ignore' });
+    child.on('error', reject);
+    child.on('close', (code) => {
+      if (code !== 0) return reject(new Error('tar 解包失败，退出码 ' + code));
+      try {
+        const entries = fs.readdirSync(dest).filter((n) => !n.startsWith('.'));
+        if (entries.length === 1 && fs.statSync(path.join(dest, entries[0])).isDirectory()) {
+          return resolve(path.join(dest, entries[0]));
+        }
+        return resolve(dest);
+      } catch (e) { reject(e); }
+    });
+  });
+}
+
 function inspectPackagedApp(appDir) {
   const result = { appDir, daemonVersion: null, appVersion: null };
   try {
-    const daemonFile = path.join(appDir, 'Contents', 'Resources', 'scripts', 'daemon.js');
+    // Linux 包是扁平目录：<appDir>/scripts/daemon.js；macOS 是 .app/Contents/Resources/scripts/daemon.js
+    const daemonFile = IS_LINUX
+      ? path.join(appDir, 'scripts', 'daemon.js')
+      : path.join(appDir, 'Contents', 'Resources', 'scripts', 'daemon.js');
     const source = fs.readFileSync(daemonFile, 'utf8');
     const match = source.match(/const DAEMON_VERSION = '([^']+)'/);
     result.daemonVersion = match ? match[1] : null;
   } catch (_) {}
-  try {
-    const plistFile = path.join(appDir, 'Contents', 'Info.plist');
-    const source = fs.readFileSync(plistFile, 'utf8');
-    const match = source.match(/<key>CFBundleShortVersionString<\/key>\s*<string>([^<]+)<\/string>/);
-    result.appVersion = match ? match[1] : null;
-  } catch (_) {}
+  if (IS_LINUX) {
+    // Linux 包没有 Info.plist，版本号由构建脚本写入 version.txt
+    try { result.appVersion = fs.readFileSync(path.join(appDir, 'version.txt'), 'utf8').trim() || null; } catch (_) {}
+  } else {
+    try {
+      const plistFile = path.join(appDir, 'Contents', 'Info.plist');
+      const source = fs.readFileSync(plistFile, 'utf8');
+      const match = source.match(/<key>CFBundleShortVersionString<\/key>\s*<string>([^<]+)<\/string>/);
+      result.appVersion = match ? match[1] : null;
+    } catch (_) {}
+  }
   return result;
 }
 
@@ -1143,7 +1199,23 @@ function validateUpdateArtifact(file, expectSha = null) {
   if (updateState.dmgSize > 0 && stat.size !== updateState.dmgSize) {
     return { ok: false, reason: `安装包大小不匹配 (${stat.size} != ${updateState.dmgSize})` };
   }
-  if (IS_MAC) {
+  if (IS_LINUX) {
+    // Linux：发布包是 .tar.gz，用 tar -tzf 做等价的完整性预检（列不出内容即视为损坏）
+    let probe;
+    try {
+      probe = spawnSync('tar', ['-tzf', file], {
+        encoding: 'utf8', timeout: 20000, windowsHide: true,
+      });
+    } catch (e) {
+      return { ok: false, reason: '安装包预检失败: ' + e.message };
+    }
+    if (probe.error || probe.status !== 0) {
+      const detail = String(probe.stderr || probe.error?.message || '未知 tar 错误').replace(/\s+/g, ' ').trim().slice(0, 300);
+      return { ok: false, reason: 'tar.gz 归档预检失败: ' + detail };
+    }
+    return { ok: true };
+  }
+  if (!IS_WIN) {
     let probe;
     try {
       probe = spawnSync('hdiutil', ['imageinfo', file], {
@@ -1507,6 +1579,44 @@ function applyUpdate() {
         updateDebug('installer-opened', { attemptId: attempt.id, pid: child.pid, assetName: updateState.assetName });
         resolve({ ok: true, opened: true, status: 'installer-opened', message: '安装程序已打开，请按提示完成安装' });
       });
+    });
+  }
+  // Linux：发布包是 .tar.gz，解包后直接覆盖安装目录并重启 daemon（无需 hdiutil / launchd）
+  if (IS_LINUX) {
+    const linuxScript = path.join(__dirname, 'apply-update-linux.sh');
+    const tarball = path.join(UPDATE_DIR, updatePrefix + updateState.latest + '.tar.gz');
+    const installDir = path.resolve(__dirname, '..');
+    if (!fs.existsSync(linuxScript)) {
+      const error = new Error('缺少 apply-update-linux.sh');
+      markAttemptFailure(error, 'preflight-error');
+      return Promise.reject(error);
+    }
+    const unpackDir = path.join(UPDATE_DIR, 'unpacked-' + updateState.latest);
+    updateState.message = '正在解包新版本…';
+    return unpackLinuxTarball(tarball, unpackDir).then((srcDir) => {
+      const artifact = inspectPackagedApp(srcDir);
+      const versionError = packagedAppVersionError(artifact, updateState.latest);
+      if (versionError) throw versionError;
+      attempt.sourceApp = srcDir;
+      attempt.targetApp = installDir;
+      writeUpdateAttempt(attempt);
+      log('[update] 执行 apply-update-linux.sh attempt=' + attempt.id + ' src=' + srcDir + ' dst=' + installDir);
+      const child = spawn('bash', [linuxScript, srcDir, installDir, String(ACTUAL_PORT), applyLog, attempt.id, PROFILE.id], { detached: true, stdio: 'ignore' });
+      child.once('error', markSpawnFailure);
+      child.once('spawn', () => {
+        attempt.status = 'script-started';
+        attempt.scriptPid = child.pid;
+        writeUpdateAttempt(attempt);
+        log('[update] apply-update-linux.sh 已启动 pid=' + child.pid);
+      });
+      child.unref();
+      return { ok: true, message: '已启动更新，正在替换文件并自动重启，请稍候…' };
+    }).catch((error) => {
+      updateState.status = 'error';
+      updateState.error = error.message;
+      updateState.message = '安装包版本校验失败';
+      if (attempt.status === 'starting') markAttemptFailure(error, 'preflight-error');
+      throw error;
     });
   }
   const scriptPath = path.join(__dirname, 'apply-update.sh');
@@ -2302,26 +2412,17 @@ async function reloadWorkBuddyPage(options = {}) {
 }
 
 const WORKBUDDY_TARGET = IS_WIN ? null : readWorkBuddyTarget({ dataDir: DATA_DIR, profileId: PROFILE.id });
-// 三平台的应用标识（WORKBUDDY_BINARY 用于 pgrep/pkill 精确匹配与直接启动）：
-//   macOS  : 二进制在 <X.app>/Contents/MacOS/Electron，WORKBUDDY_APP 是 .app 包路径
-//   Linux  : 没有 .app 包，二进制就是安装目录里的 Electron 主程序（实测 /opt/WorkBuddy/workbuddy），
-//            WORKBUDDY_APP 取所在目录
-//   Windows: 由 resolveWorkBuddyBinary() 动态解析（安装盘可自定义），此处保持空串
-const WORKBUDDY_APP = IS_WIN
-  ? ''
-  : IS_LINUX
-    ? path.dirname(WORKBUDDY_TARGET.binary || PROFILE.appPath)
-    : (WORKBUDDY_TARGET.binary ? path.resolve(WORKBUDDY_TARGET.binary, '../../..') : PROFILE.appPath);
-const WORKBUDDY_BINARY = IS_WIN
-  ? ''
-  : IS_LINUX
-    ? (WORKBUDDY_TARGET.binary || PROFILE.appPath)
-    : `${WORKBUDDY_APP}/Contents/MacOS/Electron`;
-const WORKBUDDY_APP_NAME = IS_WIN
-  ? ''
-  : IS_LINUX
-    ? path.basename(WORKBUDDY_BINARY)
-    : path.basename(WORKBUDDY_APP).replace(/\.app$/i, '');
+const WORKBUDDY_APP = IS_LINUX
+  // Linux：客户端是 /opt/WorkBuddy/workbuddy 这样的单文件可执行，没有 .app 包，
+  // 「应用目录」即二进制所在目录（/opt/WorkBuddy）。
+  ? (WORKBUDDY_TARGET.binary ? path.dirname(WORKBUDDY_TARGET.binary) : path.dirname(PROFILE.appPath))
+  : IS_WIN ? '' : (WORKBUDDY_TARGET.binary
+  ? path.resolve(WORKBUDDY_TARGET.binary, '../../..')
+  : PROFILE.appPath);
+const WORKBUDDY_BINARY = IS_WIN ? '' : IS_LINUX
+  ? (WORKBUDDY_TARGET.binary || PROFILE.appPath)
+  : `${WORKBUDDY_APP}/Contents/MacOS/Electron`;
+const WORKBUDDY_APP_NAME = path.basename(WORKBUDDY_APP).replace(/\.app$/i, '');
 
 // Windows：解析 WorkBuddy 可执行文件真实路径（安装盘可自定义，必须动态查）
 // 优先级：WBSWITCH_WORKBUDDY_BIN > 运行进程 Path > 注册表卸载项 > 常见路径
@@ -2639,8 +2740,11 @@ async function quitWorkBuddy() {
   }
 
   // 先尝试正常退出（给 Electron 一次处理机会），再强制 kill 并验证。
-  await runCommand('osascript', ['-e', `tell application "${WORKBUDDY_APP_NAME}" to quit`]);
-  if (await waitForWorkBuddyExit(2500)) return true;
+  // Linux 没有 AppleScript，直接发 SIGTERM 给客户端二进制（Electron 会正常走退出流程）
+  if (!IS_LINUX) {
+    await runCommand('osascript', ['-e', `tell application "${WORKBUDDY_APP_NAME}" to quit`]);
+    if (await waitForWorkBuddyExit(2500)) return true;
+  }
   await runCommand('pkill', ['-f', WORKBUDDY_APP]);
   if (await waitForWorkBuddyExit(2500)) return true;
   await runCommand('pkill', ['-9', '-f', WORKBUDDY_APP]);
@@ -2749,7 +2853,7 @@ function relaunchWorkBuddy() {
     const workDaddy = findWorkDaddyApp();
     if (workDaddy) {
       log(`[logout] 正在打开 WorkDaddy (${workDaddy})，由其 launcher 重启 WorkBuddy`);
-      const child = spawn('open', [workDaddy], { detached: true, stdio: 'ignore' });
+      const child = openPath(workDaddy);
       await new Promise((resolve, reject) => {
         child.once('error', reject);
         child.once('spawn', resolve);
@@ -8567,7 +8671,7 @@ function handleApi(req, res) {
         if (IS_WIN) {
           spawn('rundll32', ['url.dll,FileProtocolHandler', u], { detached: true, stdio: 'ignore' }).unref();
         } else {
-          spawn('open', [u], { detached: true, stdio: 'ignore' }).unref();
+          openPath(u).unref();
         }
         return json(res, 200, { ok: true });
       } catch (e) {
@@ -9281,7 +9385,7 @@ function handleApi(req, res) {
   if (req.method === 'GET' && p === '/api/sleep-mode') {
     let st = { mode: 'allow', displaySleep: false };
     try { st = Object.assign(st, JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'sleep-mode.json'), 'utf8'))); } catch (_) {}
-    return json(res, 200, { ok: true, mode: st.mode, displaySleep: !!st.displaySleep, preventing: st.mode === 'keep' || st.mode === 'until-done', active: !!(IS_WIN ? sleepPowershell : sleepCaffeinate), antiLock: !!sleepUserActivityTimer });
+    return json(res, 200, { ok: true, mode: st.mode, displaySleep: !!st.displaySleep, preventing: st.mode === 'keep' || st.mode === 'until-done', active: !!(IS_WIN ? sleepPowershell : IS_LINUX ? sleepInhibit : sleepCaffeinate), antiLock: !!sleepUserActivityTimer });
   }
   if (req.method === 'POST' && p === '/api/sleep-mode') {
     return readBody(req).then((body) => {
@@ -10305,7 +10409,7 @@ function handleApi(req, res) {
       } else if (IS_LINUX) {
         require('child_process').execFile('xdg-open', [DATA_DIR]);
       } else {
-        require('child_process').execFile('/usr/bin/open', [DATA_DIR]);
+        openPath(DATA_DIR).unref();
       }
       return json(res, 200, { ok: true });
     } catch (e) {
@@ -10419,10 +10523,17 @@ let sleepCaffeinate = null;
 let sleepUserActivity = null; // 防锁屏：caffeinate -u -t 300（UserIsActive 断言，阻止屏保启动/空闲锁屏）
 let sleepUserActivityTimer = null; // -u 断言每 240s 续期一次（-t 300 超时前续期，保持无间隙）
 let sleepPowershell = null; // Windows: 常驻 powershell 进程持有 SetThreadExecutionState
+let sleepInhibit = null; // Linux: 常驻 systemd-inhibit 进程持有 sleep/idle inhibitor
 function stopCaffeinate() {
   if (IS_WIN) {
     const c = sleepPowershell;
     sleepPowershell = null; // 先置 null 再 kill，避免 exit 回调把旧引用覆盖
+    if (c) { try { c.kill(); } catch (_) {} }
+    return;
+  }
+  if (IS_LINUX) {
+    const c = sleepInhibit;
+    sleepInhibit = null; // 同上，先置 null 再 kill
     if (c) { try { c.kill(); } catch (_) {} }
     return;
   }
@@ -10441,7 +10552,7 @@ function stopUserActivity() {
 // 系统认为用户一直在操作，屏保与空闲锁屏便不会触发；每 240s 重启一个 -t 300 的断言实现无间隙续期。
 // 无需辅助功能权限（-u 走系统 IOKit 用户活动断言）。
 function startUserActivityLoop() {
-  if (IS_WIN) return; // Windows 无 caffeinate -u 等价；防锁屏由系统电源策略控制
+  if (IS_WIN || IS_LINUX) return; // Windows/Linux 无 caffeinate -u 等价；防锁屏由系统电源策略控制
   stopUserActivity();
   const tick = () => {
     if (!sleepCaffeinate) return; // 防休眠已停止（allow 模式），不再续期
@@ -10467,6 +10578,19 @@ function startCaffeinate(displaySleep) {
     sleepPowershell = child;
     return child;
   }
+  if (IS_LINUX) {
+    // Linux：systemd-inhibit 以常驻子进程（sleep infinity）的形式持有 inhibitor，
+    // 进程存活期间 logind 不会执行 suspend/idle 动作。允许显示器休眠时不再阻止 idle。
+    const what = displaySleep ? 'sleep:handle-lid-switch' : 'sleep:idle:handle-lid-switch';
+    const child = spawn('systemd-inhibit', [
+      '--what=' + what, '--mode=block', '--who=WorkDaddy',
+      '--why=WorkDaddy 正在运行任务', 'sleep', 'infinity',
+    ], { stdio: 'ignore' });
+    child.on('error', (e) => { log('[sleep] systemd-inhibit 启动失败: ' + e.message); if (sleepInhibit === child) sleepInhibit = null; });
+    child.on('exit', () => { if (sleepInhibit === child) sleepInhibit = null; });
+    sleepInhibit = child;
+    return child;
+  }
   const child = spawn('caffeinate', displaySleep ? ['-i', '-s', '-m'] : ['-d', '-i', '-s', '-m'], { stdio: 'ignore' });
   child.on('error', (e) => { log('[sleep] caffeinate 启动失败: ' + e.message); if (sleepCaffeinate === child) sleepCaffeinate = null; });
   child.on('exit', () => { if (sleepCaffeinate === child) sleepCaffeinate = null; });
@@ -10478,12 +10602,12 @@ function startCaffeinate(displaySleep) {
 function applySleepMode(mode, displaySleep) {
   const preventing = mode === 'keep' || mode === 'until-done';
   if (preventing) {
-    if (IS_WIN) {
-      // Windows：powershell 持有进程参数固定，无法比较 spawnargs，直接重启（低频操作，代价可接受）
+    if (IS_WIN || IS_LINUX) {
+      // Windows/Linux：持有进程的启动参数固定，无法比较 spawnargs，直接重启（低频操作，代价可接受）
       stopCaffeinate();
       try {
         startCaffeinate(!!displaySleep);
-        log('[sleep] 禁止休眠已开启（Windows，模式=' + mode + (displaySleep ? '，允许显示器休眠' : '，显示器保持唤醒') + '）');
+        log('[sleep] 禁止休眠已开启（' + (IS_LINUX ? 'Linux，systemd-inhibit' : 'Windows') + '，模式=' + mode + (displaySleep ? '，允许显示器休眠' : '，显示器保持唤醒') + '）');
       } catch (e) { log('[sleep] 开启失败: ' + e.message); return false; }
       return true;
     }
@@ -10498,7 +10622,7 @@ function applySleepMode(mode, displaySleep) {
       log('[sleep] 禁止休眠已开启（模式=' + mode + (displaySleep ? '，允许显示器休眠，防锁屏关闭' : '，显示器保持唤醒，防锁屏开启') + '）');
     } catch (e) { log('[sleep] 开启失败: ' + e.message); return false; }
   } else {
-    if (!sleepCaffeinate && !sleepPowershell && !sleepUserActivityTimer) return true;
+    if (!sleepCaffeinate && !sleepPowershell && !sleepInhibit && !sleepUserActivityTimer) return true;
     stopCaffeinate();
     log('[sleep] 禁止休眠已解除（允许电脑休眠）');
   }
@@ -10511,6 +10635,12 @@ function sleepNow() {
       const c = spawn('rundll32.exe', ['powrprof.dll,SetSuspendState', '0,1,0'], { stdio: 'ignore', windowsHide: true });
       c.on('error', (e) => log('[sleep] 立即休眠失败: ' + e.message));
       c.on('exit', () => log('[sleep] 已请求立即休眠（Windows SetSuspendState）'));
+      return true;
+    }
+    if (IS_LINUX) {
+      const c = spawn('systemctl', ['suspend'], { stdio: 'ignore' });
+      c.on('error', (e) => log('[sleep] 立即休眠失败: ' + e.message));
+      c.on('exit', () => log('[sleep] 已请求立即休眠（systemctl suspend）'));
       return true;
     }
     const c = spawn('pmset', ['sleepnow'], { stdio: 'ignore' });

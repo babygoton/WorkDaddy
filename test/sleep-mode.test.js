@@ -7,7 +7,7 @@ const { EventEmitter } = require('node:events');
 const source = fs.readFileSync(require('node:path').join(__dirname, '../scripts/daemon.js'), 'utf8');
 function harness(windows = false) {
   const children = [], timers = new Set();
-  const ctx = { IS_WIN: windows, log() {},
+  const ctx = { IS_WIN: windows, IS_LINUX: false, log() {},
     spawn(command, args) {
       const child = new EventEmitter();
       Object.assign(child, { spawnargs: [command, ...args], killed: false,

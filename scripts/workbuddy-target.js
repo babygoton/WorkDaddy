@@ -271,7 +271,11 @@ function buildTargetFromBinary(options = {}) {
   const processNames = inferredProcessNames(binary, platform);
   const stem = processName.replace(/\.exe$/i, '').toLowerCase();
   const home = options.home || os.homedir();
-  const localAppData = options.localAppData || process.env.LOCALAPPDATA || path.join(home, 'AppData', 'Local');
+  // Linux：Electron userData 走 XDG（$XDG_DATA_HOME，默认 ~/.local/share），
+  // 与 macOS 的 ~/Library/Application Support、Windows 的 %LOCALAPPDATA% 对应。
+  const localAppData = options.localAppData
+    || (platform === 'linux' ? (options.dataHome || process.env.XDG_DATA_HOME || path.join(home, '.local', 'share')) : null)
+    || process.env.LOCALAPPDATA || path.join(home, 'AppData', 'Local');
   const dataRoot = path.join(home, `.${stem}`);
   const authDir = path.join(localAppData, 'CodeBuddyExtension', 'Data', 'Public', 'auth');
   const authFile = findAuthFile(authDir, stem);
@@ -408,7 +412,7 @@ function configureFromInstaller(argv = process.argv.slice(2)) {
   const dataDir = clean(cliValue(argv, '--data-dir'));
   const platform = clean(cliValue(argv, '--platform')) || process.env.WBSWITCH_TARGET_PLATFORM || 'win32';
   const pathApi = platformPath(platform);
-  if (platform !== 'win32' && platform !== 'darwin' && platform !== 'linux') throw new Error('仅支持 win32 / darwin / linux 客户端配置');
+  if (platform !== 'win32' && platform !== 'darwin' && platform !== 'linux') throw new Error('仅支持 win32、darwin 或 linux 客户端配置');
   if (platform !== 'win32') {
     const target = buildTargetFromBinary({
       binary,

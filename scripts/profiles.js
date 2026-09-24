@@ -5,36 +5,33 @@ const os = require('os');
 const path = require('path');
 const { readWorkBuddyTarget } = require('./workbuddy-target.js');
 
-// 注意：此处用 plat 而非 platform，避免与 getProfile 内部的 platform 字符串参数混淆
-const plat = require('./platform.js');
-
-const home = plat.home;
-const IS_WIN = plat.IS_WIN;
-const IS_LINUX = plat.IS_LINUX;
-// 应用支持根：macOS ~/Library/Application Support / Windows %APPDATA% / Linux $XDG_CONFIG_HOME(~/.config)
-const appSupport = plat.appSupport;
-// 扩展数据根：登录凭据就落在 <localSupport>/CodeBuddyExtension/Data/Public/auth 下，
-// 三平台同构，仅根不同（macOS 与 appSupport 相同；Windows 用 %LOCALAPPDATA%；Linux 用 $XDG_DATA_HOME）
-const localSupport = plat.localSupport;
-const extensionAuth = plat.extensionAuth;
-
-// Linux 没有 .app 包，官方包把 Electron 主程序直接铺在安装目录（实测 5.5.4：
-// /opt/WorkBuddy/workbuddy）。海外版常见做法是复制应用副本到 XDG 数据目录。
-const LINUX_APP_KIND = {
-  'WorkBuddy': 'workbuddy',
-  'WorkBuddy AI': 'workbuddy-ai',
-  'CodeBuddy CN': 'codebuddy-cn',
-  'CodeBuddy': 'codebuddy',
-};
-
+const home = os.homedir();
+const IS_WIN = process.platform === 'win32';
+const IS_LINUX = process.platform === 'linux';
+// Linux 移植：Electron 在 Linux 上遵循 XDG 规范，userData 落在
+// $XDG_DATA_HOME（默认 ~/.local/share），而不是 macOS 的 ~/Library/Application Support
+// 或 Windows 的 %APPDATA%。本机实测 WorkBuddy Linux 版的 auth 文件位于
+// ~/.local/share/CodeBuddyExtension/Data/Public/auth/workbuddy-desktop.info
+const linuxDataHome = () => process.env.XDG_DATA_HOME || path.join(home, '.local', 'share');
+const appSupport = IS_WIN
+  ? (process.env.APPDATA || path.join(home, 'AppData', 'Roaming'))
+  : IS_LINUX
+    ? linuxDataHome()
+    : path.join(home, 'Library', 'Application Support');
+const localSupport = IS_WIN
+  ? (process.env.LOCALAPPDATA || path.join(home, 'AppData', 'Local'))
+  : appSupport;
+const extensionAuth = path.join(localSupport, 'CodeBuddyExtension', 'Data', 'Public', 'auth');
 // Windows 可执行名与安装目录名不完全一致（AI 国际版 exe 为 WorkBuddyAI.exe，无空格；
 // win-launcher 进程枚举与 PR#8 实机已确认）。winExec 缺省时用安装目录同名 .exe，找不到时
 // win-launcher 仍有进程/注册表兜底。
-const appPath = (name, winExec, winDir) =>
+const appPath = (name, winExec, winDir, linuxExec, linuxDir) =>
   IS_WIN
     ? path.join(localSupport, 'Programs', winDir || name, winExec || `${winDir || name}.exe`)
     : IS_LINUX
-      ? plat.linuxAppBinary(LINUX_APP_KIND[name] || 'workbuddy')
+      // Linux：官方 deb/rpm 把客户端装在 /opt/<安装目录>/<可执行文件>。
+      // 本机实测国内版为 /opt/WorkBuddy/workbuddy（/usr/bin/workbuddy 是软链）。
+      ? path.join('/opt', linuxDir || name, linuxExec || 'workbuddy')
       : `/Applications/${name}.app`;
 
 function sharedDataDir() {
@@ -57,7 +54,7 @@ const PROFILES = {
   'workbuddy-ai': {
     id: 'workbuddy-ai', name: 'WorkBuddy AI', appName: 'WorkDaddy AI', region: 'intl', kind: 'workbuddy', mode: 'agents',
     // Windows 安装目录无空格：%LOCALAPPDATA%\Programs\WorkBuddyAI\WorkBuddyAI.exe（PR#8 实机确认）
-    appPath: appPath('WorkBuddy AI', 'WorkBuddyAI.exe', 'WorkBuddyAI'),
+    appPath: appPath('WorkBuddy AI', 'WorkBuddyAI.exe', 'WorkBuddyAI', 'workbuddy-ai', 'WorkBuddyAI'),
     dataRoot: path.join(home, '.workbuddy-ai'),
     authFile: path.join(extensionAuth, 'workbuddy-desktop-ai.info'),
     sessionDb: path.join(home, '.workbuddy-ai', 'workbuddy.db'),
@@ -70,7 +67,7 @@ const PROFILES = {
   },
   'codebuddy-cn': {
     id: 'codebuddy-cn', name: 'CodeBuddy CN', region: 'cn', kind: 'codebuddy', mode: 'auto',
-    appPath: appPath('CodeBuddy CN'),
+    appPath: appPath('CodeBuddy CN', null, null, 'codebuddy', 'CodeBuddyCN'),
     dataRoot: path.join(appSupport, 'CodeBuddy CN'),
     authFile: null,
     sessionDb: path.join(appSupport, 'CodeBuddy CN', 'codebuddy-sessions.vscdb'),
@@ -81,7 +78,7 @@ const PROFILES = {
   },
   'codebuddy-intl': {
     id: 'codebuddy-intl', name: 'CodeBuddy', region: 'intl', kind: 'codebuddy', mode: 'auto',
-    appPath: appPath('CodeBuddy'),
+    appPath: appPath('CodeBuddy', null, null, 'codebuddy', 'CodeBuddy'),
     dataRoot: path.join(appSupport, 'CodeBuddy'),
     authFile: null,
     sessionDb: path.join(appSupport, 'CodeBuddy', 'codebuddy-sessions.vscdb'),
