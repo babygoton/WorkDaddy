@@ -26,22 +26,24 @@ test('WorkBuddy widget cards use translucent theme surfaces', () => {
   assert.doesNotMatch(patch.css, /WBS_PROFILE|workbuddy-ai/);
 });
 
-test('nebula makes the latest mac teams grid containers transparent', () => {
+test('nebula makes the latest teams grid containers transparent', () => {
   const patch = patches.find((item) => item && item.id === 'patch-102');
   assert.ok(patch, 'patch-102 must be registered');
   assert.equal(patch.themeId, 'nebula');
-  assert.match(patch.css, /\.teams-container\.is-mac\s*>\s*\.teams-grid-scroll-content(?:,|\{)/);
+  assert.match(patch.css, /\.teams-container\s*>\s*\.teams-grid-scroll-content(?:,|\{)/);
+  assert.doesNotMatch(patch.css, /\.teams-container\.is-mac/);
   assert.match(patch.css, /\.teams-grid-scroll-content\s*>\s*\[class\*="_grid_"\]\s*>\s*\[class\*="_gridView_"\]\{/);
   assert.match(patch.css, /background:transparent !important/);
   assert.match(patch.css, /background-color:transparent !important/);
   assert.match(patch.css, /backdrop-filter:none !important/);
 });
 
-test('nebula removes the mac teams send tooltip wrapper background', () => {
+test('nebula removes the teams send tooltip wrapper background', () => {
   const patch = patches.find((item) => item && item.id === 'patch-103');
   assert.ok(patch, 'patch-103 must be registered');
   assert.equal(patch.themeId, 'nebula');
-  assert.match(patch.css, /\.teams-container\.is-mac \.cr-input-toolbar__send>span\.cr-send-button__tooltip-wrapper/);
+  assert.match(patch.css, /\.teams-container \.cr-input-toolbar__send>span\.cr-send-button__tooltip-wrapper/);
+  assert.doesNotMatch(patch.css, /\.teams-container\.is-mac/);
   assert.match(patch.css, /background:transparent !important/);
   assert.match(patch.css, /background-color:transparent !important/);
 });
@@ -49,6 +51,8 @@ test('nebula removes the mac teams send tooltip wrapper background', () => {
 test('nebula removes backgrounds from the template switcher and code copy tooltip', () => {
   const patch = patches.find((item) => item && item.id === 'patch-104');
   assert.ok(patch, 'patch-104 must be registered');
+  assert.match(patch.css, /\.teams-container \.industry-template-switcher__host/);
+  assert.doesNotMatch(patch.css, /\.teams-container\.is-mac/);
   assert.equal(patch.themeId, 'nebula');
   assert.match(patch.css, /\.industry-template-switcher__host>button\.wb-button\.wb-button--secondary/);
   assert.match(patch.css, /\.cr-code-like-box__header>span\.cr-code-block__copy-tooltip/);
