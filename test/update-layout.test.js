@@ -176,7 +176,7 @@ test('account switching carries the active conversation and opens its copied tar
   const routeStart = script.indexOf("if (req.method === 'POST' && p === '/api/switch')");
   const route = script.slice(routeStart, routeStart + 9000);
   assert.match(route, /currentConversationId/);
-  assert.match(route, /SELECT user_id FROM sessions WHERE id = \? AND deleted_at IS NULL LIMIT 1;/);
+  assert.match(route, /SELECT user_id, cwd FROM sessions WHERE id = \? AND deleted_at IS NULL LIMIT 1;/);
   assert.match(route, /不属于源账号的当前会话/);
   const dirtyStart = script.indexOf("if (req.method === 'POST' && p === '/api/sessions/dirty')");
   const dirtyRoute = script.slice(dirtyStart);
