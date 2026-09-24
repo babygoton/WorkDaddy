@@ -95,8 +95,11 @@ test('model, wallpaper, and account cards escape each dynamic HTML sink', () => 
   assert.match(accounts, /title="' \+ escAttr\(noteVal\)/);
   assert.match(accounts, /'>' \+ esc\(nameVal\)/);
   assert.match(accounts, /wbs-val">' \+ esc\(idVal\)/);
-  assert.match(accounts, /wbs-val[^\n]+esc\(ts\.label\)/);
+  assert.match(accounts, /wbs-val">' \+ esc\(fmtDateTime\(a\.lastSwitchAt\)\)/);
   assert.doesNotMatch(accounts, /data-(?:uid|name)="' \+ a\./);
+  const creditBlock = sourceBetween('function creditBlockHtml(', 'function nearestCreditExpiry(');
+  assert.match(creditBlock, /wbs-token-cell wbs-right-col"><span class="wbs-lbl">有效期至<\/span><span class="wbs-val' \+ \(tsExp\.warn \? ' wbs-warn' : ''\) \+ '">' \+ esc\(tsExp\.label\)/);
+  assert.match(creditBlock, /' \+ usage \+ '<\/div>' \+ expiryCell \+ '<\/div>'/);
   assert.doesNotMatch(accounts, /var idVal = a\.phone \? a\.phone/);
 });
 

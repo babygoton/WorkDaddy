@@ -1109,7 +1109,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '导出': 'Export', '导入': 'Import', '删除': 'Delete', '编辑': 'Edit', '保存': 'Save', '内置': 'Built-in', '取消': 'Cancel', '确定': 'Confirm', '确认': 'Confirm', '复制': 'Copy', '切换': 'Switch', '启用': 'Enable', '停用': 'Disable', '停止': 'Stop', '立即运行': 'Run now', '新建任务': 'New task', '刷新': 'Refresh', '步骤 JSON': 'Steps JSON', '任务说明': 'Task description', '任务名称': 'Task name', '调度': 'Schedule', '手动运行': 'Manual', '手动': 'Manual', '每小时': 'Hourly', '每天': 'Daily', '选择任务': 'Select tasks', '查看接口': 'View capabilities', '拾取元素': 'Pick element', '复制 XPath': 'Copy XPath', '运行中': 'Running', '已成功': 'Succeeded', '失败': 'Failed', '未运行': 'Not run', '页面加载完成': 'Page loaded', '账号切换完成': 'Account switched', '新自动化任务': 'New automation task', '任务已保存': 'Task saved', '任务已开始运行': 'Task started', '步骤 JSON 格式无效': 'Invalid steps JSON', '步骤 JSON 必须是数组': 'Steps JSON must be an array', '查看接口说明': 'View interface docs', '自动化接口协议': 'Automation interface protocol', '复制全部': 'Copy all', '接口协议已复制': 'Interface protocol copied', '暂无自动化任务': 'No automations yet', '编辑任务': 'Edit task', '触发方式': 'Trigger', '插入点击步骤': 'Insert click step', 'XPath 已复制': 'XPath copied', '点击步骤已插入': 'Click step inserted', '请先拾取元素': 'Pick an element first', '加载自动化失败': 'Failed to load automations', '读取接口失败': 'Failed to read interfaces', '批量操作失败': 'Batch operation failed', '删除失败': 'Delete failed', '确认删除该任务？': 'Delete this task?', '执行': 'Apply', '已拾取': 'Picked', '运行失败': 'Run failed', '（副本）': ' (copy)', '查看提示词': 'View prompt', '交给 WorkBuddy 创建': 'Ask WorkBuddy to create', '正在打开新任务…': 'Opening a new task…', '已创建新会话，WorkBuddy 完成后任务会自动出现': 'New session created. The task will appear after WorkBuddy finishes.', 'WorkBuddy 创建失败': 'WorkBuddy creation failed', '加载示例失败': 'Failed to load examples', '暂无示例': 'No examples available', '运行日志': 'Run logs', '暂无运行日志': 'No run logs yet', '开始时间': 'Started', '结束时间': 'Finished', '捕获错误': 'Caught error', '暂无执行日志': 'No execution log entries', '执行日志': 'Execution log', '尚未结束': 'Still running',
     '暂存提示词': 'Stash prompt', '暂存': 'Stashed', '引用文本': 'Quote text', '快捷短语': 'Quick phrases', '点击后发送': 'Send on click', '编辑 →': 'Edit →', '新增': 'Add', '批量操作': 'Batch actions', '批量管理': 'Batch manage', '全选': 'Select all', '取消全选': 'Deselect all', '已选 0': 'Selected 0',
     '分支到新会话': 'Start a new conversation here', '从这里开始新会话': 'Start a new conversation here', '复制到这条回复为止的聊天内容，在当前工作区继续聊；原会话不变。': 'Copy the conversation up to this reply into a new conversation in the current workspace. The original stays unchanged.', '正在创建分支会话…': 'Creating branch session…', '分支会话已创建，正在打开…': 'Branch created. Opening…', '分支会话已创建，但无法自动打开，请在会话列表中查找。': 'Branch created but could not open automatically. Check the sessions list.', '新会话未出现在列表中，请在会话列表中查找。': 'The new session is not listed yet. Check the sessions list.', '无法确认所选消息的分支位置，请稍后重试': 'Cannot confirm this reply position. Try again shortly.', '分支失败: ': 'Branch failed: ',
-    '账号汇总': 'Account summary', '账号数': 'Accounts', '总积分': 'Total credits', '手机': 'Phone', '有效期至': 'Expires', '当前使用中': 'Currently active', '隐藏敏感信息': 'Mask sensitive info', '显示明文': 'Show plaintext', '登录新账号': 'Log in a new account', '没有可导出的账号备份': 'No account backups to export', '还没有备份账号。打开/登录一次 WorkBuddy 后会自动备份，稍后再来查看。': 'No account backups yet. Open or log in to WorkBuddy once and check again later.',
+    '账号汇总': 'Account summary', '账号数': 'Accounts', '总积分': 'Total credits', '手机': 'Phone', '有效期至': 'Expires', '最后登录': 'Last login', '当前使用中': 'Currently active', '隐藏敏感信息': 'Mask sensitive info', '显示明文': 'Show plaintext', '登录新账号': 'Log in a new account', '没有可导出的账号备份': 'No account backups to export', '还没有备份账号。打开/登录一次 WorkBuddy 后会自动备份，稍后再来查看。': 'No account backups yet. Open or log in to WorkBuddy once and check again later.',
     '语言': 'Language', '中文': 'Chinese', '英语': 'English', 'English': 'English', '跟随系统': 'Follow system', '设置语言': 'Language', '首次打开时自动跟随系统语言；未匹配时使用英语。': 'The first launch follows your system language. English is used when no match is found.', '语言设置已更新': 'Language updated',
     '默认': 'Default', 'WorkDaddy 主题': 'WorkDaddy theme', '毛玻璃': 'Frosted glass', '护眼绿': 'Eye-care green', '赛博紫': 'Cyber purple', '主题外观': 'Theme appearance', '壁纸': 'Wallpaper', '头像': 'Avatar', '自定义壁纸': 'Custom wallpaper', '背景蒙版': 'Background overlay', '背景毛玻璃': 'Background blur', '恢复默认': 'Restore default', '恢复官方头像': 'Restore official avatar',
     '加载中…': 'Loading…', '读取中…': 'Reading…', '正在读取设置…': 'Reading settings…', '查询中…': 'Checking…', '暂无快捷短语': 'No quick phrases', '暂无快捷短语，点击「+ 新增」添加': 'No quick phrases. Click “+ Add” to create one.', '当前还未添加模型': 'No models added yet', '还没有模型备份': 'No model backups yet', '当前筛选下没有会话': 'No sessions match the current filter', '暂无进行中的会话': 'No active sessions', '暂无官方壁纸': 'No built-in wallpapers', '还没有自定义壁纸，先上传一张': 'No custom wallpapers yet. Upload one to start.', '壁纸加载中…': 'Loading wallpapers…', '壁纸加载失败（daemon 不可达）': 'Wallpaper loading failed (daemon unavailable)',
@@ -1175,7 +1175,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '(无标题)': 'Untitled', 'GitHub 仓库': 'GitHub repository', '去 GitHub Issues 反馈问题': 'Report an issue on GitHub', '在 GitHub 上给 WorkDaddy 点 Star': 'Star WorkDaddy on GitHub', 'WorkDaddy，点击打开面板，可拖动': 'WorkDaddy – click to open the panel, draggable', '如果 WorkDaddy 对你有帮助，欢迎在 GitHub 点个 Star。你的支持会让这个小项目持续更新。': 'If WorkDaddy helps you, please star it on GitHub. Your support keeps this small project alive.',
     '元素检查': 'Inspect element', '元素检查不可用：内部模块未加载': 'Element inspector unavailable: internal module not loaded', '元素拾取器尚未加载': 'Element picker is not loaded',
     'DOM 元素检查器': 'DOM element inspector', '复制元素': 'Copy element', '关闭元素检查器': 'Close element inspector', '已复制元素': 'Element copied', '未找到可检查元素': 'No inspectable element found', '检查失败：': 'Inspection failed: ', '拾取模式：移动鼠标高亮元素，点击选中（Esc 退出）': 'Pick mode: move to highlight an element, click to select (Esc to exit)',
-    '到期时间': 'Expiry', '备注': 'Note', '上次使用': 'Last used', '编辑备注': 'Edit note', '备注保存失败': 'Failed to save note', '剩余': 'Remaining', '剩余时间计算中': 'Calculating remaining time', '积分': 'Credits', '积分节点': 'Credit node', '积分查询超时': 'Credit query timed out', '个人版': 'Personal', '企业': 'Enterprise', '基础用量': 'Base usage', '赠送与加量包': 'Gift & bonus packs', '其他积分': 'Other credits', '即将过期': 'Expiring soon', '已过期': 'Expired',
+    '到期时间': 'Expiry', '备注': 'Note', '编辑备注': 'Edit note', '备注保存失败': 'Failed to save note', '剩余': 'Remaining', '剩余时间计算中': 'Calculating remaining time', '积分': 'Credits', '积分节点': 'Credit node', '积分查询超时': 'Credit query timed out', '个人版': 'Personal', '企业': 'Enterprise', '基础用量': 'Base usage', '赠送与加量包': 'Gift & bonus packs', '其他积分': 'Other credits', '即将过期': 'Expiring soon', '已过期': 'Expired',
     '昨天': 'Yesterday', '分钟': ' min', '小时': ' h', '定位到第': 'Jump to message ', '条用户消息': ' user message', '发送中': 'Sending', '附件': 'Attachment', '疑似未完成': 'Possibly incomplete',
     '已开启': 'Enabled', '已关闭': 'Disabled', '已领取': 'Claimed', '立即领取,今日可领': 'Claim now, available today', '继续执行': 'Continue',
     '下载': 'Download', '安装': 'Install', '校验': 'Verify', '检查': 'Check', '重启': 'Restart', '即将打开安装包…': 'Opening installer…', '安装包已打开': 'Installer opened', '安装失败': 'Install failed', '更新出错': 'Update error', '更新失败': 'Update failed', '检查更新失败': 'Update check failed', '已是最新版本': 'Already up to date',
@@ -13354,22 +13354,25 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     }
 
     function creditBlockHtml(credits, segments, account) {
+      // 有效期至：从上方 secondary-row 下移至此，与剩余积分同一行（wbs-lbl 定宽对齐，列位不变）
+      var tsExp = tokenState(account && account.tokenExpiresAt, account);
+      var expiryCell = '<div class="wbs-mi wbs-token-cell wbs-right-col"><span class="wbs-lbl">有效期至</span><span class="wbs-val' + (tsExp.warn ? ' wbs-warn' : '') + '">' + esc(tsExp.label) + '</span></div>';
       // 登录身份过期：展示可诊断文案（token 被服务端拒绝时不伪造积分，也不整格隐藏）
       if (isIdentityExpired(account) || (account && account.creditExpired)) {
-        return '<div class="wbs-credit-block"><div class="wbs-credit-line"><div class="wbs-credit-left"><span class="wbs-lbl">剩余</span><span class="wbs-credit-na">登录身份过期</span></div></div></div>';
+        return '<div class="wbs-credit-block"><div class="wbs-credit-line"><div class="wbs-credit-left"><span class="wbs-lbl">剩余</span><span class="wbs-credit-na">登录身份过期</span></div>' + expiryCell + '</div></div>';
       }
       var usage = accountStatusTagsHtml(account);
       // 企业账号不限量（官方 getEnterpriseUsage 返回 limitNum === -1）
       if (account && account.creditUnlimited) {
         return '<div class="wbs-credit-block">' +
-          '<div class="wbs-credit-line"><div class="wbs-credit-left"><span class="wbs-lbl">剩余</span><span class="wbs-credit-total">' + CREDIT_ICON + '<b>不限量</b></span></div>' + usage + '</div>' +
+          '<div class="wbs-credit-line"><div class="wbs-credit-left"><span class="wbs-lbl">剩余</span><span class="wbs-credit-total">' + CREDIT_ICON + '<b>不限量</b></span>' + usage + '</div>' + expiryCell + '</div>' +
           '<div class="wbs-credit-hint">企业配额</div>' +
           '</div>';
       }
-      if (credits === undefined) return '<div class="wbs-credit-block"><div class="wbs-credit-line"><div class="wbs-credit-left"><span class="wbs-lbl">剩余</span><span class="wbs-credit-loading">读取中…</span></div>' + usage + '</div></div>';
-      if (credits === null) return '<div class="wbs-credit-block"><div class="wbs-credit-line"><div class="wbs-credit-left"><span class="wbs-lbl">剩余</span><span class="wbs-credit-na">-</span></div>' + usage + '</div></div>';
+      if (credits === undefined) return '<div class="wbs-credit-block"><div class="wbs-credit-line"><div class="wbs-credit-left"><span class="wbs-lbl">剩余</span><span class="wbs-credit-loading">读取中…</span>' + usage + '</div>' + expiryCell + '</div></div>';
+      if (credits === null) return '<div class="wbs-credit-block"><div class="wbs-credit-line"><div class="wbs-credit-left"><span class="wbs-lbl">剩余</span><span class="wbs-credit-na">-</span>' + usage + '</div>' + expiryCell + '</div></div>';
       return '<div class="wbs-credit-block">' +
-        '<div class="wbs-credit-line"><div class="wbs-credit-left"><span class="wbs-lbl">剩余</span><span class="wbs-credit-total">' + CREDIT_ICON + '<b>' + fmtCredits(credits) + '</b></span></div>' + usage + '</div>' +
+        '<div class="wbs-credit-line"><div class="wbs-credit-left"><span class="wbs-lbl">剩余</span><span class="wbs-credit-total">' + CREDIT_ICON + '<b>' + fmtCredits(credits) + '</b></span>' + usage + '</div>' + expiryCell + '</div>' +
         creditBarHtml(credits, segments) +
         '</div>';
     }
@@ -14247,7 +14250,6 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       }
       state.accounts.forEach(function (a) {
         var isCur = state.current && a.uid === state.current.uid;
-        var ts = tokenState(a.tokenExpiresAt, a);
         var credits = a.credits;
         var card = el('div', 'wbs-card' + (isCur ? ' cur' : ''));
         card.setAttribute('data-uid', a.uid);
@@ -14256,16 +14258,15 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         var badge = editionBadge ? '<span class="wbs-badge">' + esc(editionBadge) + '</span>' : '';
         var checkinBadge = checkinBadgeHtml(a);
         var invalidAuthBadge = a.authValid === false ? '<span class="wbs-badge wbs-auth-invalid">认证数据无效</span>' : '';
-        // 上次使用时间（切换按钮左侧）：仅统计手动切换；静默签到不经过切换接口，不计入。
-        var lastUseHtml = a.lastSwitchAt ? '<span class="wbs-last-use" title="上次使用">' + esc(fmtDateTime(a.lastSwitchAt)) + '</span>' : '';
-        // 当前登录账号隐藏操作按钮（时间保留显示）；认证已过期的账号保留删除，但隐藏切换，避免进入登录页。
+        // 最后登录：带文字说明，置于「有效期至」原位置（secondary-row 第二列）；仅统计手动切换，静默签到不计入。
+        var lastUseCell = '<div class="wbs-mi wbs-lastuse-cell wbs-right-col"><span class="wbs-lbl">最后登录</span><span class="wbs-val">' + esc(fmtDateTime(a.lastSwitchAt)) + '</span></div>';
+        // 当前登录账号隐藏操作按钮；认证已过期的账号保留删除，但隐藏切换，避免进入登录页。
         var expired = isIdentityExpired(a);
-        var ops = (!isCur
-          ? lastUseHtml +
-            (expired || a.authValid === false ? '' : '<button class="wbs-icon-btn wbs-acc-switch" type="button" title="切换" data-uid="' + escAttr(a.uid) + '" data-name="' + escAttr(a.nickname || '未命名') + '">' + SWITCH_SVG + '</button>') +
-            '<button class="wbs-icon-btn wbs-del" type="button" title="删除" data-uid="' + escAttr(a.uid) + '" data-name="' + escAttr(a.nickname || '未命名') + '">' + TRASH_SVG + '</button>'
-          : lastUseHtml);
-        ops = '<div class="wbs-ops"' + (isCur && !a.lastSwitchAt ? ' hidden' : '') + '>' + ops + '</div>';
+        var ops = (isCur
+          ? ''
+          : (expired || a.authValid === false ? '' : '<button class="wbs-icon-btn wbs-acc-switch" type="button" title="切换" data-uid="' + escAttr(a.uid) + '" data-name="' + escAttr(a.nickname || '未命名') + '">' + SWITCH_SVG + '</button>') +
+            '<button class="wbs-icon-btn wbs-del" type="button" title="删除" data-uid="' + escAttr(a.uid) + '" data-name="' + escAttr(a.nickname || '未命名') + '">' + TRASH_SVG + '</button>');
+        ops = '<div class="wbs-ops"' + (isCur ? ' hidden' : '') + '>' + ops + '</div>';
         // 国际版没有手机号：用 UIN（账号唯一数字标识）替代展示；国内版仍显示手机。
         // UIN 与手机号共用同一标签和值间距，确保与“剩余”额度列对齐。
         var isUinMode = !a.phone;
@@ -14284,7 +14285,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
           badge + dailyRingsHtml(a) + checkinBadge + invalidAuthBadge + '</div>' + ops + '</div>' +
           '<div class="wbs-meta wbs-secondary-row">' +
           '<div class="wbs-mi wbs-phone-cell' + (isUinMode ? ' wbs-uin-cell' : '') + '"><span class="wbs-lbl">' + idLbl + '</span><span class="wbs-val">' + esc(idVal) + '</span></div>' +
-          '<div class="wbs-mi wbs-token-cell"><span class="wbs-lbl">有效期至</span><span class="wbs-val' + (ts.warn ? ' wbs-warn' : '') + '">' + esc(ts.label) + '</span></div>' +
+          lastUseCell +
           '</div>' +
           '<div class="wbs-credit-cell">' + creditBlockHtml(credits, a.creditSegments, a) + '</div>' +
           '</div>';
@@ -15355,8 +15356,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '.wbs-name-input{height:24px;min-height:24px;width:130px;box-sizing:border-box;padding:2px 8px;font-size:13px;font-weight:600;line-height:1;border-radius:6px;border:1px solid var(--wb-border-strong,#bbb);background:var(--wb-bg-popover,#fff);color:var(--wb-color-text-primary,#1f1f1f);outline:none}',
     '.wbs-name-input::placeholder{color:var(--wb-icon-tertiary,#aaa);font-weight:400}',
     'html.cb-dark .wbs-name-input,html[data-theme="dark"] .wbs-name-input{background:rgba(255,255,255,.07);color:rgba(235,236,240,.9);border-color:rgba(255,255,255,.2)}',
-    /* 上次使用时间：切换按钮左侧，与「有效期至」同格式 */
-    '.wbs-last-use{font-size:11px;color:var(--wb-color-text-secondary,#8a8b8f);white-space:nowrap;flex-shrink:0;margin-right:2px}',
+    /* 最后登录：与手机/剩余同列（wbs-lbl 定宽对齐），无独立样式 */
     '.wbs-daily-rings{display:inline-flex;width:auto;height:22px;flex:0 0 auto;box-sizing:border-box;align-items:center;justify-content:center;gap:5px;padding:1px 7px 1px 2px;border:0;border-radius:999px;outline:none;cursor:pointer;transition:background-color .15s,box-shadow .15s,color .15s}',
     '.wbs-daily-rings:hover,.wbs-daily-rings[aria-expanded="true"]{background:var(--wbs-primary-soft-hover);box-shadow:0 2px 8px rgba(var(--wbs-primary-rgb),.13),inset 0 1px 0 rgba(255,255,255,.28)}',
     '.wbs-daily-rings:focus-visible{background:color-mix(in srgb,var(--wb-bg-hover,#eef0f3) 86%,transparent);box-shadow:0 0 0 2px color-mix(in srgb,var(--wbs-liquid-fill) 45%,transparent)}',
@@ -15393,6 +15393,9 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '.wbs-phone-cell .wbs-lbl,.wbs-credit-left .wbs-lbl{width:28px}',
     '.wbs-token-cell .wbs-lbl{width:48px}',
     '.wbs-phone-cell .wbs-val,.wbs-token-cell .wbs-val{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+    /* 第二列对齐：最后登录（secondary-row）与有效期至（credit-line）同宽左对齐，左边缘一致 */
+    '.wbs-right-col{width:184px;flex:none;box-sizing:border-box;justify-content:flex-start}',
+    '.wbs-right-col .wbs-lbl{width:60px}',
     '.wbs-lbl{color:var(--wb-icon-tertiary,#999);flex-shrink:0;width:60px;white-space:nowrap}',
     '.wbs-val{color:var(--wb-color-text-primary,#1f1f1f);font-variant-numeric:tabular-nums;word-break:break-all}',
     '.wbs-warn{color:#f53f3f;font-weight:600}',
@@ -15414,7 +15417,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '.wbs-credit-segment,.wbs-credit-summary-fill{background:rgba(var(--wbs-primary-rgb,34,197,94),var(--wbs-credit-alpha,1));border-color:rgba(var(--wbs-primary-rgb,34,197,94),var(--wbs-credit-alpha,1))}',
     '.wbs-credit-empty{height:5px;border-radius:0;background:color-mix(in srgb,var(--wb-bg-tertiary,#e8e8eb) 70%,transparent);color:var(--wb-icon-tertiary,#999);font-size:10px;line-height:5px;text-align:center}',
     '.wbs-credit-hint{color:var(--wb-icon-tertiary,#999);font-size:10px;line-height:1.4;margin-top:2px}',
-    '.wbs-account-tags{display:inline-flex;align-items:center;gap:5px;min-width:0;margin-left:auto}',
+    '.wbs-account-tags{display:inline-flex;align-items:center;gap:5px;min-width:0;margin-left:12px;flex-shrink:0}',
     '.wbs-usage-tag{display:inline-flex;align-items:center;gap:4px;min-width:0;white-space:nowrap;color:var(--wb-color-text-primary,#1f1f1f);font-size:12px;font-weight:400;font-variant-numeric:tabular-nums}',
     '.wbs-usage-tag svg{width:14px;height:14px;flex:0 0 14px}',
     '.wbs-usage-tag b{font-weight:700}',
