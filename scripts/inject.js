@@ -6456,6 +6456,10 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     function usageTrendGroups(days, records, dimension, names) {
       var groups = new Map();
       (records || []).forEach(function (row) {
+        // Credit trends share account-total and model-detail records. A row
+        // without the active dimension belongs to the other view and must not
+        // become a synthetic "未识别模型"/"未关联账号" group.
+        if (!Object.prototype.hasOwnProperty.call(row, dimension)) return;
         var key = String(row[dimension] || '');
         var group = groups.get(key);
         if (!group) {
@@ -15296,6 +15300,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '.wbs-session-usage-spacer{display:block;width:100%;height:28px;min-height:28px;pointer-events:none;visibility:hidden}',
     'html.cb-dark .wbs-session-usage-summary,html[data-theme="dark"] .wbs-session-usage-summary,body[data-vscode-theme-name*="dark" i] .wbs-session-usage-summary{background:transparent;color:var(--wb-color-text-primary,#f2f3f5)}html.cb-dark .wbs-session-usage-main,html[data-theme="dark"] .wbs-session-usage-main,body[data-vscode-theme-name*="dark" i] .wbs-session-usage-main{color:var(--wb-color-text-secondary,#b7bbc5)}html.cb-dark .wbs-session-usage-copy,html[data-theme="dark"] .wbs-session-usage-copy,body[data-vscode-theme-name*="dark" i] .wbs-session-usage-copy{border:0;background:transparent;color:var(--wb-color-text-primary,#f2f3f5);box-shadow:none}html.cb-dark .wbs-session-usage-copy:hover,html[data-theme="dark"] .wbs-session-usage-copy:hover,body[data-vscode-theme-name*="dark" i] .wbs-session-usage-copy:hover{background:var(--wb-bg-hover,#34363b);color:var(--wb-color-text-primary,#f2f3f5);box-shadow:0 2px 8px rgba(0,0,0,.25)}',
     'html.cb-dark .wbs-session-usage-popover,html[data-theme="dark"] .wbs-session-usage-popover,body[data-vscode-theme-name*="dark" i] .wbs-session-usage-popover{background:color-mix(in srgb,var(--wb-bg-popover,#202126) 92%,transparent);color:var(--wb-color-text-primary,#f2f3f5);box-shadow:0 8px 22px rgba(0,0,0,.32)}',
+    'html[data-wbs-theme-id="nebula"] .wbs-session-usage-copy:hover,html[data-wbs-theme-id="nebula"] .wbs-session-usage-copy:focus-visible{background:color-mix(in srgb,var(--wb-bg-popover,#1a1729) 88%,transparent);color:var(--wb-color-text-primary,#e8e5ff);box-shadow:0 3px 12px rgba(0,0,0,.32);backdrop-filter:blur(12px) saturate(1.12);-webkit-backdrop-filter:blur(12px) saturate(1.12)}',
     '@media(max-width:620px){.wbs-session-usage-summary{padding-left:0;padding-right:0}.wbs-session-usage-main{gap:9px}.wbs-session-usage-popover{width:calc(100vw - 16px)}}',
     '.wbs-daily-rings,.wbs-status-popover{--wbs-ring-growth:var(--wbs-primary-ink);--wbs-ring-rewards:var(--wbs-primary-ink);--wbs-ring-cat:var(--wbs-primary-ink);--wbs-tip-credit:var(--wbs-primary-ink);--wbs-liquid-fill:var(--wbs-primary);--wbs-liquid-bg:color-mix(in srgb,var(--wbs-primary) 12%,var(--wb-bg-secondary,#f6f7f8));--wbs-liquid-ink:color-mix(in srgb,var(--wbs-primary-ink) 72%,var(--wb-color-text-primary,#1f1f1f))}',
     '.wbs-root.wbs-no-stash .wbs-stash-inline{display:none !important}',
@@ -15599,11 +15604,13 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '.wbs-explore-inline.wbs-menu-closed .wbs-explore-pop{opacity:0;visibility:hidden;pointer-events:none;transform:translateX(-50%) translateY(6px)}',
     /* 弹窗卡片：适配插件主题的毛玻璃；面板整体为默认箭头，仅选项 hover 变点击手型 */
     '.wbs-explore-card{position:relative;padding:8px;border-radius:12px;background:color-mix(in srgb,var(--wb-bg-popover,#fff) 62%,transparent);backdrop-filter:blur(18px) saturate(1.3);-webkit-backdrop-filter:blur(18px) saturate(1.3);border:1px solid var(--wb-border-subtle,#ececec);box-shadow:0 12px 32px rgba(0,0,0,.18);color:var(--wb-color-text-primary,#1f1f1f);cursor:default}',
+    'html[data-wbs-theme-id="nebula"] .wbs-explore-card{background:color-mix(in srgb,var(--wb-bg-popover,#1a1729) 88%,transparent);background-color:color-mix(in srgb,var(--wb-bg-popover,#1a1729) 88%,transparent);box-shadow:0 14px 36px rgba(0,0,0,.38)}',
     '.wbs-explore-item{position:relative;display:flex;align-items:center;gap:8px;padding:9px 10px;border-radius:8px;font-size:12px;color:var(--wb-color-text-primary,#1f1f1f);line-height:1.4;cursor:pointer}',
     '.wbs-explore-it{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
     '.wbs-explore-item:hover{background:color-mix(in srgb,var(--wb-bg-hover,#f3f3f3) 76%,transparent)}',
     /* 选项 hover：antd 风格 tooltip（半透明毛玻璃小气泡，出现在选项左侧，完全展示文字） */
     '.wbs-explore-tip{position:absolute;right:calc(100% + 10px);top:50%;transform:translateY(-50%);display:block;width:max-content;padding:5px 11px;border-radius:8px;font-size:11px;line-height:1.35;white-space:normal;word-break:break-word;max-width:240px;color:var(--wb-color-text-primary,#1f1f1f);background:var(--wb-bg-popover,#fff);border:1px solid color-mix(in srgb,var(--wb-border-subtle,#ececec) 65%,transparent);box-shadow:0 6px 20px rgba(0,0,0,.16);opacity:0;visibility:hidden;transition:opacity .15s ease;pointer-events:none;z-index:2}',
+    'html[data-wbs-theme-id="nebula"] .wbs-explore-tip{background:color-mix(in srgb,var(--wb-bg-popover,#1a1729) 94%,transparent);background-color:color-mix(in srgb,var(--wb-bg-popover,#1a1729) 94%,transparent);border-color:var(--wb-border-strong,#3a3160);box-shadow:0 8px 24px rgba(0,0,0,.4);backdrop-filter:blur(14px) saturate(1.12);-webkit-backdrop-filter:blur(14px) saturate(1.12)}',
     /* 滚动条默认透明，滚动/悬停时才出现（内容多时可上下滚动，内容少完全展示无滚动条） */
     '.wbs-explore-tip-body{display:block;max-height:240px;overflow-y:auto;scrollbar-width:thin;scrollbar-color:transparent transparent;white-space:normal;word-break:break-word}',
     '.wbs-explore-tip-body::-webkit-scrollbar{width:6px}',

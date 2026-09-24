@@ -1,5 +1,8 @@
 'use strict';
 const test = require('node:test');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const assert = require('node:assert/strict');
 const { createCreditHistorySync, historyRange } = require('../scripts/credit-history-sync.js');
 const { fetchUsageSinceAnchor } = require('../scripts/credit-request-usage.js');
@@ -87,6 +90,24 @@ test('historical credit results retain model totals when the official usage rows
     'Model A': { used: 2, count: 2 },
     'Model B': { used: 2.5, count: 1 },
   });
+});
+
+test('legacy cache without model details is refreshed after model normalization changes', async t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wbs-credit-model-cache-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const cacheFile = path.join(dir, 'cache.json');
+  fs.writeFileSync(cacheFile, JSON.stringify({ version: 1, daily: [{
+    uid: 'one', date: '2026-09-12', used: 1, count: 1, queriedAt: now.getTime(), final: true,
+  }] }));
+  let calls = 0;
+  const sync = createCreditHistorySync({ cacheFile, now: () => now, getAccessToken: async () => 'test', fetchUsage: async () => {
+    calls++;
+    return { records: [{ usageDate: '2026-09-12', credit: 1, requestId: 'new', model: 'Recovered model' }] };
+  } });
+  sync.start({ accounts: [{ uid: 'one' }], days: 1 });
+  const result = await settle(sync);
+  assert.equal(calls, 1);
+  assert.deepEqual(result.daily[0].models, { 'Recovered model': { used: 1, count: 1 } });
 });
 
 test('failed account contributes no cached values or false zero records', async () => {

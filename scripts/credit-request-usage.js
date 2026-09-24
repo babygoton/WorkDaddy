@@ -40,6 +40,27 @@ function safeText(value, maxLength = 200) {
   return String(value).replace(/\0/g, '').slice(0, maxLength);
 }
 
+// The billing endpoint has returned model metadata in several shapes over
+// time. Keep the model key readable and stable without persisting the raw
+// upstream object.
+function modelText(value, depth = 0) {
+  if (typeof value === 'string' || typeof value === 'number') return safeText(value).trim();
+  if (!value || typeof value !== 'object' || depth > 2) return '';
+  for (const key of ['name', 'modelName', 'model_name', 'id', 'modelId', 'model_id', 'slug']) {
+    const text = modelText(value[key], depth + 1);
+    if (text) return text;
+  }
+  return '';
+}
+
+function usageModel(row) {
+  for (const key of ['model', 'modelName', 'model_name', 'modelId', 'model_id', 'modelInfo', 'model_info']) {
+    const text = modelText(row[key]);
+    if (text) return text;
+  }
+  return '';
+}
+
 function normalizeUsageRow(row) {
   if (!row || typeof row !== 'object') throw new Error('用量记录不是对象');
   const requestId = safeText(row.requestId, 512).trim();
@@ -53,7 +74,7 @@ function normalizeUsageRow(row) {
     requestTime,
     usageDate: localDateString(requestTime),
     credit,
-    model: safeText(row.model),
+    model: usageModel(row),
     client: safeText(row.client),
     agentPurpose: safeText(row.agentPurpose),
   };
@@ -196,6 +217,7 @@ module.exports = {
   fetchUsageSinceAnchor,
   formatLocalDateTime,
   normalizeUsageRow,
+  usageModel,
   parseRequestTime,
   startOfLocalDay,
 };

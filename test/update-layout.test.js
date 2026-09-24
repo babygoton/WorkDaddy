@@ -996,6 +996,8 @@ test('quick-phrase layering does not reposition WorkBuddy native chat toolbar', 
   const script = read('inject.js');
   assert.match(script, /\.wbs-explore-inline\.wbs-stash-inline-inline\{position:relative;z-index:99999\}/);
   assert.match(script, /\.wbs-explore-pop\{[^}]*z-index:2147483647/);
+  assert.match(script, /html\[data-wbs-theme-id="nebula"\] \.wbs-explore-card\{[^}]*background:color-mix\(in srgb,var\(--wb-bg-popover/);
+  assert.match(script, /html\[data-wbs-theme-id="nebula"\] \.wbs-explore-tip\{[^}]*background:color-mix\(in srgb,var\(--wb-bg-popover/);
   assert.doesNotMatch(script, /_chatMessageBottomToolbarWrapper_\}\{position:relative;z-index:68/);
   assert.doesNotMatch(script, /_chatMessageBottomToolbar_\}\{position:relative;z-index:69/);
   assert.doesNotMatch(script, /_chatMessageBottomToolbarItem_\}\{position:relative;z-index:70/);

@@ -47,6 +47,15 @@ test('normalizes only non-sensitive fields from official usage records', () => {
   assert.equal(Object.prototype.hasOwnProperty.call(row, 'inputTrunc'), false);
 });
 
+test('normalizes model aliases returned by billing API variants', () => {
+  const byName = normalizeUsageRow({ ...usageRow('req-name', '2026-08-28 09:10:11'), model: '', modelName: 'claude-3-7-sonnet' });
+  const byId = normalizeUsageRow({ ...usageRow('req-id', '2026-08-28 09:10:10'), model: '', model_id: 'deepseek-v3.1' });
+  const nested = normalizeUsageRow({ ...usageRow('req-nested', '2026-08-28 09:10:09'), model: { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro' } });
+  assert.equal(byName.model, 'claude-3-7-sonnet');
+  assert.equal(byId.model, 'deepseek-v3.1');
+  assert.equal(nested.model, 'Gemini 2.5 Pro');
+});
+
 test('requests official pages newest-first and stops at the previous complete-sync anchor', async () => {
   const calls = [];
   const firstPage = Array.from({ length: 100 }, (_, index) =>

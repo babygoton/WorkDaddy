@@ -63,6 +63,7 @@ test('conversation usage UI uses a body-fixed mount, bottom spacer and message s
   assert.doesNotMatch(source, /悬浮查看明细|Hover for details/);
   assert.doesNotMatch(source, /el\('strong', 'wbs-session-usage/);
   assert.match(source, /wbs-session-usage-popover\{[^}]*background:color-mix/);
+  assert.match(source, /html\[data-wbs-theme-id="nebula"\] \.wbs-session-usage-copy:hover,[^}]*\.wbs-session-usage-copy:focus-visible\{[^}]*background:color-mix\(in srgb,var\(--wb-bg-popover,/);
   assert.match(source, /wbs-session-usage-summary\{[^}]*z-index:20/);
   assert.match(source, /wbs-session-usage-popover\{[^}]*z-index:21/);
   assert.match(source, /wbs-session-usage-summary\{[^}]*border:0[^}]*background:transparent/);
