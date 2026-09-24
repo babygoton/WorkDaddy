@@ -29,6 +29,7 @@ const os = require('os');
 const crypto = require('crypto');
 const net = require('net');
 const sessionSync = require('./session-sync.js');
+const { createAccountCreditCache } = require('./account-credit-cache.js');
 const { spawn, spawnSync } = require('child_process');
 const {
   assertSameProcessIdentity,
@@ -81,7 +82,11 @@ const {
   listAccounts,
   switchTo,
   deleteAccount,
-  wdCompatDecryptAuthJson, // [wd-compat] WorkBuddy 5.6.0+ 字段信封解密
+  wdCompatText, // [wd-compat]
+  wdCompatContainsEncryptedFields, // [wd-compat]
+  wdCompatDecryptAuthJson, // [wd-compat] WorkBuddy 5.6+ 字段信封解密
+  wdCompatAuthToken, // [wd-compat] 仅返回可直接发送的明文 token
+  normalizeAccountImportJson, // [wd-compat] 明文/信封账号导入归一化
   backupPath,
   updateMeta,
   canonicalWorkspace,
@@ -103,6 +108,8 @@ const {
   removeAutoCopyAccount,
   collectLineageMembersForDelete,
   getAutoCopyMapping,
+  getAutoCopyMappings,
+  migrateAutoCopyTargetRevisions: migrateAutoCopyTargetRevisionsFromMeta,
   setAutoCopyMapping,
   deleteAutoCopyMapping,
   workbuddyModelsFile,
@@ -142,6 +149,7 @@ const {
 const {
   captureException,
   captureMessage,
+  persistentInstallationId,
   setTelemetryEnabled,
   telemetryEnabled,
   telemetryEnvironmentOverride,
@@ -152,6 +160,7 @@ const plat = require('./platform.js');
 const { readWorkBuddyTarget } = require('./workbuddy-target.js');
 const { classifyTarget, looksLikeWbFamilyTarget, isTargetForProfile } = require('./cdp-targets.js');
 const { createSessionDb, normalizeSessionIdBatch, parameterCount } = require('./session-db.js');
+const { createDirtyIndex } = require('./session-dirty.js');
 const {
   createEncryptedExport,
   openEncryptedExport,
@@ -182,6 +191,7 @@ const {
   taskMatchesEvent,
   createScheduleTicker,
   taskNeedsPanelClosed,
+  stepsContainCheckin,
   taskIsPassiveCleanup,
   isSupportedTaskSchema,
   isTaskCompatible,
@@ -198,12 +208,14 @@ let automationInputActive = false;
 const { previewPackage, PACKAGE_FORMAT_VERSION } = require('./automation-packages.js');
 const { exportTasks, importTasks, readTransferBody } = require('./automation-transfer.js');
 const { createAutomationDiscovery } = require('./automation-discovery.js');
+const { createAutomationLikesClient } = require('./automation-likes.js');
 
 const { createAutomationNotifier } = require('./toast-options.js');
 const { runCompletionReport, probeAccountCompletion } = require('./completion-report.js');
 const { createPrimaryAccountStore } = require('./primary-account.js');
 const PROFILE = getProfile();
 const DATA_DIR = defaultDataDir();
+const accountCreditCache = createAccountCreditCache(DATA_DIR);
 const thirdPartyModels = createThirdPartyImport({ targetFile: workbuddyModelsFile(), dataDir: DATA_DIR });
 const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.existsSync(accountBackupFile(uid)));
 // 版本号：改动 daemon/inject/theme-patches/builtin 资产后递增，launcher 检测到运行中版本不一致会强制用 app 内置代码重启
@@ -322,8 +334,7 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 //         401 归类为「登录身份过期」并返回结构化 401；语言选择器移入「关于」页。
 // 1.1.37：修复 legacy 账号切换失败——无文件记录的旧账号无条件写回官方固定登录文件，
 //         固定文件名（workbuddy-desktop.info）跨认证通道可交替覆盖，个性化文件名保留通道校验。
-// 1.1.38：备份扫描禁止历史存档覆盖有效备份（s 身份过期事故根源）；切换账号后自动打开
-//         目标账号中与当前会话同标题的复制会话（auto-focus）。
+// 1.1.38：备份扫描禁止历史存档覆盖有效备份（s 身份过期事故根源）。
 // 1.1.39：账号脱敏状态按 profile 持久化；WorkDaddy 触发页面重载后在主执行上下文创建时提前注入。
 // 1.1.40：跨账号重载跟随新主 frame，并在会话自动复制占用事件循环前等待组件实际挂载。
 // 1.1.41：后台会话自动复制在文件边界让出 I/O；账号重载期间暂停复制，优先完成组件挂载。
@@ -377,16 +388,49 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 // 1.2.52：成长任务支持在悬浮层内直接接取，并在完成后同步最新任务状态。
 // 1.2.55：成长弹窗支持开启盲盒与抽奖并提示奖励，收敛成长/用量统计 primary 色使用。
 // 1.2.56：成长任务补齐说明与标签、已领取折叠、Buddy 派出，并把用量柱状图改为面积折线图。
-// 1.2.84：兼容 WorkBuddy 5.6.0+ 对 workbuddy.cn 域账号的 $wbEncrypted 字段级静态加密信封，
-//         读取端自动解密（密钥经 WorkBuddy 原生绑定子进程获取，内存缓存不落盘），修复
-//         该域账号昵称乱码与「登录身份过期」误报（详见 issue #243）。
-const DAEMON_VERSION = '1.2.84';
-const DAEMON_BUILD_ID = 'release-1.2.84-20260920-wbencrypted-field-decrypt';
+// 1.2.102：新建任务挂载会话后按会话控制器确认模型，不再误用新建任务偏好校验。
+// 1.2.103：发送按钮点击后由回执阶段重试确认正式会话模型，避开新建任务挂载竞态。
+// 1.2.104：同步会话时跳过本机 modify_backup，避免无用途的回滚副本拖慢切号。
+// 1.2.105：自动同步移除重复大小预扫描，并区分已检查字节与实际写入字节。
+// 1.2.106：普通切号不再等待注入确认；自动同步使用有限并发并实时报告写入字节。
+// 1.2.107：自动同步对未变化会话使用持久化轻量指纹，跳过重复快照扫描。
+// 1.2.108：自动同步热路径改用固定路径标记与源/目标数据库版本，避免重复枚举项目目录。
+// 1.2.109：暂停持久化指纹快路径，恢复完整会话比较，避免旧映射误判。
+// 1.2.110：并发自动同步按会话独立汇总实际写入字节，避免统计竞态漏计。
+// 1.2.112：自动化发送支持新版 textarea 输入框，并只聚焦当前可见的输入区。
+// 1.2.114：自动同步命中稳定行版本与文件元数据指纹时直接跳过完整快照扫描。
+// 1.2.115：自动同步未变化快路径只比较源/目标会话行修订号，避免逐会话遍历全部项目目录。
+// 1.2.116：会话同步写入前只检查本次源/目标会话，避免无关忙会话拦截同步。
+// 1.2.117：新用户首次初始化默认使用浅色主题，已有主题设置保持不变。
+// 1.2.118：多账号自动同步避免重复写入元数据，并兼容跨账号 lineage 的稳定 revision。
+// 1.2.119：无变化同步规划不再等待 renderer 注入，只有实际复制时才等待就绪。
+// 1.2.122：首次复制到没有物理副本的账号使用同步快照路径，避免异步文件校验链路拖慢全量初始化。
+// 1.2.123：自动复制映射保存目标数据库实际 revision，避免未变化会话反复进入完整快照校验。
+// 1.2.124：启动时批量校准旧目标 revision，避免历史映射让未变化会话重复进入规划。
+// 1.2.128：5.6 会话同步对瞬态冲突进行延迟重读，避免一次投影抖动生成 branchCopy 重复会话。
+// 1.2.129：自动同步跳过会话内符号链接；归档导入允许配置的数据根是目录链接。
+// 1.2.130：自动化等待按本轮会话回执绑定消息；空消息会话复制失败不阻断自动化切号。
+// 1.2.131：WorkBuddy 5.6 乐观 user 消息换正式 ID 时按稳定 requestId 继续等待。
+// 1.2.140：稳定映射自动清理历史生命周期脏标记，避免无变化切换进入同步 worker。
+// 1.2.141：已建立 dirty baseline 后忽略历史 lineage revision 漂移，并确认官方会话导航结果。
+// 1.2.142：忽略激活引起的会话生命周期漂移，拒绝切号后的旧脏通知，并按目标账号恢复同步状态。
+// 1.2.143：内容相同的激活会话刷新映射并清除旧脏标记；缺失映射时复用已有目标会话，避免重复创建。
+// 1.2.144：删除会话允许一次处理超过 100 个 ID；其他批量接口仍保留原有上限。
+// 1.2.147：忽略会话激活日志的 session-meta 记录，避免反向切换误报导入；刷新指纹缓存版本。
+// 1.2.145：识别仅 updated_at 的激活漂移，清除无变更脏标记；无结果任务不再弹同步进度窗口。
+// 1.2.126：5.6 加密账号改为密文原样备份、内存解密；导入兼容明文 token，
+//          刷新结果不把解密后的 token 写回加密备份。
+const DAEMON_VERSION = '1.2.148';
+const DAEMON_BUILD_ID = 'release-1.2.148-20260923-windows-compat-target';
 const usageReporter = createUsageReporter({ profile: PROFILE.id, version: DAEMON_VERSION });
 configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const automationDiscovery = createAutomationDiscovery({
   dataDir: DATA_DIR,
   runtime: { version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform },
+});
+const automationLikes = createAutomationLikesClient({
+  endpoint: process.env.WORKDADDY_AUTOMATION_LIKES_ENDPOINT || 'https://workdaddy.dev/api/automation-likes',
+  getActorId: persistentInstallationId,
 });
 const HOST = '127.0.0.1';
 // 平台分支开关。上游历史代码把「非 Windows」一律当 macOS，Linux 适配时拆成
@@ -420,7 +464,7 @@ const creditHistorySync = createCreditHistorySync({
     const refreshed = await refreshAccountBackupToken(uid);
     if (refreshed.error || !refreshed.root) throw new Error('账号凭据不可用');
     const auth = refreshed.root.auth || {};
-    return auth.accessToken || auth.access_token || auth.token;
+    return wdCompatAuthToken(auth);
   },
 });
 const CREDIT_USAGE_REFRESH_MS = 15000;
@@ -765,7 +809,52 @@ function expectedUpdateSha256() {
   return updateState.dmgSha256 || parseSha256(updateState.notes);
 }
 
-// 检查更新：按源降级链请求 Releases API（GitHub 失败自动降级 Gitee），比对版本，结果写缓存（内存 + 文件）
+// 多源同时可用时取最高版本；同版本优先使用带安装包的候选。
+function selectBestUpdateCandidate(candidates) {
+  return (candidates || []).filter((candidate) => candidate && candidate.latest).sort((a, b) => {
+    const version = semverCompare(b.latest, a.latest);
+    if (version) return version;
+    return (Number(!!b.asset) - Number(!!a.asset)) || (Number(a.order) || 0) - (Number(b.order) || 0);
+  })[0] || null;
+}
+
+function selectUpdateAsset(source, rel) {
+  const assets = (rel.assets || []).filter((a) =>
+    a && typeof a.name === 'string' &&
+    typeof a.browser_download_url === 'string' &&
+    a.browser_download_url.startsWith(source.downloadRoot + '/')
+  );
+  const profileAsset = PROFILE.id === 'workbuddy-ai'
+    ? /^(?:WorkDaddy-AI-Setup-|WorkDaddy-AI-).*\.(?:exe|zip|dmg)$/i
+    : /^WorkDaddy-(?!AI-)(?:Setup-|).*\.(?:exe|zip|dmg)$/i;
+  const profileSetup = PROFILE.id === 'workbuddy-ai'
+    ? /^WorkDaddy-AI-Setup-\d+\.\d+\.\d+\.exe$/i
+    : /^WorkDaddy-Setup-\d+\.\d+\.\d+\.exe$/i;
+  const profileZip = PROFILE.id === 'workbuddy-ai'
+    ? /^WorkDaddy-AI-\d+\.\d+\.\d+-win64\.zip$/i
+    : /^WorkDaddy-\d+\.\d+\.\d+-win64\.zip$/i;
+  return IS_WIN
+    ? (assets.find((a) => profileSetup.test(a.name || '')) ||
+       assets.find((a) => profileZip.test(a.name || '')) ||
+       assets.find((a) => profileAsset.test(a.name || '') && /\.(?:exe|zip)$/i.test(a.name || '')) || null)
+    : (assets.find((a) => profileAsset.test(a.name || '') && /\.dmg$/i.test(a.name || '')) ||
+       assets.find((a) => /\.dmg$/i.test(a.name || '') && (PROFILE.id !== 'workbuddy-ai' || !/WorkDaddy-AI-/i.test(a.name || ''))) || null);
+}
+
+function makeUpdateCandidate(source, rel, order) {
+  const latest = String(rel.tag_name || '').replace(/^v/, '');
+  if (!latest) return null;
+  const notes = (rel.body || '').slice(0, 2000);
+  const asset = selectUpdateAsset(source, rel);
+  return {
+    source, order, rel, latest, notes, asset,
+    dmgUrl: asset ? `${source.downloadRoot}/${rel.tag_name}/${asset.name}` : null,
+    dmgSize: asset ? (Number(asset.size) || 0) : 0,
+    dmgSha256: asset ? (normalizeAssetSha256(asset.digest) || parseSha256Map(notes)[asset.name] || parseSha256(notes)) : null,
+  };
+}
+
+// 检查更新：同时请求所有更新源，选择最高版本（同版本优先有包），结果写缓存。
 function checkUpdate(force) {
   // Linux 暂不提供自动更新。直接返回「无更新」，避免误下载 macOS 的 dmg。
   if (IS_LINUX) {
@@ -787,70 +876,40 @@ function checkUpdate(force) {
   updateState.message = '正在检查更新…';
   const order = updateSourceOrder();
   updateDebug('check-start', { force: !!force, current: DAEMON_VERSION, sources: order.map((s) => s.id) });
-  // 依次尝试各更新源，第一个可用的源即采用（检测与下载同源）
-  let attempt = Promise.reject(new Error('尚未尝试任何更新源'));
-  for (const source of order) {
-    attempt = attempt.catch(() =>
-      httpsGet(source.api).then(({ status, body }) => {
-        if (status !== 200) {
-          throw new Error('Releases API ' + status + (status === 404 ? '（仓库暂无 Release）' : ''));
-        }
-        return { source, rel: JSON.parse(body) };
-      }).catch((err) => {
-        log(`[update] ${source.id} 源检查失败: ${err.message}`);
-        updateDebug('check-source-failed', { source: source.id, api: source.api, error: err.message });
-        throw err;
-      })
-    );
-  }
-  return attempt
-    .then(({ source, rel }) => {
-      const latest = String(rel.tag_name || '').replace(/^v/, '');
-      updateState.latest = latest;
-      updateState.hasUpdate = semverCompare(latest, DAEMON_VERSION) > 0;
-      updateState.source = source.id;
-      updateState.releaseUrl = rel.html_url || (source.id === 'gitee' ? `https://gitee.com/${UPDATE_REPO}/releases` : null);
-      updateState.notes = (rel.body || '').slice(0, 2000);
-      // 资产按平台选取：macOS 找 .dmg；Windows 新版本优先同 profile 的 Setup.exe，
-      // 旧版本仍只识别 ZIP，因此没有 EXE 时回退到对应的 -win64.zip。
-      // Gitee 会把源码包（/archive/ 路径）混进 assets，且下载 URL 只信白名单 origin
-      // 的 /releases/download/ 路径，防止响应里的任意地址被当作安装包来源。
-      const assets = (rel.assets || []).filter((a) =>
-        a && typeof a.name === 'string' &&
-        typeof a.browser_download_url === 'string' &&
-        a.browser_download_url.startsWith(source.downloadRoot + '/'));
-      const profileAsset = PROFILE.id === 'workbuddy-ai'
-        ? /^(?:WorkDaddy-AI-Setup-|WorkDaddy-AI-).*\.(?:exe|zip|dmg)$/i
-        : /^WorkDaddy-(?!AI-)(?:Setup-|).*\.(?:exe|zip|dmg)$/i;
-      const profileSetup = PROFILE.id === 'workbuddy-ai'
-        ? /^WorkDaddy-AI-Setup-\d+\.\d+\.\d+\.exe$/i
-        : /^WorkDaddy-Setup-\d+\.\d+\.\d+\.exe$/i;
-      const profileZip = PROFILE.id === 'workbuddy-ai'
-        ? /^WorkDaddy-AI-\d+\.\d+\.\d+-win64\.zip$/i
-        : /^WorkDaddy-\d+\.\d+\.\d+-win64\.zip$/i;
-      const asset = IS_WIN
-        ? (assets.find((a) => profileSetup.test(a.name || '')) ||
-           assets.find((a) => profileZip.test(a.name || '')) ||
-           // tolerate older release naming while keeping profile isolation
-           assets.find((a) => profileAsset.test(a.name || '') && /\.(?:exe|zip)$/i.test(a.name || '')) || null)
-        : (assets.find((a) => profileAsset.test(a.name || '') && /\.dmg$/i.test(a.name || '')) ||
-           assets.find((a) => /\.dmg$/i.test(a.name || '') && (PROFILE.id !== 'workbuddy-ai' || !/WorkDaddy-AI-/i.test(a.name || ''))) || null);
-      // 下载 URL 从白名单 origin 派生（tag + 文件名），不直接采用响应里的 browser_download_url
-      updateState.dmgUrl = asset ? `${source.downloadRoot}/${rel.tag_name}/${asset.name}` : null;
-      // Gitee 不返回资产大小（null）→ 0，下载进度以响应 content-length 为准
-      updateState.dmgSize = asset ? (Number(asset.size) || 0) : 0;
-      // 完整性校验优先级：asset.digest（GitHub）→ notes 逐文件哈希（sha256sum 格式行）→ notes 单一哈希
-      updateState.dmgSha256 = asset
-        ? (normalizeAssetSha256(asset.digest) || parseSha256Map(updateState.notes)[asset.name] || parseSha256(updateState.notes))
-        : null;
-      updateState.assetName = asset ? asset.name : null;
+  const attempts = order.map((source, orderIndex) => httpsGet(source.api).then(({ status, body }) => {
+    if (status !== 200) {
+      throw new Error('Releases API ' + status + (status === 404 ? '（仓库暂无 Release）' : ''));
+    }
+    return makeUpdateCandidate(source, JSON.parse(body), orderIndex);
+  }).catch((err) => {
+    log(`[update] ${source.id} 源检查失败: ${err.message}`);
+    updateDebug('check-source-failed', { source: source.id, api: source.api, error: err.message });
+    return null;
+  }));
+  return Promise.all(attempts)
+    .then((candidates) => {
+      const latestCandidate = selectBestUpdateCandidate(candidates);
+      if (!latestCandidate) throw new Error('所有更新源均不可用');
+      const packageCandidate = selectBestUpdateCandidate(candidates.filter((candidate) =>
+        candidate && candidate.asset && semverCompare(candidate.latest, latestCandidate.latest) === 0
+      ));
+      const selectedCandidate = packageCandidate || latestCandidate;
+      updateState.latest = latestCandidate.latest;
+      updateState.hasUpdate = semverCompare(latestCandidate.latest, DAEMON_VERSION) > 0;
+      updateState.source = selectedCandidate.source.id;
+      updateState.releaseUrl = selectedCandidate.rel.html_url || (selectedCandidate.source.id === 'gitee' ? `https://gitee.com/${UPDATE_REPO}/releases` : null);
+      updateState.notes = latestCandidate.notes;
+      updateState.dmgUrl = packageCandidate ? packageCandidate.dmgUrl : null;
+      updateState.dmgSize = packageCandidate ? packageCandidate.dmgSize : 0;
+      updateState.dmgSha256 = packageCandidate ? packageCandidate.dmgSha256 : null;
+      updateState.assetName = packageCandidate && packageCandidate.asset ? packageCandidate.asset.name : null;
       updateState.checkedAt = Date.now();
       updateState.status = 'idle';
-      updateState.message = updateState.hasUpdate ? '发现新版本 v' + latest : '已是最新版本';
+      updateState.message = updateState.hasUpdate ? '发现新版本 v' + latestCandidate.latest : '已是最新版本';
       // 缓存发布信息（含成功的更新源），不缓存依赖当前运行版本的判断结果。
-      try { fs.writeFileSync(UPDATE_CHECK_CACHE, JSON.stringify({ latest, source: source.id, dmgUrl: updateState.dmgUrl, dmgSize: updateState.dmgSize, dmgSha256: updateState.dmgSha256, assetName: updateState.assetName, notes: updateState.notes, checkedAt: updateState.checkedAt })); } catch (_) {}
-      log(`[update] 检查完成: source=${source.id} latest=${latest} hasUpdate=${updateState.hasUpdate} (current=${DAEMON_VERSION})`);
-      updateDebug('check-result', { source: source.id, current: DAEMON_VERSION, latest, hasUpdate: updateState.hasUpdate, assetName: updateState.assetName, assetSize: updateState.dmgSize, assetSha256: updateState.dmgSha256 });
+      try { fs.writeFileSync(UPDATE_CHECK_CACHE, JSON.stringify({ latest: latestCandidate.latest, source: updateState.source, dmgUrl: updateState.dmgUrl, dmgSize: updateState.dmgSize, dmgSha256: updateState.dmgSha256, assetName: updateState.assetName, notes: updateState.notes, checkedAt: updateState.checkedAt })); } catch (_) {}
+      log(`[update] 检查完成: source=${updateState.source} latest=${latestCandidate.latest} hasUpdate=${updateState.hasUpdate} (current=${DAEMON_VERSION})`);
+      updateDebug('check-result', { source: updateState.source, current: DAEMON_VERSION, latest: latestCandidate.latest, hasUpdate: updateState.hasUpdate, assetName: updateState.assetName, assetSize: updateState.dmgSize, assetSha256: updateState.dmgSha256 });
       return updateState;
     })
     .catch((e) => {
@@ -2201,7 +2260,7 @@ async function cdpLoop() {
   }
 }
 
-async function reloadWorkBuddyPage() {
+async function reloadWorkBuddyPage(options = {}) {
   if (!cdp.connected) throw new Error('CDP 未连接，无法自动刷新窗口');
   const withTimeout = (promise, ms, label) => new Promise((resolve, reject) => {
     let settled = false;
@@ -2232,111 +2291,14 @@ async function reloadWorkBuddyPage() {
   const pending = armPendingReloadInjection(frameId);
   try {
     await withTimeout(cdpSend('Page.reload', { ignoreCache: false }), 10000, '刷新 WorkBuddy 页面');
+    if (options.waitForInjection === false) return true;
     const mounted = await pending.ready;
     if (!mounted) log('[cdp] 页面重载后组件未在 5 秒内确认挂载，继续后台流程');
+    return mounted;
   } catch (error) {
     settlePendingReloadInjection(pending, false);
     throw error;
   }
-}
-
-// 切换账号后自动打开目标账号中「与切换前当前会话同标题」的会话：
-// 自动复制会话会为目标账号创建同标题会话，刷新后轮询官方会话列表：
-// 标题精确匹配叶子 -> 定位 .conversation-item 行 -> 若已选中(_selected_)则完成，
-// 否则点击该行等待下轮确认。列表是虚拟滚动（只渲染可视行），按步进滚动扫描，
-// 并自动展开折叠的分组；最长约 26s，找不到则静默放弃。
-function autoFocusSessionByTitle(sourceTitle, logFn) {
-  const target = String(sourceTitle || '').trim();
-  if (!target) return;
-  const logger = typeof logFn === 'function' ? logFn : () => {};
-  let attempts = 0;
-  let scrollPhase = 0; // 0=顶部初始, 1=向下扫描, 2=向上回扫
-  let scrollTop = 0;
-  const SCROLL_STEP = 480;
-  const timer = setInterval(async () => {
-    attempts++;
-    try {
-      if (!cdp.connected) throw new Error('CDP 未连接');
-      // 1) 设置滚动位置（虚拟列表只渲染可视行）
-      const scrollExpr =
-        '(function(){var c=document.querySelector(".conversation-list-content");' +
-        'if(!c) return {ok:false, max:0};' +
-        'c.scrollTop=' + String(scrollTop) + ';' +
-        'return {ok:true, max:Math.max(0,c.scrollHeight-c.clientHeight)};})()';
-      const sr = await cdpSend('Runtime.evaluate', { expression: scrollExpr, returnByValue: true });
-      const scrollInfo = sr && sr.result && sr.result.value;
-      // 2) 扫描匹配行：找到即返回 hit=已选中，pending=已点击待确认，miss=未渲染
-      const findExpr =
-        '(function(){' +
-        'var wanted = ' + JSON.stringify(target) + ';' +
-        'var list = document.querySelector(".conversation-list");' +
-        'if (!list) return { miss: true };' +
-        'var leaves = [];' +
-        'var all = list.querySelectorAll("*");' +
-        'for (var i = 0; i < all.length; i++) {' +
-        '  var el = all[i];' +
-        '  if (el.children.length === 0 && (el.textContent || "").trim() === wanted) leaves.push(el);' +
-        '}' +
-        'if (!leaves.length) {' +
-        '  var headers = list.querySelectorAll(".collapsible-section-header");' +
-        '  for (var k = 0; k < headers.length; k++) {' +
-        '    var hdr = headers[k];' +
-        '    if (hdr.className.indexOf("expanded") === -1) hdr.click();' +
-        '  }' +
-        '  return { miss: true };' +
-        '}' +
-        'for (var j = 0; j < leaves.length; j++) {' +
-        '  var row = leaves[j];' +
-        '  for (var d = 0; d < 8 && row && row.parentElement; d++) {' +
-        '    var rc = row.classList ? row.className : "";' +
-        '    if (rc.indexOf("conversation-item") !== -1 || rc.indexOf("_card_") !== -1) break;' +
-        '    row = row.parentElement;' +
-        '  }' +
-        '  var rcls = row && row.classList ? row.className : "";' +
-        '  if (!row || row === list || (rcls.indexOf("conversation-item") === -1 && rcls.indexOf("_card_") === -1)) continue;' +
-        '  var rect = row.getBoundingClientRect ? row.getBoundingClientRect() : null;' +
-        '  if (!rect || rect.width === 0 || rect.height === 0) continue;' +
-        '  if (rcls.indexOf("_selected_") !== -1 || rcls.indexOf("selected") !== -1) {' +
-        '    return { hit: true };' +
-        '  }' +
-        '  row.click();' +
-        '  return { pending: true };' +
-        '}' +
-        'return { miss: true };' +
-        '})()';
-      const fr = await cdpSend('Runtime.evaluate', { expression: findExpr, returnByValue: true });
-      const out = fr && fr.result && fr.result.value;
-      if (out && out.hit) {
-        clearInterval(timer);
-        logger('[auto-focus] 已自动打开目标账号会话「' + target + '」');
-        return;
-      }
-      if (out && out.pending) {
-        // 已点击，下轮确认选中态；本轮不推进滚动
-        if (attempts >= 30) {
-          clearInterval(timer);
-          logger('[auto-focus] 已点击目标会话「' + target + '」，未确认选中（放弃继续等待）');
-        }
-        return;
-      }
-      // 3) 未渲染：推进滚动扫描
-      const max = scrollInfo && scrollInfo.max ? scrollInfo.max : 0;
-      if (scrollPhase === 0) { scrollPhase = 1; scrollTop = 0; }
-      else if (scrollPhase === 1) {
-        scrollTop += SCROLL_STEP;
-        if (scrollTop > max + SCROLL_STEP) { scrollPhase = 2; scrollTop = max; }
-      } else {
-        scrollTop -= SCROLL_STEP;
-        if (scrollTop <= -SCROLL_STEP) { scrollPhase = 1; scrollTop = 0; }
-      }
-    } catch (_) {
-      /* 页面加载中或 CDP 抖动，下一轮再试 */
-    }
-    if (attempts >= 30) {
-      clearInterval(timer);
-      logger('[auto-focus] 未找到目标会话「' + target + '」（复制未完成或标题不一致）');
-    }
-  }, 800);
 }
 
 const WORKBUDDY_TARGET = IS_WIN ? null : readWorkBuddyTarget({ dataDir: DATA_DIR, profileId: PROFILE.id });
@@ -2559,10 +2521,11 @@ function verifiedWindowsWorkBuddyProcesses(binary) {
   return verified;
 }
 
-function revalidateWindowsWorkBuddyProcess(original, binary) {
+function revalidateWindowsWorkBuddyProcess(original, binary, options = {}) {
   const current = verifiedWindowsWorkBuddyProcesses(binary)
     .find((process) => process.ProcessId === original.ProcessId);
   if (!current) {
+    if (options.tolerateMissing) return null;
     throw new Error(`结束前无法再次验证 WorkBuddy PID=${original.ProcessId}`);
   }
   return assertSameProcessIdentity(original, current);
@@ -2633,19 +2596,24 @@ async function quitWorkBuddy() {
     if (!processes.length) return true;
 
     for (const process of processes) {
-      const current = revalidateWindowsWorkBuddyProcess(process, binary);
+      const current = revalidateWindowsWorkBuddyProcess(process, binary, { tolerateMissing: true });
+      if (!current) continue;
       const result = await runCommand('taskkill', ['/PID', String(current.ProcessId)]);
       if (result.error || result.code !== 0) {
-        throw result.error || new Error(`taskkill 无法结束已验证进程 PID=${process.ProcessId}`);
+        // Console-less Electron children commonly reject the graceful pass.
+        // Continue so the verified survivor set can enter the force pass.
+        log(`[relaunch] taskkill 普通退出未结束 PID=${process.ProcessId}，将复验后强制退出`);
       }
     }
     if (await waitForWorkBuddyExit(1800, binary)) return true;
 
     processes = verifiedWindowsWorkBuddyProcesses(binary);
     for (const process of processes) {
-      const current = revalidateWindowsWorkBuddyProcess(process, binary);
+      const current = revalidateWindowsWorkBuddyProcess(process, binary, { tolerateMissing: true });
+      if (!current) continue;
       const result = await runCommand('taskkill', ['/F', '/PID', String(current.ProcessId)]);
       if (result.error || result.code !== 0) {
+        if (!revalidateWindowsWorkBuddyProcess(process, binary, { tolerateMissing: true })) continue;
         throw result.error || new Error(`taskkill 无法强制结束已验证进程 PID=${process.ProcessId}`);
       }
     }
@@ -2937,12 +2905,12 @@ const CHECKIN_REQUEST_TIMEOUT_MS = 12000;
 const growthStreakCache = createGrowthStreakCache(async (uid) => {
   const raw = wdCompatDecryptAuthJson(JSON.parse(fs.readFileSync(accountBackupFile(uid), 'utf8'))); // [wd-compat]
   const auth = raw && raw.auth || {};
-  return fetchGrowthStreak(auth.accessToken || auth.access_token || auth.token, { apiHost: PROFILE.apiHost });
+  return fetchGrowthStreak(wdCompatAuthToken(auth), { apiHost: PROFILE.apiHost });
 });
 const dailyProgressCache = createDailyProgressCache(async (uid) => {
   const raw = wdCompatDecryptAuthJson(JSON.parse(fs.readFileSync(accountBackupFile(uid), 'utf8'))); // [wd-compat]
   const auth = raw && raw.auth || {};
-  const token = auth.accessToken || auth.access_token || auth.token;
+  const token = wdCompatAuthToken(auth);
   if (!token) throw new Error('备份中无 accessToken');
   return fetchDailyProgress(token, { apiHost: PROFILE.apiHost });
 });
@@ -2976,7 +2944,7 @@ async function automationAccountStatus(account, fields) {
     result.checkin = { today: !!(hit && hit.date === today && hit.ok && (hit.verified === true || classifyCheckinResult({ httpOk: true, code: hit.code, message: hit.message }).ok)), verified: !!(hit && hit.date === today && hit.verified === true), source: mark ? 'sqlite' : 'cache' };
   }
   if (wanted.includes('activity.today')) {
-    const token = auth.accessToken || auth.access_token || auth.token;
+    const token = wdCompatAuthToken(auth);
     if (!token) throw new Error('备份中无 accessToken');
     result.activity = Object.assign({ source: 'server' }, await fetchGrowthTodayActive(token, { apiHost: PROFILE.apiHost }));
   }
@@ -2985,7 +2953,7 @@ async function automationAccountStatus(account, fields) {
     result.activity.streak = { days: Number.isFinite(streak && streak.days) ? streak.days : null, status: streak && streak.status || 'unavailable' };
   }
   if (wanted.includes('credits')) {
-    const token = auth.accessToken || auth.access_token || auth.token;
+    const token = wdCompatAuthToken(auth);
     if (!token) throw new Error('备份中无 accessToken');
     const credits = await fetchCredits(token, raw.account || {});
     result.credits = { total: credits.credits, unlimited: !!credits.unlimited, cycleResetTime: credits.cycleResetTime || null };
@@ -3097,7 +3065,7 @@ async function automationHttpRequest(request, account) {
   if (account && account.uid) {
     assertAccountRequestUrl(url, PROFILE.apiHost);
     const raw = wdCompatDecryptAuthJson(JSON.parse(fs.readFileSync(accountBackupFile(account.uid), 'utf8'))); const auth = raw && raw.auth && typeof raw.auth === 'object' ? raw.auth : {}; // [wd-compat]
-    const token = auth.accessToken || auth.access_token || auth.token; if (!token) throw new Error('账号没有 accessToken'); headers.authorization = 'Bearer ' + token;
+    const token = wdCompatAuthToken(auth); if (!token) throw new Error('账号凭据暂不可用'); headers.authorization = 'Bearer ' + token;
   }
   if (request.isCancelled && request.isCancelled()) throw new Error('任务已停止');
   if (request.body && typeof request.body === 'object' && !Object.keys(headers).some(k => k.toLowerCase() === 'content-type')) headers['content-type'] = 'application/json';
@@ -3111,7 +3079,7 @@ async function automationHttpRequest(request, account) {
     return { ok: response.ok, status: response.status, headers: { 'content-type': response.headers.get('content-type') || '' }, text, json: jsonBody };
   } catch (e) { if (request.isCancelled && request.isCancelled()) throw new Error('任务已停止'); if (e && e.name === 'AbortError') throw new Error('HTTP 请求超时'); throw new Error(e && e.message === 'HTTP 响应超过 1 MiB' ? e.message : 'HTTP 请求失败'); } finally { clearTimeout(timer); clearInterval(cancelTimer); }
 }
-function automationPublicRun(run) { return { id: run.id, taskId: run.taskId, status: run.status, phase: run.phase || 'executing', startedAt: run.startedAt, finishedAt: run.finishedAt || 0, error: run.error || '', logs: run.logs, result: run.result || null }; }
+function automationPublicRun(run) { return { id: run.id, taskId: run.taskId, status: run.status, phase: run.phase || 'executing', sync: run.sync || null, stopRequested: !!run.stopRequested, startedAt: run.startedAt, finishedAt: run.finishedAt || 0, error: run.error || '', logs: run.logs, result: run.result || null }; }
 
 // 自动化运行前收拢 WorkDaddy 面板「窗口」，避免其 contenteditable/悬浮层与 WorkBuddy 原生
 // composer 抢焦点或遮挡，导致任务把提示词键入到 WorkDaddy 面板输入框 / 点不到官方发送按钮
@@ -3185,11 +3153,21 @@ async function automationNotifyToast(detail) {
   return response.result.value;
 }
 let accountSwitchInProgress = false;
-async function assertSessionSyncIdle() {
+const accountSyncFailures = new Map();
+function isIgnorableAutomationSyncFailure(job) {
+  if (!job || job.status === 'done' || !Array.isArray(job.details) || !job.details.length) return false;
+  const failed = job.details.filter(item => item && item.status === 'failed');
+  return failed.length > 0 && failed.every(item => item.error === '会话消息文件没有消息，未同步');
+}
+async function assertSessionSyncIdle(sessionIds = []) {
   if (PROFILE.kind !== 'workbuddy') return;
   if (!cdp.connected) throw new Error('无法确认会话状态，请连接 WorkBuddy 后重试');
+  const ids = Array.isArray(sessionIds) ? sessionIds.map((id) => String(id || '').trim()).filter(Boolean) : [];
+  const expression = ids.length
+    ? "typeof window.__wbsSessionsBusy === 'function' ? window.__wbsSessionsBusy(" + JSON.stringify(ids) + ") : (typeof window.__wbsAnySessionBusy === 'function' ? window.__wbsAnySessionBusy() : null)"
+    : "typeof window.__wbsAnySessionBusy === 'function' ? window.__wbsAnySessionBusy() : null";
   const result = await cdpSend('Runtime.evaluate', {
-    expression: "typeof window.__wbsAnySessionBusy === 'function' ? window.__wbsAnySessionBusy() : null",
+    expression,
     returnByValue: true,
   });
   const busy = result && result.result && result.result.value;
@@ -3205,16 +3183,82 @@ async function assertAccountSwitchIdle() {
 }
 
 let automationAccountSwitchTail = Promise.resolve();
-function automationSwitchAccount(account) {
+function assertAutoCopySucceeded(job) {
+  if (job && !isIgnorableAutomationSyncFailure(job) && (job.status !== 'done' || job.processed !== job.total || job.failed || job.failedItems || job.partial || job.conflicts)) {
+    throw new Error('会话同步未成功完成，已停止自动切换（同步任务 ' + job.id + '，状态 ' + job.status + '）');
+  }
+}
+
+function recordAccountSyncResult(job) {
+  if (!job || !job.targetUid) return;
+  try {
+    assertAutoCopySucceeded(job);
+    accountSyncFailures.delete(job.targetUid);
+  } catch (_) {
+    // UI history expires after 30 minutes. Keep a compact failure barrier until
+    // a subsequent successful synchronization proves this account is ready.
+    accountSyncFailures.set(job.targetUid, {
+      id: job.id, status: job.status, total: job.total, processed: job.processed,
+      failed: job.failed, failedItems: job.failedItems, partial: job.partial, conflicts: job.conflicts,
+    });
+  }
+}
+
+function automationSwitchProgress(options, phase, job = null) {
+  if (typeof options.onProgress !== 'function') return;
+  options.onProgress({ phase, sync: job ? {
+    jobId: job.id, status: job.status, processed: job.processed, total: job.total,
+    failed: job.failed || 0, conflicts: job.conflicts || 0,
+  } : null });
+}
+
+async function waitAutomationSyncJob(job, options) {
+  // Completion includes worker cleanup. Keep the account lock while writes drain,
+  // even after Stop; releasing it early would let restoration race file commits.
+  let finished = false;
+  job.completion.then(() => { finished = true; });
+  while (!finished) {
+    automationSwitchProgress(options, options.isCancelled && options.isCancelled() ? 'stopping-sync' : 'syncing-sessions', job);
+    await sleep(200);
+  }
+  automationSwitchProgress(options, 'syncing-sessions', job);
+  assertAutoCopySucceeded(job);
+}
+
+async function acquireAutomationAccountSwitch(options) {
+  for (;;) {
+    if (options.isCancelled && options.isCancelled()) throw new Error('任务已停止');
+    const busy = accountSwitchInProgress || autoCopyWorkerRunning || autoCopyQueue.length || sessionCopyLocks.size;
+    if (!busy) {
+      // Check the latest inbound result, not just an empty queue. A failed job
+      // must not silently become permission to switch once its worker stops.
+      const uid = String((currentAccount() || {}).uid || '');
+      assertAutoCopySucceeded(accountSyncFailures.get(uid));
+      let latest = null;
+      for (const job of autoCopyJobs.values()) if (job.targetUid === uid) latest = job;
+      assertAutoCopySucceeded(latest);
+      // No await between the idle check and claiming the synchronous switch lock.
+      return assertAccountSwitchIdle();
+    }
+    const pending = Array.from(autoCopyJobs.values()).find(job => job.status === 'queued' || job.status === 'running');
+    automationSwitchProgress(options, 'waiting-sync', pending);
+    await sleep(200);
+  }
+}
+
+function automationSwitchAccount(account, options = {}) {
   const target = account && typeof account === 'object' ? account : { uid: String(account || '').trim() };
   const run = automationAccountSwitchTail.then(async () => {
     const uid = String(target.uid || '').trim();
     if (!uid) throw new Error('账号切换缺少 uid');
-    const active = currentAccount();
-    if (active && active.uid === uid) return { ok: true, uid, switched: false };
-    const releaseAccountSwitch = await assertAccountSwitchIdle();
-    const releaseRendererReload = beginRendererReloadPriority();
+    const releaseAccountSwitch = await acquireAutomationAccountSwitch(options);
+    let releaseRendererReload = null;
     try {
+      if (options.isCancelled && options.isCancelled()) throw new Error('任务已停止');
+      const active = currentAccount();
+      if (active && active.uid === uid) return { ok: true, uid, switched: false };
+      automationSwitchProgress(options, options.restore ? 'restoring-account' : 'switching-account');
+      releaseRendererReload = beginRendererReloadPriority();
       const acct = switchTo(DATA_DIR, uid, log);
       pendingAutomationAccountSwitch = { account: { uid: acct.uid, nickname: acct.nickname } };
       await reloadWorkBuddyPage();
@@ -3225,16 +3269,23 @@ function automationSwitchAccount(account) {
       }
       const sourceUid = String(active && active.uid || '');
       const rules = sourceUid ? getAutoCopyRules(DATA_DIR, sourceUid) : {};
+      let job = null;
       if (rules.allSessions || (rules.sessionIds || []).length || (rules.workspaces || []).length) {
-        startAutoCopyJob(sourceUid, uid, [], { sourceName: active.nickname, targetName: acct.nickname });
+        job = startAutoCopyJob(sourceUid, uid, [], { sourceName: active.nickname, targetName: acct.nickname });
       }
-      return { ok: true, uid: acct.uid, nickname: acct.nickname, switched: true };
+      // Sync yields to reload priority: release it before awaiting the job.
+      releaseRendererReload();
+      releaseRendererReload = null;
+      if (job) await waitAutomationSyncJob(job, options);
+      if (options.isCancelled && options.isCancelled()) throw new Error('任务已停止');
+      return { ok: true, uid: acct.uid, nickname: acct.nickname, switched: true, syncJobId: job ? job.id : null };
     } catch (error) {
       pendingAutomationAccountSwitch = null;
       throw error;
     } finally {
-      releaseRendererReload();
+      if (releaseRendererReload) releaseRendererReload();
       releaseAccountSwitch();
+      automationSwitchProgress(options, 'executing');
     }
   });
   automationAccountSwitchTail = run.catch(() => {});
@@ -3250,7 +3301,7 @@ function startAutomationRun(task, event = null) {
   }
   const id = 'run_' + Date.now().toString(36) + '_' + crypto.randomBytes(3).toString('hex');
   const run = { id, taskId: task.id, status: 'running', startedAt: Date.now(), finishedAt: 0, error: '', logs: [], result: null, navigationSerial: event && event.navigationSerial, pageSessionId: event && event.pageSessionId };
-  const isCancelled = () => run.status === 'cancelled' || run.superseded === true ||
+  const isCancelled = () => run.stopRequested === true || run.status === 'cancelled' || run.superseded === true ||
     (task.trigger.restartOnNavigation && event && (event.navigationSerial !== mainFrameNavigationSerial || event.pageSessionId !== cdpPageSessionId));
   log('[automation-focus-diagnostics] automation:start ' + JSON.stringify({ runId: id, taskId: task.id, source: event && event.source || '', account: event && event.account || null, cdpTargetUrl: cdp.targetUrl, cdpTargetTitle: cdp.targetTitle }));
   const appendRunLog = (message) => {
@@ -3290,9 +3341,12 @@ function startAutomationRun(task, event = null) {
     }
   };
   let lastReceipt = null;
-  const readSession = async () => {
+  const readSession = async (expectedReceipt = null) => {
     if (isCancelled()) throw new Error('任务已停止');
-    const response = await cdpSend('Runtime.evaluate', { expression: '(' + probeSessionReceipt.toString() + ')()', returnByValue: true });
+    const expected = expectedReceipt && typeof expectedReceipt === 'object'
+      ? { userMessageId: String(expectedReceipt.userMessageId || ''), requestId: String(expectedReceipt.requestId || '') }
+      : null;
+    const response = await cdpSend('Runtime.evaluate', { expression: '(' + probeSessionReceipt.toString() + ')(' + JSON.stringify(expected) + ')', returnByValue: true });
     return response && response.result && response.result.value || null;
   };
   const sessionAction = async (op, detail) => {
@@ -3303,7 +3357,7 @@ function startAutomationRun(task, event = null) {
       const end = Date.now() + Math.min(300000,Math.max(1000,Number(detail.timeoutMs)||120000));
       while (Date.now() < end) {
         if ((currentAccount() || {}).uid !== receipt.accountUid) throw new Error('账号已变化，已停止等待');
-        const snapshot = await readSession();
+        const snapshot = await readSession(receipt);
         if (receiptComplete(receipt,snapshot)) {
           if (detail.contains) {
             const response = await cdpSend('Runtime.evaluate', {expression: `(function(){var c=window.__wbsWorkBuddyCompat.findConversationControllers(document).find(c=>String(c.conversationId)===${JSON.stringify(receipt.conversationId)});if(!c)return false;var m=c.messageStore.getState().messages.find(m=>String(m.id||m.requestId||'')===${JSON.stringify(snapshot.assistantId)});return !!m&&JSON.stringify(m.content||[]).includes(${JSON.stringify(String(detail.contains))});})()`,returnByValue:true});
@@ -3321,7 +3375,12 @@ function startAutomationRun(task, event = null) {
     if (op === 'session.create') await withInput(() => ensureAutomationNewTask({ guard: () => {
       if (isCancelled() || (currentAccount() || {}).uid !== accountUid) throw new Error('发送前账号或运行状态已变化');
     } }));
-    const before = await readSession();
+    let before = await readSession();
+    // New Task has no conversation controller until WorkBuddy accepts the first
+    // send. Keep the first controller it mounts as the send baseline; after that,
+    // a conversation change is still treated as an external navigation.
+    let sendBaseline = before;
+    let sendSubmitted = false;
     if (op === 'session.send') {
       if (!detail.conversationId || !before || before.conversationId !== detail.conversationId) throw new Error('只能发送到已选中的指定会话');
       if (before.busy) throw new Error('目标会话正在运行');
@@ -3334,17 +3393,43 @@ function startAutomationRun(task, event = null) {
         modelSelection = await withInput(() => selectAutomationModelById(modelId,
           op === 'session.send' ? { conversationId: detail.conversationId } : { accountUid }));
         appendRunLog('session:model:confirmed');
+        // Selecting a model on New Task may mount its provisional conversation
+        // before any text is entered. Treat that renderer-owned transition as
+        // the send baseline; later changes are still rejected by the guard.
+        if (op === 'session.create') {
+          before = await readSession();
+          sendBaseline = before;
+        }
       }
       if (isCancelled() || (currentAccount() || {}).uid !== accountUid) throw new Error('发送前账号或运行状态已变化');
-      await withInput(() => acSendPhrase(String(detail.message || ''), { requireEmpty: true, isCancelled, guard: async () => {
+      await withInput(() => acSendPhrase(String(detail.message || ''), { requireEmpty: true, isCancelled, beforeSubmit: () => {
+        sendSubmitted = true;
+      }, guard: async () => {
         if (isCancelled() || (currentAccount() || {}).uid !== accountUid) throw new Error('账号或运行状态已变化，停止发送');
         const selected = await readSession();
-        if (op === 'session.send' ? !selected || selected.conversationId !== detail.conversationId : selected && (!before || selected.conversationId !== before.conversationId)) throw new Error('会话已变化，停止发送');
-        if (modelId) await confirmAutomationModel(modelId, { displayName: modelSelection.displayName,
-          ...(op === 'session.send' ? { conversationId: detail.conversationId } : { accountUid }) });
+        if (op === 'session.send') {
+          if (!selected || selected.conversationId !== detail.conversationId) throw new Error('会话已变化，停止发送');
+        } else if (selected) {
+          if (!sendBaseline) sendBaseline = selected;
+          else if (selected.conversationId !== sendBaseline.conversationId) {
+            if (!sendSubmitted) throw new Error('会话已变化，停止发送');
+            // WorkBuddy creates the real conversation immediately after the
+            // official send click. Accept that one expected transition.
+            sendBaseline = selected;
+          }
+        }
+        // Before the official click, the selected model is a hard safety guard.
+        // Once the click has happened, WorkBuddy may briefly unmount the New
+        // Task controller while mounting the real conversation. The post-send
+        // receipt loop below confirms that real controller with retries; do
+        // not reject an already-submitted message during that transition.
+        if (modelId && !sendSubmitted) await confirmAutomationModel(modelId, { displayName: modelSelection.displayName,
+          ...(op === 'session.send'
+            ? { conversationId: detail.conversationId }
+            : (selected && selected.conversationId ? { conversationId: selected.conversationId, accountUid } : { accountUid })) });
       } }));
       // Do not retry an unconfirmed send: it may already have reached WorkBuddy.
-      const end = Date.now() + 12000;
+      const end = Date.now() + 30000;
       while (Date.now() < end) {
         if ((currentAccount() || {}).uid !== accountUid) throw new Error('发送后账号已变化，请检查会话；不会自动重发');
         const snapshot = await readSession();
@@ -3403,7 +3488,7 @@ function startAutomationRun(task, event = null) {
           if (isCancelled()) throw new Error('用户停止任务');
           const raw = wdCompatDecryptAuthJson(JSON.parse(fs.readFileSync(accountBackupFile(uid), 'utf8'))); // [wd-compat]
           const auth = raw.auth || {};
-          const token = auth.accessToken || auth.access_token || auth.token;
+          const token = wdCompatAuthToken(auth);
           if (!token) throw new Error('主账号凭据不可用');
           try { return await activateGrowthAccount(token, { apiHost: PROFILE.apiHost, prompt: message, purpose: 'completion-report', timeoutMs: 60000 }); }
           catch (_) { throw new Error('云端汇报未确认成功，请检查主账号云端会话；不会自动重试，避免重复发送'); }
@@ -3417,7 +3502,15 @@ function startAutomationRun(task, event = null) {
   run.cleanupNotifications = runNotifier.cleanup;
   const publicAccounts = () => listAccounts(DATA_DIR).map(a => ({uid:a.uid,nickname:a.nickname,isPrimary:primaryAccountStore.get()===a.uid}));
   const publicCurrent = () => { const a = currentAccount(); return a ? {uid:a.uid,nickname:a.nickname,isPrimary:primaryAccountStore.get()===a.uid} : null; };
-  const runDeps = { runId: id, sessionAction, primaryAccount: async () => publicAccounts().find(a=>a.isPrimary) || null, dismissToast: runNotifier.dismiss, completionReport, event, listAccounts: async () => publicAccounts(), currentAccount: publicCurrent, accountSwitch: (account, detail) => withInput(() => automationSwitchAccount(account), !!(detail && detail.restore)), accountStatus: automationAccountStatus, accountCheckin: async (account) => {
+  const runDeps = { runId: id, sessionAction, primaryAccount: async () => publicAccounts().find(a=>a.isPrimary) || null, dismissToast: runNotifier.dismiss, completionReport, event, orderCheckinAccounts: (accounts) => accountCreditCache.order(accounts), listAccounts: async () => publicAccounts(), currentAccount: publicCurrent, accountSwitch: (account, detail) => withInput(() => automationSwitchAccount(account, {
+    restore: !!(detail && detail.restore),
+    isCancelled: detail && detail.restore ? () => false : isCancelled,
+    onProgress: progress => {
+      if (run.phase !== progress.phase || (run.sync && run.sync.jobId) !== (progress.sync && progress.sync.jobId)) appendRunLog('account:switch:' + progress.phase + (progress.sync ? ':' + progress.sync.jobId : ''));
+      run.phase = progress.phase;
+      run.sync = progress.sync;
+    },
+  }), !!(detail && detail.restore)), accountStatus: automationAccountStatus, accountCheckin: async (account) => {
     if (!account || !account.uid) throw new Error('没有可用账号');
     const result = await claimDailyForUid(account.uid);
     appendRunLog('account:checkin:' + (result.skipped ? 'skipped' : result.ok ? 'success' : 'failed'));
@@ -3470,12 +3563,24 @@ function saveCheckinCache(cache) {
   }
 }
 
+// 加密备份的刷新结果只在 daemon 生命周期内缓存，绝不把解密后的 token 写回磁盘。
+const backupAuthRuntimeCache = new Map();
+
 /** 刷新备份账号凭证：临期惰性刷新，或距上次刷新超过一天时执行保活。 */
 async function refreshAccountBackupToken(uid, options = {}) {
   const file = path.join(DATA_DIR, 'accounts', uid + '.info');
   let root;
+  let encryptedAtRest = false;
+  let sourceSignature = '';
   try {
-    root = wdCompatDecryptAuthJson(JSON.parse(fs.readFileSync(file, 'utf8'))); // [wd-compat]
+    const stat = fs.statSync(file);
+    sourceSignature = `${stat.mtimeMs}:${stat.size}`;
+    const stored = JSON.parse(fs.readFileSync(file, 'utf8'));
+    encryptedAtRest = wdCompatContainsEncryptedFields(stored);
+    const cached = backupAuthRuntimeCache.get(uid);
+    root = cached && cached.signature === sourceSignature
+      ? cached.root
+      : wdCompatDecryptAuthJson(stored); // [wd-compat]
   } catch (e) {
     return { root: null, error: 'read-account-failed: ' + e.message };
   }
@@ -3493,6 +3598,11 @@ async function refreshAccountBackupToken(uid, options = {}) {
     return { root, refreshed: false, error: result.error };
   }
   const nextRoot = Object.assign({}, root, { auth: result.auth });
+  if (encryptedAtRest) {
+    backupAuthRuntimeCache.set(uid, { signature: sourceSignature, root: nextRoot });
+    log(`[token-refresh] 账号 ${uid} 已刷新（加密备份仅保存在内存）`);
+    return { root: nextRoot, refreshed: true, persisted: false };
+  }
   const tmp = file + '.tmp';
   try {
     fs.writeFileSync(tmp, JSON.stringify(nextRoot, null, 2), { mode: 0o600 });
@@ -3503,7 +3613,8 @@ async function refreshAccountBackupToken(uid, options = {}) {
     log(`[token-refresh] 账号 ${uid} 刷新结果落盘失败: ${e.message}`);
     return { root, refreshed: false, error: 'write-account-failed: ' + e.message };
   }
-  return { root: nextRoot, refreshed: true };
+  backupAuthRuntimeCache.delete(uid);
+  return { root: nextRoot, refreshed: true, persisted: true };
 }
 
 /**
@@ -3596,7 +3707,7 @@ async function performAccountCheckin(uid) {
   const refreshError = refreshed.error || '';
   if (!accountRoot) return { uid, ok: false, reason: refreshed.error || 'no-backup' };
   const auth = accountRoot.auth && typeof accountRoot.auth === 'object' ? accountRoot.auth : {};
-  const tk = auth.accessToken || auth.access_token || auth.token;
+  const tk = wdCompatAuthToken(auth);
   if (!tk) return { uid, ok: false, reason: 'no-accessToken' };
   const account = { uid, domain: auth.domain || '' };
   const r = await dailyCheckin(tk, account);
@@ -4107,8 +4218,9 @@ function sessionContentMtime(wbHome, sessionId) {
 }
 
 // Yield between session pairs so renderer reloads and UI events can complete.
-async function yieldAutoCopyToRenderer() {
+async function yieldAutoCopyToRenderer(options = {}) {
   await new Promise((resolve) => setImmediate(resolve));
+  if (options && options.waitForInjection === false) return;
   const reloadPriority = rendererReloadPriorityPromise;
   if (reloadPriority) await reloadPriority;
   const pending = pendingReloadInjection;
@@ -4177,10 +4289,14 @@ function collectSessionArchiveFiles(wbHome, sessionId) {
 }
 
 function ensureArchiveParentNoFollow(wbHome, target) {
-  const root = path.resolve(wbHome);
+  // The configured WorkBuddy root may itself be a junction/symlink. Resolve
+  // only that boundary; every managed child component remains no-follow.
+  const configuredRoot = path.resolve(wbHome);
+  const root = fs.realpathSync(configuredRoot);
   const rootStat = fs.lstatSync(root);
-  if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) throw new Error('WorkBuddy 数据目录不是受管目录');
-  const parent = path.dirname(resolveArchiveTarget(root, archiveRelativePath(root, target)));
+  if (!rootStat.isDirectory()) throw new Error('WorkBuddy 数据目录不是受管目录');
+  const relativeTarget = archiveRelativePath(configuredRoot, path.resolve(target));
+  const parent = path.dirname(resolveArchiveTarget(root, relativeTarget));
   const relative = path.relative(root, parent);
   let current = root;
   for (const part of relative.split(path.sep).filter(Boolean)) {
@@ -4250,6 +4366,8 @@ function sqlPlaceholders(values) {
 }
 
 async function insertCopiedSession(src, targetUid, newId) {
+  const updatedAt = Date.now();
+  const lastActivityAt = Number(src.last_activity_at || src.updated_at || updatedAt);
   const vals = [
     newId,
     src.cwd || '',
@@ -4258,8 +4376,8 @@ async function insertCopiedSession(src, targetUid, newId) {
     src.custom_title || '',
     src.status || 'Pending',
     Number(src.created_at || Date.now()),
-    Date.now(),
-    Number(src.last_activity_at || src.updated_at || Date.now()),
+    updatedAt,
+    lastActivityAt,
     Number(src.is_playground || 0),
     src.source_mode || null,
     src.is_background_automation === null || src.is_background_automation === undefined || src.is_background_automation === '' ? null : Number(src.is_background_automation),
@@ -4277,6 +4395,11 @@ async function insertCopiedSession(src, targetUid, newId) {
     'INSERT INTO sessions (' + SESSION_COPY_COLUMNS.join(',') + ') VALUES (' + sqlPlaceholders(vals) + ');',
     vals
   );
+  // The inserted row intentionally gets a fresh updated_at. Persisting the
+  // source revision here would make every later switch look dirty.
+  return Object.assign({}, src, {
+    id: newId, user_id: targetUid, updated_at: updatedAt, last_activity_at: lastActivityAt,
+  });
 }
 
 async function createForkSession(src, selection) {
@@ -4378,13 +4501,247 @@ async function importSessionArchives(payload, targetUid, staged = false) {
   return { imported, failed: errors.length, errors: summarizeSessionImportErrors(errors) };
 }
 
+// Session-copy fingerprint cache: files whose size/mtime/ctime are unchanged
+// reuse their stored SHA-256 instead of being re-read on every sync. Best
+// effort only — a lost or stale entry just costs one re-read. The cap must
+// cover every session file on disk (tens of thousands), or active sessions
+// evict each other and the cache never warms up.
+const SESSION_SYNC_CACHE_LIMIT = 100000;
+const SESSION_SYNC_CACHE_VERSION = 2;
+let sessionSyncCacheState = null;
+function getSessionSyncCache() {
+  if (sessionSyncCacheState) return sessionSyncCacheState.map;
+  const file = path.join(DATA_DIR, 'session-sync-cache.json');
+  const map = new Map();
+  try {
+    const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
+    if (raw && raw.version === SESSION_SYNC_CACHE_VERSION && raw.entries && typeof raw.entries === 'object') {
+      for (const [key, entry] of Object.entries(raw.entries)) {
+        if (!entry || typeof entry !== 'object') continue;
+        if (typeof entry.hash !== 'string' || !entry.hash) continue;
+        if (![entry.size, entry.mtimeMs, entry.ctimeMs].every(Number.isFinite)) continue;
+        map.set(key, entry);
+      }
+    }
+  } catch (_) {}
+  while (map.size > SESSION_SYNC_CACHE_LIMIT) map.delete(map.keys().next().value);
+  sessionSyncCacheState = { file, map, timer: null, dirty: false };
+  const set = map.set.bind(map);
+  map.set = (key, value) => { sessionSyncCacheState.dirty = true; return set(key, value); };
+  return map;
+}
+function scheduleSessionSyncCacheSave() {
+  const state = sessionSyncCacheState;
+  if (!state || !state.dirty || state.timer) return;
+  state.timer = setTimeout(() => {
+    state.timer = null;
+    if (!state.dirty) return;
+    state.dirty = false;
+    try {
+      while (state.map.size > SESSION_SYNC_CACHE_LIMIT) state.map.delete(state.map.keys().next().value);
+      fs.mkdirSync(path.dirname(state.file), { recursive: true });
+      replaceFileWithRetry(state.file, JSON.stringify({ version: SESSION_SYNC_CACHE_VERSION, entries: Object.fromEntries(state.map) }), 0o600);
+    } catch (_) { state.dirty = true; }
+  }, 1000);
+  if (typeof state.timer.unref === 'function') state.timer.unref();
+}
+
+function sessionCopyRowRevision(row) {
+  return JSON.stringify([
+    String(row && row.id || ''), String(row && row.user_id || ''),
+    Number(row && row.updated_at || 0), Number(row && row.last_activity_at || 0),
+    String(row && row.status || ''), String(row && row.title || ''), String(row && row.custom_title || ''),
+  ]);
+}
+
+// The physical session id and account id intentionally differ between members
+// of one shared lineage. Keep the content portion separately so a mapping
+// created from another account can still prove that an unchanged member is a
+// no-op without entering the filesystem snapshot path.
+function sessionCopyContentRevision(row) {
+  return JSON.stringify([
+    Number(row && row.updated_at || 0), Number(row && row.last_activity_at || 0),
+    String(row && row.status || ''), String(row && row.title || ''), String(row && row.custom_title || ''),
+  ]);
+}
+
+// This revision is the cheap fallback used when the renderer event was
+// missed. WorkBuddy advances updated_at for edits that do not necessarily
+// change the sidebar lifecycle payload, so it is part of the observable
+// session state. The fallback still avoids filesystem snapshots and hashes.
+function sessionCopyStableStateRevision(row) {
+  return JSON.stringify([
+    Number(row && row.updated_at || 0), Number(row && row.last_activity_at || 0), String(row && row.status || ''),
+    String(row && row.title || ''), String(row && row.custom_title || ''),
+  ]);
+}
+
+const SESSION_DIRTY_FILE = typeof DATA_DIR !== 'undefined' && typeof path !== 'undefined'
+  ? path.join(DATA_DIR, 'session-dirty.json') : '';
+let sessionDirtyState = null;
+function getSessionDirtyIndex() {
+  if (sessionDirtyState) return sessionDirtyState.index;
+  let raw = null;
+  try { if (SESSION_DIRTY_FILE) raw = JSON.parse(fs.readFileSync(SESSION_DIRTY_FILE, 'utf8')); } catch (_) {}
+  const index = typeof createDirtyIndex === 'function'
+    ? createDirtyIndex(raw)
+    : { get: () => null, mark: () => null, markBaseline: () => false, clear: () => false, shouldSync: () => true, isInitialized: () => false, state: {} };
+  sessionDirtyState = { index, timer: null, dirty: false };
+  return index;
+}
+function scheduleSessionDirtySave() {
+  const state = sessionDirtyState;
+  if (!state || !state.dirty || state.timer) return;
+  state.timer = setTimeout(() => {
+    state.timer = null;
+    if (!state.dirty) return;
+    state.dirty = false;
+    try {
+      if (!SESSION_DIRTY_FILE) return;
+      fs.mkdirSync(path.dirname(SESSION_DIRTY_FILE), { recursive: true });
+      replaceFileWithRetry(SESSION_DIRTY_FILE, JSON.stringify(state.index.state), 0o600);
+    } catch (_) { state.dirty = true; }
+  }, 250);
+  if (typeof state.timer.unref === 'function') state.timer.unref();
+}
+function markSessionDirty(uid, sessionId, event) {
+  const state = sessionDirtyState || (getSessionDirtyIndex(), sessionDirtyState);
+  const before = state.index.get(uid, sessionId);
+  const marker = state.index.mark(uid, sessionId, event);
+  if (marker && (!before || before.at !== marker.at || before.event !== marker.event)) {
+    state.dirty = true;
+    scheduleSessionDirtySave();
+  }
+  return marker;
+}
+function markSessionDirtyBaseline(uid) {
+  const state = sessionDirtyState || (getSessionDirtyIndex(), sessionDirtyState);
+  if (state.index.markBaseline(uid)) {
+    state.dirty = true;
+    scheduleSessionDirtySave();
+  }
+}
+function clearSessionDirty(uid, sessionId, expectedAt) {
+  const state = sessionDirtyState || (getSessionDirtyIndex(), sessionDirtyState);
+  if (!state.index.clear(uid, sessionId, expectedAt)) return false;
+  state.dirty = true;
+  scheduleSessionDirtySave();
+  return true;
+}
+
+function mappingSourceRevisionMatches(mapping, sourceUid, sourceRow) {
+  if (!mapping) return false;
+  const sourceRevision = sessionCopyRowRevision(sourceRow);
+  const sourceRevisions = mapping.sourceRevisions;
+  if (sourceRevisions && typeof sourceRevisions === 'object' &&
+      sourceRevisions[String(sourceUid || '')] === sourceRevision) return true;
+  if (mapping.sourceUid && String(mapping.sourceUid) === String(sourceUid || '') &&
+      mapping.sourceRevision === sourceRevision) return true;
+  const contentRevision = sessionCopyContentRevision(sourceRow);
+  if (mapping.sourceStateRevision === sessionCopyStableStateRevision(sourceRow)) return true;
+  if (mapping.sourceContentRevision === contentRevision) return true;
+  // Mappings written before sourceStateRevision existed contain the same
+  // content tuple after the id/user fields. Accept that tuple for migration.
+  try {
+    const legacy = JSON.parse(mapping.sourceRevision);
+    if (Array.isArray(legacy) && JSON.stringify(legacy.slice(2)) === sessionCopyStableStateRevision(sourceRow)) return true;
+  } catch (_) {}
+  return false;
+}
+
+// WorkBuddy may advance only updated_at while restoring/activating a
+// conversation. That row change is a renderer lifecycle event; a real message
+// edit also advances last_activity_at (or changes status/title metadata). Keep
+// this narrower check separate from the full revision check so message edits
+// still enter the snapshot worker.
+function mappingSourceLifecycleRevisionMatches(mapping, sourceRow) {
+  if (!mapping || !sourceRow) return false;
+  const candidates = [];
+  if (typeof mapping.sourceRevision === 'string') candidates.push(mapping.sourceRevision);
+  if (typeof mapping.sourceStateRevision === 'string') candidates.push(mapping.sourceStateRevision);
+  if (typeof mapping.sourceContentRevision === 'string') candidates.push(mapping.sourceContentRevision);
+  const current = JSON.stringify([
+    Number(sourceRow.last_activity_at || 0), String(sourceRow.status || ''),
+    String(sourceRow.title || ''), String(sourceRow.custom_title || ''),
+  ]);
+  for (const value of candidates) {
+    try {
+      const parsed = JSON.parse(value);
+      if (!Array.isArray(parsed)) continue;
+      const offset = parsed.length >= 7 ? 2 : 0;
+      if (parsed.length >= offset + 5 && JSON.stringify(parsed.slice(offset + 1, offset + 5)) === current) return true;
+    } catch (_) {}
+  }
+  return false;
+}
+
+function mappingWithSourceRevision(mapping, sourceUid, sourceRow) {
+  const sourceRevision = sessionCopyRowRevision(sourceRow);
+  const sourceRevisions = mapping && mapping.sourceRevisions && typeof mapping.sourceRevisions === 'object'
+    ? Object.assign({}, mapping.sourceRevisions)
+    : {};
+  sourceRevisions[String(sourceUid || '')] = sourceRevision;
+  return {
+    sourceRevision,
+    sourceUid: String(sourceUid || ''),
+    sourceContentRevision: sessionCopyContentRevision(sourceRow),
+    sourceStateRevision: sessionCopyStableStateRevision(sourceRow),
+    sourceRevisions,
+  };
+}
+
+function mappingTargetRevisionMatches(mapping, targetRow) {
+  if (!mapping || !targetRow) return false;
+  const stable = sessionCopyStableStateRevision(targetRow);
+  if (mapping.targetStateRevision === stable) return true;
+  try {
+    const legacy = JSON.parse(mapping.targetRevision);
+    if (Array.isArray(legacy) && JSON.stringify(legacy.slice(2)) === stable) return true;
+  } catch (_) {}
+  return mapping.targetRevision === sessionCopyRowRevision(targetRow);
+}
+
+// Opening a copied conversation can refresh its status/last-activity fields
+// without changing any session files. Treat that lifecycle-only drift as a
+// stable target when planning incremental sync; actual content/title revision
+// changes still go through the normal worker path.
+function mappingTargetLifecycleRevisionMatches(mapping, targetRow) {
+  if (!mapping || !targetRow) return false;
+  const candidates = [];
+  if (typeof mapping.targetRevision === 'string') candidates.push(mapping.targetRevision);
+  if (typeof mapping.targetStateRevision === 'string') candidates.push(mapping.targetStateRevision);
+  for (const value of candidates) {
+    try {
+      const parsed = JSON.parse(value);
+      if (!Array.isArray(parsed) || parsed.length < 5) continue;
+      // Revisions are [updatedAt, lastActivityAt, status, title, customTitle]
+      // or their row form with the id/user prefix. Activation can rewrite all
+      // lifecycle fields; title/custom title remain the user-facing identity.
+      const offset = parsed.length >= 7 ? 2 : 0;
+      const comparable = JSON.stringify([parsed[offset + 3], parsed[offset + 4]]);
+      const now = JSON.stringify([String(targetRow.title || ''), String(targetRow.custom_title || '')]);
+      if (comparable === now) return true;
+    } catch (_) {}
+  }
+  return false;
+}
+
 async function copySessionRecord(src, targetUid, options = {}) {
+  if (accountSwitchInProgress && !options.auto) throw new Error('账号正在切换，请稍后同步');
   const sourceUid = String(options.sourceUid || src.user_id || '').trim();
   targetUid = String(targetUid || '').trim();
   if (!sourceUid || !targetUid || sourceUid === targetUid) return { status: 'skipped', sourceId: src.id, targetId: src.id };
   // Provenance, not matching titles/timestamps, identifies an existing copy.
   const lineageId = options.lineageId || getAutoCopySession(DATA_DIR, sourceUid, src.id).lineageId ||
     ensureAutoCopySession(DATA_DIR, sourceUid, src.id, { enabled: false });
+  // Multiple session workers may finish together. Serialize only the shared
+  // meta.json read-modify-write operations; filesystem snapshots stay parallel.
+  const withAutoCopyMetaWrite = (task) => {
+    const previous = copySessionRecord._metaWriteTail || Promise.resolve();
+    const current = previous.catch(() => {}).then(task);
+    copySessionRecord._metaWriteTail = current.catch(() => {});
+    return current;
+  };
   const perform = async () => {
     await yieldAutoCopyToRenderer();
     const readRow = async (id, uid) => (await sqliteQuery(
@@ -4392,6 +4749,11 @@ async function copySessionRecord(src, targetUid, options = {}) {
     ))[0];
     const sourceRow = await readRow(src.id, sourceUid);
     if (!sourceRow) throw new Error('源会话已变化，请重试');
+    const dirtyIndex = typeof getSessionDirtyIndex === 'function' ? getSessionDirtyIndex() : null;
+    const dirtyMarker = options.auto && dirtyIndex ? dirtyIndex.get(sourceUid, sourceRow.id) : null;
+    const clearAutoDirty = () => {
+      if (options.auto && dirtyMarker && typeof clearSessionDirty === 'function') clearSessionDirty(sourceUid, sourceRow.id, dirtyMarker.at);
+    };
     const mapping = getAutoCopyMapping(DATA_DIR, lineageId, targetUid);
     const ids = new Set(getAutoCopySessionMembers(DATA_DIR, lineageId, targetUid));
     if (mapping && mapping.targetId) ids.add(mapping.targetId);
@@ -4400,12 +4762,67 @@ async function copySessionRecord(src, targetUid, options = {}) {
       const row = await readRow(id, targetUid);
       if (row) candidates.push(row);
     }
+    // A previous daemon could have created the target row and crashed before
+    // persisting its lineage member/mapping. Repeated account switches must
+    // recover that exact content instead of allocating another physical row.
+    // Restrict the recovery probe to the same workspace/title so unrelated
+    // sessions are never merged by a fuzzy match; the snapshot comparison
+    // below remains the final proof of identity.
+    if (!candidates.length && (!mapping || !mapping.targetId) && sourceRow.cwd) {
+      try {
+        const fallbackRows = await sqliteQuery(
+          'SELECT ' + SESSION_COPY_COLUMNS.join(',') + ' FROM sessions WHERE deleted_at IS NULL AND user_id = ? AND cwd = ? AND title = ? AND custom_title = ?;',
+          [targetUid, sourceRow.cwd, sourceRow.title || '', sourceRow.custom_title || '']
+        );
+        for (const row of fallbackRows || []) {
+          if (row && String(row.id || '') !== String(sourceRow.id || '')) candidates.push(row);
+        }
+      } catch (_) {}
+    }
     const targetIds = candidates.length ? candidates.map(row => row.id) : [crypto.randomUUID()];
     const aliases = getAutoCopySessionMemberRecords(DATA_DIR, lineageId).map(member => member.id).concat(targetIds);
-    let left = sessionSync.readSnapshot(PROFILE.dataRoot, sourceRow.id, aliases);
+    const syncCache = getSessionSyncCache();
+    const existingMappingTarget = mapping && mapping.targetId ? candidates.find(row => row.id === mapping.targetId) : null;
+    // A brand-new destination has no target bytes to protect and is the only
+    // path that copies every selected session. The synchronous snapshot/apply
+    // implementation matches main's low-overhead file path; using it here
+    // avoids the per-file async stream/hash scheduling cost during first-time
+    // account initialization. Existing copies keep the async path so normal
+    // incremental repairs continue to yield to the renderer.
+    const firstTargetCopy = options.auto && !existingMappingTarget && candidates.length === 0;
+    // Automatic switching revisits the same source/target pairs frequently.
+    // WorkBuddy updates the session row whenever its content changes. Validate
+    // the persisted source/target row revisions before paying for a complete
+    // recursive snapshot and hash comparison. Do not scan projects/ here:
+    // there can be thousands of unrelated project directories, and doing that
+    // once per unchanged session made account switching slower than copying.
+    // Fast path is opt-in by fingerprintVersion so mappings written before
+    // revision persistence are revalidated once through the normal snapshot
+    // comparison path.
+    if (options.auto && existingMappingTarget && mapping.fingerprintVersion === 2 &&
+        mappingSourceRevisionMatches(mapping, sourceUid, sourceRow) &&
+        mappingTargetRevisionMatches(mapping, existingMappingTarget)) {
+      const sourceBytes = Number(mapping.sourceBytes);
+      const totalBytes = Number(mapping.totalBytes);
+      const warning = (Number.isFinite(sourceBytes) ? sourceBytes : 0) > 100 * 1024 * 1024
+        ? '会话超过 100 MB，同步可能较慢' : '';
+      clearAutoDirty();
+      return {
+        status: 'skipped', sourceId: sourceRow.id, targetId: existingMappingTarget.id,
+        branched: false, failedFiles: 0, warning,
+        sourceBytes: Number.isFinite(sourceBytes) ? sourceBytes : 0,
+        totalBytes: Number.isFinite(totalBytes) ? totalBytes : (Number.isFinite(sourceBytes) ? sourceBytes : 0),
+        copiedBytes: 0,
+      };
+    }
+    let left = firstTargetCopy
+      ? sessionSync.readSnapshot(PROFILE.dataRoot, sourceRow.id, aliases, syncCache)
+      : await sessionSync.readSnapshotAsync(PROFILE.dataRoot, sourceRow.id, aliases, syncCache);
     const selection = await sessionSync.selectTargetSnapshot(left, targetIds, async id => {
       await yieldAutoCopyToRenderer();
-      return sessionSync.readSnapshot(PROFILE.dataRoot, id, aliases);
+      return firstTargetCopy
+        ? sessionSync.readSnapshot(PROFILE.dataRoot, id, aliases, syncCache)
+        : sessionSync.readSnapshotAsync(PROFILE.dataRoot, id, aliases, syncCache);
     }, mapping && mapping.targetId);
     // A divergent source still needs to reach the destination. Publish it as
     // a new physical session in the same lineage, so later scans find it by
@@ -4414,7 +4831,30 @@ async function copySessionRecord(src, targetUid, options = {}) {
     const targetId = branched ? crypto.randomUUID() : selection.targetId;
     if (branched) aliases.push(targetId);
     const existing = candidates.find(row => row.id === targetId) || null;
-    let right = sessionSync.readSnapshot(PROFILE.dataRoot, targetId, aliases);
+    // An equal selection needs no writes: the trimmed selection snapshot is
+    // enough to skip, and the next sync re-reads everything anyway. Avoid the
+    // extra full target snapshot on the hot all-skipped path.
+    if (!branched && selection.comparison.kind === 'equal') {
+      await withAutoCopyMetaWrite(() => {
+        if (!getAutoCopySessionMembers(DATA_DIR, lineageId, targetUid).includes(targetId)) addAutoCopySessionMember(DATA_DIR, lineageId, targetUid, targetId);
+        setAutoCopyMapping(DATA_DIR, lineageId, targetUid, {
+          targetId, status: 'copied', failedFiles: 0, fingerprintVersion: 2,
+          ...mappingWithSourceRevision(mapping, sourceUid, sourceRow),
+          targetRevision: sessionCopyRowRevision(existing || { ...sourceRow, id: targetId, user_id: targetUid }),
+          targetStateRevision: sessionCopyStableStateRevision(existing || { ...sourceRow, id: targetId, user_id: targetUid }),
+          sourceBytes: left.totalBytes, totalBytes: left.totalBytes,
+        });
+      });
+      const warning = left.totalBytes > 100 * 1024 * 1024 ? '会话超过 100 MB，同步可能较慢' : '';
+      clearAutoDirty();
+      return { status: 'skipped', sourceId: src.id, targetId, branched: false, failedFiles: 0, warning, sourceBytes: left.totalBytes, totalBytes: left.totalBytes, copiedBytes: 0 };
+    }
+    let right = firstTargetCopy
+      ? sessionSync.readSnapshot(PROFILE.dataRoot, targetId, aliases, syncCache)
+      : await sessionSync.readSnapshotAsync(PROFILE.dataRoot, targetId, aliases, syncCache);
+    // Size is advisory only; both manual and automatic sync keep all files.
+    const warning = Math.max(left.totalBytes, right.totalBytes) > 100 * 1024 * 1024
+      ? '会话超过 100 MB，同步可能较慢' : '';
     // Selection may have yielded while inspecting other legacy copies.
     // Require the chosen complete snapshot to remain the same before writing.
     if (!branched && selection.snapshot.records && sessionSync.compareSnapshots(selection.snapshot, right).kind !== 'equal') {
@@ -4423,35 +4863,57 @@ async function copySessionRecord(src, targetUid, options = {}) {
     const comparison = sessionSync.compareSnapshots(left, right);
     if (comparison.kind === 'conflict') throw new Error('会话记录正在变化，请稍后重试');
     let changed = false;
+    let totalBytes = left.totalBytes;
+    let copiedBytes = 0;
+    let persistedTargetRow = existing || null;
     const update = async (from, to, fromRow, toRow, missingOnly = false) => {
       await yieldAutoCopyToRenderer();
       const verifyRows = async () => {
-        await assertSessionSyncIdle();
+        await assertSessionSyncIdle([fromRow && fromRow.id, toRow && toRow.id]);
         const freshSource = await readRow(fromRow.id, fromRow.user_id);
         const freshTarget = toRow ? await readRow(toRow.id, toRow.user_id) : null;
         if (JSON.stringify(freshSource) !== JSON.stringify(fromRow) || (toRow && JSON.stringify(freshTarget) !== JSON.stringify(toRow))) {
           throw new Error('会话记录正在变化，请稍后重试');
         }
       };
-      await sessionSync.applySnapshot(from, to, {
-        backupRoot: path.join(DATA_DIR, 'session-sync-backups'), metadata: toRow,
-        missingOnly, guard: verifyRows,
-        commit: async verifyPublished => {
-          await verifyRows();
-          verifyPublished();
-          if (!toRow) {
-            // Reserve provenance before the row becomes visible, so a crash
-            // after insertion cannot create an untracked duplicate on retry.
-            addAutoCopySessionMember(DATA_DIR, lineageId, targetUid, targetId, { branchCopy: branched });
-            await insertCopiedSession(fromRow, targetUid, targetId);
-          }
-          else if (!missingOnly) await sqliteRun(
+      const commit = async (verifyPublished) => {
+        await verifyRows();
+        await verifyPublished();
+        if (!toRow) {
+          // Reserve provenance before the row becomes visible, so a crash
+          // after insertion cannot create an untracked duplicate on retry.
+          await withAutoCopyMetaWrite(() => addAutoCopySessionMember(DATA_DIR, lineageId, targetUid, targetId, { branchCopy: branched }));
+          persistedTargetRow = await insertCopiedSession(fromRow, targetUid, targetId);
+        }
+        else if (!missingOnly) {
+          const updatedAt = Number(fromRow.updated_at || 0);
+          const lastActivityAt = Number(fromRow.last_activity_at || fromRow.updated_at || 0);
+          await sqliteRun(
             'UPDATE sessions SET title = ?, custom_title = ?, status = ?, updated_at = ?, last_activity_at = ? WHERE id = ? AND user_id = ? AND deleted_at IS NULL;',
             [fromRow.title || '', fromRow.custom_title || '', fromRow.status || 'Pending',
-              Number(fromRow.updated_at || 0), Number(fromRow.last_activity_at || fromRow.updated_at || 0), toRow.id, toRow.user_id]
+              updatedAt, lastActivityAt, toRow.id, toRow.user_id]
           );
-        },
-      });
+          persistedTargetRow = Object.assign({}, toRow, {
+            title: fromRow.title || '', custom_title: fromRow.custom_title || '', status: fromRow.status || 'Pending',
+            updated_at: updatedAt, last_activity_at: lastActivityAt,
+          });
+        }
+      };
+      const applied = await (firstTargetCopy
+        ? sessionSync.applySnapshot(from, to, {
+          backupRoot: path.join(DATA_DIR, 'session-sync-backups'), metadata: toRow,
+          missingOnly, guard: verifyRows,
+          onProgress: options.onProgress,
+          commit,
+        })
+        : sessionSync.applySnapshotAsync(from, to, {
+        backupRoot: path.join(DATA_DIR, 'session-sync-backups'), metadata: toRow,
+        missingOnly, guard: verifyRows,
+        onProgress: options.onProgress,
+        commit,
+      }));
+      totalBytes = applied.totalBytes;
+      copiedBytes += applied.copiedBytes;
       changed = true;
     };
     if (comparison.kind === 'left-extends') await update(left, right, sourceRow, existing);
@@ -4460,14 +4922,28 @@ async function copySessionRecord(src, targetUid, options = {}) {
       if (comparison.missingRight) await update(left, right, sourceRow, existing, true);
       if (comparison.missingLeft) {
         // Re-read after the first repair, so race detection uses current bytes.
-        left = sessionSync.readSnapshot(PROFILE.dataRoot, sourceRow.id, aliases);
-        right = sessionSync.readSnapshot(PROFILE.dataRoot, targetId, aliases);
+        left = firstTargetCopy
+          ? sessionSync.readSnapshot(PROFILE.dataRoot, sourceRow.id, aliases, syncCache)
+          : await sessionSync.readSnapshotAsync(PROFILE.dataRoot, sourceRow.id, aliases, syncCache);
+        right = firstTargetCopy
+          ? sessionSync.readSnapshot(PROFILE.dataRoot, targetId, aliases, syncCache)
+          : await sessionSync.readSnapshotAsync(PROFILE.dataRoot, targetId, aliases, syncCache);
         await update(right, left, existing, sourceRow, true);
       }
     }
-    if (!getAutoCopySessionMembers(DATA_DIR, lineageId, targetUid).includes(targetId)) addAutoCopySessionMember(DATA_DIR, lineageId, targetUid, targetId);
-    if (changed || !mapping || mapping.targetId !== targetId) setAutoCopyMapping(DATA_DIR, lineageId, targetUid, { targetId, status: 'copied', failedFiles: 0 });
-    return { status: changed ? 'copied' : 'skipped', sourceId: src.id, targetId, branched: branched && changed, failedFiles: 0 };
+    const mappingTarget = persistedTargetRow || existing || { ...sourceRow, id: targetId, user_id: targetUid };
+    await withAutoCopyMetaWrite(() => {
+      if (!getAutoCopySessionMembers(DATA_DIR, lineageId, targetUid).includes(targetId)) addAutoCopySessionMember(DATA_DIR, lineageId, targetUid, targetId);
+      return setAutoCopyMapping(DATA_DIR, lineageId, targetUid, {
+        targetId, status: 'copied', failedFiles: 0, fingerprintVersion: 2,
+        ...mappingWithSourceRevision(mapping, sourceUid, sourceRow),
+        targetRevision: sessionCopyRowRevision(mappingTarget),
+        targetStateRevision: sessionCopyStableStateRevision(mappingTarget),
+        sourceBytes: left.totalBytes, totalBytes,
+      });
+    });
+    clearAutoDirty();
+    return { status: changed ? 'copied' : 'skipped', sourceId: src.id, targetId, branched: branched && changed, failedFiles: 0, warning, sourceBytes: left.totalBytes, totalBytes, copiedBytes };
   };
   // One lineage lock also serializes manual copy and reverse-direction updates.
   const lockKey = lineageId;
@@ -4475,34 +4951,241 @@ async function copySessionRecord(src, targetUid, options = {}) {
   const current = previous.catch(() => {}).then(perform);
   sessionCopyLocks.set(lockKey, current);
   try { return await current; }
-  finally { if (sessionCopyLocks.get(lockKey) === current) sessionCopyLocks.delete(lockKey); }
+  finally {
+    if (sessionCopyLocks.get(lockKey) === current) sessionCopyLocks.delete(lockKey);
+    scheduleSessionSyncCacheSave();
+  }
 }
 
-async function buildAutoCopyPlan(sourceUid, targetUid) {
+async function buildAutoCopyPlan(sourceUid, targetUid, requestedSessionIds = []) {
   const source = String(sourceUid || '').trim();
   const target = String(targetUid || '').trim();
   if (!source || !target || source === target) return [];
   normalizeAutoCopyLineages(DATA_DIR);
   const rules = getAutoCopyRules(DATA_DIR, source);
-  if (!rules.allSessions && !rules.sessionIds.length && !rules.workspaces.length) return [];
+  const requested = new Set((Array.isArray(requestedSessionIds) ? requestedSessionIds : [])
+    .map((id) => String(id || '').trim())
+    .filter((id) => id && id.length <= 200 && id !== '.' && id !== '..' &&
+      !/[\\/\x00-\x1f\x7f]/.test(id) && !/^[ .]|[ .]$/.test(id) && !/[<>:"|?*]/.test(id)));
+  if (!rules.allSessions && !rules.sessionIds.length && !rules.workspaces.length && !requested.size) return [];
   const rows = await sqliteQuery(
     'SELECT id, cwd, user_id, title, custom_title, status, created_at, updated_at, last_activity_at, is_playground, source_mode, is_background_automation, mode, model, expert_id, expert_locale, expert_runtime_identity, expert_marketplace, permission_mode, use_sandbox_cli, project_id ' +
     'FROM sessions WHERE deleted_at IS NULL AND user_id = ? ORDER BY created_at DESC;',
     [source]
   );
   const workspaceSet = new Set(rules.workspaces.map(canonicalWorkspace));
-  const selectedRows = rows.filter((row) => isAutoCopySessionSelected(rules, row));
+  const selectedRows = rows.filter((row) => requested.has(String(row.id || '')) || isAutoCopySessionSelected(rules, row));
+  const mappings = getAutoCopyMappings(
+    DATA_DIR,
+    selectedRows.map((row) => {
+      const known = rules.allLineages && rules.allLineages[String(row.id)];
+      if (known) return known;
+      if (!requested.has(String(row.id || '')) || typeof getAutoCopySession !== 'function') return null;
+      try { return getAutoCopySession(DATA_DIR, source, row.id).lineageId; } catch (_) { return null; }
+    }).filter(Boolean),
+    target
+  );
+  const dirtyIndex = typeof getSessionDirtyIndex === 'function'
+    ? getSessionDirtyIndex()
+    : { shouldSync: () => true };
+  const clearStableDirtyMarker = (row, mapping, provenEqual = false) => {
+    if (!mapping || mapping.fingerprintVersion !== 2 || !mapping.targetId ||
+        (!provenEqual && !mappingSourceRevisionMatches(mapping, source, row))) return false;
+    if (typeof dirtyIndex.get !== 'function' || typeof clearSessionDirty !== 'function') return false;
+    const marker = dirtyIndex.get(source, row.id);
+    if (!marker) return false;
+    // Markers written by the pre-1.2.139 lifecycle signature can survive a
+    // reload even though both persisted revisions prove the mapping is clean.
+    // Clear only that proven no-op; a changed source revision remains dirty.
+    clearSessionDirty(source, row.id, marker.at);
+    return true;
+  };
+  const refreshStableMappedPayload = async (row, mapping, targetRow, lineageId) => {
+    if (!mapping || !mapping.targetId || !targetRow || !lineageId ||
+        typeof sessionSync === 'undefined' || typeof sessionSync.readSnapshotAsync !== 'function' ||
+        typeof sessionSync.compareSnapshots !== 'function') return false;
+    try {
+      const members = typeof getAutoCopySessionMemberRecords === 'function'
+        ? getAutoCopySessionMemberRecords(DATA_DIR, lineageId).map((member) => member && member.id).filter(Boolean)
+        : [];
+      const aliases = Array.from(new Set([String(row.id), String(targetRow.id), ...members]));
+      const cache = typeof getSessionSyncCache === 'function' ? getSessionSyncCache() : null;
+      const sourceSnapshot = await sessionSync.readSnapshotAsync(PROFILE.dataRoot, row.id, aliases, cache);
+      const targetSnapshot = await sessionSync.readSnapshotAsync(PROFILE.dataRoot, targetRow.id, aliases, cache);
+      if (sessionSync.compareSnapshots(sourceSnapshot, targetSnapshot).kind !== 'equal') return false;
+      setAutoCopyMapping(DATA_DIR, lineageId, target,
+        Object.assign({}, mapping, mappingWithSourceRevision(mapping, source, row), {
+          targetRevision: sessionCopyRowRevision(targetRow),
+          targetStateRevision: sessionCopyStableStateRevision(targetRow),
+          sourceBytes: sourceSnapshot.totalBytes,
+          totalBytes: sourceSnapshot.totalBytes,
+        }));
+      return true;
+    } catch (_) {
+      return false;
+    }
+  };
+  // A requested active session still needs its target id for post-switch
+  // navigation, but it must not force a full snapshot when the renderer did
+  // not report that session as dirty. Read target rows only for this narrow
+  // requested-session check; regular no-op plans keep the original hot path.
+  let targetRows = null;
+  let targetById = null;
+  const loadTargetRows = async () => {
+    if (targetRows) return;
+    targetRows = await sqliteQuery(
+      'SELECT ' + SESSION_COPY_COLUMNS.join(',') + ' FROM sessions WHERE deleted_at IS NULL AND user_id = ?;',
+      [target]
+    );
+    targetById = new Map(targetRows.map((row) => [String(row.id), row]));
+  };
+  if (requested.size) await loadTargetRows();
+  const hasDirtyMarker = (row) => typeof dirtyIndex.get === 'function' && !!dirtyIndex.get(source, row.id);
+  const initializedClean = (row) => typeof dirtyIndex.isInitialized === 'function' &&
+    dirtyIndex.isInitialized(source) && !hasDirtyMarker(row);
+  const stableTargetExists = (mapping) => !!(mapping && mapping.targetId && targetById &&
+    targetById.has(String(mapping.targetId)) && (() => {
+      const targetRow = targetById.get(String(mapping.targetId));
+      return mappingTargetRevisionMatches(mapping, targetRow) ||
+        mappingTargetLifecycleRevisionMatches(mapping, targetRow);
+    })());
+  // A lineage may contain several historical physical copies. Their persisted
+  // source revision can refer to a different member even though the renderer
+  // has established a clean baseline for the current account. Resolve target
+  // rows once so that this legacy drift can stay on the metadata-only path.
+  if (!targetRows && typeof dirtyIndex.isInitialized === 'function' && dirtyIndex.isInitialized(source)) {
+    const hasRevisionDrift = selectedRows.some((row) => {
+      if (!initializedClean(row)) return false;
+      const lineageId = rules.allLineages && rules.allLineages[String(row.id)];
+      const mapping = lineageId ? mappings.get(String(lineageId)) : null;
+      return mapping && mapping.fingerprintVersion === 2 && mapping.targetId &&
+        !mappingSourceRevisionMatches(mapping, source, row);
+    });
+    if (hasRevisionDrift) await loadTargetRows();
+  }
+  // Dirty lifecycle notifications need the target row to prove that the
+  // mapped copy still exists before they can be cleared without a worker.
+  if (!targetRows && selectedRows.some((row) => {
+    if (!dirtyIndex.shouldSync(source, row.id)) return false;
+    const lineageId = rules.allLineages && rules.allLineages[String(row.id)];
+    const mapping = lineageId ? mappings.get(String(lineageId)) : null;
+    return !!(mapping && mapping.targetId);
+  })) await loadTargetRows();
+  // Once the renderer has established a baseline, only sessions reported by
+  // its lifecycle feed enter the copy worker. Before that first baseline the
+  // conservative fallback keeps existing installations fully synchronised.
+  // Do the source-side check before reading the target account: the common
+  // no-op switch should be a single sessions query plus metadata lookup.
+  // Keep the array realm of the SQLite result. Some embedders execute this
+  // planner in a VM context; returning a foreign-realm array breaks callers'
+  // strict structural comparisons even when the plan is empty. `filter`
+  // preserves the source array's realm in both the daemon and VM harness.
+  const dirtyRows = selectedRows.filter(() => false);
+  for (const row of selectedRows) {
+    const requestedRow = requested.has(String(row.id || ''));
+    if (requestedRow) {
+      const lineageId = (rules.allLineages && rules.allLineages[String(row.id)]) ||
+        (typeof getAutoCopySession === 'function' && getAutoCopySession(DATA_DIR, source, row.id)?.lineageId);
+      const mapping = lineageId ? mappings.get(String(lineageId)) : null;
+      // The target mapping is enough to restore the active view. Only enter
+      // the worker when it is missing, its row disappeared, or the renderer
+      // explicitly marked the source session dirty.
+      if (!mapping || mapping.fingerprintVersion !== 2 || !mapping.targetId ||
+          !targetById || !targetById.has(String(mapping.targetId))) {
+        dirtyRows.push(row);
+        continue;
+      }
+      if (mappingSourceRevisionMatches(mapping, source, row) &&
+          mappingTargetRevisionMatches(mapping, targetById.get(String(mapping.targetId)))) {
+        clearStableDirtyMarker(row, mapping);
+        continue;
+      }
+      if (mappingSourceLifecycleRevisionMatches(mapping, row) && stableTargetExists(mapping)) {
+        clearStableDirtyMarker(row, mapping, true);
+        continue;
+      }
+      if (!mappingSourceRevisionMatches(mapping, source, row) && stableTargetExists(mapping)) {
+        const refreshed = await refreshStableMappedPayload(
+          row, mapping, targetById.get(String(mapping.targetId)), lineageId
+        );
+        if (initializedClean(row) || refreshed) {
+          clearStableDirtyMarker(row, mapping, refreshed);
+          continue;
+        }
+      }
+      dirtyRows.push(row);
+      continue;
+    }
+    const lineageId = rules.allLineages && rules.allLineages[String(row.id)];
+    const mapping = lineageId ? mappings.get(String(lineageId)) : null;
+    if (dirtyIndex.shouldSync(source, row.id)) {
+      if (clearStableDirtyMarker(row, mapping)) continue;
+      if (mappingSourceLifecycleRevisionMatches(mapping, row) && targetById && stableTargetExists(mapping)) {
+        clearStableDirtyMarker(row, mapping, true);
+        continue;
+      }
+      dirtyRows.push(row);
+      continue;
+    }
+    if (!mapping || mapping.fingerprintVersion !== 2 || !mapping.targetId) { dirtyRows.push(row); continue; }
+    if (mappingSourceRevisionMatches(mapping, source, row)) continue;
+    // Once the renderer has supplied a baseline, a persisted revision drift
+    // without a dirty event is historical lineage churn, not a content edit.
+    // Keep missing target rows on the worker path so first-time recovery still
+    // creates the physical copy.
+    if (!(initializedClean(row) && stableTargetExists(mapping))) dirtyRows.push(row);
+  }
+  if (!dirtyRows.length) return [];
+
+  // Only dirty/new source rows need target state to resolve an existing copy,
+  // repair a missing row, or detect a divergent continuation.
+  if (!targetRows) {
+    await loadTargetRows();
+  }
   // Full-copy and workspace matches need stable hidden lineages for idempotent
   // repeated switches. Prepare the whole batch with one metadata write.
-  const lineageSessionIds = selectedRows
+  const lineageSessionIds = dirtyRows
     .filter((row) => rules.allSessions || workspaceSet.has(canonicalWorkspace(row.cwd)))
     .map((row) => row.id);
-  const ensuredLineages = lineageSessionIds.length
-    ? ensureAutoCopySessions(DATA_DIR, source, lineageSessionIds, { enabled: !rules.allSessions })
+  // `getAutoCopyRules` already loaded the lineage index. On the hot path all
+  // selected sessions are normally indexed, so avoid reparsing and rewriting
+  // the large metadata file just to confirm that nothing needs to be created.
+  const missingLineageIds = lineageSessionIds.filter((id) => !rules.allLineages[String(id)]);
+  const ensuredLineages = missingLineageIds.length
+    ? ensureAutoCopySessions(DATA_DIR, source, missingLineageIds, { enabled: !rules.allSessions })
     : {};
-  return selectedRows.map((row) => Object.assign({}, row, {
+  const lineageRows = dirtyRows.map((row) => Object.assign({}, row, {
     lineageId: rules.allLineages[String(row.id)] || ensuredLineages[String(row.id)] || null,
   }));
+  if (!lineageRows.length) return lineageRows;
+
+  // Filter the hot path in one batch. The persisted mapping and the target
+  // session row already carry the same revisions used by copySessionRecord;
+  // unchanged sessions do not need to enter the worker pool at all.
+  return lineageRows.filter((row) => {
+    const mapping = row.lineageId ? mappings.get(String(row.lineageId)) : null;
+    if (!mapping || mapping.fingerprintVersion !== 2 || !mapping.targetId) return true;
+    const targetRow = targetById.get(String(mapping.targetId));
+    return !targetRow || !mappingSourceRevisionMatches(mapping, source, row) ||
+      (!mappingTargetRevisionMatches(mapping, targetRow) &&
+       !mappingTargetLifecycleRevisionMatches(mapping, targetRow));
+  });
+}
+
+let autoCopyTargetRevisionMigrationStarted = false;
+async function migrateAutoCopyTargetRevisionBaselines() {
+  if (autoCopyTargetRevisionMigrationStarted) return;
+  autoCopyTargetRevisionMigrationStarted = true;
+  try {
+    const rows = await sqliteQuery(
+      'SELECT id, user_id, updated_at, last_activity_at, status, title, custom_title FROM sessions WHERE deleted_at IS NULL;'
+    );
+    const rowsByKey = new Map(rows.map((row) => [JSON.stringify([String(row.id || ''), String(row.user_id || '')]), row]));
+    const changed = migrateAutoCopyTargetRevisionsFromMeta(DATA_DIR, rowsByKey);
+    if (changed) log(`[sessions-auto-copy] 已校准 ${changed} 条历史目标 revision`);
+  } catch (error) {
+    log(`[sessions-auto-copy] 历史目标 revision 校准失败: ${error.message}`);
+  }
 }
 
 const autoCopyJobs = new Map();
@@ -4546,6 +5229,22 @@ function pruneAutoCopyJobs() {
   }
 }
 
+function resolveAutoCopyTargetId(sourceUid, targetUid, sessionId) {
+  const source = String(sourceUid || '').trim();
+  const target = String(targetUid || '').trim();
+  const id = String(sessionId || '').trim();
+  if (!source || !target || !id || typeof getAutoCopyRules !== 'function' || typeof getAutoCopyMapping !== 'function') return '';
+  try {
+    const rules = getAutoCopyRules(DATA_DIR, source);
+    const lineageId = (rules.allLineages && rules.allLineages[id]) ||
+      (typeof getAutoCopySession === 'function' && getAutoCopySession(DATA_DIR, source, id)?.lineageId);
+    const mapping = lineageId ? getAutoCopyMapping(DATA_DIR, lineageId, target) : null;
+    return mapping && mapping.targetId ? String(mapping.targetId) : '';
+  } catch (_) {
+    return '';
+  }
+}
+
 function runAutoCopyQueue() {
   if (autoCopyWorkerRunning || !autoCopyQueue.length) return;
   autoCopyWorkerRunning = true;
@@ -4562,7 +5261,9 @@ function runAutoCopyQueue() {
       pruneAutoCopyJobs();
     })
     .finally(() => {
+      recordAccountSyncResult(item.job);
       autoCopyWorkerRunning = false;
+      if (item.complete) item.complete(item.job);
       runAutoCopyQueue();
     });
 }
@@ -4577,6 +5278,8 @@ function startAutoCopyJob(sourceUid, targetUid, plan, labels) {
     targetUid,
     sourceName: String(accountLabels.sourceName || ''),
     targetName: String(accountLabels.targetName || ''),
+    openSessionId: String(accountLabels.openSessionId || '').trim(),
+    openSessionTargetId: '',
     plan: Array.isArray(plan) ? plan : [],
     total: Array.isArray(plan) ? plan.length : 0,
     processed: 0,
@@ -4589,6 +5292,10 @@ function startAutoCopyJob(sourceUid, targetUid, plan, labels) {
     details: [],
     error: null,
     currentLabel: '',
+    copiedBytes: 0,
+    processedBytes: 0,
+    totalBytes: null,
+    copyStartedAt: null,
     startedAt: Date.now(),
     finishedAt: null,
   };
@@ -4597,44 +5304,141 @@ function startAutoCopyJob(sourceUid, targetUid, plan, labels) {
     job.status = 'running';
     // 账号切换响应、CDP 导航和注入事件必须先有机会完成；Node SQLite 与文件复制
     // 的 Promise 可能同步结算，连续微任务会在 macOS 上长期饿死 I/O 事件。
-    await yieldAutoCopyToRenderer();
+    // Planning only reads SQLite and auto-copy metadata. Do not make a
+    // no-op synchronization wait for the renderer's post-reload injection.
+    await yieldAutoCopyToRenderer({ waitForInjection: false });
     // A rapid switch chain may enqueue this job before the previous copy has
     // created the target rows. Re-plan after the queue reaches this job.
-    job.plan = await buildAutoCopyPlan(sourceUid, targetUid);
+    job.copyStartedAt = Date.now();
+    job.plan = await buildAutoCopyPlan(sourceUid, targetUid, job.openSessionId ? [job.openSessionId] : []);
     job.total = job.plan.length;
-    for (const src of job.plan) {
-      job.currentLabel = String(src.custom_title || src.title || src.cwd || '未命名会话');
-      const detail = {
-        id: String(src.id || ''),
-        label: job.currentLabel,
-        status: 'running',
-        failedFiles: 0,
-        conflicts: 0,
-      };
-      await yieldAutoCopyToRenderer();
-      try {
-        const result = await copySessionRecord(src, targetUid, { sourceUid, lineageId: src.lineageId, auto: true });
-        detail.status = result.status === 'partial' ? 'partial'
-          : result.status === 'conflict' ? 'conflict'
-          : result.status === 'skipped' ? 'skipped' : 'copied';
-        detail.branched = result.branched === true;
-        detail.failedFiles = Number(result.failedFiles) || 0;
-        detail.conflicts = Number(result.conflicts) || 0;
-        if (result.status === 'skipped') job.skipped++;
-        else if (result.status === 'partial') { job.partial++; job.failedItems++; }
-        else if (result.status === 'conflict') job.conflicts += Number(result.conflicts) || 1;
-        else job.copied++;
-        if (result.failedFiles) job.failed += result.failedFiles;
-      } catch (e) {
-        job.failed++;
-        job.failedItems++;
-        detail.status = 'failed';
-        detail.error = String(e.message || e).slice(0, 240);
-        log(`[sessions-auto-copy] ${sourceUid} -> ${targetUid} 会话 ${src.id} 失败: ${e.message}`);
-      }
-      if (job.details.length < 500) job.details.push(detail);
-      job.processed++;
+    if (job.openSessionId && !job.plan.some((row) => String(row && row.id || '') === job.openSessionId)) {
+      job.openSessionTargetId = resolveAutoCopyTargetId(sourceUid, targetUid, job.openSessionId);
     }
+    // Each source snapshot already computes its byte total. Avoid a separate
+    // full directory walk here: the old pre-scan doubled metadata I/O before
+    // the per-session snapshot pass, especially on Windows with many files.
+    job.totalBytes = null;
+    // Session snapshots are independent across lineages. A small worker pool
+    // prevents hundreds of "already equal" sessions from serialising all
+    // directory metadata I/O, while keeping the disk pressure bounded on
+    // lower-end Windows machines.
+    const concurrency = Math.min(4, Math.max(1, job.plan.length));
+    // The active conversation is still flushed by WorkBuddy for a short
+    // period after account navigation. Give that one requested session a
+    // bounded backoff retry window; ordinary sessions remain fail-fast.
+    const activeSessionRetryDelays = [350, 700, 1200];
+    let nextIndex = 0;
+    const recoverOpenSessionTarget = (src) => {
+      if (!job.openSessionId || String(src && src.id || '') !== job.openSessionId || job.openSessionTargetId) return;
+      if (typeof DATA_DIR === 'undefined' || typeof getAutoCopyMapping !== 'function') return;
+      try {
+        let lineageId = src && src.lineageId;
+        if (!lineageId && typeof getAutoCopySession === 'function') {
+          const record = getAutoCopySession(DATA_DIR, sourceUid, src.id);
+          lineageId = record && record.lineageId;
+        }
+        const mapping = lineageId ? getAutoCopyMapping(DATA_DIR, lineageId, targetUid) : null;
+        if (mapping && mapping.targetId) {
+          job.openSessionTargetId = String(mapping.targetId);
+          log(`[sessions-auto-copy] 已恢复当前会话目标映射 source=${src.id} target=${job.openSessionTargetId}`);
+        }
+      } catch (error) {
+        log(`[sessions-auto-copy] 恢复当前会话目标映射失败: ${error.message}`);
+      }
+    };
+    const processNext = async () => {
+      for (;;) {
+        const index = nextIndex++;
+        if (index >= job.plan.length) return;
+        const src = job.plan[index];
+        job.currentLabel = String(src.custom_title || src.title || src.cwd || '未命名会话');
+        const detail = {
+          id: String(src.id || ''),
+          label: job.currentLabel,
+          status: 'running',
+          failedFiles: 0,
+          conflicts: 0,
+        };
+        await yieldAutoCopyToRenderer();
+        try {
+          // Keep this counter local to the session. Other workers may publish
+          // bytes while this one is awaiting the copy, so a shared before/after
+          // comparison can mistake another worker's progress for this one's.
+          let reportedBytes = 0;
+          const activeSession = job.openSessionId && String(src.id || '') === job.openSessionId;
+          let result;
+          let copyAttempt = 0;
+          for (;;) {
+            try {
+              result = await copySessionRecord(src, targetUid, {
+                sourceUid, lineageId: src.lineageId, auto: true,
+                onProgress: (progress) => {
+                  const bytes = Math.max(0, Number(progress && progress.bytes) || 0);
+                  reportedBytes += bytes;
+                  job.copiedBytes += bytes;
+                },
+              });
+              break;
+            } catch (error) {
+              if (!activeSession || copyAttempt >= activeSessionRetryDelays.length) throw error;
+              const retryDelay = activeSessionRetryDelays[copyAttempt];
+              copyAttempt++;
+              log(`[sessions-auto-copy] 当前会话复制失败，${retryDelay}ms 后重试 attempt=${copyAttempt}: ${error.message}`);
+              await new Promise((resolve) => setTimeout(resolve, retryDelay));
+              await yieldAutoCopyToRenderer();
+            }
+          }
+          detail.status = result.status === 'partial' ? 'partial'
+            : result.status === 'conflict' ? 'conflict'
+            : result.status === 'skipped' ? 'skipped' : 'copied';
+          detail.branched = result.branched === true;
+          if (job.openSessionId && String(result.sourceId || '') === job.openSessionId) {
+            job.openSessionTargetId = String(result.targetId || '');
+          }
+          detail.totalBytes = result.totalBytes;
+          // Test doubles and older adapters may not call onProgress. Add only
+          // the unreported remainder so a real callback is never double-counted.
+          const resultBytes = Math.max(0, Number(result.copiedBytes) || 0);
+          if (resultBytes > reportedBytes) job.copiedBytes += resultBytes - reportedBytes;
+          job.processedBytes += Math.max(0, Number(result.sourceBytes) || 0);
+          detail.warning = result.warning || '';
+          if (detail.warning) job.warning = detail.warning;
+          detail.failedFiles = Number(result.failedFiles) || 0;
+          detail.conflicts = Number(result.conflicts) || 0;
+          if (result.status === 'skipped') job.skipped++;
+          else if (result.status === 'partial') { job.partial++; job.failedItems++; }
+          else if (result.status === 'conflict') job.conflicts += Number(result.conflicts) || 1;
+          else job.copied++;
+          if (result.failedFiles) job.failed += result.failedFiles;
+        } catch (e) {
+          recoverOpenSessionTarget(src);
+          const errorText = String(e.message || e).slice(0, 240);
+          if (errorText === '会话消息文件没有消息，未同步') {
+            // Empty metadata-only sessions are normal transient WorkBuddy
+            // rows (for example a newly opened draft), not sync failures.
+            if (typeof getSessionDirtyIndex === 'function' && typeof clearSessionDirty === 'function') {
+              const dirty = getSessionDirtyIndex().get(sourceUid, src.id);
+              if (dirty) clearSessionDirty(sourceUid, src.id, dirty.at);
+            }
+            detail.status = 'skipped';
+            detail.skipReason = 'empty-message-file';
+            job.skipped++;
+            log(`[sessions-auto-copy] ${sourceUid} -> ${targetUid} 会话 ${src.id} 跳过: ${errorText}`);
+          } else {
+            job.failed++;
+            job.failedItems++;
+            detail.status = 'failed';
+            detail.error = errorText;
+            log(`[sessions-auto-copy] ${sourceUid} -> ${targetUid} 会话 ${src.id} 失败: ${e.message}`);
+          }
+        }
+        if (index < 500) job.details[index] = detail;
+        job.processed++;
+      }
+    };
+    await Promise.all(Array.from({ length: concurrency }, () => processNext()));
+    job.details = job.details.filter(Boolean);
     job.status = job.conflicts ? 'conflict' : (job.failed || job.partial ? 'partial' : 'done');
     job.finishedAt = Date.now();
     log(`[sessions-auto-copy] ${sourceUid} -> ${targetUid} 完成 total=${job.total} copied=${job.copied} skipped=${job.skipped} partial=${job.partial} conflicts=${job.conflicts} failed=${job.failed}`);
@@ -4644,28 +5448,38 @@ function startAutoCopyJob(sourceUid, targetUid, plan, labels) {
   };
   // Serialising jobs makes a chain such as h -> s -> x observe the sessions
   // created by the preceding job, even when the user switches rapidly.
-  autoCopyQueue.push({ job, run });
+  let complete;
+  Object.defineProperty(job, 'completion', { value: new Promise(resolve => { complete = resolve; }) });
+  autoCopyQueue.push({ job, run, complete });
   runAutoCopyQueue();
   return job;
 }
 
 function publicAutoCopyJob(job) {
   if (!job) return null;
+  const copiedBytes = typeof job.copiedBytes === 'number' && Number.isFinite(job.copiedBytes) ? Math.max(0, job.copiedBytes) : null;
+  const elapsedMs = job.copyStartedAt == null ? 0 : Math.max(0, (job.finishedAt == null ? Date.now() : job.finishedAt) - job.copyStartedAt);
   return {
     id: job.id,
     status: job.status,
     total: job.total,
     processed: job.processed,
     copied: job.copied,
+    copiedBytes,
+    processedBytes: typeof job.processedBytes === 'number' ? Math.max(0, job.processedBytes) : null,
+    totalBytes: typeof job.totalBytes === 'number' && Number.isFinite(job.totalBytes) ? Math.max(0, job.totalBytes) : null,
+    averageBytesPerSecond: copiedBytes == null || !elapsedMs ? null : Math.round(copiedBytes * 1000 / elapsedMs),
     skipped: job.skipped,
     partial: job.partial,
     failed: job.failed,
     failedItems: job.failedItems,
+    warning: job.warning || '',
     conflicts: job.conflicts,
     details: Array.isArray(job.details) ? job.details.slice(0, 500) : [],
     error: job.error,
     sourceUid: job.sourceUid,
     targetUid: job.targetUid,
+    openSessionId: job.openSessionTargetId || '',
     sourceName: job.sourceName,
     targetName: job.targetName,
     currentLabel: job.currentLabel,
@@ -4674,9 +5488,11 @@ function publicAutoCopyJob(job) {
   };
 }
 
-function activeAutoCopyJob() {
+function activeAutoCopyJob(targetUid = '') {
+  const wantedTarget = String(targetUid || '').trim();
   const jobs = Array.from(autoCopyJobs.values());
   const active = jobs
+    .filter((job) => !wantedTarget || String(job.targetUid || '') === wantedTarget)
     .filter((job) => job.status === 'running' || job.status === 'queued')
     .sort((a, b) => {
       if (a.status !== b.status) return a.status === 'running' ? -1 : 1;
@@ -4684,6 +5500,7 @@ function activeAutoCopyJob() {
     })[0];
   if (active) return active;
   const recent = jobs
+    .filter((job) => !wantedTarget || String(job.targetUid || '') === wantedTarget)
     .filter((job) => job.finishedAt && Date.now() - job.finishedAt < 15000)
     .sort((a, b) => Number(b.finishedAt || 0) - Number(a.finishedAt || 0))[0];
   return recent || null;
@@ -5554,9 +6371,15 @@ async function ensureAutomationNewTask(options = {}) {
     await cdpSend('Input.dispatchKeyEvent', { type: 'keyUp' });
     await cdpSend('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Backspace', code: 'Backspace', windowsVirtualKeyCode: 8 });
     await cdpSend('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Backspace', code: 'Backspace', windowsVirtualKeyCode: 8 });
-    await sleep(150);
+    const clearDeadline = Date.now() + 3000;
+    do {
+      await sleep(100);
+      if (options.guard) await options.guard();
+      surface = await readAutomationAgentSurface(false);
+      if (surface && surface.newTaskReady && !surface.composerText) break;
+    } while (Date.now() < clearDeadline);
   }
-  surface = await readAutomationAgentSurface(false);
+  if (!surface || surface.composerText) surface = await readAutomationAgentSurface(false);
   if (!surface || !surface.newTaskReady || surface.composerText) throw new Error('新建任务输入框尚未清空，原草稿已保留在暂存');
   return surface;
 }
@@ -5727,6 +6550,7 @@ function buildBusyExpr() {
       for (var i = 0; i < sels.length; i++) {
         var els = document.querySelectorAll(sels[i]);
         for (var j = 0; j < els.length; j++) {
+          if (els[j].closest && els[j].closest('.wbs-root')) continue;
           var r = els[j].getBoundingClientRect();
           if (r.width > 0 && r.height > 0) return true;
         }
@@ -5859,11 +6683,11 @@ function initBuiltinAssets() {
       fs.writeFileSync(BACKGROUND_BLUR_FILE, JSON.stringify({ blur: 0 }, null, 2));
       log('[init] 首次初始化：背景毛玻璃默认 0% -> background-blur.json');
     }
-    // 5) 默认主题 → WorkDaddy 壁纸主题（仅当 profile 从未设置过主题）
+    // 5) 默认主题 → 浅色主题（仅当 profile 从未设置过主题）
     const curFile = path.join(DATA_DIR, 'current-theme.json');
     if (!fs.existsSync(curFile)) {
-      fs.writeFileSync(curFile, JSON.stringify({ id: 'nebula', at: new Date().toISOString() }, null, 2));
-      log('[init] 首次初始化：默认主题 -> WorkDaddy 壁纸主题（nebula）');
+      fs.writeFileSync(curFile, JSON.stringify({ id: 'default', at: new Date().toISOString() }, null, 2));
+      log('[init] 首次初始化：默认主题 -> 浅色主题（default）');
     }
   } catch (e) {
     log('[init] 首次初始化失败: ' + e.message);
@@ -6521,18 +7345,23 @@ async function sendStashToComposer(record) {
 
   const focusExpr = `(function(){
     try {
+      function visibleEditor(element) {
+        if (!element || element.closest('.wbs-root')) return false;
+        var rect = element.getBoundingClientRect(), style = getComputedStyle(element);
+        return rect.width > 0 && rect.height > 0 && rect.bottom > 0 && style.display !== 'none' && style.visibility !== 'hidden';
+      }
       var mic = document.querySelector('.voice-mic-wrap');
       var ed = null;
       if (mic) {
         var p = mic.parentElement;
         for (var up = 0; up < 6 && p; up++) {
-          var e = p.querySelector('[contenteditable="true"]') || p.querySelector('[data-slate-editor="true"]');
-          if (e) { ed = e; break; }
+          var e = p.querySelector('[contenteditable="true"],textarea') || p.querySelector('[data-slate-editor="true"]');
+          if (visibleEditor(e)) { ed = e; break; }
           p = p.parentElement;
         }
       }
       if (!ed) {
-        var all = document.querySelectorAll('[contenteditable="true"]');
+        var all = Array.from(document.querySelectorAll('[contenteditable="true"],textarea')).filter(visibleEditor);
         if (mic && all.length) {
           var mr = mic.getBoundingClientRect(), best = null, bd = Infinity;
           for (var i = 0; i < all.length; i++) {
@@ -6544,7 +7373,10 @@ async function sendStashToComposer(record) {
           }
           if (best) ed = best;
         }
-        if (!ed && all.length) ed = all[0];
+        if (!ed && all.length) {
+          ed = all.find(function(element) { return !!element.closest('.cr-input-box,.wb-home-composer'); }) ||
+            all.sort(function(left, right) { return right.getBoundingClientRect().bottom - left.getBoundingClientRect().bottom; })[0];
+        }
       }
       if (!ed) return { ok: false, error: '未找到输入框' };
       ed.focus();
@@ -6570,10 +7402,10 @@ async function sendStashToComposer(record) {
       var ed = null;
       if (mic) {
         var p = mic.parentElement;
-        for (var up = 0; up < 6 && p; up++) { var e = p.querySelector('[contenteditable="true"]'); if (e) { ed = e; break; } p = p.parentElement; }
+        for (var up = 0; up < 6 && p; up++) { var e = p.querySelector('[contenteditable="true"],textarea'); if (e) { ed = e; break; } p = p.parentElement; }
       }
       if (!ed) {
-        var all = document.querySelectorAll('[contenteditable="true"]'), best = null, bestBottom = -Infinity;
+        var all = document.querySelectorAll('[contenteditable="true"],textarea'), best = null, bestBottom = -Infinity;
         for (var i = 0; i < all.length; i++) {
           var r = all[i].getBoundingClientRect();
           if (r.width > 0 && r.height > 0 && r.bottom > 0 && r.bottom > bestBottom) { best = all[i]; bestBottom = r.bottom; }
@@ -6586,7 +7418,8 @@ async function sendStashToComposer(record) {
       // inspect a detached clone so the live editor and its selection stay intact.
       var clone = ed.cloneNode(true);
       clone.querySelectorAll('[data-slate-placeholder="true"],[data-slate-zero-width]').forEach(function(node){ node.remove(); });
-      return { ok: true, hasContent: ((clone.innerText || clone.textContent || '').replace(/[\\uFEFF\\u200B\\u00A0]/g, '').trim().length > 0) || !!ed.querySelector('[data-contentblock]') };
+      var editorText = ed.tagName === 'TEXTAREA' ? ed.value : (clone.innerText || clone.textContent || '');
+      return { ok: true, hasContent: (String(editorText || '').replace(/[\\uFEFF\\u200B\\u00A0]/g, '').trim().length > 0) || !!ed.querySelector('[data-contentblock]') };
     } catch (e) { return { ok: false, error: String(e) }; }
   })()`;
   const clr = await guardedSend('Runtime.evaluate', { expression: clearExpr, returnByValue: true });
@@ -6630,9 +7463,9 @@ async function sendStashToComposer(record) {
     var mic = document.querySelector('.voice-mic-wrap');
     var ed = null;
     if (mic) { var p = mic.parentElement;
-      for (var up = 0; up < 6 && p; up++) { var e = p.querySelector('[contenteditable="true"]'); if (e) { ed = e; break; } p = p.parentElement; } }
+      for (var up = 0; up < 6 && p; up++) { var e = p.querySelector('[contenteditable="true"],textarea'); if (e) { ed = e; break; } p = p.parentElement; } }
     if (!ed) {
-      var all = document.querySelectorAll('[contenteditable="true"]'), best = null, bestBottom = -Infinity;
+      var all = document.querySelectorAll('[contenteditable="true"],textarea'), best = null, bestBottom = -Infinity;
       for (var i = 0; i < all.length; i++) { var r = all[i].getBoundingClientRect(); if (r.width > 0 && r.height > 0 && r.bottom > 0 && r.bottom > bestBottom) { best = all[i]; bestBottom = r.bottom; } }
       ed = best;
     }
@@ -6655,9 +7488,9 @@ async function sendStashToComposer(record) {
         var mic = document.querySelector('.voice-mic-wrap');
         var ed = null;
         if (mic) { var p = mic.parentElement;
-          for (var up = 0; up < 6 && p; up++) { var e = p.querySelector('[contenteditable="true"]'); if (e) { ed = e; break; } p = p.parentElement; } }
+          for (var up = 0; up < 6 && p; up++) { var e = p.querySelector('[contenteditable="true"],textarea'); if (e) { ed = e; break; } p = p.parentElement; } }
         if (!ed) {
-          var all = document.querySelectorAll('[contenteditable="true"]'), best = null, bestBottom = -Infinity;
+          var all = document.querySelectorAll('[contenteditable="true"],textarea'), best = null, bestBottom = -Infinity;
           for (var i = 0; i < all.length; i++) { var r = all[i].getBoundingClientRect(); if (r.width > 0 && r.height > 0 && r.bottom > 0 && r.bottom > bestBottom) { best = all[i]; bestBottom = r.bottom; } }
           ed = best;
         }
@@ -6754,7 +7587,7 @@ async function sendStashToComposer(record) {
       var mic = document.querySelector('.voice-mic-wrap');
       var row = mic ? mic.parentElement : null;
       if (!row) {
-        var allEd = document.querySelectorAll('[contenteditable="true"]'), ed = null, bestBottom = -Infinity;
+        var allEd = document.querySelectorAll('[contenteditable="true"],textarea'), ed = null, bestBottom = -Infinity;
         for (var ei = 0; ei < allEd.length; ei++) { var er = allEd[ei].getBoundingClientRect(); if (er.width > 0 && er.height > 0 && er.bottom > 0 && er.bottom > bestBottom) { ed = allEd[ei]; bestBottom = er.bottom; } }
         if (ed) {
           var er2 = ed.getBoundingClientRect();
@@ -6805,7 +7638,37 @@ async function sendStashToComposer(record) {
   if (Date.now() >= sendDeadline) throw new Error('等待发送按钮可点击超时（5 秒），未发送');
   if (!sv || !sv.ok) throw new Error((sv && sv.error) || '未找到发送按钮');
   if (record.guard) await record.guard();
+  if (record.beforeSubmit) await record.beforeSubmit();
   await cdpMouseClick('automation:sendPhrase', sv.x, sv.y, { textLen: text.length, button: sv });
+  const submittedComposerExpr = `(function(){/* composer-after-submit */
+    try {
+      var editors = document.querySelectorAll('[contenteditable="true"],textarea'), ed = null, bestBottom = -Infinity;
+      for (var i = 0; i < editors.length; i++) {
+        var r = editors[i].getBoundingClientRect();
+        if (r.width > 0 && r.height > 0 && r.bottom > 0 && r.bottom > bestBottom) { ed = editors[i]; bestBottom = r.bottom; }
+      }
+      if (!ed) return { ok: true, hasContent: false };
+      var clone = ed.cloneNode(true);
+      clone.querySelectorAll('[data-slate-placeholder="true"],[data-slate-zero-width]').forEach(function(node){ node.remove(); });
+      var editorText = ed.tagName === 'TEXTAREA' ? ed.value : (clone.innerText || clone.textContent || '');
+      return { ok: true, hasContent: (String(editorText || '').replace(/[\\uFEFF\\u200B\\u00A0]/g, '').trim().length > 0) || !!ed.querySelector('[data-contentblock]') };
+    } catch (e) { return { ok: false, error: String(e) }; }
+  })()`;
+  let submitState = null;
+  for (let attempt = 0; attempt < 20; attempt++) {
+    if (record.guard) await record.guard();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    try {
+      const response = await guardedSend('Runtime.evaluate', { expression: submittedComposerExpr, returnByValue: true });
+      submitState = response.result && response.result.value;
+      if (submitState && submitState.ok && !submitState.hasContent) break;
+    } catch (error) {
+      if (!/Execution context was destroyed|Cannot find (?:default execution context|context with specified id)/i.test(String(error && error.message || error))) throw error;
+    }
+  }
+  if (!submitState || !submitState.ok || submitState.hasContent) {
+    throw new Error('输入框仍有内容，未确认发送；不会自动重发');
+  }
   const result = { sent: true, textLen: text.length, itemCount: allItems.length, imagesRestored, imagesFailed, blocksRestored, blocksFailed };
   log('[quick-phrase-diagnostics] composer:finish ' + JSON.stringify({ ok: true, result: { sent: result.sent, textLen: result.textLen, itemCount: result.itemCount } }));
   return result;
@@ -7088,7 +7951,7 @@ async function refreshCreditRotationAccounts(currentUid, currentResult) {
       const uid = String(account.uid);
       if (uid === currentUid) return { uid, nickname: account.nickname || '', creditSegments: currentResult.segments };
       const raw = wdCompatDecryptAuthJson(JSON.parse(fs.readFileSync(accountBackupFile(uid), 'utf8'))); // [wd-compat]
-      const token = raw && raw.auth && (raw.auth.accessToken || raw.auth.access_token || raw.auth.token);
+      const token = wdCompatAuthToken(raw && raw.auth);
       if (!token) throw new Error('账号凭证不可用');
       const result = await fetchCredits(token, raw.account || {});
       if (!Array.isArray(result.segments) || result.meterError || result.packageError) throw new Error('积分段不可用');
@@ -7201,13 +8064,23 @@ function handleApi(req, res) {
   }
 
   if (req.method === 'GET' && p === '/api/automations/capabilities') {
-    return json(res, 200, { ok: true, schemaVersion: AUTOMATION_SCHEMA_VERSION, supportedSchemaVersions: [1, 2], capabilities: AUTOMATION_CAPABILITIES.filter(item => item.available !== false), protocolZh: automationCapabilityText('zh'), protocolEn: automationCapabilityText('en') });
+    return json(res, 200, { ok: true, schemaVersion: AUTOMATION_SCHEMA_VERSION, supportedSchemaVersions: [1, 2, 3], capabilities: AUTOMATION_CAPABILITIES.filter(item => item.available !== false), protocolZh: automationCapabilityText('zh'), protocolEn: automationCapabilityText('en') });
   }
 
   if (req.method === 'GET' && p === '/api/automations/discovery') {
     return automationDiscovery.getCatalog({ force: url.searchParams.get('refresh') === '1' })
+      .then(result => automationLikes.decorate(result))
       .then(result => json(res, 200, { ok: true, ...result }))
       .catch(error => json(res, 503, { ok: false, error: error.message || '公开任务加载失败' }));
+  }
+
+  if (req.method === 'POST' && p === '/api/automations/discovery/favorite') {
+    return readBody(req).then(body => {
+      if (!body || typeof body.key !== 'string' || typeof body.favorite !== 'boolean') throw new Error('收藏请求参数无效');
+      return automationLikes.toggle(body.key, body.favorite);
+    })
+      .then(result => json(res, 200, { ok: true, ...result }))
+      .catch(error => json(res, 400, { ok: false, error: error.message || '收藏失败' }));
   }
 
   if (req.method === 'POST' && p === '/api/automations/discovery/import') {
@@ -7378,7 +8251,7 @@ function handleApi(req, res) {
       const run = automationRuns.get(String(body && body.runId || ''));
       if (!run) return json(res, 404, { ok: false, error: '运行记录不存在' });
       // 当前执行器的网络/CDP调用由超时控制；停止请求先标记状态，避免新的批量运行进入。
-      if (run.status === 'running') { run.pendingEvent = null; run.status = 'cancelled'; run.finishedAt = Date.now(); run.error = '用户停止任务'; }
+      if (run.status === 'running') { run.pendingEvent = null; run.stopRequested = true; run.phase = 'stopping'; run.error = '用户停止任务，正在安全收尾'; }
       if (run.cleanupNotifications) await run.cleanupNotifications();
       return json(res, 200, { ok: true, run: automationPublicRun(run) });
     });
@@ -7817,6 +8690,7 @@ function handleApi(req, res) {
 
   if (req.method === 'GET' && p === '/api/accounts') {
     const accounts = listAccounts(DATA_DIR);
+    const checkinAutomationEnabled = readAutomations(DATA_DIR).some(task => task.enabled && stepsContainCheckin(task.steps));
     const cache = loadCheckinCache();
     const today = todayStr();
     return CREDIT_USAGE_STORE.listDailyCheckins(accounts.map((a) => a.uid), today)
@@ -7830,7 +8704,7 @@ function handleApi(req, res) {
           const checked = c && c.ok && (c.verified === true || classifyCheckinResult({ httpOk: true, code: c.code, message: c.message }).ok)
             ? c
             : null;
-          return Object.assign({}, a, {
+          return Object.assign({}, a, { creditSegments: [] }, accountCreditCache.get(a.uid), {
             checkin: checkinDisplayValue(checked, today),
             activityStreak: growthStreakCache.peek(a.uid),
           });
@@ -7840,11 +8714,11 @@ function handleApi(req, res) {
             const withUsage = enriched.map((account) => summaries[account.uid]
               ? Object.assign({}, account, { todayUsage: summaries[account.uid] })
               : account);
-            return json(res, 200, { ok: true, current: currentAccount(), primaryUid: primaryAccountStore.get(), accountOrder: getAccountOrder(DATA_DIR), accounts: withUsage });
+            return json(res, 200, { ok: true, checkinAutomationEnabled, current: currentAccount(), primaryUid: primaryAccountStore.get(), accountOrder: getAccountOrder(DATA_DIR), accounts: withUsage });
           })
           .catch((error) => {
             log('[credits-usage] 读取本地今日用量失败: ' + error.message);
-            return json(res, 200, { ok: true, current: currentAccount(), primaryUid: primaryAccountStore.get(), accountOrder: getAccountOrder(DATA_DIR), accounts: enriched });
+            return json(res, 200, { ok: true, checkinAutomationEnabled, current: currentAccount(), primaryUid: primaryAccountStore.get(), accountOrder: getAccountOrder(DATA_DIR), accounts: enriched });
           });
       });
   }
@@ -7859,7 +8733,7 @@ function handleApi(req, res) {
         const file = accountBackupFile(uid);
         if (!fs.existsSync(file)) return json(res, 404, { ok: false, error: '账号备份不存在' });
         const j = wdCompatDecryptAuthJson(JSON.parse(fs.readFileSync(file, 'utf8'))); // [wd-compat]
-        const tk = j.auth && j.auth.accessToken;
+        const tk = wdCompatAuthToken(j.auth);
         if (!tk) return json(res, 400, { ok: false, error: '备份中无 accessToken' });
         const current = currentAccount();
         const shouldSyncUsage = !!(current && current.uid === uid);
@@ -7886,6 +8760,8 @@ function handleApi(req, res) {
           unlimited: !!r.unlimited,
           cycleResetTime: r.cycleResetTime || null,
         };
+        // Cache failures must not turn a successful credit query into an error.
+        try { accountCreditCache.set(uid, r); } catch (_) { log('[credits] 本地积分缓存写入失败'); }
         if (usage.synced) payload.todayUsage = usage.value;
         return json(res, 200, payload);
       } catch (e) {
@@ -7908,7 +8784,7 @@ function handleApi(req, res) {
         const file = accountBackupFile(uid);
         if (!fs.existsSync(file)) return json(res, 404, { ok: false, error: '账号备份不存在' });
         const raw = wdCompatDecryptAuthJson(JSON.parse(fs.readFileSync(file, 'utf8'))); // [wd-compat]
-        const token = raw && raw.auth && (raw.auth.accessToken || raw.auth.access_token || raw.auth.token);
+        const token = wdCompatAuthToken(raw && raw.auth);
         if (!token) return json(res, 400, { ok: false, error: '备份中无 accessToken' });
         const refreshed = await fetchCredits(token, raw.account || {});
         let accounts;
@@ -8053,7 +8929,7 @@ function handleApi(req, res) {
         const file = accountBackupFile(uid);
         if (!fs.existsSync(file)) return json(res, 404, { ok: false, error: '账号备份不存在' });
         const j = wdCompatDecryptAuthJson(JSON.parse(fs.readFileSync(file, 'utf8'))); // [wd-compat]
-        const tk = j.auth && j.auth.accessToken;
+        const tk = wdCompatAuthToken(j.auth);
         if (!tk) return json(res, 400, { ok: false, error: '备份中无 accessToken' });
         const today = await fetchGrowthTodayActive(tk, { apiHost: PROFILE.apiHost });
         return json(res, 200, { ok: true, uid, ...today });
@@ -8075,7 +8951,7 @@ function handleApi(req, res) {
         const file = accountBackupFile(uid);
         if (!fs.existsSync(file)) return json(res, 404, { ok: false, error: '账号备份不存在' });
         const j = wdCompatDecryptAuthJson(JSON.parse(fs.readFileSync(file, 'utf8'))); // [wd-compat]
-        const tk = j.auth && j.auth.accessToken;
+        const tk = wdCompatAuthToken(j.auth);
         if (!tk) return json(res, 400, { ok: false, error: '备份中无 accessToken' });
         const before = await fetchGrowthTodayActive(tk, { apiHost: PROFILE.apiHost });
         if (before.is_active) return json(res, 200, { ok: true, uid, activated: false, alreadyActive: true, ...before });
@@ -8150,28 +9026,25 @@ function handleApi(req, res) {
           ensureDirs(DATA_DIR);
           const imported = [];
           for (const candidate of candidates) {
-            const j = candidate && typeof candidate === 'object' ? candidate : null;
-            const acct = j && j.account && typeof j.account === 'object' ? j.account : j;
-            const auth = j && j.auth && typeof j.auth === 'object' ? j.auth : null;
-            const uid = String(acct && acct.uid || '').trim();
-            const accessToken = String(auth && (auth.accessToken || auth.access_token || auth.token) || '').trim();
-            if (!/^[A-Za-z0-9_-]{1,128}$/.test(uid) || !accessToken) continue;
-            const normalized = {
-              account: { ...acct, uid },
-              auth: { ...auth, accessToken },
-            };
-            const authRecord = parseAuthJson(normalized);
-            if (!authRecord || authRecord.uid !== uid) continue;
+            const normalizedImport = normalizeAccountImportJson(candidate);
+            if (!normalizedImport) continue;
+            const { uid, normalized } = normalizedImport;
+            const acct = normalized.account;
             const dest = backupPath(DATA_DIR, uid);
             const tmp = dest + '.tmp';
             fs.writeFileSync(tmp, JSON.stringify(normalized), { mode: 0o600 });
             fs.renameSync(tmp, dest);
             try { fs.chmodSync(dest, 0o600); } catch (_) {}
-            updateMeta(DATA_DIR, { uid, nickname: normalized.account.nickname || '', uin: normalized.account.uin || '', phone: normalized.account.phoneNumber || '' });
+            updateMeta(DATA_DIR, {
+              uid,
+              nickname: wdCompatText(normalized.account.nickname),
+              uin: typeof normalized.account.uin === 'string' || typeof normalized.account.uin === 'number' ? normalized.account.uin : '',
+              phone: wdCompatText(normalized.account.phoneNumber),
+            });
             imported.push(uid);
           }
           if (!imported.length) throw new Error('没有找到符合格式的账号，请先让 WorkBuddy 整理 JSON');
-          log(`[import] 明文 JSON 导入 ${imported.length}/${candidates.length} 个账号`);
+          log(`[import] JSON 导入 ${imported.length}/${candidates.length} 个账号`);
           return json(res, 200, { ok: true, imported, count: imported.length });
         }
         if (!envelope || envelope.wbsExport !== 'WorkDaddy') throw new Error('不是 WorkDaddy 的账号导出文件');
@@ -8207,9 +9080,9 @@ function handleApi(req, res) {
           try { fs.chmodSync(dest, 0o600); } catch (_) {}
           updateMeta(DATA_DIR, {
             uid,
-            nickname: acct.nickname || '',
-            uin: acct.uin || '',
-            phone: acct.phoneNumber || '',
+            nickname: wdCompatText(acct.nickname),
+            uin: typeof acct.uin === 'string' || typeof acct.uin === 'number' ? acct.uin : '',
+            phone: wdCompatText(acct.phoneNumber),
           });
           imported.push(uid);
         }
@@ -8435,10 +9308,9 @@ function handleApi(req, res) {
     const clauses = ["deleted_at IS NULL"];
     const params = [];
     if (uid) { clauses.push('user_id = ?'); params.push(uid); }
-    if (rangeMs) { clauses.push('COALESCE(last_activity_at, updated_at, created_at) >= ?'); params.push(rangeMs); }
     // 时间筛选和排序按最近活动/修改时间；旧记录缺字段时回退到创建时间。
     return sqliteQuery("SELECT id, cwd, user_id, title, custom_title, status, created_at, updated_at, last_activity_at, is_playground, project_id FROM sessions WHERE " + clauses.join(' AND ') + " ORDER BY COALESCE(last_activity_at, updated_at, created_at) DESC, created_at DESC;", params)
-      .then((rows) => {
+      .then(async (rows) => {
         const autoCopyAll = getAutoCopyRules(DATA_DIR, uid).allSessions;
         const rulesByUid = {};
         rows.forEach((row) => {
@@ -8449,13 +9321,19 @@ function handleApi(req, res) {
         });
         const lineagesByUid = {}, branchesByUid = {};
         Object.keys(rulesByUid).forEach((owner) => { lineagesByUid[owner] = rulesByUid[owner].lineages; branchesByUid[owner] = rulesByUid[owner].branches; });
-        const sessions = dedupeAutoCopySessionRows(rows, lineagesByUid, branchesByUid).map((row) => {
+        const allSessions = dedupeAutoCopySessionRows(rows, lineagesByUid, branchesByUid).map((row) => {
           const rules = rulesByUid[String(row.user_id || '').trim()] || { sessions: new Set(), workspaces: new Set() };
           return Object.assign({}, row, {
             autoCopySession: rules.sessions.has(String(row.id)),
             autoCopyWorkspace: rules.workspaces.has(canonicalWorkspace(row.cwd)),
           });
         });
+        const sizes = await sessionSync.readSessionSizes(PROFILE.dataRoot, allSessions.map(row => String(row.id)));
+        allSessions.forEach(row => { row.totalBytes = sizes.get(String(row.id)); });
+        // Account totals deliberately include sessions hidden by either filter.
+        const totalBytes = allSessions.every(row => typeof row.totalBytes === 'number' && Number.isFinite(row.totalBytes))
+          ? allSessions.reduce((sum, row) => sum + row.totalBytes, 0) : null;
+        const sessions = rangeMs ? allSessions.filter(row => Number(row.last_activity_at ?? row.updated_at ?? row.created_at) >= rangeMs) : allSessions;
         const currentRules = uid
           ? (rulesByUid[uid] || (() => {
               const rules = getAutoCopyRules(DATA_DIR, uid);
@@ -8466,6 +9344,7 @@ function handleApi(req, res) {
           ok: true,
           sessions,
           count: sessions.length,
+          totalBytes,
           uid,
           range,
           autoCopyAll,
@@ -8689,6 +9568,40 @@ function handleApi(req, res) {
       }
     });
   }
+  // Renderer lifecycle feed for incremental auto-copy planning. The payload is
+  // deliberately limited to session ids and event names; message contents
+  // never leave WorkBuddy and the local API token remains the only auth gate.
+  if (req.method === 'POST' && p === '/api/sessions/dirty') {
+    return readBody(req).then((body) => {
+      try {
+        const currentUid = String((currentAccount() || {}).uid || '').trim();
+        const claimedUid = String(body && body.uid || '').trim();
+        // A renderer can flush a debounced dirty batch while an account switch
+        // is replacing its auth file. Never let that old page mark the newly
+        // active account (or keep the old account dirty) after the switch.
+        if (currentUid && claimedUid && claimedUid !== currentUid) {
+          return json(res, 409, { ok: false, error: '账号已切换，忽略旧会话通知' });
+        }
+        const uid = currentUid ||
+          (/^[A-Za-z0-9_-]{1,128}$/.test(claimedUid) && fs.existsSync(accountBackupFile(claimedUid)) ? claimedUid : '');
+        if (!uid) return json(res, 409, { ok: false, error: '当前账号不可用' });
+        if (!body || typeof body !== 'object' || Array.isArray(body)) return json(res, 400, { ok: false, error: '脏会话通知格式无效' });
+        if (body.ready === true) markSessionDirtyBaseline(uid);
+        const events = Array.isArray(body.events) ? body.events : [];
+        if (events.length > 500) return json(res, 400, { ok: false, error: '脏会话通知过多' });
+        let marked = 0;
+        for (const event of events) {
+          const id = String(event && event.id || '').trim();
+          if (!isValidSessionId(id)) continue;
+          markSessionDirty(uid, id, String(event.event || 'sessionUpdated'));
+          marked++;
+        }
+        return json(res, 200, { ok: true, marked, initialized: getSessionDirtyIndex().isInitialized(uid) });
+      } catch (e) {
+        return json(res, 400, { ok: false, error: e.message });
+      }
+    });
+  }
   // 自动复制任务状态：GET /api/sessions/auto-copy/status?id=<jobId>
   if (req.method === 'GET' && p === '/api/sessions/auto-copy/status') {
     const job = autoCopyJobs.get(url.searchParams.get('id') || '');
@@ -8701,7 +9614,8 @@ function handleApi(req, res) {
   }
   // 当前任务或刚完成的任务：renderer 重载后仍可恢复复制进度。
   if (req.method === 'GET' && p === '/api/sessions/auto-copy/active') {
-    return json(res, 200, { ok: true, job: publicAutoCopyJob(activeAutoCopyJob()) });
+    const currentUid = String((currentAccount() || {}).uid || '').trim();
+    return json(res, 200, { ok: true, job: publicAutoCopyJob(activeAutoCopyJob(currentUid)) });
   }
   // Stream the completed encrypted archive; clean up even if the download disconnects.
   if (req.method === 'POST' && p === '/api/sessions/export') {
@@ -8792,6 +9706,9 @@ function handleApi(req, res) {
       const targetUid = (body.targetUid || '').trim();
       if (!ids.length) return json(res, 400, { ok: false, error: '未选择会话' });
       if (!targetUid) return json(res, 400, { ok: false, error: '未指定目标账号' });
+      if (accountSwitchInProgress) return json(res, 409, { ok: false, error: '账号正在切换，请稍后同步' });
+      const copyOperation = Symbol('manual-session-copy');
+      sessionCopyLocks.set(copyOperation, true);
       try {
         // 1) 取出源会话（含 cwd 用于定位消息文件）
         const srcRows = await sqliteQuery(
@@ -8800,16 +9717,18 @@ function handleApi(req, res) {
         );
         if (!srcRows.length) return json(res, 404, { ok: false, error: '源会话不存在' });
         let copied = 0, skipped = 0, conflicts = 0;
+        let warning = '';
         for (const src of srcRows) {
           const result = await copySessionRecord(src, targetUid);
+          if (result.warning) warning = result.warning;
           if (result.status === 'conflict') conflicts++;
           else if (result.status === 'skipped') skipped++;
           else copied++;
         }
-        return json(res, 200, { ok: true, copied, skipped, conflicts, targetUid });
+        return json(res, 200, { ok: true, copied, skipped, conflicts, targetUid, warning });
       } catch (e) {
         return json(res, 500, { ok: false, error: e.message });
-      }
+      } finally { sessionCopyLocks.delete(copyOperation); }
     });
   }
   // 迁移会话：POST /api/sessions/migrate { ids, targetUid }
@@ -8851,7 +9770,7 @@ function handleApi(req, res) {
   if (req.method === 'POST' && p === '/api/sessions/delete') {
     return readBody(req).then(async (body) => {
       let ids;
-      try { ids = normalizeSessionIdBatch(body && body.ids); }
+      try { ids = normalizeSessionIdBatch(body && body.ids, { maxBatch: null }); }
       catch (e) { return json(res, 400, { ok: false, error: e.message }); }
       if (!ids.length) return json(res, 400, { ok: false, error: '未选择会话' });
       if (!ids.every(isValidSessionId)) return json(res, 400, { ok: false, error: '包含无效的会话 ID' });
@@ -9419,54 +10338,43 @@ function handleApi(req, res) {
         releaseAccountSwitch = await assertAccountSwitchIdle();
         const sourceAccount = currentAccount() || {};
         const sourceUid = String(sourceAccount.uid || '').trim();
+        let currentConversationId = isValidSessionId(String(body.currentConversationId || '').trim())
+          ? String(body.currentConversationId).trim() : '';
+        // Renderer projection state can briefly retain the destination id from
+        // the previous rotation. Never carry an id into the next account unless
+        // the session index proves it belongs to the account being replaced.
+        if (currentConversationId && sourceUid) {
+          const ownerRows = await sqliteQuery(
+            'SELECT user_id FROM sessions WHERE id = ? AND deleted_at IS NULL LIMIT 1;',
+            [currentConversationId]
+          );
+          if (!ownerRows.length || String(ownerRows[0].user_id || '') !== sourceUid) {
+            log(`[switch] 丢弃不属于源账号的当前会话 source=${sourceUid} session=${currentConversationId}`);
+            currentConversationId = '';
+          }
+        }
         const acct = switchTo(DATA_DIR, uid, log);
         const hint = '登录文件已切换，请重启 WorkBuddy 使新账号生效';
         let reloaded = false;
         if (body.reload) {
-          // 读取切换前当前会话标题：官方会话列表的选中行（.conversation-item 带 selected）；
-// 刷新后用于在目标账号里自动打开对应的复制会话。读不到则跳过自动聚焦。
-          let sourceSessionTitle = '';
-          try {
-            if (cdp.connected) {
-              const titleExpr =
-                '(function(){' +
-                'var list = document.querySelector(".conversation-list");' +
-                'if (!list) return "";' +
-                'var rows = list.querySelectorAll(".conversation-item");' +
-                'for (var i = 0; i < rows.length; i++) {' +
-                '  var r = rows[i];' +
-                '  if ((r.className || "").indexOf("selected") === -1) continue;' +
-                '  var best = "";' +
-                '  var els = r.querySelectorAll("*");' +
-                '  for (var j = 0; j < els.length; j++) {' +
-                '    var el = els[j];' +
-                '    if (el.children.length === 0) {' +
-                '      var t = (el.textContent || "").trim();' +
-                '      if (t.length > best.length) best = t;' +
-                '    }' +
-                '  }' +
-                '  if (best) return best;' +
-                '}' +
-                'return "";' +
-                '})()';
-              const t = await cdpSend('Runtime.evaluate', { expression: titleExpr, returnByValue: true });
-              sourceSessionTitle = String((t && t.result && t.result.value) || '').trim();
-            }
-          } catch (_) { /* 读不到就跳过自动聚焦会话 */ }
           try {
             pendingAutomationAccountSwitch = { account: { uid: acct.uid, nickname: acct.nickname } };
-            await reloadWorkBuddyPage();
+            // The user-facing switch must not wait for the injected panel's
+            // readiness promise (which can take the full 5s timeout on a slow
+            // renderer). The pending injection remains in place and the copy
+            // worker will yield on it before touching session files.
+            await reloadWorkBuddyPage({ waitForInjection: false });
             reloaded = true;
             log('[switch] 已通过 CDP 刷新 WorkBuddy 窗口');
-            // 某些 renderer 不发送 Page.loadEventFired；刷新流程已返回且新页面已挂载时兜底。
-            if (pendingAutomationAccountSwitch) {
+            // 某些 renderer 不发送 Page.loadEventFired；给正常 load 事件
+            // 留出时间后再兜底派发，避免在空白页面上启动自动化任务。
+            const fallbackNavigationSerial = mainFrameNavigationSerial;
+            setTimeout(() => {
+              if (!pendingAutomationAccountSwitch) return;
               const switchEvent = pendingAutomationAccountSwitch;
               pendingAutomationAccountSwitch = null;
-              dispatchAutomationEvent('pageReady', { navigationSerial: mainFrameNavigationSerial, source: 'account-switch-fallback', account: switchEvent.account });
-            }
-            if (sourceSessionTitle) {
-              autoFocusSessionByTitle(sourceSessionTitle, log);
-            }
+              dispatchAutomationEvent('pageReady', { navigationSerial: fallbackNavigationSerial, source: 'account-switch-fallback', account: switchEvent.account });
+              }, 1500);
           } catch (e) {
             pendingAutomationAccountSwitch = null;
             log(`[switch] CDP 刷新失败: ${e.message}`);
@@ -9476,10 +10384,11 @@ function handleApi(req, res) {
         // 任务规则通常能直接命中，所以旧逻辑只表现为“任务能复制、空间不复制”。
         const sourceRules = sourceUid ? getAutoCopyRules(DATA_DIR, sourceUid) : { allSessions: false, sessionIds: [], workspaces: [] };
         const hasSourceAutoCopyRules = !!(sourceRules.allSessions || sourceRules.sessionIds.length || sourceRules.workspaces.length);
-        const autoCopyJob = (hasSourceAutoCopyRules || hasPendingAutoCopyTo(sourceUid))
+        const autoCopyJob = (hasSourceAutoCopyRules || hasPendingAutoCopyTo(sourceUid) || currentConversationId)
           ? startAutoCopyJob(sourceUid, uid, [], {
             sourceName: sourceAccount.nickname || '',
             targetName: acct.nickname || '',
+            openSessionId: currentConversationId,
           })
           : null;
         return json(res, 200, {
@@ -9487,7 +10396,7 @@ function handleApi(req, res) {
           uid: acct.uid,
           nickname: acct.nickname,
           reloaded,
-          autoCopy: autoCopyJob ? { jobId: autoCopyJob.id, total: autoCopyJob.total } : { total: 0 },
+          autoCopy: autoCopyJob ? { jobId: autoCopyJob.id, total: autoCopyJob.total, openSessionId: autoCopyJob.openSessionId || '' } : { total: 0 },
           hint: reloaded ? '已切换并触发窗口刷新' : hint,
         });
       } catch (e) {
@@ -9812,6 +10721,9 @@ for (const preset of ['close-buddy-popups.json', ...(PROFILE.capabilities.accoun
 restoreSleepMode();
 startServer();
 cdpLoop();
+// Migrate legacy target row baselines off the switch hot path. This is a
+// metadata-only repair and does not read any session payload files.
+setTimeout(() => { migrateAutoCopyTargetRevisionBaselines().catch(() => {}); }, 0);
 // All automatic check-in entry points are owned by the visible automation task.
 const tickAutomationSchedules = createScheduleTicker(DATA_DIR);
 function runAutomationSchedules() {

@@ -12,7 +12,7 @@ const { normalizeAutomationModelId, selectAutomationModel, verifyAutomationModel
 const builtIn = JSON.parse(fs.readFileSync(path.join(__dirname, '../scripts/builtin/automations/keep-accounts-active.json'), 'utf8'));
 
 test('V2 session sends accept a model ID without changing the protocol version', async () => {
-  assert.equal(SCHEMA_VERSION, 2);
+  assert.equal(SCHEMA_VERSION, 3);
   const seen = [];
   const task = validateTask({ schemaVersion: 2, id: 'choose-model', name: 'choose-model', variables: { model: 'deepseek-v4.1-flash' }, steps: [
     { op: 'session.create', message: 'hi', model: '{{vars.model}}' },
@@ -157,9 +157,10 @@ test('daemon selects and checks the model before sending, and ships the renderer
   const selectAt = daemon.indexOf('modelSelection = await withInput(() => selectAutomationModelById(');
   const sendAt = daemon.indexOf("await withInput(() => acSendPhrase(String(detail.message || '')");
   assert.ok(selectAt > 0 && sendAt > selectAt);
-  assert.match(daemon, /if \(modelId\) await confirmAutomationModel\(modelId/);
+  assert.match(daemon, /if \(modelId && !sendSubmitted\) await confirmAutomationModel\(modelId/);
   assert.match(daemon, /restoreAutomationNewTaskPreference\(modelSelection\)/);
-  assert.match(daemon, /const DAEMON_VERSION = '1\.2\.83'/);
+  assert.match(daemon, /selected && selected\.conversationId \? \{ conversationId: selected\.conversationId, accountUid \}/);
+  assert.match(daemon, /const DAEMON_VERSION = '\d+\.\d+\.\d+'/);
   const staging = fs.readFileSync(path.join(__dirname, '../scripts/build-mac-dmg.sh'), 'utf8');
   assert.match(staging, /automation-model\.js/);
 });

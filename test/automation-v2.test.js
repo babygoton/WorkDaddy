@@ -11,10 +11,10 @@ const {
 } = require('../scripts/automation');
 
 test('automation v2 remains backward compatible and exposes generic runtime metadata', async () => {
-  assert.equal(SCHEMA_VERSION, 2);
+  assert.equal(SCHEMA_VERSION, 3);
   assert.equal(isSupportedTaskSchema({ schemaVersion: 1 }), true);
   assert.equal(isSupportedTaskSchema({ schemaVersion: 2 }), true);
-  assert.equal(isSupportedTaskSchema({ schemaVersion: 3 }), false);
+  assert.equal(isSupportedTaskSchema({ schemaVersion: 4 }), false);
 
   const task = validateTask({
     schemaVersion: 2,

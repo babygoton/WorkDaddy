@@ -69,8 +69,8 @@ test('account loops can physically switch each account and restore the original'
 test('capability protocol documents every supported step and rejects event ids as steps', () => {
   const documented = new Set(CAPABILITIES.map((item) => item.id));
   for (const op of SUPPORTED_OPS) assert.equal(documented.has(op), true, `missing capability documentation for ${op}`);
-  assert.match(capabilityText('zh'), /WorkDaddy 自动化任务协议 v2/);
-  assert.match(capabilityText('en'), /WorkDaddy Automation Task Protocol v2/);
+  assert.match(capabilityText('zh'), /WorkDaddy 自动化任务协议 v3/);
+  assert.match(capabilityText('en'), /WorkDaddy Automation Task Protocol v3/);
   assert.match(capabilityText('zh'), /基础接口总目录：[\s\S]*logic:[\s\S]*account:[\s\S]*http:[\s\S]*dom:[\s\S]*session:[\s\S]*state:[\s\S]*notify:/);
   assert.match(capabilityText('zh'), /HTTP 输入：[\s\S]*响应：\{ok,status,headers,text,json\}/);
   assert.match(capabilityText('en'), /Capability index:[\s\S]*Per-operation reference and minimal examples:/);

@@ -251,9 +251,13 @@ function normalizeTransactionStatements(statements) {
   });
 }
 
-function normalizeSessionIdBatch(value) {
+function normalizeSessionIdBatch(value, options = {}) {
   if (!Array.isArray(value)) throw new TypeError('会话 ID 批次必须是数组');
-  if (value.length > MAX_SESSION_ID_BATCH) {
+  // Most batch endpoints keep the defensive cap. Destructive deletion passes
+  // maxBatch:null after validating every ID and matching it back to the DB,
+  // so large user selections are processed as one logical request.
+  const maxBatch = options && options.maxBatch === null ? null : MAX_SESSION_ID_BATCH;
+  if (maxBatch !== null && value.length > maxBatch) {
     throw new RangeError(`单次最多接收 ${MAX_SESSION_ID_BATCH} 个会话 ID`);
   }
   const ids = [];

@@ -57,7 +57,7 @@ test('invalid selected task and capacity failures do not partially save',()=>{
 test('JSON imports reject unrelated documents and block future schema, dependencies and missing package inputs',()=>{
  for(const doc of [{hello:'world'},[],{kind:'workdaddy.automation-index',items:[]}]){const p=previewImport({content:JSON.stringify(doc)},[],runtime);assert.equal(p.entries[0].compatible,false);}
  assert.equal(previewImport({content:JSON.stringify({...task(),schemaVersion:2})},[],runtime).entries[0].compatible,true);
- for(const doc of [{...task(),schemaVersion:3},{...task(),requires:{minWorkDaddyVersion:'9.0.0',taskSchemaVersion:1,capabilities:[]}}])assert.equal(previewImport({content:JSON.stringify(doc)},[],runtime).entries[0].compatible,false);
+ for(const doc of [{...task(),schemaVersion:4},{...task(),requires:{minWorkDaddyVersion:'9.0.0',taskSchemaVersion:1,capabilities:[]}}])assert.equal(previewImport({content:JSON.stringify(doc)},[],runtime).entries[0].compatible,false);
  const pkg=JSON.parse(fs.readFileSync(path.join(__dirname,'../examples/automation-packages/account-summary.workdaddy.json')));
  const p=previewImport({content:JSON.stringify(pkg)},[],runtime);assert.equal(p.entries[0].compatible,true);assert.notEqual(p.entries[0].task.id,'package_preview');assert.equal(p.entries[0].task.enabled,false);
  pkg.inputs.requiredValue={type:'string',required:true};assert.equal(previewImport({content:JSON.stringify(pkg)},[],runtime).entries[0].compatible,false);

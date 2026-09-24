@@ -211,6 +211,32 @@ test('Windows installer stops the verified profile lifecycle before replacing or
   assert.match(installerSource, /runtime\\node/);
 });
 
+test('daemon continues to the verified force pass when graceful taskkill returns non-zero', async () => {
+  const start = daemonSource.indexOf('async function quitWorkBuddy()');
+  const end = daemonSource.indexOf('\nfunction relaunchWorkBuddy()', start);
+  assert.ok(start >= 0 && end > start);
+  const calls = [];
+  let waits = 0;
+  const process = { ProcessId: 701, CreationDate: 'one' };
+  const context = {
+    IS_WIN: true,
+    IS_LINUX: false,
+    resolveWorkBuddyBinary: () => 'C:\\WorkBuddy\\WorkBuddy.exe',
+    verifiedWindowsWorkBuddyProcesses: () => [process],
+    revalidateWindowsWorkBuddyProcess: value => value,
+    runCommand: async (_, args) => {
+      calls.push(args);
+      return args.includes('/F') ? { code: 0 } : { code: 1 };
+    },
+    waitForWorkBuddyExit: async () => ++waits > 1,
+    workBuddyRunning: () => false,
+    spawnSync() {}, WORKBUDDY_APP: '', WORKBUDDY_BINARY: '', linuxWorkBuddyPids: () => [], sleep: async () => {}, log() {},
+  };
+  require('node:vm').runInNewContext(daemonSource.slice(start, end), context);
+  assert.equal(await context.quitWorkBuddy(), true);
+  assert.deepEqual(calls.map(args => Array.from(args)), [['/PID', '701'], ['/F', '/PID', '701']]);
+});
+
 test('PowerShell lifecycle scopes daemon discovery to a verified watchdog parent', () => {
   const boundary = fs.readFileSync(path.join(scriptsDir, 'windows-process-boundary.ps1'), 'utf8');
   const pidValidation = boundary.indexOf('$watchdog = Assert-NodeProcessIdentity');

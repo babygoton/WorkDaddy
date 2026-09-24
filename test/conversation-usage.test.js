@@ -59,9 +59,12 @@ test('conversation usage UI uses a body-fixed mount, bottom spacer and message s
   assert.match(source, /wbs-session-usage-detail-title\{[^}]*font-weight:700/);
   assert.match(source, /wbs-session-usage-summary\{[^}]*font-size:13px[^}]*opacity:\.72/);
   assert.match(source, /wbs-session-usage-detail-title\{[^}]*font-size:14px/);
+  assert.match(source, /wbs-session-usage-detail-title-row\{[^}]*display:flex[^}]*align-items:center[^}]*justify-content:space-between/);
+  assert.match(source, /detailTitleRow\.appendChild\(el\('div', 'wbs-session-usage-detail-total'/);
   assert.match(source, /wbs-session-usage-detail-row\{[^}]*font-size:12px/);
   assert.match(source, /wbs-session-usage-detail-note/);
-  assert.match(source, /部分会话尚未完成，当前 Token 和积分仅按已完成用量统计/);
+  assert.match(source, /用量统计会随会话完成逐步更新/);
+  assert.doesNotMatch(source, /部分会话尚未完成，当前 Token 和积分仅按已完成用量统计/);
   assert.match(source, /if \(open\) \{[\s\S]{0,260}closeSessionCopyNotice\(\)/);
   assert.match(source, /pollSessionCopyNotice[\s\S]{0,500}if \(state\.open\)/);
   assert.match(source, /return usageNumber\(value\) > 0 \? '≥' \+ formatted/);
@@ -74,4 +77,20 @@ test('conversation usage UI uses a body-fixed mount, bottom spacer and message s
   assert.match(source, /positionConversationUsage\(\);[\s\S]{0,120}updateConversationUsageScrollState\(\)/);
   assert.match(source, /wbs-session-usage-summary\.is-hidden/);
   assert.doesNotMatch(source, /conversation-finished-footer[\s\S]{0,120}usage/);
+});
+
+test('usage trend reserves horizontal label space so endpoint values stay visible', () => {
+  const source = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'inject.js'), 'utf8');
+  const chart = source.slice(source.indexOf('function renderUsageTrendChart'), source.indexOf('function usageTimeSegmentHtml'));
+  assert.match(chart, /measureText\(/);
+  assert.match(chart, /chartInset = Math\.max\(/);
+  assert.match(chart, /chartRight = cssWidth - chartInset/);
+});
+
+test('credit model breakdown follows the selected account filter', () => {
+  const source = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'inject.js'), 'utf8');
+  const start = source.indexOf('var byModel = Object.create(null);');
+  const end = source.indexOf("creditBody.innerHTML =", start);
+  assert.ok(start >= 0 && end > start);
+  assert.match(source.slice(start, end), /if \(ids\.indexOf\(item\.uid\) < 0\) return;/);
 });

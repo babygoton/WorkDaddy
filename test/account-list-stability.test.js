@@ -25,14 +25,14 @@ function harness() {
   const ctx = vm.createContext({
     window: {},
     state: { accounts: [], current: null, open: true, creditRunId: 0, creditRefreshGeneration: {}, activityRunId: 0, creditRemaining: 0 },
-    alive: true, CAPS: { accounts: true }, accountsPane: pane, panel: el(), fab: el(), fabQuietMode: { wake() {} },
+    alive: true, CAPS: { accounts: true }, WBS_PROFILE_IS_AI: false, accountsPane: pane, panel: el(), fab: el(), fabQuietMode: { wake() {} },
     api(route, options) { return new Promise((resolve, reject) => requests.push({ route, options, resolve, reject })); },
     el, esc: String, escAttr: String, tokenState: () => ({ label: '-' }), isIdentityExpired: a => !!a.identityExpired,
     checkinBadgeHtml: () => '', creditBlockHtml: () => '', applyAccountMask() {}, updateAccountSummary() {},
     updateCheckinCells() {}, updateCreditCell() {}, fetchActivityForAccounts() {}, toast() {}, root: {},
     PRIMARY_ACCOUNT_SVG: '', SWITCH_SVG: '', TRASH_SVG: '',
     setBuildTimeout: fn => fn(), setTimeout: () => 1, clearTimeout() {},
-    checkForUpdate() {}, acCheckPromptOnOpen() {}, syncSessionModule() {},
+    checkForUpdate() {}, acCheckPromptOnOpen() {}, syncSessionModule() {}, fetchDailyProgressForAccounts() {}, pollActiveSessionCopyNotice() {},
   });
   vm.runInContext([
     section('  function isKnownActivityStreak(', '  function el(tag'),
@@ -53,6 +53,23 @@ test('metadata refresh retains cached credits, sorted order and the actual butto
   assert.deepEqual(h.order(), ['soon', 'later']);
   assert.equal(h.ctx.state.accounts[0].credits, 10);
   assert.equal(h.cards()[0], before[0]);
+});
+
+test('cached first render fixes the visible order and delegates current-account check-in to the ordered automation', async () => {
+  const h = harness();
+  h.ctx.refresh();
+  h.requests[0].resolve({ checkinAutomationEnabled: true, current: { uid: 'later' }, accounts: [account('later', 200), account('soon', 100), { uid: 'unknown', creditSegments: [] }] });
+  await tick();
+  const before = h.cards();
+  assert.deepEqual(h.order(), ['soon', 'later', 'unknown']);
+  assert.ok(h.requests.every(request => request.route !== '/api/accounts/checkin-sync'));
+  for (const request of h.requests.filter(request => request.route === '/api/credits')) {
+    const uid = JSON.parse(request.options.body).uid;
+    request.resolve({ credits: 10, segments: [{ remaining: 10, expiresAt: uid === 'unknown' ? 1 : 300 }] });
+  }
+  await tick();
+  assert.deepEqual(h.order(), ['soon', 'later', 'unknown']);
+  assert.deepEqual(h.cards(), before);
 });
 
 test('first credit batch after renderer reload sorts cards without reopening the panel', async () => {

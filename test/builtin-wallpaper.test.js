@@ -26,13 +26,13 @@ test('built-in official wallpapers refresh stale managed copies', () => {
   assert.equal(fs.readFileSync(wallpaperOverride, null).subarray(0, 4).toString('ascii'), 'RIFF');
 });
 
-test('a fresh profile starts with the WorkDaddy wallpaper theme', () => {
+test('a fresh profile starts with the light theme', () => {
   const start = daemon.indexOf('function initBuiltinAssets()');
   const end = daemon.indexOf('\n/** 内置主题', start);
   const source = daemon.slice(start, end);
 
-  assert.match(source, /JSON\.stringify\(\{ id: 'nebula'/);
-  assert.doesNotMatch(source, /JSON\.stringify\(\{ id: 'default'/);
+  assert.match(source, /JSON\.stringify\(\{ id: 'default'/);
+  assert.doesNotMatch(source, /JSON\.stringify\(\{ id: 'nebula'/);
 });
 
 test('release builders stage the tracked wallpaper override as wallpaper 6 and the default background', () => {

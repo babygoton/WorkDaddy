@@ -61,6 +61,8 @@ test('all-account delete button follows the current session selection', () => {
     updateSessionSummary() {}, syncCheckAllBtn() {},
   });
   const start = source.indexOf('    function updateSessCount()');
+  const filterStart = source.indexOf('    function filteredSessions()');
+  vm.runInContext(source.slice(filterStart, source.indexOf('    // 按空间分组渲染', filterStart)), ctx);
   vm.runInContext(source.slice(start, source.indexOf('    // 全选按钮', start)), ctx);
   ctx.updateSessCount();
   assert.equal(button.style.display, 'none', 'hidden before checking a session');
