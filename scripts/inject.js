@@ -1146,7 +1146,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     "已关闭首页活动弹窗": "Home activity popup closed.",
     "Token 用量仅统计本机记录，在不同电脑上查看的数据可能不一致。": "Token usage only includes records on this computer. Figures may differ between computers.",
     "会话输入框非空，未覆盖草稿、未发送": "The composer contains a draft. Nothing was overwritten or sent.",
-    '页面就绪': 'Page ready', '删除选中的': 'Delete selected', '删除该自动化任务？': 'Delete this automation task?', '删除选中的自动化任务？': 'Delete selected automation tasks?', '删除后无法恢复。': 'This cannot be undone.', '清除': 'Clear', '清除日志': 'Clear logs', '清除运行日志？': 'Clear run logs?', '仅清除已结束的运行记录。': 'Only completed run records will be cleared.', '清除日志失败': 'Failed to clear logs', '任务已启用': 'Task enabled', '任务已停用': 'Task disabled', '发送中': 'Sending',
+    '页面就绪': 'Page ready', '删除选中的': 'Delete selected', '删除中…': 'Deleting…', '删除该自动化任务？': 'Delete this automation task?', '删除选中的自动化任务？': 'Delete selected automation tasks?', '删除后无法恢复。': 'This cannot be undone.', '清除': 'Clear', '清除日志': 'Clear logs', '清除运行日志？': 'Clear run logs?', '仅清除已结束的运行记录。': 'Only completed run records will be cleared.', '清除日志失败': 'Failed to clear logs', '任务已启用': 'Task enabled', '任务已停用': 'Task disabled', '发送中': 'Sending',
     '成长计划读取中': 'Growth plan is loading', '成长计划暂不可用': 'Growth plan is unavailable',
     'Buddy 今日旅行已完成': 'Buddy finished traveling today', 'Buddy 旅行中': 'Buddy is traveling', 'Buddy 待领取礼物': 'Buddy gift pending', 'Buddy 已归来，待领奖': 'Buddy returned; reward pending', 'Buddy 在家': 'Buddy is home', 'Buddy 尚未解锁': 'Buddy is not unlocked',
     '成长任务': 'Growth tasks', '状态暂不可用': 'Status unavailable', '暂不可用': 'Unavailable', '今日旅行已完成': "Today's travel is complete", '旅行中，预计': 'Traveling, expected ', ' 归来': ' return', '旅行中': 'Traveling', '即将归来': 'Returning soon',
@@ -8400,6 +8400,10 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         }
         pending = true;
         okBtn.disabled = true;
+        var pendingLabel = okBtn.textContent;
+        okBtn.textContent = '删除中…';
+        okBtn.classList.add('is-loading');
+        okBtn.setAttribute('aria-busy', 'true');
         api('/api/sessions/delete', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
@@ -8413,7 +8417,12 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
           toast('删除失败: ' + (e.message || e), true, root);
         }).finally(function () {
           pending = false;
-          if (okBtn.onclick === submit) okBtn.disabled = false;
+          if (okBtn.onclick === submit) {
+            okBtn.disabled = false;
+            okBtn.textContent = pendingLabel;
+            okBtn.classList.remove('is-loading');
+            okBtn.removeAttribute('aria-busy');
+          }
         });
       };
       okBtn.onclick = submit;
@@ -15935,6 +15944,9 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '.wbs-modal-btn:hover{background:var(--wb-bg-hover,#f5f5f5);color:var(--wb-color-text-primary,#1f1f1f);border-color:var(--wb-border-strong,#bbb)}',
     '.wbs-modal-btn.wbs-modal-ok{color:#fff;background:#141416;border-color:#141416}',
     '.wbs-modal-btn.wbs-modal-ok:hover{background:#2a2a2e;color:#fff}',
+    '.wbs-modal-btn.is-loading{display:inline-flex;align-items:center;justify-content:center;gap:6px;cursor:wait}',
+    '.wbs-modal-btn.is-loading::before{content:"";width:11px;height:11px;box-sizing:border-box;border:1.5px solid currentColor;border-top-color:transparent;border-radius:50%;animation:wbs-modal-btn-spin .72s linear infinite}',
+    '@keyframes wbs-modal-btn-spin{to{transform:rotate(360deg)}}',
     /* 免打扰确认弹窗：红字确认按钮（高危操作，用红色警示） */
     '.wbs-modal-btn.wbs-modal-danger{color:#fff;background:#c62828;border-color:#c62828}',
     '.wbs-modal-btn.wbs-modal-danger:hover{background:#b71c1c}',

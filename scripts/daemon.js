@@ -420,8 +420,8 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 // 1.2.145：识别仅 updated_at 的激活漂移，清除无变更脏标记；无结果任务不再弹同步进度窗口。
 // 1.2.126：5.6 加密账号改为密文原样备份、内存解密；导入兼容明文 token，
 //          刷新结果不把解密后的 token 写回加密备份。
-const DAEMON_VERSION = '1.2.148';
-const DAEMON_BUILD_ID = 'release-1.2.148-20260923-windows-compat-target';
+const DAEMON_VERSION = '1.2.151';
+const DAEMON_BUILD_ID = 'release-1.2.151-20260924-session-switch-delete-loading';
 const usageReporter = createUsageReporter({ profile: PROFILE.id, version: DAEMON_VERSION });
 configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const automationDiscovery = createAutomationDiscovery({
@@ -5217,6 +5217,12 @@ function hasPendingAutoCopyTo(uid) {
     if (job.targetUid === target && (job.status === 'queued' || job.status === 'running')) return true;
   }
   return false;
+}
+
+function shouldStartAutoCopyJob(sourceRules, pendingToSource) {
+  const rules = sourceRules || {};
+  return !!(rules.allSessions || (Array.isArray(rules.sessionIds) && rules.sessionIds.length) ||
+    (Array.isArray(rules.workspaces) && rules.workspaces.length) || pendingToSource);
 }
 
 function pruneAutoCopyJobs() {
@@ -10383,8 +10389,7 @@ function handleApi(req, res) {
         // 空间规则可能因切换前后的会话索引时序暂时无法生成初始计划，但规则本身仍需触发复制任务；
         // 任务规则通常能直接命中，所以旧逻辑只表现为“任务能复制、空间不复制”。
         const sourceRules = sourceUid ? getAutoCopyRules(DATA_DIR, sourceUid) : { allSessions: false, sessionIds: [], workspaces: [] };
-        const hasSourceAutoCopyRules = !!(sourceRules.allSessions || sourceRules.sessionIds.length || sourceRules.workspaces.length);
-        const autoCopyJob = (hasSourceAutoCopyRules || hasPendingAutoCopyTo(sourceUid) || currentConversationId)
+        const autoCopyJob = shouldStartAutoCopyJob(sourceRules, hasPendingAutoCopyTo(sourceUid))
           ? startAutoCopyJob(sourceUid, uid, [], {
             sourceName: sourceAccount.nickname || '',
             targetName: acct.nickname || '',

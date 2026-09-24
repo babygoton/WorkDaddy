@@ -6,7 +6,16 @@ const vm = require('node:vm');
 const source = fs.readFileSync(require('node:path').join(__dirname, '../scripts/inject.js'), 'utf8');
 function harness() {
   const requests = [], nodes = {};
-  for (const id of ['title', 'body', 'ok', 'cancel']) nodes['#wbs-sess-modal-' + id] = { textContent: '', focus() {}, disabled: false };
+  for (const id of ['title', 'body', 'ok', 'cancel']) {
+    const classes = new Set(), attrs = {};
+    nodes['#wbs-sess-modal-' + id] = {
+      textContent: '', focus() {}, disabled: false,
+      classList: { add: name => classes.add(name), remove: name => classes.delete(name), contains: name => classes.has(name) },
+      setAttribute: (name, value) => { attrs[name] = String(value); },
+      getAttribute: name => attrs[name] || null,
+      removeAttribute: name => { delete attrs[name]; },
+    };
+  }
   const ctx = vm.createContext({
     sessionsPane: { querySelector: id => nodes[id] },
     sessionsState: {}, root: {}, toast() {}, loadSessions() {},
@@ -28,6 +37,10 @@ test('all-account deletion requires two confirmations and freezes the selected I
   assert.match(h.nodes['#wbs-sess-modal-title'].textContent, /再次确认/);
   h.ok.onclick(); h.ok.onclick();
   assert.equal(h.requests.length, 1, 'ignore duplicate submission');
+  assert.equal(h.ok.disabled, true, 'delete button is disabled while the request is pending');
+  assert.equal(h.ok.classList.contains('is-loading'), true, 'delete button shows loading while the request is pending');
+  assert.equal(h.ok.getAttribute('aria-busy'), 'true');
+  assert.equal(h.ok.textContent, '删除中…');
   assert.equal(h.requests[0].route, '/api/sessions/delete');
   assert.deepEqual(JSON.parse(h.requests[0].options.body).ids, ['selected-session']);
   h.requests[0].resolve({ deleted: 3, cascaded: 2 });
@@ -48,6 +61,9 @@ test('existing deletion retains its single confirmation and errors permit retry'
   h.requests[0].reject(Error('locked'));
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(h.ok.disabled, false);
+  assert.equal(h.ok.classList.contains('is-loading'), false);
+  assert.equal(h.ok.getAttribute('aria-busy'), null);
+  assert.equal(h.ok.textContent, '确定');
   assert.equal(h.ctx.open, true);
   h.ok.onclick(); assert.equal(h.requests.length, 2);
 });
