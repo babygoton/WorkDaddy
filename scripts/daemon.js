@@ -420,8 +420,8 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 // 1.2.145：识别仅 updated_at 的激活漂移，清除无变更脏标记；无结果任务不再弹同步进度窗口。
 // 1.2.126：5.6 加密账号改为密文原样备份、内存解密；导入兼容明文 token，
 //          刷新结果不把解密后的 token 写回加密备份。
-const DAEMON_VERSION = '1.2.148';
-const DAEMON_BUILD_ID = 'release-1.2.148-20260923-windows-compat-target';
+const DAEMON_VERSION = '1.2.153';
+const DAEMON_BUILD_ID = 'release-1.2.153-20260924-respect-active-session-sync-rule';
 const usageReporter = createUsageReporter({ profile: PROFILE.id, version: DAEMON_VERSION });
 configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const automationDiscovery = createAutomationDiscovery({
@@ -5219,6 +5219,12 @@ function hasPendingAutoCopyTo(uid) {
   return false;
 }
 
+function shouldStartAutoCopyJob(sourceRules, pendingToSource) {
+  const rules = sourceRules || {};
+  return !!(rules.allSessions || (Array.isArray(rules.sessionIds) && rules.sessionIds.length) ||
+    (Array.isArray(rules.workspaces) && rules.workspaces.length) || pendingToSource);
+}
+
 function pruneAutoCopyJobs() {
   const completed = Array.from(autoCopyJobs.values())
     .filter((job) => job.status === 'done' || job.status === 'partial' || job.status === 'conflict' || job.status === 'error')
@@ -8564,6 +8570,20 @@ function handleApi(req, res) {
       const u = String((body && body.url) || '');
       if (!/^https?:\/\//i.test(u)) return json(res, 400, { ok: false, error: '仅支持 http(s) 链接' });
       try {
+        if (IS_LINUX) {
+          return new Promise((resolve, reject) => {
+            const child = spawn('xdg-open', [u], { detached: true, stdio: 'ignore' });
+            // 不记录 URL：授权链接可能包含登录 state。缺少命令时也不能让 error 事件退出 daemon。
+            child.once('error', reject);
+            child.once('spawn', () => {
+              child.unref();
+              resolve();
+            });
+          }).then(
+            () => json(res, 200, { ok: true }),
+            () => json(res, 500, { ok: false, error: '无法启动系统浏览器，请确认已安装 xdg-utils' })
+          );
+        }
         if (IS_WIN) {
           spawn('rundll32', ['url.dll,FileProtocolHandler', u], { detached: true, stdio: 'ignore' }).unref();
         } else {
@@ -9281,7 +9301,7 @@ function handleApi(req, res) {
   if (req.method === 'GET' && p === '/api/sleep-mode') {
     let st = { mode: 'allow', displaySleep: false };
     try { st = Object.assign(st, JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'sleep-mode.json'), 'utf8'))); } catch (_) {}
-    return json(res, 200, { ok: true, mode: st.mode, displaySleep: !!st.displaySleep, preventing: st.mode === 'keep' || st.mode === 'until-done', active: !!(IS_WIN ? sleepPowershell : sleepCaffeinate), antiLock: !!sleepUserActivityTimer });
+    return json(res, 200, { ok: true, mode: st.mode, displaySleep: !!st.displaySleep, preventing: st.mode === 'keep' || st.mode === 'until-done', active: !!(IS_WIN ? sleepPowershell : IS_LINUX ? sleepInhibit : sleepCaffeinate), antiLock: !!sleepUserActivityTimer });
   }
   if (req.method === 'POST' && p === '/api/sleep-mode') {
     return readBody(req).then((body) => {
@@ -10338,6 +10358,7 @@ function handleApi(req, res) {
         releaseAccountSwitch = await assertAccountSwitchIdle();
         const sourceAccount = currentAccount() || {};
         const sourceUid = String(sourceAccount.uid || '').trim();
+        let currentConversationRow = null;
         let currentConversationId = isValidSessionId(String(body.currentConversationId || '').trim())
           ? String(body.currentConversationId).trim() : '';
         // Renderer projection state can briefly retain the destination id from
@@ -10345,12 +10366,14 @@ function handleApi(req, res) {
         // the session index proves it belongs to the account being replaced.
         if (currentConversationId && sourceUid) {
           const ownerRows = await sqliteQuery(
-            'SELECT user_id FROM sessions WHERE id = ? AND deleted_at IS NULL LIMIT 1;',
+            'SELECT user_id, cwd FROM sessions WHERE id = ? AND deleted_at IS NULL LIMIT 1;',
             [currentConversationId]
           );
           if (!ownerRows.length || String(ownerRows[0].user_id || '') !== sourceUid) {
             log(`[switch] 丢弃不属于源账号的当前会话 source=${sourceUid} session=${currentConversationId}`);
             currentConversationId = '';
+          } else {
+            currentConversationRow = { ...ownerRows[0], id: currentConversationId };
           }
         }
         const acct = switchTo(DATA_DIR, uid, log);
@@ -10383,12 +10406,15 @@ function handleApi(req, res) {
         // 空间规则可能因切换前后的会话索引时序暂时无法生成初始计划，但规则本身仍需触发复制任务；
         // 任务规则通常能直接命中，所以旧逻辑只表现为“任务能复制、空间不复制”。
         const sourceRules = sourceUid ? getAutoCopyRules(DATA_DIR, sourceUid) : { allSessions: false, sessionIds: [], workspaces: [] };
-        const hasSourceAutoCopyRules = !!(sourceRules.allSessions || sourceRules.sessionIds.length || sourceRules.workspaces.length);
-        const autoCopyJob = (hasSourceAutoCopyRules || hasPendingAutoCopyTo(sourceUid) || currentConversationId)
+        // An unrelated workspace rule may start a job, but must never opt the
+        // open conversation into copying. Use the planner's exact selection rule.
+        const autoCopyOpenSessionId = currentConversationRow && isAutoCopySessionSelected(sourceRules, currentConversationRow)
+          ? currentConversationId : '';
+        const autoCopyJob = shouldStartAutoCopyJob(sourceRules, hasPendingAutoCopyTo(sourceUid))
           ? startAutoCopyJob(sourceUid, uid, [], {
             sourceName: sourceAccount.nickname || '',
             targetName: acct.nickname || '',
-            openSessionId: currentConversationId,
+            openSessionId: autoCopyOpenSessionId,
           })
           : null;
         return json(res, 200, {
@@ -10412,14 +10438,22 @@ function handleApi(req, res) {
 }
 
 
-// ===== 电脑休眠控制（三模式：allow/keep/until-done + 显示器开关 + 立即休眠 pmset sleepnow）=====
+// ===== 电脑休眠控制（三模式：allow/keep/until-done + 显示器开关 + 立即休眠）=====
 // mode: 'allow' 允许电脑休眠（默认）| 'keep' 持续禁止休眠 | 'until-done' 所有任务结束后允许休眠
 // displaySleep: 禁止休眠时是否允许显示器休眠（默认 false = 显示器也保持唤醒）
 let sleepCaffeinate = null;
 let sleepUserActivity = null; // 防锁屏：caffeinate -u -t 300（UserIsActive 断言，阻止屏保启动/空闲锁屏）
 let sleepUserActivityTimer = null; // -u 断言每 240s 续期一次（-t 300 超时前续期，保持无间隙）
 let sleepPowershell = null; // Windows: 常驻 powershell 进程持有 SetThreadExecutionState
+let sleepInhibit = null; // Linux: systemd-inhibit 持有 sleep/idle inhibitor
 function stopCaffeinate() {
+  if (IS_LINUX) {
+    const c = sleepInhibit;
+    sleepInhibit = null;
+    // detached 子进程独占进程组；同时结束 inhibitor 和 sleep，避免遗留后台进程。
+    if (c && c.pid) { try { process.kill(-c.pid, 'SIGTERM'); } catch (_) {} }
+    return;
+  }
   if (IS_WIN) {
     const c = sleepPowershell;
     sleepPowershell = null; // 先置 null 再 kill，避免 exit 回调把旧引用覆盖
@@ -10441,7 +10475,7 @@ function stopUserActivity() {
 // 系统认为用户一直在操作，屏保与空闲锁屏便不会触发；每 240s 重启一个 -t 300 的断言实现无间隙续期。
 // 无需辅助功能权限（-u 走系统 IOKit 用户活动断言）。
 function startUserActivityLoop() {
-  if (IS_WIN) return; // Windows 无 caffeinate -u 等价；防锁屏由系统电源策略控制
+  if (IS_WIN || IS_LINUX) return; // 防锁屏由系统/桌面策略控制，不运行 macOS 用户活动断言
   stopUserActivity();
   const tick = () => {
     if (!sleepCaffeinate) return; // 防休眠已停止（allow 模式），不再续期
@@ -10456,6 +10490,17 @@ function startUserActivityLoop() {
   if (sleepUserActivityTimer.unref) sleepUserActivityTimer.unref();
 }
 function startCaffeinate(displaySleep) {
+  if (IS_LINUX) {
+    // logind 的 idle inhibitor 不保证阻止 Wayland 锁屏；不接管合盖策略。
+    const child = spawn('systemd-inhibit', [
+      '--what=' + (displaySleep ? 'sleep' : 'sleep:idle'), '--mode=block',
+      '--who=WorkDaddy', '--why=WorkDaddy 正在运行任务', 'sleep', 'infinity',
+    ], { detached: true, stdio: 'ignore' });
+    child.on('error', (e) => { log('[sleep] systemd-inhibit 启动失败: ' + e.message); if (sleepInhibit === child) sleepInhibit = null; });
+    child.on('exit', () => { if (sleepInhibit === child) sleepInhibit = null; });
+    sleepInhibit = child;
+    return child;
+  }
   if (IS_WIN) {
     // Windows：常驻 powershell 循环调用 SetThreadExecutionState。
     // 0x80000000 ES_CONTINUOUS | 0x1 ES_SYSTEM_REQUIRED | 0x2 ES_DISPLAY_REQUIRED
@@ -10478,12 +10523,12 @@ function startCaffeinate(displaySleep) {
 function applySleepMode(mode, displaySleep) {
   const preventing = mode === 'keep' || mode === 'until-done';
   if (preventing) {
-    if (IS_WIN) {
-      // Windows：powershell 持有进程参数固定，无法比较 spawnargs，直接重启（低频操作，代价可接受）
+    if (IS_WIN || IS_LINUX) {
+      // 平台持有进程直接重启（低频操作），同步更新显示器休眠策略。
       stopCaffeinate();
       try {
         startCaffeinate(!!displaySleep);
-        log('[sleep] 禁止休眠已开启（Windows，模式=' + mode + (displaySleep ? '，允许显示器休眠' : '，显示器保持唤醒') + '）');
+        log('[sleep] 禁止休眠已开启（' + (IS_LINUX ? 'Linux，systemd-inhibit' : 'Windows') + '，模式=' + mode + (displaySleep ? '，允许显示器休眠' : IS_LINUX ? '，请求阻止空闲休眠' : '，显示器保持唤醒') + '）');
       } catch (e) { log('[sleep] 开启失败: ' + e.message); return false; }
       return true;
     }
@@ -10498,7 +10543,7 @@ function applySleepMode(mode, displaySleep) {
       log('[sleep] 禁止休眠已开启（模式=' + mode + (displaySleep ? '，允许显示器休眠，防锁屏关闭' : '，显示器保持唤醒，防锁屏开启') + '）');
     } catch (e) { log('[sleep] 开启失败: ' + e.message); return false; }
   } else {
-    if (!sleepCaffeinate && !sleepPowershell && !sleepUserActivityTimer) return true;
+    if (!sleepCaffeinate && !sleepPowershell && !sleepInhibit && !sleepUserActivityTimer) return true;
     stopCaffeinate();
     log('[sleep] 禁止休眠已解除（允许电脑休眠）');
   }
@@ -10506,6 +10551,12 @@ function applySleepMode(mode, displaySleep) {
 }
 function sleepNow() {
   try {
+    if (IS_LINUX) {
+      const c = spawn('systemctl', ['suspend'], { stdio: 'ignore' });
+      c.on('error', (e) => log('[sleep] 立即休眠失败: ' + e.message));
+      c.on('exit', (code) => log(code === 0 ? '[sleep] 已请求立即休眠（systemctl suspend）' : '[sleep] systemctl suspend 失败，退出码=' + code));
+      return true;
+    }
     if (IS_WIN) {
       // Windows：SetSuspendState(Hibernate=0, ForceCritical=0, DisableWakeEvent=0) → 睡眠
       const c = spawn('rundll32.exe', ['powrprof.dll,SetSuspendState', '0,1,0'], { stdio: 'ignore', windowsHide: true });

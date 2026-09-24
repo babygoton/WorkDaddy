@@ -5,6 +5,8 @@ const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 const { fetchUsageSinceAnchor, startOfLocalDay } = require('./credit-request-usage.js');
 
+const CREDIT_HISTORY_CACHE_VERSION = 2;
+
 function dateString(date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 }
@@ -29,7 +31,7 @@ function createCreditHistorySync(options) {
   const key = (uid, date) => uid + ':' + date;
   try {
     const stored = JSON.parse(fs.readFileSync(options.cacheFile, 'utf8'));
-    if (stored.version === 1 && Array.isArray(stored.daily)) for (const row of stored.daily) {
+    if (stored.version === CREDIT_HISTORY_CACHE_VERSION && Array.isArray(stored.daily)) for (const row of stored.daily) {
       if (typeof row.uid !== 'string' || !/^\d{4}-\d\d-\d\d$/.test(row.date) ||
           !Number.isFinite(row.used) || row.used < 0 || !Number.isSafeInteger(row.count) || row.count < 0 ||
           !Number.isFinite(row.queriedAt) || typeof row.final !== 'boolean') continue;
@@ -42,7 +44,7 @@ function createCreditHistorySync(options) {
     const tmp = options.cacheFile + '.tmp';
     try {
       fs.mkdirSync(path.dirname(options.cacheFile), { recursive: true, mode: 0o700 });
-      fs.writeFileSync(tmp, JSON.stringify({ version: 1, daily: Array.from(cache.values()) }), { mode: 0o600 });
+      fs.writeFileSync(tmp, JSON.stringify({ version: CREDIT_HISTORY_CACHE_VERSION, daily: Array.from(cache.values()) }), { mode: 0o600 });
       fs.renameSync(tmp, options.cacheFile);
     } catch (_) { /* In-memory results remain usable if disk is unavailable. */ }
   }

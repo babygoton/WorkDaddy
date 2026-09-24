@@ -5,7 +5,18 @@ const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
 
-const { collectConversationUsage } = require('../scripts/inject.js');
+const { collectConversationUsage, conversationMessagesToMarkdown } = require('../scripts/inject.js');
+
+test('conversation copy preserves complete user and assistant Markdown from the message store', () => {
+  const markdown = conversationMessagesToMarkdown([
+    { id: 'timeline:initial', messageType: 'assistant', content: [{ type: 'text', text: 'hidden' }] },
+    { id: 'u-1', messageType: 'user', content: [{ type: 'text', text: '# 需求\n\n请保留 **Markdown**。'}] },
+    { id: 'a-1', messageType: 'assistant', content: [{ type: 'markdown', text: '```js\nconst answer = true;\n```\n[wbs-reply-done]: #' }] },
+    { id: 'u-2', role: 'user', content: '继续。' },
+    { id: 'a-2', role: 'assistant', content: [{ type: 'text', text: '第二次回复' }] },
+  ]);
+  assert.equal(markdown, '用户：\n\n# 需求\n\n请保留 **Markdown**。\n\n---\n\n助手：\n\n```js\nconst answer = true;\n```\n\n---\n\n用户：\n\n继续。\n\n---\n\n助手：\n\n第二次回复');
+});
 
 test('conversation usage keeps only terminal messages and groups credits by model', () => {
   const result = collectConversationUsage([
@@ -52,12 +63,14 @@ test('conversation usage UI uses a body-fixed mount, bottom spacer and message s
   assert.doesNotMatch(source, /悬浮查看明细|Hover for details/);
   assert.doesNotMatch(source, /el\('strong', 'wbs-session-usage/);
   assert.match(source, /wbs-session-usage-popover\{[^}]*background:color-mix/);
+  assert.match(source, /html\[data-wbs-theme-id="nebula"\] \.wbs-session-usage-copy:hover,[^}]*\.wbs-session-usage-copy:focus-visible\{[^}]*background:color-mix\(in srgb,var\(--wb-bg-popover,/);
   assert.match(source, /wbs-session-usage-summary\{[^}]*z-index:20/);
   assert.match(source, /wbs-session-usage-popover\{[^}]*z-index:21/);
-  assert.match(source, /wbs-session-usage-summary\{[^}]*border:0/);
+  assert.match(source, /wbs-session-usage-summary\{[^}]*border:0[^}]*background:transparent/);
   assert.match(source, /wbs-session-usage-summary\{[^}]*cursor:pointer/);
   assert.match(source, /wbs-session-usage-detail-title\{[^}]*font-weight:700/);
-  assert.match(source, /wbs-session-usage-summary\{[^}]*font-size:13px[^}]*opacity:\.72/);
+  assert.match(source, /wbs-session-usage-summary\{[^}]*font-size:14px[^}]*line-height:18px/);
+  assert.match(source, /wbs-session-usage-summary\{[^}]*background:transparent/);
   assert.match(source, /wbs-session-usage-detail-title\{[^}]*font-size:14px/);
   assert.match(source, /wbs-session-usage-detail-title-row\{[^}]*display:flex[^}]*align-items:center[^}]*justify-content:space-between/);
   assert.match(source, /detailTitleRow\.appendChild\(el\('div', 'wbs-session-usage-detail-total'/);
@@ -76,6 +89,29 @@ test('conversation usage UI uses a body-fixed mount, bottom spacer and message s
   assert.match(source, /window\.innerHeight - anchorBottom/);
   assert.match(source, /positionConversationUsage\(\);[\s\S]{0,120}updateConversationUsageScrollState\(\)/);
   assert.match(source, /wbs-session-usage-summary\.is-hidden/);
+  assert.match(source, /wbs-session-usage-label', '共'/);
+  assert.match(source, /wbs-session-usage-copy/);
+  assert.match(source, /复制整个会话/);
+  assert.match(source, /event\.target\.closest\('\.wbs-session-usage-copy'\)/);
+  assert.match(source, /listen\(copyButton, 'mouseenter', hideUsagePopover\)/);
+  assert.match(source, /wbs-session-usage-copy-icon/);
+  assert.match(source, /wbs-session-usage-copy\{[^}]*gap:6px[^}]*width:auto[^}]*min-width:34px[^}]*height:30px[^}]*padding:0 9px[^}]*border-radius:0[^}]*background:transparent[^}]*box-shadow:none/);
+  assert.match(source, /wbs-session-usage-copy-label\{[^}]*width:auto[^}]*max-width:0[^}]*padding:0[^}]*text-align:left/);
+  assert.match(source, /wbs-session-usage-copy:hover \.wbs-session-usage-copy-label[^']*max-width:72px/);
+  assert.match(source, /wbs-session-usage-main\{[^}]*gap:9px[^}]*flex:0 1 auto/);
+  assert.match(source, /wbs-session-usage-copy-icon svg\{[^}]*width:16px[^}]*height:16px[^}]*flex:0 0 16px/);
+  assert.match(source, /wbs-session-usage-copy-icon \.wbs-session-usage-check-glyph\{[^}]*display:none/);
+  assert.match(source, /wbs-session-usage-copy-icon\{[^}]*width:16px[^}]*flex:0 0 16px/);
+  assert.doesNotMatch(source, /wbs-session-usage-copy-icon\{[^}]*transform:/);
+  assert.match(source, /wbs-session-usage-check-glyph/);
+  assert.match(source, /toast\('会话已复制到剪贴板', false, null, 'success'\)/);
+  assert.doesNotMatch(source, /label\.textContent = '已复制'/);
+  assert.match(source, /conversationMessagesToMarkdown/);
+  assert.match(source, /messageStore\.getState\(\)/);
+  assert.match(source, /surface\.conversation\.getBoundingClientRect/);
+  assert.match(source, /alignmentRect = documentRect/);
+  assert.match(source, /Math\.max\(4, window\.innerHeight - anchorBottom \+ 4\)/);
+  assert.match(source, /var\(--wb-accent-blue/);
   assert.doesNotMatch(source, /conversation-finished-footer[\s\S]{0,120}usage/);
 });
 

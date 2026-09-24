@@ -490,6 +490,24 @@ module.exports = [
     desc: '毛玻璃消息正文文字阴影（默认开启，可在主题面板关闭），不影响输入框或侧栏',
     css: 'body[data-vscode-theme-name] .conversation-timeline .cr-document,body[data-vscode-theme-name] .conversation-timeline .cr-document *{text-shadow:0 1px 2px rgba(0,0,0,.65),0 0 6px rgba(0,0,0,.3) !important;}',
   },
+  {
+    id: 'patch-102',
+    themeId: 'nebula',
+    desc: '最新版 mac teams 布局：滚动容器与内部 gridView 的不透明底色会盖住毛玻璃背景，改为透明并移除自身模糊层',
+    css: ':is(html.cb-dark,html[data-theme="dark"]) body[data-vscode-theme-name] .teams-container.is-mac>.teams-grid-scroll-content,:is(html.cb-dark,html[data-theme="dark"]) body[data-vscode-theme-name] .teams-container.is-mac>.teams-grid-scroll-content>[class*="_grid_"]>[class*="_gridView_"],body[data-vscode-theme-name="IDE Night"] .teams-container.is-mac>.teams-grid-scroll-content,body[data-vscode-theme-name="IDE Night"] .teams-container.is-mac>.teams-grid-scroll-content>[class*="_grid_"]>[class*="_gridView_"]{background:transparent !important;background-color:transparent !important;backdrop-filter:none !important;-webkit-backdrop-filter:none !important;}',
+  },
+  {
+    id: 'patch-103',
+    themeId: 'nebula',
+    desc: '毛玻璃主题下新版 mac teams 主页与会话页发送按钮 tooltip 包装层去掉背景色，避免输入框右侧出现多余色块',
+    css: ':is(html.cb-dark,html[data-theme="dark"]) body[data-vscode-theme-name] .teams-container.is-mac .cr-input-toolbar__send>span.cr-send-button__tooltip-wrapper,body[data-vscode-theme-name="IDE Night"] .teams-container.is-mac .cr-input-toolbar__send>span.cr-send-button__tooltip-wrapper{background:transparent !important;background-color:transparent !important;backdrop-filter:none !important;-webkit-backdrop-filter:none !important;}',
+  },
+  {
+    id: 'patch-104',
+    themeId: 'nebula',
+    desc: '毛玻璃主题下左侧模板切换按钮与代码块复制提示去掉官方背景色，避免出现实心色块',
+    css: ':is(html.cb-dark,html[data-theme="dark"]) body[data-vscode-theme-name] .teams-container.is-mac .industry-template-switcher__host>button.wb-button.wb-button--secondary,:is(html.cb-dark,html[data-theme="dark"]) body[data-vscode-theme-name] .teams-container.is-mac .industry-template-switcher__host>button.wb-button.wb-button--secondary:hover,:is(html.cb-dark,html[data-theme="dark"]) body[data-vscode-theme-name] .teams-container.is-mac .industry-template-switcher__host>button.wb-button.wb-button--secondary:focus-visible,:is(html.cb-dark,html[data-theme="dark"]) body[data-vscode-theme-name] .teams-container.is-mac .industry-template-switcher__host>button.wb-button.wb-button--secondary:active,:is(html.cb-dark,html[data-theme="dark"]) body[data-vscode-theme-name] .cr-code-like-box__header>span.cr-code-block__copy-tooltip,:is(html.cb-dark,html[data-theme="dark"]) body[data-vscode-theme-name] .cr-code-like-box__header>span.cr-code-block__copy-tooltip:hover,body[data-vscode-theme-name="IDE Night"] .teams-container.is-mac .industry-template-switcher__host>button.wb-button.wb-button--secondary,body[data-vscode-theme-name="IDE Night"] .teams-container.is-mac .industry-template-switcher__host>button.wb-button.wb-button--secondary:hover,body[data-vscode-theme-name="IDE Night"] .teams-container.is-mac .industry-template-switcher__host>button.wb-button.wb-button--secondary:focus-visible,body[data-vscode-theme-name="IDE Night"] .teams-container.is-mac .industry-template-switcher__host>button.wb-button.wb-button--secondary:active,body[data-vscode-theme-name="IDE Night"] .cr-code-like-box__header>span.cr-code-block__copy-tooltip,body[data-vscode-theme-name="IDE Night"] .cr-code-like-box__header>span.cr-code-block__copy-tooltip:hover{background:transparent !important;background-color:transparent !important;backdrop-filter:none !important;-webkit-backdrop-filter:none !important;box-shadow:none !important;}',
+  },
   /* 原 patch-82（AI 端快捷短语弹层 z-index 抬升）已移入 inject.js 常驻样式：
      theme-patches 仅在非默认主题时注入，默认浅色主题下会失效；层级修复不依赖主题，随注入脚本常驻更可靠。 */
 ];

@@ -176,7 +176,7 @@ test('account switching carries the active conversation and opens its copied tar
   const routeStart = script.indexOf("if (req.method === 'POST' && p === '/api/switch')");
   const route = script.slice(routeStart, routeStart + 9000);
   assert.match(route, /currentConversationId/);
-  assert.match(route, /SELECT user_id FROM sessions WHERE id = \? AND deleted_at IS NULL LIMIT 1;/);
+  assert.match(route, /SELECT user_id, cwd FROM sessions WHERE id = \? AND deleted_at IS NULL LIMIT 1;/);
   assert.match(route, /不属于源账号的当前会话/);
   const dirtyStart = script.indexOf("if (req.method === 'POST' && p === '/api/sessions/dirty')");
   const dirtyRoute = script.slice(dirtyStart);
@@ -203,6 +203,24 @@ test('account switching carries the active conversation and opens its copied tar
   assert.match(inject, /'confirmed' : 'not-confirmed'/);
   assert.match(inject, /activationLog\('timeout'/);
   assert.match(inject, /setBuildTimeout\(function \(\) \{ openCopiedSession\(id, started, attempt \+ 1\); \}, 500\)/);
+});
+
+test('account switching does not auto-copy an opened session without an enabled rule', () => {
+  const daemon = read('daemon.js');
+  const helperStart = daemon.indexOf('function shouldStartAutoCopyJob(');
+  assert.notEqual(helperStart, -1, 'auto-copy decision must have a testable helper');
+  const helperEnd = daemon.indexOf('\n}\n', helperStart) + 3;
+  const context = {};
+  vm.runInNewContext(daemon.slice(helperStart, helperEnd), context);
+  assert.equal(context.shouldStartAutoCopyJob({ allSessions: false, sessionIds: [], workspaces: [] }, false), false);
+  assert.equal(context.shouldStartAutoCopyJob({ allSessions: false, sessionIds: [], workspaces: [] }, true), true);
+  assert.equal(context.shouldStartAutoCopyJob({ allSessions: true, sessionIds: [], workspaces: [] }, false), true);
+  assert.equal(context.shouldStartAutoCopyJob({ allSessions: false, sessionIds: ['session'], workspaces: [] }, false), true);
+  assert.equal(context.shouldStartAutoCopyJob({ allSessions: false, sessionIds: [], workspaces: ['/workspace'] }, false), true);
+  const routeStart = daemon.indexOf("if (req.method === 'POST' && p === '/api/switch')");
+  const route = daemon.slice(routeStart, routeStart + 9000);
+  assert.match(route, /shouldStartAutoCopyJob\(sourceRules, hasPendingAutoCopyTo\(sourceUid\)\)/);
+  assert.doesNotMatch(route, /hasPendingAutoCopyTo\(sourceUid\) \|\| currentConversationId/);
 });
 
 test('copied-session activation trusts the official handler even when projection ids are empty', async () => {
@@ -978,6 +996,8 @@ test('quick-phrase layering does not reposition WorkBuddy native chat toolbar', 
   const script = read('inject.js');
   assert.match(script, /\.wbs-explore-inline\.wbs-stash-inline-inline\{position:relative;z-index:99999\}/);
   assert.match(script, /\.wbs-explore-pop\{[^}]*z-index:2147483647/);
+  assert.match(script, /html\[data-wbs-theme-id="nebula"\] \.wbs-explore-card\{[^}]*background:color-mix\(in srgb,var\(--wb-bg-popover/);
+  assert.match(script, /html\[data-wbs-theme-id="nebula"\] \.wbs-explore-tip\{[^}]*background:color-mix\(in srgb,var\(--wb-bg-popover/);
   assert.doesNotMatch(script, /_chatMessageBottomToolbarWrapper_\}\{position:relative;z-index:68/);
   assert.doesNotMatch(script, /_chatMessageBottomToolbar_\}\{position:relative;z-index:69/);
   assert.doesNotMatch(script, /_chatMessageBottomToolbarItem_\}\{position:relative;z-index:70/);
@@ -1307,7 +1327,7 @@ test('automatic session copy includes workspace-only rules when the initial plan
   assert.match(daemon, /getAutoCopySessionMembers\(DATA_DIR, lineageId, targetUid\)/);
   assert.match(daemon, /const existing = candidates\.find\(/);
   assert.match(daemon, /const sourceRules = sourceUid \? getAutoCopyRules\(DATA_DIR, sourceUid\)/);
-  assert.match(daemon, /hasSourceAutoCopyRules/);
+  assert.match(daemon, /shouldStartAutoCopyJob\(sourceRules, hasPendingAutoCopyTo\(sourceUid\)\)/);
   assert.match(daemon, /hasPendingAutoCopyTo\(uid\)/);
   assert.match(daemon, /startAutoCopyJob\(sourceUid, uid, \[\]/);
   assert.match(daemon, /copySessionRecord\(src, targetUid/);
@@ -1335,7 +1355,7 @@ test('session copy-all is a separate override with a distinct toggle and hidden 
   const daemon = read('daemon.js');
   const inject = read('inject.js');
   assert.match(daemon, /POST' && p === '\/api\/sessions\/auto-copy-all'/);
-  assert.match(daemon, /sourceRules\.allSessions/);
+  assert.match(daemon, /rules\.allSessions/);
   assert.match(inject, /id="wbs-sess-auto-all"/);
   const filters = inject.slice(inject.indexOf('<div class="wbs-sess-filters">'), inject.indexOf('<div class="wbs-sess-toolbar">'));
   assert.match(filters, /id="wbs-sess-account-select"[\s\S]*id="wbs-sess-size-seg"[\s\S]*id="wbs-sess-range-seg"/);
