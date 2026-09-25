@@ -10,7 +10,8 @@ function harness() {
   const control = id => controls[id] ||= { innerHTML: '', textContent: '', style: {}, disabled: false, addEventListener(type, callback) { this[type] = callback; }, querySelectorAll: () => [] };
   const ctx = vm.createContext({
     sessionsState: { list: [{ id: 'small', totalBytes: 10 * 1024 ** 2, title: 'small' }, { id: 'large', totalBytes: 100 * 1024 ** 2 + 1, title: '<unsafe>', is_playground: 1 }, { id: 'unknown', totalBytes: null }], selected: {}, wsExpanded: {}, totalBytes: 2 * 1024 ** 3, minBytes: 10 * 1024 ** 2 },
-    sessionsPane: { querySelector: control, querySelectorAll: () => [] },
+    sessionsPane: { querySelector: id => id === '#wbs-sess-export-progress' ? null : control(id), querySelectorAll: () => [] },
+    sessState: { themeTakeover: true }, syncSessionModule() {},
     esc: value => String(value).replace(/</g, '&lt;'), escAttr: String,
     updateAutoCopyAllButton() {}, isTaskSessionRecordUI: s => !!s.is_playground,
     fmtHumanTime: () => 'now', shortWs: String, SESS_WS_INIT: 5,

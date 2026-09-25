@@ -6,6 +6,29 @@ const path = require('node:path');
 const vm = require('node:vm');
 const source = fs.readFileSync(path.join(__dirname, '../scripts/inject.js'), 'utf8');
 const section = (a,b) => source.slice(source.indexOf(a),source.indexOf(b,source.indexOf(a)));
+test('theme takeover is visible above theme choices and retains the saved setting', () => {
+  const theme = section('function buildThemePane()', 'function buildEnhancePane()');
+  const sessions = section('function buildSessionsPane()', 'function wireSessionsPane()');
+  assert.match(theme, /id="wbs-theme-takeover"/);
+  assert.match(theme, /<div class="wbs-pcard-title">接管 WorkBuddy 主题<\/div>/);
+  assert.doesNotMatch(theme, /关闭后，加载和切换账号时保留 WorkBuddy 的主题/);
+  assert.match(source, /\.wbs-theme-takeover-row>\.wbs-pcard-title\{[^}]*flex:1/);
+  assert.ok(theme.indexOf('id="wbs-theme-takeover"') < theme.indexOf('id="wbs-theme-seg"'));
+  assert.doesNotMatch(sessions, /wbs-theme-takeover|wbs-sess-theme-takeover/);
+  const wire = section('function wireThemePane()', '      var shadowSwitch =');
+  assert.match(wire, /themeSwitch.checked = sessState.themeTakeover/);
+  assert.match(wire, /if \(!themeSwitch\.dataset\.wbsWired\)/);
+  assert.match(wire, /setSessionSwitchWire\('themeTakeoverEnabled', this\)/);
+  assert.match(wire, /syncSessionModule\(\)/);
+  const apply = section('function applySessionModule(', 'function syncSessionModule()');
+  assert.match(apply, /themePane && themePane.querySelector\('#wbs-theme-takeover'\)/);
+  assert.match(theme, /id="wbs-theme-appearance-options"/);
+  assert.match(theme, /wbs-avatar-card wbs-theme-managed/);
+  assert.match(theme, /wbs-fab-settings wbs-theme-managed/);
+  assert.match(theme, /wbs-wallpaper-card wbs-theme-managed/);
+  assert.match(source, /function syncThemeTakeoverVisibility\(enabled\)/);
+  assert.match(source, /avatarLibrary\.select\('default'\)/);
+});
 test('theme choices do not activate official data-theme scopes and robot radios reuse their visual component', () => {
   const pane = section('function buildThemePane()', 'function buildEnhancePane()');
   assert.doesNotMatch(pane, /data-theme="/);
@@ -55,4 +78,12 @@ test('avatar presets retain legacy custom uploads and are safe before official c
   assert.equal(choose('javascript:bad', 'official', 'brand').src, 'official');
   assert.match(source, /if \(!target\) \{\s*restoreAvatarDom\(\);\s*return;/);
   assert.doesNotMatch(source, /id="wbs-avatar-reset"/);
+});
+
+test('theme takeover off hides every managed theme module and blocks custom theme clicks', () => {
+  const visibility = section('function syncThemeTakeoverVisibility(', '    // 主题 pane 事件绑定');
+  assert.match(visibility, /querySelectorAll\('\.wbs-theme-managed'\)/);
+  assert.match(visibility, /node\.style\.display = visible \? '' : 'none'/);
+  assert.match(source, /var visible = sessState\.themeTakeover && themeId === 'nebula'/);
+  assert.match(source, /if \(!sessState\.themeTakeover\) return;\s+var id = segBtn/);
 });

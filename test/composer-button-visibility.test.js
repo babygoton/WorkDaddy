@@ -39,7 +39,7 @@ function harness() {
   };
   const context = vm.createContext({
     document, window: { innerWidth: 1000, innerHeight: 800 }, WBS_COMPAT: compat,
-    stashBtn: element(), exploreBtn: element(), alive: true,
+    stashBtn: element(), exploreBtn: element(), exploreMenu: { close() {} }, alive: true,
     sessState: { phrase: true, stash: true },
     findComposer: () => page.editor,
     composerHasContent: editor => !!editor?.hasContent,

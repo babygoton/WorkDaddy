@@ -3,7 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { PROFILES } = require('../scripts/profiles.js');
-const { normalizeTargetUrl, classifyTarget, looksLikeWbFamilyTarget, isTargetForProfile } = require('../scripts/cdp-targets.js');
+const { normalizeTargetUrl, classifyTarget, looksLikeWbFamilyTarget, isTargetForProfile, selectPageTarget } = require('../scripts/cdp-targets.js');
 
 const AI_URL = 'file:///Applications/WorkBuddy%20AI.app/Contents/Resources/app.asar/renderer/index.html';
 const CN_URL = 'file:///Applications/WorkBuddy.app/Contents/Resources/app.asar/renderer/index.html';
@@ -14,6 +14,12 @@ const VSCODE_URL = 'vscode-file://vscode-app/Applications/CodeBuddy.app/Contents
 test('normalizeTargetUrl 把 %20 还原为空格', () => {
   assert.equal(normalizeTargetUrl(AI_URL), AI_URL.replace(/%20/g, ' '));
   assert.equal(normalizeTargetUrl('WorkBuddy AI.app'), 'WorkBuddy AI.app');
+});
+
+test('selectPageTarget prefers the main renderer over the settings utility window', () => {
+  const settings = { type: 'page', url: CN_URL + '?colorScheme=dark&windowAppId=settings&windowKind=settings&windowPreset=utility', title: 'WorkBuddy' };
+  const main = { type: 'page', url: CN_URL + '?locale=zh-CN&accountSnapshot=%7B%7D', title: 'WorkBuddy' };
+  assert.equal(selectPageTarget([settings, main], PROFILES['workbuddy-cn']), main);
 });
 
 test('classifyTarget 依据 app 包路径识别四客户端（含 %20 编码）', () => {

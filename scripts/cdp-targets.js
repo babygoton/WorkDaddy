@@ -121,4 +121,20 @@ function isTargetForProfile(target, profile) {
   return false;
 }
 
-module.exports = { normalizeTargetUrl, classifyTarget, looksLikeWbFamilyTarget, isTargetForProfile };
+/**
+ * Pick the renderer page for WorkDaddy injection. WorkBuddy can expose a
+ * separate settings utility window before the main conversation page; that
+ * window shares the same app URL and must not become the CDP session target.
+ */
+function selectPageTarget(targets, profile) {
+  const candidates = (Array.isArray(targets) ? targets : []).filter((target) => isTargetForProfile(target, profile));
+  const score = (target) => {
+    const url = String(target && target.url || '');
+    if (/windowAppId=settings|windowKind=settings|windowPreset=utility/i.test(url)) return 20;
+    if (/accountSnapshot=|[?&]locale=/i.test(url)) return 0;
+    return 10;
+  };
+  return candidates.sort((a, b) => score(a) - score(b))[0] || null;
+}
+
+module.exports = { normalizeTargetUrl, classifyTarget, looksLikeWbFamilyTarget, isTargetForProfile, selectPageTarget };

@@ -61,11 +61,13 @@ class ChunkReader {
   async close() { if (this.iterator.return) await this.iterator.return(); }
 }
 
-async function* archiveChunks(sessions) {
+async function* archiveChunks(sessions, options = {}) {
+  let processedBytes = 0;
   yield frame({ type: 'archive', version: 4, count: sessions.length });
   for (const session of sessions) {
     yield frame({ type: 'session', record: session.record, count: session.files.length });
     for (const file of session.files) {
+      options.signal?.throwIfAborted();
       remapSessionArchivePath(file.path, session.record.id, session.record.id);
       const handle = await fs.promises.open(file.source, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
       try {
@@ -75,7 +77,10 @@ async function* archiveChunks(sessions) {
         let total = 0;
         if (stat.size) {
           for await (const chunk of handle.createReadStream({ autoClose: false, start: 0, end: stat.size - 1 })) {
-            total += chunk.length; yield chunk;
+            options.signal?.throwIfAborted();
+            total += chunk.length; processedBytes += chunk.length;
+            if (options.onProgress) options.onProgress(processedBytes);
+            yield chunk;
           }
         }
         const after = await handle.stat();
@@ -85,7 +90,7 @@ async function* archiveChunks(sessions) {
   }
 }
 
-async function writeSessionTransfer(file, sessions, password) {
+async function writeSessionTransfer(file, sessions, password, options = {}) {
   requiredPassword(password);
   if (!Array.isArray(sessions) || !sessions.length || sessions.length > 100) throw new Error('单次最多导出 100 个会话');
   const header = Buffer.alloc(HEADER_SIZE); MAGIC.copy(header);
@@ -95,9 +100,10 @@ async function writeSessionTransfer(file, sessions, password) {
   cipher.setAAD(header.subarray(0, 36));
   let created = false;
   try {
+    options.signal?.throwIfAborted();
     await fs.promises.writeFile(file, header, { flag: 'wx', mode: 0o600 }); created = true;
-    await pipeline(Readable.from(archiveChunks(sessions)), zlib.createGzip(), cipher,
-      fs.createWriteStream(file, { flags: 'r+', start: HEADER_SIZE }));
+    await pipeline(Readable.from(archiveChunks(sessions, options)), zlib.createGzip(), cipher,
+      fs.createWriteStream(file, { flags: 'r+', start: HEADER_SIZE }), { signal: options.signal });
     const handle = await fs.promises.open(file, 'r+');
     try { await handle.write(cipher.getAuthTag(), 0, 16, 36); } finally { await handle.close(); }
   } catch (error) {
@@ -186,4 +192,68 @@ async function receiveSessionUpload(input, directory) {
   }
 }
 
-module.exports = { writeSessionTransfer, readSessionTransfer, receiveSessionUpload };
+// Jobs belong to the daemon, so closing/reloading the renderer cannot abort an
+// export. Only bounded progress metadata crosses HTTP; passwords stay in the task.
+function createSessionExportJobs({ prepare, directory, brand = 'WorkDaddy', write = writeSessionTransfer }) {
+  const jobs = new Map();
+  let latest = null, active = null, pending = Promise.resolve();
+  const publicJob = job => job ? { ...job } : null;
+  function get(id) { return publicJob(id ? jobs.get(id) : latest); }
+  function start(ids, password) {
+    requiredPassword(password);
+    if (active) throw new Error('正在导出会话，请等待完成或取消');
+    const job = { id: crypto.randomUUID(), status: 'preparing', running: true, count: 0,
+      processedBytes: 0, totalBytes: 0, percent: 0, file: '', error: '', startedAt: Date.now() };
+    const controller = new AbortController();
+    active = { job, controller }; latest = job; jobs.set(job.id, job);
+    while (jobs.size > 10) jobs.delete(jobs.keys().next().value);
+    pending = (async () => {
+      let staging;
+      try {
+        // Yield before collecting files or deriving keys, letting POST return immediately.
+        await new Promise(resolve => setImmediate(resolve));
+        controller.signal.throwIfAborted();
+        const sessions = await prepare(ids);
+        controller.signal.throwIfAborted();
+        job.count = sessions.length;
+        job.totalBytes = sessions.reduce((sum, session) => sum + session.files.reduce((bytes, file) => bytes + file.size, 0), 0);
+        const outputDir = path.resolve(await directory());
+        await fs.promises.mkdir(outputDir, { recursive: true, mode: 0o700 });
+        staging = await fs.promises.mkdtemp(path.join(outputDir, '.workdaddy-export-'));
+        await fs.promises.chmod(staging, 0o700);
+        const stagedFile = path.join(staging, 'archive.wds');
+        job.status = 'writing';
+        await write(stagedFile, sessions, password, { signal: controller.signal, onProgress(bytes) {
+          job.processedBytes = bytes;
+          job.percent = job.totalBytes ? Math.min(99, Math.floor(bytes / job.totalBytes * 100)) : 0;
+        } });
+        controller.signal.throwIfAborted();
+        const filename = brand.replace(/[^A-Za-z0-9_-]/g, '-') + '-sessions-' +
+          new Date(job.startedAt).toISOString().replace(/[:.]/g, '-') + '-' + job.id + '.wds';
+        const destination = path.join(outputDir, filename);
+        // Same-volume exclusive publication: never replace an existing download,
+        // and never expose the final filename before GCM authentication is sealed.
+        await fs.promises.link(stagedFile, destination);
+        job.file = destination; job.status = 'completed'; job.percent = 100;
+      } catch (error) {
+        job.status = controller.signal.aborted ? 'cancelled' : 'failed';
+        job.error = controller.signal.aborted ? '' : error.code === 'ENOSPC' ? '下载目录空间不足，请释放空间后重试' : String(error.message || '会话导出失败');
+      } finally {
+        password = null;
+        if (staging) await fs.promises.rm(staging, { recursive: true, force: true }).catch(() => {});
+        job.running = false; active = null;
+      }
+      return publicJob(job);
+    })();
+    return publicJob(job);
+  }
+  function cancel(id) {
+    if (active && active.job.id === id && active.job.status !== 'completed') {
+      active.job.status = 'cancelling'; active.controller.abort();
+    }
+    return get(id);
+  }
+  return { start, get, cancel, wait: () => pending };
+}
+
+module.exports = { writeSessionTransfer, readSessionTransfer, receiveSessionUpload, createSessionExportJobs };

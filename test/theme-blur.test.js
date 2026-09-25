@@ -26,9 +26,9 @@ test('theme pane exposes a percentage blur slider and syncs it with the daemon',
 test('theme pane keeps avatar controls visible and gates wallpaper controls to WorkDaddy theme', () => {
   assert.doesNotMatch(inject, /背景与头像/);
   assert.match(inject, /wbs-avatar-card/);
-  assert.match(inject, /<div class="wbs-pcard wbs-wallpaper-card" id="wbs-wallpaper-card" style="display:none">/);
+  assert.match(inject, /<div class="wbs-pcard wbs-wallpaper-card wbs-theme-managed" id="wbs-wallpaper-card" style="display:none">/);
   assert.match(inject, /function syncWallpaperCardVisibility\(themeId\)/);
-  assert.match(inject, /var visible = themeId === 'nebula'/);
+  assert.match(inject, /var visible = sessState\.themeTakeover && themeId === 'nebula'/);
   assert.match(inject, /syncWallpaperCardVisibility\(id\)/);
   assert.match(inject, /syncWallpaperCardVisibility\(cur\)/);
 });

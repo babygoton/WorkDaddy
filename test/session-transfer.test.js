@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const crypto = require('node:crypto');
-const { writeSessionTransfer, readSessionTransfer, receiveSessionUpload } = require('../scripts/session-transfer');
+const { writeSessionTransfer, readSessionTransfer, receiveSessionUpload, createSessionExportJobs } = require('../scripts/session-transfer');
 const { Readable } = require('node:stream');
 function fixture(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wd-stream-test-'));
@@ -73,7 +73,8 @@ test('real session export/import routes round-trip binary archives and retain ow
   fs.writeFileSync(original, crypto.randomBytes(100001));
   const source = fs.readFileSync(path.join(__dirname, '../scripts/daemon.js'), 'utf8');
   const stored = [], records = [{ id, user_id: 'original-owner', title: 'fixture' }];
-  const ctx = { fs, path, os, crypto, Buffer, ...require('../scripts/secure-transfer'),
+  const opened = [];
+  const ctx = { fs, path, os, crypto, Buffer, URL, IS_WIN: false, IS_LINUX: false, runCommand: async (command, args) => { opened.push(args); return {code:0}; }, ...require('../scripts/secure-transfer'),
     writeSessionTransfer, readSessionTransfer, receiveSessionUpload,
     transferPipeline: require('node:stream/promises').pipeline,
     PROFILE: { dataRoot: home }, MAX_SESSION_ID_LENGTH: 200,
@@ -88,8 +89,9 @@ test('real session export/import routes round-trip binary archives and retain ow
   vm.runInContext(source.slice(source.indexOf('const MAX_SESSION_EXPORT_FILES'), source.indexOf('async function copySessionRecord(')), ctx);
   const validStart = source.indexOf('function isValidSessionId(');
   vm.runInContext(source.slice(validStart, source.indexOf('\n}\n', validStart) + 2), ctx);
-  const routeStart = source.indexOf("if (req.method === 'POST' && p === '/api/sessions/export')");
-  vm.runInContext('function serve(req, res) { const p = req.url; ' + source.slice(routeStart, source.indexOf('  // 复制会话：POST /api/sessions/copy', routeStart)) + '\n}', ctx);
+  ctx.sessionExportJobs = createSessionExportJobs({ prepare: ctx.prepareSessionExport, directory: () => path.join(dir, 'Downloads') });
+  const routeStart = source.indexOf("if (req.method === 'GET' && p === '/api/sessions/export')");
+  vm.runInContext("function serve(req, res) { const url = new URL(req.url, 'http://127.0.0.1'); const p = url.pathname; " + source.slice(routeStart, source.indexOf('  // 复制会话：POST /api/sessions/copy', routeStart)) + '\n}', ctx);
   const server = http.createServer((req, res) => ctx.serve(req, res));
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(() => new Promise(resolve => { server.closeAllConnections(); server.close(resolve); }));
@@ -115,15 +117,37 @@ test('real session export/import routes round-trip binary archives and retain ow
   assert.deepEqual(fs.readFileSync(path.join(home, 'tasks', newId, '测试附件.bin')), fs.readFileSync(original));
   assert.equal((await upload('密码', 'override-owner')).status, 200);
   assert.equal(stored[1][2], 'override-owner');
+  const response = await fetch(base + '/api/sessions/export', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids: [id], password: '密码', background: true }) });
+  assert.equal(response.status, 202);
+  const { job } = await response.json();
+  assert.equal(job.running, true);
+  await ctx.sessionExportJobs.wait();
+  const done = (await (await fetch(base + '/api/sessions/export?id=' + job.id)).json()).job;
+  assert.equal(done.status, 'completed');
+  assert.equal(path.dirname(done.file), path.join(dir, 'Downloads'));
+  const saved = await readSessionTransfer(done.file, '密码', path.join(dir, 'saved'));
+  assert.deepEqual(fs.readFileSync(saved.sessions[0].files[0].source), fs.readFileSync(original));
+  assert.equal((await fetch(base + '/api/sessions/export?id=unknown')).status, 404);
+  const post = (route, body) => fetch(base + route, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  assert.equal((await post('/api/sessions/export/open', { id: 'unknown', path: '/etc' })).status, 400);
+  assert.equal(opened.length, 0);
+  assert.equal((await post('/api/sessions/export/open', { id: job.id, path: '/etc' })).status, 200);
+  assert.equal(opened[0][0], path.join(dir, 'Downloads'));
+  assert.equal((await post('/api/sessions/export/cancel', { id: 'unknown' })).status, 404);
+
 });
 
-test('panel uses Blob responses/uploads and release includes the streaming module', () => {
+test('panel exports in the background while retaining binary uploads and legacy transfers', () => {
   const daemon = fs.readFileSync(path.join(__dirname, '../scripts/daemon.js'), 'utf8');
   const inject = fs.readFileSync(path.join(__dirname, '../scripts/inject.js'), 'utf8');
   const build = fs.readFileSync(path.join(__dirname, '../scripts/build-mac-dmg.sh'), 'utf8');
   assert.doesNotMatch(daemon, /MAX_SESSION_EXPORT_BYTES|附件超过 256/);
   assert.match(inject, /opts\.responseType === 'blob'[\s\S]*r\.blob\(\)/);
   assert.match(inject, /new Blob\(\[prefix, metadata, file\]/);
+  const start = inject.indexOf("var exportBtn = sessionsPane.querySelector('#wbs-sess-export')");
+  const exportUi = inject.slice(start, inject.indexOf('var importBtn =', start));
+  assert.match(exportUi, /background: true/);
+  assert.doesNotMatch(exportUi, /responseType: 'blob'|downloadTransfer/);
   assert.match(build, /session-transfer\.js/);
   const publicPaths = daemon.match(/const PUBLIC_API_PATHS = new Set\(([\s\S]*?)\);/);
   assert.doesNotMatch(publicPaths[1], /sessions\/(export|import)/);
@@ -166,4 +190,15 @@ test('authenticated archives still reject path traversal, duplicates and excess 
     assert.equal(fs.existsSync(staging), false);
   }
   assert.equal(fs.existsSync(path.join(dir, 'outside')), false);
+});
+
+test('cancelling an active streaming archive closes input and removes partial output', async t => {
+  const dir = fixture(t), file = path.join(dir, 'source'), out = path.join(dir, 'export.wds');
+  const fd = fs.openSync(file, 'w'); fs.ftruncateSync(fd, 16 * 1024 * 1024); fs.closeSync(fd);
+  const controller = new AbortController(); let read = 0;
+  await assert.rejects(writeSessionTransfer(out, archive(file, fs.statSync(file).size), 'password', {
+    signal: controller.signal, onProgress(bytes) { read = bytes; controller.abort(); },
+  }), error => error.name === 'AbortError');
+  assert.ok(read > 0 && read < fs.statSync(file).size);
+  assert.equal(fs.existsSync(out), false);
 });

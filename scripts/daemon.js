@@ -158,7 +158,7 @@ const { createUsageReporter } = require('./usage-report.js');
 const { getProfile, profileDataDir, listInstalledModelSources } = require('./profiles.js');
 const plat = require('./platform.js');
 const { readWorkBuddyTarget } = require('./workbuddy-target.js');
-const { classifyTarget, looksLikeWbFamilyTarget, isTargetForProfile } = require('./cdp-targets.js');
+const { classifyTarget, looksLikeWbFamilyTarget, isTargetForProfile, selectPageTarget } = require('./cdp-targets.js');
 const { createSessionDb, normalizeSessionIdBatch, parameterCount } = require('./session-db.js');
 const { createDirtyIndex } = require('./session-dirty.js');
 const {
@@ -168,7 +168,7 @@ const {
   requiredPassword,
   resolveArchiveTarget,
 } = require('./secure-transfer.js');
-const { writeSessionTransfer, readSessionTransfer, receiveSessionUpload } = require('./session-transfer.js');
+const { writeSessionTransfer, readSessionTransfer, receiveSessionUpload, createSessionExportJobs } = require('./session-transfer.js');
 const { forkedTitle, planForkAtMessage } = require('./session-fork.js');
 const { pipeline: transferPipeline } = require('node:stream/promises');
 const { replaceFileWithRetry } = require('./atomic-file-write.js');
@@ -420,8 +420,8 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 // 1.2.145：识别仅 updated_at 的激活漂移，清除无变更脏标记；无结果任务不再弹同步进度窗口。
 // 1.2.126：5.6 加密账号改为密文原样备份、内存解密；导入兼容明文 token，
 //          刷新结果不把解密后的 token 写回加密备份。
-const DAEMON_VERSION = '1.2.153';
-const DAEMON_BUILD_ID = 'release-1.2.153-20260924-respect-active-session-sync-rule';
+const DAEMON_VERSION = '1.2.167';
+const DAEMON_BUILD_ID = 'release-1.2.167-20260925-theme-optout-sync';
 const usageReporter = createUsageReporter({ profile: PROFILE.id, version: DAEMON_VERSION });
 configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const automationDiscovery = createAutomationDiscovery({
@@ -440,6 +440,11 @@ const IS_MAC = process.platform === 'darwin';
 const IS_LINUX = process.platform === 'linux';
 // Windows 安装目录（install.ps1 铺、launcher 用、更新替换目标），对应 macOS 的 /Applications/WorkDaddy.app
 const WORKDADDY_INSTALL_NAME = PROFILE.id === 'workbuddy-ai' ? 'WorkDaddy AI' : 'WorkDaddy';
+const sessionExportJobs = createSessionExportJobs({
+  prepare: prepareSessionExport,
+  directory: () => path.join(process.env.WBSWITCH_LAUNCH_HOME || os.homedir(), 'Downloads', WORKDADDY_INSTALL_NAME),
+  brand: WORKDADDY_INSTALL_NAME,
+});
 const WORKDADDY_DIR_WIN = process.env.WBSWITCH_APP_DIR || path.resolve(__dirname, '..');
 const IS_PORTABLE_WIN = IS_WIN && fs.existsSync(path.join(WORKDADDY_DIR_WIN, 'WorkDaddy.portable'));
 const UI_PORT_BASE = parseInt(process.env.WBSWITCH_PORT || String(profileUiPortCandidates(PROFILE.id)[0]), 10);
@@ -1785,6 +1790,9 @@ let suppressPageLoadInjectionForNavigation = 0;
 let cdpPageSessionId = '';
 const automationEventKeys = new Set();
 let pendingAutomationAccountSwitch = null;
+// 自动主题恢复可能与用户刚关闭/开启接管开关并发。递增此序号使旧的
+// Runtime.evaluate 在真正写入页面前失效，避免 WorkDaddy/WorkBuddy 两套主题来回闪烁。
+let themeApplyGeneration = 0;
 
 function settlePendingReloadInjection(pending, mounted) {
   if (!pending || pendingReloadInjection !== pending || pending.settled) return;
@@ -1920,7 +1928,7 @@ function isWorkBuddyCdpTarget(target) {
 async function getPageTarget(port) {
   const r = await fetch(`http://127.0.0.1:${port}/json/list`, { signal: AbortSignal.timeout(1500) });
   const list = await r.json();
-  return (Array.isArray(list) ? list : []).find(isWorkBuddyCdpTarget) || null;
+  return selectPageTarget(list, PROFILE);
 }
 
 async function cleanupForeignInjectedTargets(targets) {
@@ -4435,10 +4443,9 @@ async function createForkSession(src, selection) {
   return { id, sourceId: src.id, keptMessages: plan.keep, droppedMessages: plan.drop };
 }
 
-async function exportSessions(ids, password) {
+async function prepareSessionExport(ids) {
   const selectedIds = normalizeSessionIdBatch(ids);
   if (!selectedIds.length) throw new Error('未选择会话');
-  requiredPassword(password);
   const rows = await sqliteQuery(
     'SELECT ' + SESSION_COPY_COLUMNS.join(',') + ' FROM sessions WHERE id IN (' + sqlPlaceholders(selectedIds) + ') AND deleted_at IS NULL;',
     selectedIds
@@ -4450,6 +4457,12 @@ async function exportSessions(ids, password) {
     return { record, files: collectSessionArchiveFiles(wbHome, id) };
   });
   if (!sessions.length) throw new Error('没有可导出的会话');
+  return sessions;
+}
+
+async function exportSessions(ids, password) {
+  requiredPassword(password);
+  const sessions = await prepareSessionExport(ids);
   const directory = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'workdaddy-session-export-'));
   const file = path.join(directory, 'sessions.wds');
   try {
@@ -4783,13 +4796,6 @@ async function copySessionRecord(src, targetUid, options = {}) {
     const aliases = getAutoCopySessionMemberRecords(DATA_DIR, lineageId).map(member => member.id).concat(targetIds);
     const syncCache = getSessionSyncCache();
     const existingMappingTarget = mapping && mapping.targetId ? candidates.find(row => row.id === mapping.targetId) : null;
-    // A brand-new destination has no target bytes to protect and is the only
-    // path that copies every selected session. The synchronous snapshot/apply
-    // implementation matches main's low-overhead file path; using it here
-    // avoids the per-file async stream/hash scheduling cost during first-time
-    // account initialization. Existing copies keep the async path so normal
-    // incremental repairs continue to yield to the renderer.
-    const firstTargetCopy = options.auto && !existingMappingTarget && candidates.length === 0;
     // Automatic switching revisits the same source/target pairs frequently.
     // WorkBuddy updates the session row whenever its content changes. Validate
     // the persisted source/target row revisions before paying for a complete
@@ -4815,14 +4821,10 @@ async function copySessionRecord(src, targetUid, options = {}) {
         copiedBytes: 0,
       };
     }
-    let left = firstTargetCopy
-      ? sessionSync.readSnapshot(PROFILE.dataRoot, sourceRow.id, aliases, syncCache)
-      : await sessionSync.readSnapshotAsync(PROFILE.dataRoot, sourceRow.id, aliases, syncCache);
+    let left = await sessionSync.readSnapshotAsync(PROFILE.dataRoot, sourceRow.id, aliases, syncCache);
     const selection = await sessionSync.selectTargetSnapshot(left, targetIds, async id => {
       await yieldAutoCopyToRenderer();
-      return firstTargetCopy
-        ? sessionSync.readSnapshot(PROFILE.dataRoot, id, aliases, syncCache)
-        : sessionSync.readSnapshotAsync(PROFILE.dataRoot, id, aliases, syncCache);
+      return sessionSync.readSnapshotAsync(PROFILE.dataRoot, id, aliases, syncCache);
     }, mapping && mapping.targetId);
     // A divergent source still needs to reach the destination. Publish it as
     // a new physical session in the same lineage, so later scans find it by
@@ -4849,9 +4851,7 @@ async function copySessionRecord(src, targetUid, options = {}) {
       clearAutoDirty();
       return { status: 'skipped', sourceId: src.id, targetId, branched: false, failedFiles: 0, warning, sourceBytes: left.totalBytes, totalBytes: left.totalBytes, copiedBytes: 0 };
     }
-    let right = firstTargetCopy
-      ? sessionSync.readSnapshot(PROFILE.dataRoot, targetId, aliases, syncCache)
-      : await sessionSync.readSnapshotAsync(PROFILE.dataRoot, targetId, aliases, syncCache);
+    let right = await sessionSync.readSnapshotAsync(PROFILE.dataRoot, targetId, aliases, syncCache);
     // Size is advisory only; both manual and automatic sync keep all files.
     const warning = Math.max(left.totalBytes, right.totalBytes) > 100 * 1024 * 1024
       ? '会话超过 100 MB，同步可能较慢' : '';
@@ -4899,19 +4899,12 @@ async function copySessionRecord(src, targetUid, options = {}) {
           });
         }
       };
-      const applied = await (firstTargetCopy
-        ? sessionSync.applySnapshot(from, to, {
-          backupRoot: path.join(DATA_DIR, 'session-sync-backups'), metadata: toRow,
-          missingOnly, guard: verifyRows,
-          onProgress: options.onProgress,
-          commit,
-        })
-        : sessionSync.applySnapshotAsync(from, to, {
+      const applied = await sessionSync.applySnapshotAsync(from, to, {
         backupRoot: path.join(DATA_DIR, 'session-sync-backups'), metadata: toRow,
         missingOnly, guard: verifyRows,
         onProgress: options.onProgress,
         commit,
-      }));
+      });
       totalBytes = applied.totalBytes;
       copiedBytes += applied.copiedBytes;
       changed = true;
@@ -4922,12 +4915,8 @@ async function copySessionRecord(src, targetUid, options = {}) {
       if (comparison.missingRight) await update(left, right, sourceRow, existing, true);
       if (comparison.missingLeft) {
         // Re-read after the first repair, so race detection uses current bytes.
-        left = firstTargetCopy
-          ? sessionSync.readSnapshot(PROFILE.dataRoot, sourceRow.id, aliases, syncCache)
-          : await sessionSync.readSnapshotAsync(PROFILE.dataRoot, sourceRow.id, aliases, syncCache);
-        right = firstTargetCopy
-          ? sessionSync.readSnapshot(PROFILE.dataRoot, targetId, aliases, syncCache)
-          : await sessionSync.readSnapshotAsync(PROFILE.dataRoot, targetId, aliases, syncCache);
+        left = await sessionSync.readSnapshotAsync(PROFILE.dataRoot, sourceRow.id, aliases, syncCache);
+        right = await sessionSync.readSnapshotAsync(PROFILE.dataRoot, targetId, aliases, syncCache);
         await update(right, left, existing, sourceRow, true);
       }
     }
@@ -6100,7 +6089,7 @@ async function acSendCurrentInput() {
 // 开关状态 + 短语列表持久化在 ~/.workbuddy/settings.json 的 wbs.session 域（与 noDisturb/autoContinue 同模式）。
 // 默认值：暂存提示词开、快捷短语开（属性缺省即按开处理，保证旧用户全新功能默认可用）。
 const SESS_NS = 'session';
-const SESS_SWITCHES = ['stashEnabled', 'phraseEnabled'];
+const SESS_SWITCHES = ['stashEnabled', 'phraseEnabled', 'themeTakeoverEnabled'];
 // 首次使用时播种的默认快捷短语（仅一次；用户删除后不再补——seeded 标志已置位，删除即永久生效）
 const SESS_DEFAULT_PHRASES = ['继续执行'];
 let sessionSeedPersistReported = false;
@@ -6109,6 +6098,7 @@ function sessBuild(st, phrases) {
   return {
     stashEnabled: st.stashEnabled !== false,
     phraseEnabled: st.phraseEnabled !== false,
+    themeTakeoverEnabled: st.themeTakeoverEnabled !== false,
     phrases: Array.isArray(phrases) ? phrases : [],
   };
 }
@@ -6152,7 +6142,7 @@ function writeSessionState(state) {
   const prior = (s.wbs && s.wbs[SESS_NS] && typeof s.wbs[SESS_NS] === 'object') ? s.wbs[SESS_NS] : {};
   if (!s.wbs || typeof s.wbs !== 'object') s.wbs = {};
   s.wbs[SESS_NS] = {
-    state: { stashEnabled: !!state.stashEnabled, phraseEnabled: !!state.phraseEnabled },
+    state: { stashEnabled: !!state.stashEnabled, phraseEnabled: !!state.phraseEnabled, themeTakeoverEnabled: state.themeTakeoverEnabled !== false },
     phrases: state.phrases || [],
     seeded: prior.seeded !== false, // 保留播种标志（删除默认短语后不回补）
   };
@@ -6913,16 +6903,195 @@ function getTheme(id) {
   return null;
 }
 
+// WorkBuddy 的外观设置在独立窗口中运行。关闭接管后，主会话窗口不会
+// 自动收到特殊皮肤的 adoptedStyleSheet，因此只同步 WorkBuddy 自己保存
+// 的 CSS 资源；浅色/深色仍由 WorkBuddy 原生状态负责。
+function nativeAppearanceSyncExpression() {
+  return `(function () {
+    var h = null, b = null;
+    function removeNativeSheet() {
+      try {
+        var own = window.__wbsNativeAppearanceSheet;
+        if (!own || !document.adoptedStyleSheets) return;
+        document.adoptedStyleSheets = Array.from(document.adoptedStyleSheets).filter(function (sheet) { return sheet !== own; });
+      } catch (_) {}
+      try { delete window.__wbsNativeAppearanceSheet; delete window.__wbsNativeAppearanceKey; } catch (_) {}
+    }
+    function setMode(mode) {
+      var dark = mode === 'dark';
+      h.setAttribute('data-theme', mode);
+      h.classList.toggle('cb-dark', dark); h.classList.toggle('cb-light', !dark);
+      h.classList.toggle('dark', dark); h.classList.toggle('light', !dark);
+      b.setAttribute('data-vscode-theme-kind', dark ? 'vscode-dark' : 'vscode-light');
+      b.setAttribute('data-vscode-theme-name', dark ? 'IDE Night' : 'IDE Light');
+      b.classList.toggle('vscode-dark', dark); b.classList.toggle('vscode-light', !dark);
+      b.classList.toggle('cb-dark', dark); b.classList.toggle('cb-light', !dark);
+      b.classList.toggle('dark', dark); b.classList.toggle('light', !dark);
+    }
+    function sync() {
+      h = document.documentElement; b = document.body;
+      if (!h || !b) return;
+      var applied = null, cssState = null;
+      try { applied = JSON.parse(localStorage.getItem('workbuddy.appearance.lastApplied') || 'null'); } catch (_) {}
+      try { cssState = JSON.parse(localStorage.getItem('workbuddy.appearance.lastApplied.css') || 'null'); } catch (_) {}
+      var resource = String((cssState && cssState.resourceKey) || (applied && applied.resourceKey) || '');
+      var css = String((cssState && cssState.css) || '');
+      var special = resource && resource !== 'light' && resource !== 'dark' && css;
+      if (special && typeof CSSStyleSheet !== 'undefined' && document.adoptedStyleSheets) {
+        var key = resource + ':' + css.length;
+        var currentSheets = Array.from(document.adoptedStyleSheets || []);
+        var ownSheetPresent = window.__wbsNativeAppearanceSheet && currentSheets.indexOf(window.__wbsNativeAppearanceSheet) >= 0;
+        if (window.__wbsNativeAppearanceKey !== key || !ownSheetPresent) {
+          removeNativeSheet();
+          try {
+            var sheet = new CSSStyleSheet();
+            sheet.replaceSync(css);
+            document.adoptedStyleSheets = Array.from(document.adoptedStyleSheets || []).concat([sheet]);
+            window.__wbsNativeAppearanceSheet = sheet;
+            window.__wbsNativeAppearanceKey = key;
+          } catch (_) {}
+        }
+        setMode(applied && applied.appearance === 'dark' ? 'dark' : 'light');
+        return;
+      }
+      removeNativeSheet();
+      setMode(resource === 'dark' || (applied && applied.appearance === 'dark') ? 'dark' : 'light');
+    }
+    sync();
+    try {
+      if (window.__wbsNativeAppearanceSync) clearInterval(window.__wbsNativeAppearanceSync);
+      window.__wbsNativeAppearanceSync = setInterval(sync, 500);
+    } catch (_) {}
+  })()`;
+}
+
+async function startNativeAppearanceSyncByCdp() {
+  if (!cdp.connected) return;
+  await cdpSend('Runtime.evaluate', { expression: nativeAppearanceSyncExpression(), returnByValue: true });
+}
+
+async function releaseThemeByCdp() {
+  themeApplyGeneration++;
+  if (!cdp.connected) return;
+  let _accUid = null;
+  try { const _a = currentAccount(); _accUid = _a ? _a.uid : null; } catch (_) {}
+  const uid = (typeof _accUid === 'string' && _accUid) ? _accUid : null;
+  const result = await cdpSend('Runtime.evaluate', {
+    expression: `(function () {
+      var WBS_UID = ${JSON.stringify(uid || null)};
+      try {
+        if (window.__wbsThemeAppearanceGuard) {
+          clearInterval(window.__wbsThemeAppearanceGuard);
+          clearTimeout(window.__wbsThemeAppearanceGuardStop);
+          delete window.__wbsThemeAppearanceGuard;
+          delete window.__wbsThemeAppearanceGuardStop;
+        }
+      } catch (_) {}
+      // 接管主题期间保存了 WorkBuddy 的账号级外观；关闭接管时恢复，保证
+      // WorkBuddy 的特殊主题不会因为一次接管而丢失。
+      try {
+        if (WBS_UID) {
+          var snapshotKey = 'workdaddy.theme.native-snapshot::' + WBS_UID;
+          var rawSnapshot = localStorage.getItem(snapshotKey);
+          if (rawSnapshot) {
+            var snapshot = JSON.parse(rawSnapshot);
+            var accountSuffix = '::' + WBS_UID;
+            var removeKeys = [];
+            for (var si = 0; si < localStorage.length; si++) {
+              var sk = localStorage.key(si);
+              if (!sk) continue;
+              if ((sk.indexOf('workbuddy.appearance.mode::') === 0 ||
+                   sk.indexOf('workbuddy.appearance.state::') === 0 ||
+                   sk.indexOf('workbuddy.appearance.lastApplied::') === 0) && sk.endsWith(accountSuffix)) {
+                removeKeys.push(sk);
+              }
+            }
+            for (var sr = 0; sr < removeKeys.length; sr++) localStorage.removeItem(removeKeys[sr]);
+            var globalKeys = ['agent-ui-theme', 'workbuddy.appearance.lastApplied', 'workbuddy.appearance.lastApplied.css', 'workbuddy.appearance.lastApplied::__identity'];
+            for (var sg = 0; sg < globalKeys.length; sg++) localStorage.removeItem(globalKeys[sg]);
+            var savedKeys = Array.isArray(snapshot.keys) ? snapshot.keys : [];
+            var savedMap = {};
+            for (var skn = 0; skn < savedKeys.length; skn++) {
+              if (Array.isArray(savedKeys[skn]) && savedKeys[skn].length >= 2) {
+                savedMap[savedKeys[skn][0]] = savedKeys[skn][1];
+                localStorage.setItem(savedKeys[skn][0], savedKeys[skn][1]);
+              }
+            }
+            // Keep the exact snapshot bytes. WorkBuddy's special appearances
+            // use their own resource key and CSS payload; normalising them to
+            // light/dark here makes the settings window appear selected while
+            // the main page stays on the forced takeover mode.
+            localStorage.removeItem(snapshotKey);
+          }
+        }
+      } catch (_) {}
+      if (window.__wbsThemeGuard) window.__wbsThemeGuard.disconnect();
+      delete window.__wbsThemeGuard;
+      var style = document.getElementById('wbs-theme-style');
+      if (style) style.remove();
+      document.documentElement.removeAttribute('data-wbs-theme');
+      document.documentElement.removeAttribute('data-wbs-theme-id');
+    })()`,
+    returnByValue: true,
+  });
+  if (result && result.exceptionDetails) throw new Error('释放主题接管失败');
+  await startNativeAppearanceSyncByCdp();
+}
+
+async function restoreNativeAppearanceByCdp() {
+  if (!cdp.connected) return;
+  let _accUid = null;
+  try { const _a = currentAccount(); _accUid = _a ? _a.uid : null; } catch (_) {}
+  const uid = (typeof _accUid === 'string' && _accUid) ? _accUid : null;
+  if (!uid) return;
+  try {
+    await cdpSend('Runtime.evaluate', {
+      expression: `(function () {
+        var WBS_UID = ${JSON.stringify(uid)};
+        var snapshotKey = 'workdaddy.theme.native-snapshot::' + WBS_UID;
+        var rawSnapshot = localStorage.getItem(snapshotKey);
+        if (!rawSnapshot) return { restored: false };
+        var snapshot = JSON.parse(rawSnapshot);
+        var suffix = '::' + WBS_UID;
+        var removeKeys = [];
+        for (var i = 0; i < localStorage.length; i++) {
+          var k = localStorage.key(i);
+          if (!k) continue;
+          if ((k.indexOf('workbuddy.appearance.mode::') === 0 ||
+               k.indexOf('workbuddy.appearance.state::') === 0 ||
+               k.indexOf('workbuddy.appearance.lastApplied::') === 0) && k.endsWith(suffix)) removeKeys.push(k);
+        }
+        for (var r = 0; r < removeKeys.length; r++) localStorage.removeItem(removeKeys[r]);
+        var globalKeys = ['agent-ui-theme', 'workbuddy.appearance.lastApplied', 'workbuddy.appearance.lastApplied.css', 'workbuddy.appearance.lastApplied::__identity'];
+        for (var g = 0; g < globalKeys.length; g++) localStorage.removeItem(globalKeys[g]);
+        var saved = Array.isArray(snapshot.keys) ? snapshot.keys : [];
+        var savedMap = {};
+        for (var s = 0; s < saved.length; s++) if (Array.isArray(saved[s]) && saved[s].length >= 2) { savedMap[saved[s][0]] = saved[s][1]; localStorage.setItem(saved[s][0], saved[s][1]); }
+        // Preserve the saved WorkBuddy resource key and CSS payload verbatim;
+        // special appearances must remain selectable after takeover is off.
+        localStorage.removeItem(snapshotKey);
+        return { restored: true };
+      })()`,
+      returnByValue: true,
+    });
+    await startNativeAppearanceSyncByCdp();
+  } catch (_) {}
+}
+
 /** 恢复已保存的主题（CDP 连接/页面刷新后调用）：读取 current-theme.json 重新应用，保证深浅色在重启/刷新后仍生效 */
 async function restoreSavedTheme() {
   if (!PROFILE.capabilities.theme) return;
   if (!cdp.connected) return;
+  if (readSessionState().themeTakeoverEnabled === false) {
+    await restoreNativeAppearanceByCdp();
+    return;
+  }
   let id = 'default';
   try {
     const f = path.join(DATA_DIR, 'current-theme.json');
     if (fs.existsSync(f)) id = String(JSON.parse(fs.readFileSync(f, 'utf8')).id || 'default');
   } catch (_) {}
-  await applyThemeByCdp(id);
+  await applyThemeByCdp(id, { automatic: true });
 }
 
 /** 应用主题：通过 CDP 注入主题样式。
@@ -7033,9 +7202,12 @@ function readBackgroundBlur() {
   return blur;
 }
 
-async function applyThemeByCdp(id) {
+async function applyThemeByCdp(id, options = {}) {
   if (!PROFILE.capabilities.theme) throw new Error(`${PROFILE.name} 暂不支持主题功能`);
+  if (options.automatic && readSessionState().themeTakeoverEnabled === false) return { applied: false, takeover: false };
+  const applyGeneration = themeApplyGeneration;
   if (!cdp.connected) throw new Error('CDP 未连接');
+  const takeoverEnabled = readSessionState().themeTakeoverEnabled !== false;
   let _accUid = null;
   try { const _a = currentAccount(); _accUid = _a ? _a.uid : null; } catch (_) {}
   const uid = (typeof _accUid === 'string' && _accUid) ? _accUid : null;
@@ -7125,6 +7297,12 @@ async function applyThemeByCdp(id) {
   const expr = `(function(){
     var h = document.documentElement, b = document.body;
     if (!h || !b) return { pending: true };
+    try {
+      if (window.__wbsNativeAppearanceSync) clearInterval(window.__wbsNativeAppearanceSync);
+      var nativeSheet = window.__wbsNativeAppearanceSheet;
+      if (nativeSheet && document.adoptedStyleSheets) document.adoptedStyleSheets = Array.from(document.adoptedStyleSheets).filter(function (sheet) { return sheet !== nativeSheet; });
+      delete window.__wbsNativeAppearanceSync; delete window.__wbsNativeAppearanceSheet; delete window.__wbsNativeAppearanceKey;
+    } catch (_) {}
     if (window.__wbsThemeGuard) window.__wbsThemeGuard.disconnect();
     var WBS_UID = ${JSON.stringify(uid || null)};
     // WorkDaddy 自定义主题已应用标记：theme-patches 里部分规则用 html[data-wbs-theme] 限定
@@ -7139,24 +7317,114 @@ async function applyThemeByCdp(id) {
     //    会按账号原偏好（如 dark）恢复并覆盖我们的设置 —— 这是面板切主题被"弹回"的根因；
     // 4) 设置 body[data-vscode-theme-kind]，触发 ThemeManager 的 MutationObserver（syncThemeClassesFromAttribute），
     //    让 WorkBuddy 内部 useTheme hook / 组件 theme prop 实时跟随，等价调用原生 setTheme()。
-    function wbsSyncAppearanceKeys(mode) {
+    function wbsBuiltinAppearance(mode) {
+      return {
+        kind: 'theme',
+        resourceKey: mode,
+        nameZh: mode === 'dark' ? '深色' : '浅色',
+        nameEn: mode === 'dark' ? 'Dark' : 'Light',
+        vipLevel: 'free',
+        updatedAt: 0,
+        series: 'base',
+        appearance: mode,
+      };
+    }
+    function wbsSnapshotNativeAppearance() {
+      if (!WBS_UID) return;
       try {
-        // 覆盖所有已存在的账号外观键（mode 存裸 'light'/'dark'，state 存 {currentTheme}）
+        var snapshotKey = 'workdaddy.theme.native-snapshot::' + WBS_UID;
+        if (localStorage.getItem(snapshotKey)) return;
+        var keys = [];
+        var suffix = '::' + WBS_UID;
         for (var i = 0; i < localStorage.length; i++) {
           var k = localStorage.key(i);
-          if (typeof k !== 'string') continue;
+          if (!k) continue;
+          if ((k.indexOf('workbuddy.appearance.mode::') === 0 ||
+               k.indexOf('workbuddy.appearance.state::') === 0 ||
+               k.indexOf('workbuddy.appearance.lastApplied::') === 0) && k.endsWith(suffix)) {
+            keys.push([k, localStorage.getItem(k)]);
+          }
+        }
+        var globalKeys = ['agent-ui-theme', 'workbuddy.appearance.lastApplied', 'workbuddy.appearance.lastApplied.css', 'workbuddy.appearance.lastApplied::__identity'];
+        for (var g = 0; g < globalKeys.length; g++) {
+          var gv = localStorage.getItem(globalKeys[g]);
+          if (gv !== null) keys.push([globalKeys[g], gv]);
+        }
+        localStorage.setItem(snapshotKey, JSON.stringify({ keys: keys, at: Date.now() }));
+      } catch (_) {}
+    }
+    function wbsClearNativeCustomCss() {
+      try {
+        var raw = localStorage.getItem('workbuddy.appearance.lastApplied.css');
+        var cssState = null;
+        var applied = null;
+        try { cssState = JSON.parse(raw || 'null'); } catch (_) {}
+        try { applied = JSON.parse(localStorage.getItem('workbuddy.appearance.lastApplied') || 'null'); } catch (_) {}
+        var css = String((cssState || {}).css || '');
+        var resourceKey = String((cssState || {}).resourceKey || (applied || {}).resourceKey || '');
+        var special = !!resourceKey && resourceKey !== 'light' && resourceKey !== 'dark';
+        if ((!css && !special) || !document.adoptedStyleSheets || !document.adoptedStyleSheets.length) return;
+        var kept = [];
+        for (var i = 0; i < document.adoptedStyleSheets.length; i++) {
+          var sheet = document.adoptedStyleSheets[i];
+          var text = '';
+          try { text = Array.from(sheet.cssRules || []).map(function (rule) { return rule.cssText; }).join('\\n'); } catch (_) {}
+          // CSSOM serialization may differ from the downloaded CSS. When the
+          // active resource is a special skin, WorkBuddy theme variables give
+          // us a stable marker for the adopted sheet.
+          var looksLikeCustomSkin = special && (
+            text.indexOf('--cb-bg-primary') !== -1 ||
+            text.indexOf('--wb-bg-primary') !== -1 ||
+            text.indexOf('--cb-color') !== -1
+          );
+          if (text !== css && !looksLikeCustomSkin) kept.push(sheet);
+        }
+        if (kept.length !== document.adoptedStyleSheets.length) document.adoptedStyleSheets = kept;
+      } catch (_) {}
+    }
+    function wbsSyncAppearanceKeys(mode) {
+      try {
+        if (!WBS_UID) return;
+        wbsSnapshotNativeAppearance();
+        var builtin = wbsBuiltinAppearance(mode);
+        var accountLastAppliedFound = false;
+        for (var i = 0; i < localStorage.length; i++) {
+          var k = localStorage.key(i);
+          if (typeof k !== 'string' || !k.endsWith('::' + WBS_UID)) continue;
           if (k.indexOf('workbuddy.appearance.mode::') === 0) {
             localStorage.setItem(k, mode);
           } else if (k.indexOf('workbuddy.appearance.state::') === 0) {
             try { localStorage.setItem(k, JSON.stringify({ currentTheme: mode })); } catch (e3) {}
+          } else if (k.indexOf('workbuddy.appearance.lastApplied::') === 0) {
+            try { localStorage.setItem(k, JSON.stringify(builtin)); accountLastAppliedFound = true; } catch (e4) {}
           }
         }
         // 当前账号兜底键（个人版默认 accountType=personal、eid=personal），保证新账号也跟随
         if (WBS_UID) {
           localStorage.setItem('workbuddy.appearance.mode::personal::personal::' + WBS_UID, mode);
-          try { localStorage.setItem('workbuddy.appearance.state::personal::' + WBS_UID, JSON.stringify({ currentTheme: mode })); } catch (e4) {}
+          try { localStorage.setItem('workbuddy.appearance.state::personal::' + WBS_UID, JSON.stringify({ currentTheme: mode })); } catch (e5) {}
+          if (!accountLastAppliedFound) {
+            try { localStorage.setItem('workbuddy.appearance.lastApplied::personal::' + WBS_UID, JSON.stringify(builtin)); } catch (e6) {}
+          }
         }
-      } catch (e5) {}
+      } catch (e7) {}
+    }
+    function wbsPrepareNativeAppearance() {
+      if (!WBS_UID) return;
+      // WorkBuddy 的特殊皮肤会在 React effect 中再次覆盖 html/body；先把
+      // 当前账号切到官方浅色并清理已注入的皮肤 CSS，再落下 WorkDaddy 主题。
+      wbsSnapshotNativeAppearance();
+      wbsClearNativeCustomCss();
+      wbsSyncAppearanceKeys('light');
+      try {
+        localStorage.setItem('agent-ui-theme', JSON.stringify({ theme: 'light', followSystem: false, vsCodeThemeName: 'IDE Light', vsCodeThemeKind: 'vscode-light' }));
+        localStorage.setItem('workbuddy.appearance.lastApplied', JSON.stringify(wbsBuiltinAppearance('light')));
+      } catch (_) {}
+      h.setAttribute('data-theme', 'light');
+      h.classList.remove('cb-dark');
+      b.setAttribute('data-vscode-theme-kind', 'vscode-light');
+      b.setAttribute('data-vscode-theme-name', 'IDE Light');
+      b.classList.remove('vscode-dark');
     }
     function wbsSyncNativeTheme(mode) {
       var isLight = mode === 'light';
@@ -7164,13 +7432,14 @@ async function applyThemeByCdp(id) {
       var name = isLight ? 'IDE Light' : 'IDE Night';
       try {
         localStorage.setItem('agent-ui-theme', JSON.stringify({ theme: mode, followSystem: false, vsCodeThemeName: name, vsCodeThemeKind: kind }));
-        try { localStorage.setItem('workbuddy.appearance.lastApplied', JSON.stringify({ appearance: mode })); } catch (e2) {}
+        try { localStorage.setItem('workbuddy.appearance.lastApplied', JSON.stringify(wbsBuiltinAppearance(mode))); } catch (e2) {}
         wbsSyncAppearanceKeys(mode);
       } catch (e1) {}
       b.setAttribute('data-vscode-theme-kind', kind);
       b.setAttribute('data-vscode-theme-name', name);
       h.setAttribute('data-theme', mode);
     }
+    if (${takeoverEnabled ? 'true' : 'false'}) wbsPrepareNativeAppearance();
     var s = document.getElementById('wbs-theme-style');
     if (${id === 'default' || id === 'dark' ? 'true' : 'false'}) {
       if (s) s.remove();
@@ -7211,19 +7480,78 @@ async function applyThemeByCdp(id) {
     function keepSelectedTheme() {
       if (h.getAttribute('data-theme') === wantedMode &&
           h.classList.contains('cb-dark') === wantedDark &&
+          h.classList.contains('cb-light') === !wantedDark &&
+          h.classList.contains('dark') === wantedDark &&
+          h.classList.contains('light') === !wantedDark &&
+          h.classList.contains('vscode-dark') === wantedDark &&
+          h.classList.contains('vscode-light') === !wantedDark &&
           b.getAttribute('data-vscode-theme-kind') === wantedKind &&
           b.getAttribute('data-vscode-theme-name') === wantedName &&
-          b.classList.contains('vscode-dark') === wantedDark) return;
+          b.classList.contains('vscode-dark') === wantedDark &&
+          b.classList.contains('vscode-light') === !wantedDark &&
+          b.classList.contains('cb-dark') === wantedDark &&
+          b.classList.contains('cb-light') === !wantedDark &&
+          b.classList.contains('dark') === wantedDark &&
+          b.classList.contains('light') === !wantedDark) return;
       h.classList.toggle('cb-dark', wantedDark);
+      h.classList.toggle('cb-light', !wantedDark);
+      h.classList.toggle('dark', wantedDark);
+      h.classList.toggle('light', !wantedDark);
+      h.classList.toggle('vscode-dark', wantedDark);
+      h.classList.toggle('vscode-light', !wantedDark);
       b.classList.toggle('vscode-dark', wantedDark);
+      b.classList.toggle('vscode-light', !wantedDark);
+      b.classList.toggle('cb-dark', wantedDark);
+      b.classList.toggle('cb-light', !wantedDark);
+      b.classList.toggle('dark', wantedDark);
+      b.classList.toggle('light', !wantedDark);
       wbsSyncNativeTheme(wantedMode);
     }
     keepSelectedTheme();
-    if (typeof MutationObserver !== 'undefined') {
+    if (${readSessionState().themeTakeoverEnabled !== false} && typeof MutationObserver !== 'undefined') {
       var guard = new MutationObserver(keepSelectedTheme);
       guard.observe(h, { attributes: true, attributeFilter: ['class', 'data-theme'] });
       guard.observe(b, { attributes: true, attributeFilter: ['class', 'data-vscode-theme-kind', 'data-vscode-theme-name'] });
       window.__wbsThemeGuard = guard;
+    }
+    if (${takeoverEnabled ? 'true' : 'false'} && WBS_UID && typeof setInterval === 'function') {
+      function wbsHasSpecialNativeAppearance() {
+        try {
+          var globalCss = null;
+          try { globalCss = JSON.parse(localStorage.getItem('workbuddy.appearance.lastApplied.css') || 'null'); } catch (_) {}
+          if (globalCss && globalCss.resourceKey && globalCss.resourceKey !== 'light' && globalCss.resourceKey !== 'dark') return true;
+          var globalApplied = null;
+          try { globalApplied = JSON.parse(localStorage.getItem('workbuddy.appearance.lastApplied') || 'null'); } catch (_) {}
+          if (globalApplied && globalApplied.resourceKey && globalApplied.resourceKey !== 'light' && globalApplied.resourceKey !== 'dark') return true;
+          var suffix = '::' + WBS_UID;
+          for (var i = 0; i < localStorage.length; i++) {
+            var k = localStorage.key(i);
+            if (!k || !k.endsWith(suffix)) continue;
+            if (k.indexOf('workbuddy.appearance.lastApplied::') === 0) {
+              var item = null;
+              try { item = JSON.parse(localStorage.getItem(k) || 'null'); } catch (_) {}
+              if (item && item.resourceKey && item.resourceKey !== 'light' && item.resourceKey !== 'dark') return true;
+            } else if (k.indexOf('workbuddy.appearance.state::') === 0) {
+              var state = null;
+              try { state = JSON.parse(localStorage.getItem(k) || 'null'); } catch (_) {}
+              if (state && state.currentTheme && state.currentTheme !== wantedMode && state.currentTheme !== 'light' && state.currentTheme !== 'dark') return true;
+            }
+          }
+        } catch (_) {}
+        return false;
+      }
+      function wbsHoldNativeAppearance() {
+        if (!wbsHasSpecialNativeAppearance()) return;
+        wbsClearNativeCustomCss();
+        wbsSyncNativeTheme(wantedMode);
+        keepSelectedTheme();
+      }
+      wbsHoldNativeAppearance();
+      window.__wbsThemeAppearanceGuard = setInterval(wbsHoldNativeAppearance, 250);
+      window.__wbsThemeAppearanceGuardStop = setTimeout(function () {
+        try { clearInterval(window.__wbsThemeAppearanceGuard); } catch (_) {}
+        try { delete window.__wbsThemeAppearanceGuard; delete window.__wbsThemeAppearanceGuardStop; } catch (_) {}
+      }, 10000);
     }
     var cs = getComputedStyle(b);
     return { applied: ${id === 'default' ? 'false' : 'true'}, dark: ${isDark ? 'true' : 'false'}, bg: cs.getPropertyValue('--vscode-editor-background').trim(), text: cs.getPropertyValue('--vscode-editor-foreground').trim() };
@@ -7240,6 +7568,8 @@ async function applyThemeByCdp(id) {
       } else if (attempt) {
         await cdpActivatePage();
       }
+      // A navigation retry must respect an opt-out saved while CDP was reconnecting.
+      if (options.automatic && (readSessionState().themeTakeoverEnabled === false || applyGeneration !== themeApplyGeneration)) return { applied: false, takeover: false };
       r = await cdpSend('Runtime.evaluate', { expression: expr, returnByValue: true });
       if (r && r.exceptionDetails) {
         const detail = r.exceptionDetails.exception && r.exceptionDetails.exception.description;
@@ -8375,9 +8705,16 @@ function handleApi(req, res) {
   }
   // 会话模块：POST /api/session-module-set { name, enabled }
   if (req.method === 'POST' && p === '/api/session-module-set') {
-    return readBody(req).then((body) => {
+    return readBody(req).then(async (body) => {
       try {
-        return json(res, 200, { ok: true, ...setSessionSwitch(body.name, !!body.enabled) });
+        if (typeof body.enabled !== 'boolean') return json(res, 400, { ok: false, error: '无效的开关状态' });
+        const state = setSessionSwitch(body.name, body.enabled);
+        if (body.name === 'themeTakeoverEnabled') {
+          themeApplyGeneration++;
+          if (state.themeTakeoverEnabled) await restoreSavedTheme();
+          else await releaseThemeByCdp();
+        }
+        return json(res, 200, { ok: true, ...state });
       } catch (e) {
         return json(res, 500, { ok: false, error: e.message });
       }
@@ -9637,11 +9974,41 @@ function handleApi(req, res) {
     const currentUid = String((currentAccount() || {}).uid || '').trim();
     return json(res, 200, { ok: true, job: publicAutoCopyJob(activeAutoCopyJob(currentUid)) });
   }
-  // Stream the completed encrypted archive; clean up even if the download disconnects.
+  if (req.method === 'GET' && p === '/api/sessions/export') {
+    const id = url.searchParams.get('id');
+    const job = sessionExportJobs.get(id);
+    if (id && !job) return json(res, 404, { ok: false, code: 'EXPORT_JOB_NOT_FOUND', error: '导出任务不存在' });
+    return json(res, 200, { ok: true, job });
+  }
+  if (req.method === 'POST' && p === '/api/sessions/export/cancel') {
+    return readBody(req).then(body => {
+      const job = body && typeof body.id === 'string' && sessionExportJobs.cancel(body.id);
+      return json(res, job ? 200 : 404, job ? { ok: true, job } : { ok: false, error: '导出任务不存在' });
+    });
+  }
+  if (req.method === 'POST' && p === '/api/sessions/export/open') {
+    return readBody(req).then(async body => {
+      const job = body && typeof body.id === 'string' && sessionExportJobs.get(body.id);
+      if (!job || job.status !== 'completed' || !job.file) return json(res, 400, { ok: false, error: '导出尚未完成' });
+      // The renderer supplies a job ID, never an arbitrary filesystem path.
+      const command = IS_WIN ? 'explorer.exe' : IS_LINUX ? 'xdg-open' : '/usr/bin/open';
+      const result = await runCommand(command, [path.dirname(job.file)]);
+      if (result.error || (result.code !== 0 && !IS_WIN)) return json(res, 500, { ok: false, error: '无法打开导出目录' });
+      return json(res, 200, { ok: true });
+    });
+  }
+  // Older clients can still stream the completed archive. New panels request
+  // a background job, which publishes directly to Downloads without a browser Blob.
   if (req.method === 'POST' && p === '/api/sessions/export') {
     return readBody(req).then(async (body) => {
       let result;
       try {
+        if (body && body.background === true) {
+          const ids = normalizeSessionIdBatch(body.ids);
+          if (!ids.length) throw new Error('未选择会话');
+          const job = sessionExportJobs.start(ids, body.password);
+          return json(res, 202, { ok: true, job });
+        }
         result = await exportSessions(body && body.ids, body && body.password);
         if (res.destroyed) return;
         const headers = {
@@ -9893,7 +10260,7 @@ function handleApi(req, res) {
         r.on('end', () => {
           try {
             const list = JSON.parse(d);
-            const page = list.find(isWorkBuddyCdpTarget);
+            const page = selectPageTarget(list, PROFILE);
             const id = page && page.id;
             if (!id) return resolve(json(res, 500, { ok: false, error: '未找到 WorkBuddy 页面 target' }));
             if (!wsLib) return resolve(json(res, 500, { ok: false, error: 'ws 代理库未加载，无法打开 DevTools' }));

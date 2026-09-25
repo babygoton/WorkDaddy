@@ -955,7 +955,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     var n;
     if ((n = document.querySelector('.wbs-root'))) n.remove();
     if ((n = document.getElementById('wbs-window-logo'))) n.remove();
-    var st = document.querySelectorAll('.wbs-stash-inline, .wbs-stash-btn, .wbs-explore-inline, .wbs-fork-button');
+    var st = document.querySelectorAll('.wbs-stash-inline, .wbs-stash-btn, .wbs-explore-inline, .wbs-explore-pop, .wbs-fork-button');
     for (var i = 0; i < st.length; i++) st[i].remove();
     var nav = document.querySelectorAll('.wbs-message-nav-root');
     for (var ni = 0; ni < nav.length; ni++) nav[ni].remove();
@@ -1005,6 +1005,21 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
   var WBS_ACCOUNT_MASK_KEY = 'workdaddy.account.mask.' + PROFILE_ID;
   var WBS_INITIAL_AUTO_COPY_ALL_KEY = 'workdaddy.initial.autoCopyAllSessions.' + PROFILE_ID;
   var WBS_I18N_EN = {
+    '导出会话会在后台完成，文件保存到下载目录。': 'Export runs in the background and saves to Downloads.',
+    '正在准备导出…': 'Preparing export…', '正在导出会话…': 'Exporting sessions…',
+    '正在取消导出…': 'Cancelling export…', '会话导出已取消': 'Session export cancelled',
+    '正在导出会话，请等待完成或取消': 'An export is already running. Wait or cancel it.',
+    '下载目录空间不足，请释放空间后重试': 'Downloads is out of space. Free up space and retry.',
+    '会话导出完成': 'Session export complete', '会话导出失败': 'Session export failed',
+    '导出进度暂时无法读取，正在重试…': 'Could not read export progress. Retrying…',
+    '取消导出': 'Cancel export', '打开导出目录': 'Open export folder',
+    '导出进度': 'Export progress', '导出任务不存在': 'Export job not found', '导出尚未完成': 'Export is not finished',
+    '无法打开导出目录': 'Could not open export folder',
+    '接管主题': 'Manage theme',
+    '接管 WorkBuddy 主题': 'Manage WorkBuddy theme',
+    '关闭后，加载和切换账号时保留 WorkBuddy 的主题': 'When off, keep the WorkBuddy theme on load and account switches',
+    '无效的开关状态': 'Invalid switch state',
+    '释放主题接管失败': 'Could not release theme control',
     '总大小': 'Total size',
     '初始化设置': 'Initial setup',
     '切换账号自动同步所有会话': 'Automatically sync all sessions when switching accounts',
@@ -1064,7 +1079,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '查询已中断，请重新选择时间重试': 'Query interrupted. Select a time range to retry.',
     '无法读取查询进度，请重新选择时间重试': 'Could not read progress. Select a time range to retry.',
     '趋势分组': 'Trend grouping', '筛选折线': 'Filter lines', '统计时间': 'Statistics period',
-    '总览': 'Overview', '按账号': 'By account', '按模型': 'By model', '总量': 'Total', '模型用量': 'Model usage',
+    '总览': 'Overview', '按账号': 'By account', '按模型': 'By model', '总量': 'Total', '模型用量': 'Model usage', '其他': 'Other', 'Token（输入 + 输出）': 'Tokens (input + output)', '输入 + 输出': 'Input + output',
     '未识别模型': 'Unknown model', '未关联账号': 'Unassigned account', '暂无分组数据': 'No breakdown data',
     '解锁后未读取到最新状态': 'Could not load the latest status after unlocking',
     'Buddy 已解锁': 'Buddy unlocked', 'Buddy 解锁成功': 'Buddy unlocked', '解锁 Buddy 失败': 'Could not unlock Buddy',
@@ -3225,7 +3240,10 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       '</div>' +
       '</div>';
     applyI18n(exploreBtn);
-    var exploreSendTxt = exploreBtn.querySelector('.wbs-explore-send-txt');
+    var explorePopover = exploreBtn.querySelector('.wbs-explore-pop');
+    var exploreMenu = mountExplorePopover(exploreBtn, explorePopover);
+    registerDisposer(exploreMenu.destroy);
+    var exploreSendTxt = explorePopover.querySelector('.wbs-explore-send-txt');
     if (exploreSendTxt) {
       exploreSendTxt.addEventListener('click', function (e) {
         e.stopPropagation();
@@ -3239,7 +3257,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         }).catch(function (e2) { toast('发送失败: ' + (e2.message || e2), true, root); });
       });
     }
-    var exploreEditBtn = exploreBtn.querySelector('.wbs-explore-edit');
+    var exploreEditBtn = explorePopover.querySelector('.wbs-explore-edit');
     if (exploreEditBtn) {
       exploreEditBtn.addEventListener('click', function (e) {
         e.stopPropagation();
@@ -3272,13 +3290,56 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         fetch(API + '/api/breadcrumb', { method: 'POST', headers: { 'content-type': 'application/json', 'X-WorkDaddy-Token': WBS_API_TOKEN }, body: JSON.stringify({ msg: '[quick-phrase-diagnostics] ' + JSON.stringify(payload) }) }).catch(function () {});
       } catch (_) {}
     }
+    // Only the popup leaves the official toolbar. Its body-level stacking context
+    // keeps it above the usage summary even when the composer creates its own layer.
+    function mountExplorePopover(button, popup) {
+      document.body.appendChild(popup);
+      var timer = null;
+      var listeners = [];
+      function listen(target, name, handler, options) {
+        target.addEventListener(name, handler, options);
+        listeners.push(function () { target.removeEventListener(name, handler, options); });
+      }
+      function cancelClose() { if (timer) { clearTimeout(timer); timer = null; } }
+      function close() { cancelClose(); popup.classList.remove('is-open'); button.setAttribute('aria-expanded', 'false'); }
+      function open() {
+        cancelClose();
+        var rect = button.getBoundingClientRect();
+        if (!button.isConnected || !rect.width || !rect.height) return close();
+        var width = popup.getBoundingClientRect().width;
+        popup.style.left = Math.max(8, Math.min(window.innerWidth - width - 8, rect.left + rect.width / 2 - width / 2)) + 'px';
+        popup.style.bottom = Math.max(8, window.innerHeight - rect.top + 10) + 'px';
+        popup.classList.add('is-open');
+        button.setAttribute('aria-expanded', 'true');
+      }
+      function delayedClose() { cancelClose(); timer = setTimeout(close, 120); }
+      button.setAttribute('aria-expanded', 'false');
+      listen(button, 'mouseenter', open);
+      listen(button, 'mouseleave', delayedClose);
+      listen(button, 'keydown', function (event) {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault(); event.stopPropagation();
+          if (popup.classList.contains('is-open')) close(); else open();
+        }
+        if (event.key === 'Escape') { event.stopPropagation(); close(); }
+      });
+      listen(popup, 'mouseenter', cancelClose);
+      listen(popup, 'mouseleave', delayedClose);
+      listen(popup, 'mousedown', function (event) { event.preventDefault(); event.stopPropagation(); });
+      ['click', 'pointerdown', 'pointerup', 'keyup', 'keypress'].forEach(function (name) {
+        listen(popup, name, function (event) { event.stopPropagation(); });
+      });
+      listen(popup, 'keydown', function (event) { event.stopPropagation(); if (event.key === 'Escape') { close(); button.focus(); } });
+      listen(window, 'resize', close);
+      listen(document, 'scroll', function (event) { if (!popup.contains(event.target)) close(); }, true);
+      listen(document, 'pointerdown', function (event) { if (!button.contains(event.target) && !popup.contains(event.target)) close(); }, true);
+      return { close: close, open: open, destroy: function () { close(); listeners.forEach(function (remove) { remove(); }); popup.remove(); } };
+    }
     function acMenuClose() {
       qpDiag('menu:close:before', { menuClass: exploreBtn.className });
-      exploreBtn.classList.add('wbs-menu-closed');
+      exploreMenu.close();
       qpDiag('menu:close:after', { menuClass: exploreBtn.className });
     }
-    exploreBtn.addEventListener('mouseenter', function () { exploreBtn.classList.remove('wbs-menu-closed'); });
-    exploreBtn.addEventListener('mouseleave', function () { exploreBtn.classList.remove('wbs-menu-closed'); });
     exploreBtn.style.display = 'none'; // 找到可见会话输入区并完成定位后才显示，避免登录页出现悬空按钮。
 
     /* ———— 会话模块（session）：暂存提示词、会话消息索引 & 快捷短语 ————
@@ -3306,6 +3367,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       usageSummary: conversationUsageEnabled,
       fork: readForkEnabled(),
       phrase: true,
+      themeTakeover: true,
       phrases: [],
       qpBatch: false,
       qpSel: {},
@@ -3316,6 +3378,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       if (!d || !d.ok) return;
       sessState.stash = !!d.stashEnabled;
       sessState.phrase = !!d.phraseEnabled;
+      sessState.themeTakeover = d.themeTakeoverEnabled !== false;
       sessState.phrases = Array.isArray(d.phrases) ? d.phrases : [];
       // 同步 UI：会话开关 + 快捷短语列表区显隐
       var pane0 = enhancePane;
@@ -3330,6 +3393,9 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       if (swU) swU.checked = !!conversationUsageEnabled;
       if (swF) swF.checked = !!sessState.fork;
       if (swP) swP.checked = !!sessState.phrase;
+      var themeSwitch = themePane && themePane.querySelector('#wbs-theme-takeover');
+      if (themeSwitch) themeSwitch.checked = sessState.themeTakeover;
+      syncThemeTakeoverVisibility(sessState.themeTakeover);
       if (area) area.style.display = sessState.phrase ? '' : 'none';
       renderQpList();
       renderExploreOptions();
@@ -3343,7 +3409,8 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     /** 开关切换：写 daemon 并回应用户界（设置失败回滚 UI 状态） */
     function setSessionSwitchWire(name, el) {
       var v = !!el.checked;
-      api('/api/session-module-set', {
+      el.disabled = true;
+      return api('/api/session-module-set', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ name: name, enabled: v }),
@@ -3353,7 +3420,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       }).catch(function (e) {
         toast('设置失败: ' + (e.message || e), true, root);
         syncSessionModule();
-      });
+      }).finally(function () { el.disabled = false; });
     }
 
     /** 增强页快捷短语列表渲染（含批量模式） */
@@ -3425,7 +3492,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     }
     /** 发送按钮面板选项 = 快捷短语列表；点击项经 CDP 发送该短语（替换式，发完默认关面板） */
     function renderExploreOptions() {
-      var listHost = exploreBtn && exploreBtn.querySelector('#wbs-explore-list');
+      var listHost = explorePopover && explorePopover.querySelector('#wbs-explore-list');
       if (!listHost) return;
       var phrases = sessState.phrases || [];
       // 渲染签名去重：短语内容无变化则不重建 DOM（syncStash 高频调用会摧毁 tooltip 的显示状态/绑定 → 闪烁）
@@ -3810,11 +3877,13 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         if (isWelcomePage() || !insertStash()) {
           stashBtn.style.display = 'none';
           exploreBtn.style.display = 'none';
+          exploreMenu.close();
           exploreBtn.classList.add('wbs-menu-closed');
           return;
         }
         // 探索按钮常驻（若「快捷短语」开关开着）：不等输入框有内容，只要定位到操作栏就常显
         exploreBtn.style.display = sessState.phrase ? 'flex' : 'none';
+        if (!sessState.phrase) exploreMenu.close();
         applyThemeButtonColors(); // 主题色按钮（浅色黑底白图 / 深色白底黑图）
         renderExploreOptions(); // 面板选项 = 快捷短语列表（增删改后同步刷新）
         // 暂存按钮：仍按输入框是否有内容显隐，且「暂存提示词」开关需开着
@@ -6453,6 +6522,93 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         'var(--wbs-trend-series-10)', 'var(--wbs-trend-series-11)', 'var(--wbs-trend-series-12)'];
     }
 
+    function usagePieData(rows) {
+      var sorted = (rows || []).map(function (row) {
+        return { label: String(row.label || '未知'), value: Number(row.value), calls: Math.max(0, Number(row.calls) || 0) };
+      }).filter(function (row) { return Number.isFinite(row.value) && row.value > 0; })
+        .sort(function (a, b) { return b.value - a.value || a.label.localeCompare(b.label); });
+      var total = sorted.reduce(function (sum, row) { return sum + row.value; }, 0);
+      var segments = sorted.slice(0, 7);
+      if (sorted.length > 8) {
+        var rest = sorted.slice(7);
+        segments.push({ label: '其他', value: rest.reduce(function (sum, row) { return sum + row.value; }, 0),
+          calls: rest.reduce(function (sum, row) { return sum + row.calls; }, 0), children: rest });
+      } else segments = sorted;
+      return { total: total, segments: segments };
+    }
+
+    function usagePieHtml(rows, title, unit, formatValue, emptyText) {
+      var data = usagePieData(rows);
+      var heading = '<div class="wbs-token-stats-section wbs-usage-pie-section"><div class="wbs-token-stats-section-title">' + esc(title) + '</div>';
+      if (!data.total) return heading + '<div class="wbs-token-stats-empty">' + esc(emptyText) + '</div></div>';
+      var colors = usageTrendColors(), offset = -Math.PI / 2;
+      function percent(value) { var p = value / data.total * 100; return p < 0.1 ? '<0.1%' : p.toFixed(1) + '%'; }
+      function description(row) { return row.label + ' · ' + formatValue(row.value) + ' ' + unit + ' · ' + percent(row.value); }
+      function legendRow(row, color, index) {
+        return '<div class="wbs-pie-row" data-pie-index="' + index + '" title="' + escAttr(description(row)) + '"><i style="background:' + color + '" aria-hidden="true"></i>' +
+          '<span class="wbs-pie-name">' + esc(row.label) + '<small>' + esc(formatTokenCount(row.calls)) + ' 次</small></span>' +
+          '<b>' + esc(formatValue(row.value)) + '</b><span class="wbs-pie-percent">' + esc(percent(row.value)) + '</span></div>';
+      }
+      var arcs = data.segments.map(function (row, index) {
+        var angle = row.value / data.total * Math.PI * 2;
+        var end = offset + angle;
+        var startX = 64 + 58 * Math.cos(offset), startY = 64 + 58 * Math.sin(offset);
+        var endX = 64 + 58 * Math.cos(end), endY = 64 + 58 * Math.sin(end);
+        var shape = data.segments.length === 1 ? '<circle cx="64" cy="64" r="58"' :
+          '<path d="M64 64 L' + startX + ' ' + startY + ' A58 58 0 ' + (angle > Math.PI ? 1 : 0) + ' 1 ' + endX + ' ' + endY + ' Z"';
+        offset = end;
+        return shape + ' class="wbs-pie-slice" data-pie-index="' + index + '" tabindex="0" role="img" aria-label="' + escAttr(description(row)) + '"' +
+          ' data-pie-label="' + escAttr(row.label) + '" data-pie-value="' + escAttr(formatValue(row.value) + ' ' + unit) + '" data-pie-percent="' + escAttr(percent(row.value)) + '" data-pie-calls="' + escAttr(formatTokenCount(row.calls)) + '"' +
+          ' style="--wbs-pie-color:' + colors[index] + '"></' + (data.segments.length === 1 ? 'circle' : 'path') + '>';
+      }).join('');
+      var legend = data.segments.map(function (row, index) {
+        var line = legendRow(row, colors[index], index);
+        return row.children ? '<details class="wbs-pie-other"><summary>' + line + '</summary><div class="wbs-pie-details">' + row.children.map(function (child) { return legendRow(child, colors[index], index); }).join('') + '</div></details>' : line;
+      }).join('');
+      return heading + '<div class="wbs-pie-subtitle"><strong>' + esc(formatValue(data.total)) + '</strong><span>' + esc(unit) + '</span></div>' +
+        '<div class="wbs-usage-pie"><div class="wbs-pie-plot"><svg viewBox="0 0 128 128" aria-label="' + escAttr(title) + '">' + arcs + '</svg></div>' +
+        '<div class="wbs-pie-legend">' + legend + '</div></div>' +
+        '<div class="wbs-pie-tooltip" role="tooltip" hidden><strong></strong><div data-pie-tip-value></div><div data-pie-tip-detail></div></div></div>';
+    }
+
+    function wireUsagePies(container) {
+      container.querySelectorAll('.wbs-usage-pie-section').forEach(function (section) {
+        var tooltip = section.querySelector('.wbs-pie-tooltip');
+        if (!tooltip) return;
+        function clear() {
+          section.classList.remove('has-pie-preview');
+          section.querySelectorAll('[data-pie-index]').forEach(function (el) { el.classList.remove('is-preview'); });
+          tooltip.hidden = true;
+        }
+        function preview(target, event) {
+          var item = target && target.closest && target.closest('[data-pie-index]');
+          if (!item) { clear(); return; }
+          var index = item.getAttribute('data-pie-index');
+          var slice = section.querySelector('.wbs-pie-slice[data-pie-index="' + index + '"]');
+          if (!slice) return;
+          section.classList.add('has-pie-preview');
+          section.querySelectorAll('[data-pie-index]').forEach(function (el) { el.classList.toggle('is-preview', el.getAttribute('data-pie-index') === index); });
+          tooltip.querySelector('strong').textContent = slice.getAttribute('data-pie-label');
+          tooltip.querySelector('[data-pie-tip-value]').textContent = slice.getAttribute('data-pie-value');
+          tooltip.querySelector('[data-pie-tip-detail]').textContent = slice.getAttribute('data-pie-percent') + ' · ' + slice.getAttribute('data-pie-calls') + ' 次';
+          tooltip.hidden = false;
+          var bounds = item.getBoundingClientRect();
+          var x = event && Number.isFinite(event.clientX) ? event.clientX : bounds.left + bounds.width / 2;
+          var y = event && Number.isFinite(event.clientY) ? event.clientY : bounds.bottom;
+          var tip = tooltip.getBoundingClientRect();
+          tooltip.style.left = Math.max(8, Math.min(window.innerWidth - tip.width - 8, x + 12)) + 'px';
+          tooltip.style.top = Math.max(8, y + tip.height + 20 > window.innerHeight ? y - tip.height - 12 : y + 12) + 'px';
+        }
+        section.addEventListener('pointermove', function (event) { preview(event.target, event); });
+        section.addEventListener('pointerleave', clear);
+        section.addEventListener('focusin', function (event) { preview(event.target); });
+        section.addEventListener('focusout', clear);
+        section.addEventListener('keydown', function (event) { if (event.key === 'Escape' && !tooltip.hidden) { clear(); event.stopPropagation(); } });
+        section.addEventListener('scroll', clear, true);
+      });
+    }
+
+
     function usageTrendGroups(days, records, dimension, names) {
       var groups = new Map();
       (records || []).forEach(function (row) {
@@ -6518,7 +6674,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
           renderUsageBreakdown(panel, days, records, modes, state, formatValue);
         };
       });
-      var series = mode === 'total' ? [{ label: '总量', values: days.map(function (day) { return day.value; }), color: getComputedStyle(panel).getPropertyValue('--wbs-primary').trim() }] :
+      var series = mode === 'total' ? [{ label: '总量', values: days.map(function (day) { return day.value; }), color: getComputedStyle(panel).getPropertyValue('--wbs-trend-series-1').trim() || colors[0] }] :
         groups.filter(function (group) { return selected.has(group.key); }).map(function (group, index) {
           var dot = Array.from(legend.querySelectorAll('[data-trend-series]')).find(function (button) { return button.dataset.trendSeries === group.key; }).querySelector('i');
           return { label: group.label, values: group.values, color: getComputedStyle(dot).color, dash: index % 3 };
@@ -6682,12 +6838,20 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       var creditPollTimer = null;
       var focusBefore = document.activeElement;
       function closeStats() {
+        if (!mask.isConnected) return;
         if (creditPollTimer) clearTimeout(creditPollTimer);
+        if (firstLoadTimer) clearTimeout(firstLoadTimer);
+        tokenReadSerial++;
         mask.remove();
         if (focusBefore && focusBefore.isConnected) focusBefore.focus();
       }
       mask.__wbsClose = closeStats;
-      registerDisposer(function () { if (creditPollTimer) clearTimeout(creditPollTimer); mask.remove(); });
+      mask.addEventListener('scroll', function () {
+        mask.querySelectorAll('.wbs-pie-tooltip').forEach(function (tooltip) { tooltip.hidden = true; });
+        mask.querySelectorAll('.has-pie-preview').forEach(function (section) { section.classList.remove('has-pie-preview'); });
+        mask.querySelectorAll('.is-preview[data-pie-index]').forEach(function (item) { item.classList.remove('is-preview'); });
+      }, true);
+      registerDisposer(closeStats);
       mask.querySelector('[data-token-close]').addEventListener('click', closeStats);
       mask.addEventListener('click', function (event) { event.stopPropagation(); if (event.target === mask) closeStats(); });
       ['pointerdown', 'pointerup', 'keyup', 'keypress'].forEach(function (name) { mask.addEventListener(name, function (event) { event.stopPropagation(); }); });
@@ -6695,7 +6859,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         event.stopPropagation();
         if (event.key === 'Escape') { event.preventDefault(); closeStats(); }
         if (event.key === 'Tab') {
-          var controls = Array.from(mask.querySelectorAll('button,select,input')).filter(function (el) { return !el.disabled && el.getClientRects().length; });
+          var controls = Array.from(mask.querySelectorAll('button,select,input,summary,[tabindex="0"]')).filter(function (el) { return !el.disabled && el.getClientRects().length; });
           var first = controls[0], last = controls[controls.length - 1];
           if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
           if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
@@ -6705,6 +6869,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       function usageDays(kind) { return Number(mask.querySelector('[data-' + kind + '-days][aria-pressed="true"]').dataset[kind + 'Days']); }
       var overlay = mask.querySelector('.wbs-token-stats-overlay');
       var hasStats = false;
+      var tokenBusy = false;
       var firstLoadTimer = null;
       var tokenReadSerial = 0;
       var tokenTrendState = { mode: 'total', selected: {} };
@@ -6757,22 +6922,16 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         });
         creditBody.innerHTML = '<div class="wbs-token-stats-grid wbs-credit-stats-grid"><div><span>积分消耗</span><strong>' + (creditData.daily.length ? esc(fmtCredits(total)) : '—') + '</strong></div><div><span>调用</span><strong>' + (creditData.daily.length ? esc(formatTokenCount(calls)) : '—') + '</strong></div></div>' +
           '<div class="wbs-token-stats-section"><div class="wbs-token-stats-section-title">每日趋势</div>' + usageTrendChartHtml('每日积分趋势', true) + ((creditData.failures || []).length ? '<div class="wbs-credit-stats-note">* 表示部分账号查询失败；— 表示查询失败，暂无数据。</div>' : '') + '</div>' +
-          '<div class="wbs-usage-columns"><div class="wbs-token-stats-section"><div class="wbs-token-stats-section-title">账号用量</div><div class="wbs-token-model-scroll"><div class="wbs-token-stats-table">' + (selected.slice().filter(function (a) { return (byAccount[a.uid] || 0) > 0; }).sort(function (a,b) { return (byAccount[b.uid] || 0) - (byAccount[a.uid] || 0); }).map(function (a) { return '<div><span title="' + escAttr(a.nickname || a.uid) + '">' + esc(a.nickname || a.uid) + '</span><b>' + esc(fmtCredits(byAccount[a.uid])) + '</b><em>' + esc(formatTokenCount(accountCalls[a.uid] || 0)) + ' 次</em></div>'; }).join('') || '<div class="wbs-token-stats-empty">没有匹配的账号</div>') + '</div></div></div>' +
-          (Object.keys(byModel).length ? '<div class="wbs-token-stats-section"><div class="wbs-token-stats-section-title">模型用量</div><div class="wbs-token-model-scroll"><div class="wbs-token-stats-table">' + Object.keys(byModel).sort(function (a, b) { return byModel[b].used - byModel[a].used || a.localeCompare(b); }).map(function (model) { return '<div><span title="' + escAttr(model) + '">' + esc(model) + '</span><b>' + esc(fmtCredits(byModel[model].used)) + '</b><em>' + esc(formatTokenCount(byModel[model].count)) + ' 次</em></div>'; }).join('') + '</div></div></div>' : '') + '</div>';
+          '<div class="wbs-usage-columns">' +
+          usagePieHtml(selected.map(function (a) { return { label: a.nickname || a.uid, value: byAccount[a.uid] || 0, calls: accountCalls[a.uid] || 0 }; }), '账号用量', '积分', fmtCredits, '暂无账号数据') +
+          usagePieHtml(Object.keys(byModel).map(function (model) { return { label: model, value: byModel[model].used, calls: byModel[model].count }; }), '模型用量', '积分', fmtCredits, '暂无模型数据') + '</div>';
+        wireUsagePies(creditBody);
         var creditNames = Object.create(null);
         creditAccounts.forEach(function (account) { creditNames[account.uid] = account.nickname || account.uid; });
         renderUsageBreakdown(creditBody.querySelector('.wbs-trend-panel'), days, (creditData.daily || []).map(function (row) {
           return { day: row.date, account: row.uid, value: Number(row.used) || 0 };
         }).concat(modelRecords), { account: creditNames, model: Object.keys(byModel).reduce(function (out, model) { out[model] = model; return out; }, {}) }, creditTrendState, fmtCredits);
-        var accountScroll = creditBody.querySelector('.wbs-token-model-scroll');
-        if (accountScroll) {
-          var syncAccountFade = function () {
-            accountScroll.classList.toggle('no-overflow', accountScroll.scrollHeight <= accountScroll.clientHeight + 1);
-            accountScroll.classList.toggle('at-end', accountScroll.scrollTop + accountScroll.clientHeight >= accountScroll.scrollHeight - 1);
-          };
-          accountScroll.addEventListener('scroll', syncAccountFade, { passive: true });
-          syncAccountFade();
-        }
+
       }
       function setCreditBusy(busy, showOverlay) {
         creditBusy = busy;
@@ -6852,6 +7011,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
           mask.querySelectorAll('[data-usage-pane]').forEach(function (pane) { pane.hidden = pane.getAttribute('data-usage-pane') !== tab; });
           mask.querySelector('.wbs-usage-scroll').scrollTop = 0;
           if (tab === 'credit' && (changed || !creditLoaded)) loadCredits();
+          if (tab === 'token' && !hasStats && !tokenBusy) load();
         });
       });
       ['token', 'credit'].forEach(function (kind) {
@@ -6868,6 +7028,8 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         });
       });
       function load() {
+        if (tokenBusy) return;
+        tokenBusy = true;
         var serial = ++tokenReadSerial;
         mask.querySelectorAll('[data-token-days]').forEach(function (button) { button.disabled = true; });
         overlay.hidden = false;
@@ -6905,21 +7067,18 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
             '<div><span>缓存读取</span><strong>' + esc(formatTokenCount(totals.cacheRead)) + '</strong></div>' +
             '<div><span>缓存写入</span><strong>' + esc(formatTokenCount(totals.cacheWrite)) + '</strong></div>' +
             '</div><div class="wbs-token-stats-section"><div class="wbs-token-stats-section-title">每日趋势</div>' + usageTrendChartHtml('每日 Token 趋势', true) + '</div>' +
-            '<div class="wbs-usage-columns"><div class="wbs-token-stats-section"><div class="wbs-token-stats-section-title">模型排行</div><div class="wbs-token-model-scroll"><div class="wbs-token-stats-table">' + ((stats.models || []).slice(0, 12).map(function (item) { return '<div><span>' + esc(item.model) + '</span><b>' + esc(formatTokenCount((item.input || 0) + (item.output || 0))) + '</b><em>' + esc(formatTokenCount(item.calls || 0)) + ' 次</em></div>'; }).join('') || '<div class="wbs-token-stats-empty wbs-token-empty-model">暂无模型数据</div>') + '</div></div></div>' +
-            '<div class="wbs-token-stats-section"><div class="wbs-token-stats-section-title">账号用量</div><div class="wbs-token-model-scroll"><div class="wbs-token-stats-table">' + (accountRows.map(function (item) { var label = item.nickname || item.account; var value = (item.input || 0) + (item.output || 0); return '<div><span title="' + escAttr(label) + '">' + esc(label) + '</span><b>' + esc(formatTokenCount(value)) + '</b><em>' + esc(formatTokenCount(item.calls || 0)) + ' 次</em></div>'; }).join('') || '<div class="wbs-token-stats-empty">暂无账号数据</div>') + '</div></div></div></div>';
+            '<div class="wbs-usage-columns">' +
+            usagePieHtml((stats.models || []).map(function (item) { return { label: item.model, value: (item.input || 0) + (item.output || 0), calls: item.calls }; }), '模型用量', 'Token（输入 + 输出）', formatTokenCount, '暂无模型数据') +
+            usagePieHtml(accountRows.map(function (item) { return { label: item.nickname || item.account, value: (item.input || 0) + (item.output || 0), calls: item.calls }; }), '账号用量', 'Token（输入 + 输出）', formatTokenCount, '暂无账号数据') + '</div>';
+          wireUsagePies(body);
           var tokenNames = Object.create(null);
           ((result && result.accounts) || []).forEach(function (item) { tokenNames[item.uid] = item.nickname || item.uid; });
           renderUsageBreakdown(body.querySelector('.wbs-trend-panel'), tokenDays, (stats.dailyBreakdown || []).map(function (row) {
             return { day: row.day, account: row.account, model: row.model, value: (row.input || 0) + (row.output || 0) };
           }), { account: tokenNames, model: Object.create(null) }, tokenTrendState, formatTokenCount);
-          var modelScroll = mask.querySelector('.wbs-token-model-scroll');
-          if (modelScroll) {
-            var syncModelFade = function () { modelScroll.classList.toggle('at-end', modelScroll.scrollTop + modelScroll.clientHeight >= modelScroll.scrollHeight - 1); modelScroll.classList.toggle('no-overflow', modelScroll.scrollHeight <= modelScroll.clientHeight + 1); };
-            modelScroll.addEventListener('scroll', syncModelFade, { passive: true });
-            syncModelFade();
-          }
+
           hasStats = true;
-        }).catch(function (error) { if (!mask.isConnected || serial !== tokenReadSerial) return; if (hasStats) toast('读取失败：' + (error.message || error), true, root); else body.innerHTML = '<div class="wbs-token-stats-empty">读取失败：' + esc(error.message || error) + '</div>'; }).finally(function () { if (!mask.isConnected || serial !== tokenReadSerial) return; if (firstLoadTimer) { clearTimeout(firstLoadTimer); firstLoadTimer = null; } mask.querySelectorAll('[data-token-days]').forEach(function (button) { button.disabled = false; }); overlay.hidden = true; });
+        }).catch(function (error) { if (!mask.isConnected || serial !== tokenReadSerial) return; if (hasStats) toast('读取失败：' + (error.message || error), true, root); else body.innerHTML = '<div class="wbs-token-stats-empty">读取失败：' + esc(error.message || error) + '</div>'; }).finally(function () { if (!mask.isConnected || serial !== tokenReadSerial) return; tokenBusy = false; if (firstLoadTimer) { clearTimeout(firstLoadTimer); firstLoadTimer = null; } mask.querySelectorAll('[data-token-days]').forEach(function (button) { button.disabled = false; }); overlay.hidden = true; });
       }
       if (mask.querySelector('[data-usage-tab].active').getAttribute('data-usage-tab') === 'credit') loadCredits(); else load();
     }
@@ -7698,6 +7857,9 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         '<button class="wbs-sess-bbtn wbs-sess-done" type="button" id="wbs-sess-done">取消</button>' +
         '</div>' +
         '</div>' +
+        '<div class="wbs-sess-export-progress" id="wbs-sess-export-progress" role="status" aria-live="polite" hidden>' +
+        '<div class="wbs-sess-export-head"><strong data-export-title></strong><button type="button" class="wbs-sess-bbtn" data-export-cancel>取消导出</button><button type="button" class="wbs-sess-bbtn" data-export-open hidden>打开导出目录</button></div>' +
+        '<progress data-export-progress max="100" aria-label="导出进度"></progress><div data-export-detail></div></div>' +
         '<div class="wbs-sess-copy-progress" id="wbs-sess-copy-progress" role="status" aria-live="polite" hidden>' +
         '<div class="wbs-sess-copy-head"><span class="wbs-sess-copy-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></span><strong class="wbs-sess-copy-title">正在同步会话</strong></div>' +
         '<div class="wbs-sess-copy-detail"></div><div class="wbs-sess-copy-track" role="progressbar" aria-label="会话同步进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span class="wbs-sess-copy-fill"></span></div>' +
@@ -7719,7 +7881,45 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       loadSessionAccounts();
       loadSessions();
       pollActiveSessionCopyJob();
+      pollSessionExport();
       registerDisposer(function () { if (sessionsState.autoCopyPollTimer) clearTimeout(sessionsState.autoCopyPollTimer); });
+      registerDisposer(function () { if (sessionsState.exportPollTimer) clearTimeout(sessionsState.exportPollTimer); });
+    }
+
+    function renderSessionExport(job) {
+      var card = sessionsPane && sessionsPane.querySelector('#wbs-sess-export-progress');
+      if (!card) return;
+      sessionsState.exportJob = job;
+      card.hidden = !job;
+      var button = sessionsPane.querySelector('#wbs-sess-export');
+      if (button) button.disabled = !!(job && job.running);
+      if (!job) return;
+      card.querySelector('[data-export-title]').textContent = ({ preparing: '正在准备导出…', writing: '正在导出会话…', cancelling: '正在取消导出…', cancelled: '会话导出已取消', completed: '会话导出完成', failed: '会话导出失败' })[job.status] || '正在准备导出…';
+      var progress = card.querySelector('[data-export-progress]');
+      progress.hidden = !job.running;
+      if (job.status === 'preparing') progress.removeAttribute('value'); else progress.value = job.percent || 0;
+      card.querySelector('[data-export-detail]').textContent = job.file || job.error ||
+        (job.totalBytes ? sessionCopySizeText(job.processedBytes) + ' / ' + sessionCopySizeText(job.totalBytes) + ' · ' + job.percent + '%' : '');
+      card.querySelector('[data-export-cancel]').hidden = !job.running;
+      card.querySelector('[data-export-cancel]').disabled = job.status === 'cancelling';
+      card.querySelector('[data-export-open]').hidden = job.status !== 'completed';
+    }
+
+    function pollSessionExport(id) {
+      if (sessionsState.exportPollTimer) clearTimeout(sessionsState.exportPollTimer);
+      sessionsState.exportPollTimer = null;
+      var serial = sessionsState.exportReadSerial = (sessionsState.exportReadSerial || 0) + 1;
+      return api('/api/sessions/export' + (id ? '?id=' + encodeURIComponent(id) : '')).then(function (result) {
+        if (!alive || serial !== sessionsState.exportReadSerial) return;
+        renderSessionExport(result.job);
+        if (result.job && result.job.running) sessionsState.exportPollTimer = setBuildTimeout(function () { pollSessionExport(result.job.id); }, 800);
+      }).catch(function (error) {
+        if (!alive || serial !== sessionsState.exportReadSerial) return;
+        if (error.payload && error.payload.code === 'EXPORT_JOB_NOT_FOUND') return pollSessionExport();
+        var detail = sessionsPane && sessionsPane.querySelector('[data-export-detail]');
+        if (detail && sessionsState.exportJob) detail.textContent = '导出进度暂时无法读取，正在重试…';
+        sessionsState.exportPollTimer = setBuildTimeout(function () { pollSessionExport(id); }, 2500);
+      });
     }
 
     function sortSessionAccounts(accounts, accountOrder) {
@@ -8125,6 +8325,22 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     }
 
     function wireSessionsPane() {
+      var exportCard = sessionsPane.querySelector('#wbs-sess-export-progress');
+      if (exportCard) {
+        exportCard.querySelector('[data-export-cancel]').addEventListener('click', function () {
+          var job = sessionsState.exportJob;
+          if (!job || !job.running) return;
+          api('/api/sessions/export/cancel', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: job.id }) })
+            .then(function (result) { renderSessionExport(result.job); pollSessionExport(job.id); })
+            .catch(function (error) { toast(error.message, true, root); });
+        });
+        exportCard.querySelector('[data-export-open]').addEventListener('click', function () {
+          var job = sessionsState.exportJob;
+          if (!job || job.status !== 'completed') return;
+          api('/api/sessions/export/open', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: job.id }) })
+            .catch(function (error) { toast(error.message, true, root); });
+        });
+      }
       var sizeSeg = sessionsPane.querySelector('#wbs-sess-size-seg');
       if (sizeSeg) sizeSeg.addEventListener('click', function (e) {
         var button = e.target.closest ? e.target.closest('.wbs-sess-seg-btn') : null;
@@ -8204,15 +8420,15 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
           title: '导出会话',
           requirePassword: true,
           confirmText: '导出',
-          hint: '将加密导出 ' + ids.length + ' 个会话及其本地消息附件。',
+          hint: '导出会话会在后台完成，文件保存到下载目录。',
           onConfirm: function (password) { return api('/api/sessions/export', {
-            responseType: 'blob',
             method: 'POST',
             headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ ids: ids, password: password }),
+            body: JSON.stringify({ ids: ids, password: password, background: true }),
           }).then(function (result) {
-            downloadTransfer(result, 'WorkDaddy-sessions-' + new Date().toISOString().slice(0, 10) + '.wds');
-            toast('已导出 ' + result.count + ' 个会话（已加密）', false, root);
+            sessionsState.exportReadSerial = (sessionsState.exportReadSerial || 0) + 1;
+            renderSessionExport(result.job);
+            pollSessionExport(result.job.id);
           }); },
         });
       });
@@ -8949,6 +9165,10 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       themePane.dataset.built = '1';
       themePane.innerHTML =
         '<div class="wbs-pcard">' +
+        '<div class="wbs-theme-takeover-row">' +
+        '<div class="wbs-pcard-title">接管 WorkBuddy 主题</div>' +
+        '<label class="wbs-switch"><input type="checkbox" id="wbs-theme-takeover" checked><span class="wbs-switch-slider"></span></label></div>' +
+        '<div class="wbs-theme-managed" id="wbs-theme-appearance-options">' +
         '<div class="wbs-pcard-title">主题外观</div>' +
         '<div class="wbs-theme-seg" id="wbs-theme-seg">' +
         '<button class="wbs-theme-opt active" type="button" data-wbs-theme-option="default">浅色</button>' +
@@ -8956,9 +9176,9 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         '<button class="wbs-theme-opt" type="button" data-wbs-theme-option="eye-care">护眼绿</button>' +
         '<button class="wbs-theme-opt" type="button" data-wbs-theme-option="cyber-purple">赛博紫</button>' +
         '<button class="wbs-theme-opt" type="button" data-wbs-theme-option="nebula">毛玻璃</button>' +
+        '</div></div>' +
         '</div>' +
-        '</div>' +
-        '<div class="wbs-pcard wbs-avatar-card">' +
+        '<div class="wbs-pcard wbs-avatar-card wbs-theme-managed">' +
         '<div class="wbs-pcard-title">头像</div>' +
         '<div class="wbs-avatar-row">' +
         '<label class="wbs-avatar-option wbs-avatar-default-option" title="默认头像"><input type="radio" name="wbs-avatar-preset" value="default"><img class="wb-avatar__img" data-avatar-image="default" alt="默认头像"></label>' +
@@ -8969,7 +9189,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         '<input type="file" id="wbs-avatar-file" accept="image/png,image/jpeg,image/webp" style="display:none">' +
         '</div>' +
         '</div>' +
-        '<div class="wbs-pcard wbs-fab-settings">' +
+        '<div class="wbs-pcard wbs-fab-settings wbs-theme-managed">' +
         '<div class="wbs-pcard-title">悬浮机器人</div>' +
         '<div class="wbs-theme-seg wbs-robot-seg" role="radiogroup" aria-label="机器人外观">' +
         '<label class="wbs-theme-opt wbs-robot-option" title="白底黑眼"><input type="radio" name="wbs-robot-style" value="white"><span>白色</span></label>' +
@@ -8980,7 +9200,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         '<label class="wbs-ask-label" for="wbs-fab-auto-dock">自动贴边<span class="wbs-ask-hint">闲置 5 秒后收起，鼠标靠近即展开</span></label>' +
         '<label class="wbs-switch"><input type="checkbox" id="wbs-fab-auto-dock"><span class="wbs-switch-slider"></span></label>' +
         '</div></div>' +
-        '<div class="wbs-pcard wbs-wallpaper-card" id="wbs-wallpaper-card" style="display:none">' +
+        '<div class="wbs-pcard wbs-wallpaper-card wbs-theme-managed" id="wbs-wallpaper-card" style="display:none">' +
         '<div class="wbs-pcard-title">壁纸</div>' +
         '<div class="wbs-bg-source">' +
         '<button class="wbs-bg-src active" type="button" data-src="official">' + WBS_BRAND + ' 壁纸</button>' +
@@ -9005,7 +9225,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         '<span class="wbs-mask-val" id="wbs-bg-blur-val">0%</span>' +
         '</div>' +
         '</div>' +
-        '<div class="wbs-pcard" id="wbs-text-shadow-card" style="display:none">' +
+        '<div class="wbs-pcard wbs-theme-managed" id="wbs-text-shadow-card" style="display:none">' +
         '<div class="wbs-ask-row">' +
         '<label class="wbs-ask-label" for="wbs-text-shadow">消息文字阴影<span class="wbs-ask-hint">增强壁纸上的消息文字辨识度</span></label>' +
         '<label class="wbs-switch"><input type="checkbox" id="wbs-text-shadow" checked disabled><span class="wbs-switch-slider"></span></label>' +
@@ -9618,15 +9838,43 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       if (!themePane) return;
       var card = themePane.querySelector('#wbs-wallpaper-card');
       if (!card) return;
-      var visible = themeId === 'nebula';
+      var visible = sessState.themeTakeover && themeId === 'nebula';
       card.style.display = visible ? '' : 'none';
       var textCard = themePane.querySelector('#wbs-text-shadow-card');
       if (textCard) textCard.style.display = visible ? '' : 'none';
       if (visible) loadWallpapers();
     }
 
+    // 关闭接管后，主题页只保留开关本身；WorkBuddy 的外观由官方设置页接管。
+    // 同时恢复第一个默认头像，避免 WorkDaddy 头像覆盖仍留在主窗口。
+    function syncThemeTakeoverVisibility(enabled) {
+      var visible = enabled !== false;
+      if (themePane) {
+        themePane.querySelectorAll('.wbs-theme-managed').forEach(function (node) {
+          node.style.display = visible ? '' : 'none';
+        });
+      }
+      if (!visible && avatarLibrary) {
+        try {
+          var avatar = avatarLibrary.snapshot();
+          if (!avatar || avatar.selected !== 'default') avatarLibrary.select('default');
+          applyAvatar();
+        } catch (_) {}
+      }
+    }
+
     // 主题 pane 事件绑定（元素在 buildThemePane 之后才存在，延迟到首次切换时绑定）
     function wireThemePane() {
+      var themeSwitch = themePane.querySelector('#wbs-theme-takeover');
+      if (themeSwitch) {
+        themeSwitch.checked = sessState.themeTakeover;
+        if (!themeSwitch.dataset.wbsWired) {
+          themeSwitch.dataset.wbsWired = '1';
+          themeSwitch.addEventListener('change', function () { setSessionSwitchWire('themeTakeoverEnabled', this); });
+        }
+        syncThemeTakeoverVisibility(sessState.themeTakeover);
+        syncSessionModule();
+      }
       themePane.querySelectorAll('input[name="wbs-robot-style"]').forEach(function (input) {
         input.checked = input.value === fabAppearance.get();
         input.closest('.wbs-theme-opt').classList.toggle('active', input.checked);
@@ -9663,6 +9911,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         var t = e.target;
         var segBtn = t.closest ? t.closest('#wbs-theme-seg .wbs-theme-opt') : null;
         if (segBtn) {
+          if (!sessState.themeTakeover) return;
           var id = segBtn.getAttribute('data-wbs-theme-option');
           // 不做 active 拦截：即使当前已是该主题也强制重新应用（保证「切换到默认主题=强制浅色 / 切换到 WorkDaddy 主题=强制深色」始终生效，面板状态与真实主题不一致时也能纠正）
           var previous = themePane.querySelector('#wbs-theme-seg .wbs-theme-opt.active');
@@ -15587,21 +15836,17 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     // 宽度按 icon(16)+gap(7)+文字(~90)+padding(13) 收紧，不留过多右侧留白
     'html[data-wbs-language="en"] .wbs-stash-inline:hover,html[data-wbs-language="en"] .wbs-stash-inline.wbs-stash-inline-inline:hover{width:128px}',
     'html[data-wbs-language="en"] .wbs-stash-inline:hover .wbs-stash-txt{max-width:96px}',
+    '.wbs-theme-takeover-row{display:flex;align-items:center;flex-shrink:0;gap:12px;margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid var(--wb-border-subtle)}.wbs-theme-takeover-row>.wbs-pcard-title{flex:1;min-width:0}',
     '.wbs-explore-inline{position:fixed;left:auto;display:flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;z-index:auto;top:0;right:0;overflow:visible;padding:0 8px}',
     /* 复用暂存按钮视觉（wbs-stash-inline 提供 32px 圆形/背景/阴影），但 hover 不变宽 */
     '.wbs-stash-inline.wbs-explore-inline:hover,.wbs-stash-inline.wbs-explore-inline.wbs-stash-inline-inline:hover{width:32px!important;min-width:32px!important;height:32px!important;border-radius:50%;padding:0 8px}',
     /* 图标常显；hover 无任何自身动画 */
     '.wbs-explore-ico{display:flex;align-items:center;justify-content:center}',
-    /* 新版内联模式：弹层(absolute)必须以按钮自身为定位上下文——static 会让 .wbs-explore-pop 的 bottom:100% 上溯到最近的 positioned 祖先（操作栏外壳），导致弹层大幅偏离按钮；z-index 抬升让按钮成为独立层叠上下文，弹层在其内不受操作栏兄弟元素压制 */
     '.wbs-explore-inline.wbs-stash-inline-inline{position:relative;z-index:99999}',
-    /* 按钮不可点击缩放（点击不改变按钮自身与面板大小），菜单全由 hover 展示 */
     '.wbs-explore-inline:active{transform:none}',
-    '.wbs-explore-pop{position:absolute;bottom:calc(100% + 10px);left:50%;transform:translateX(-50%) translateY(6px);width:280px;max-width:84vw;opacity:0;visibility:hidden;transition:opacity .18s ease,transform .18s ease,visibility 0s linear .18s;z-index:2147483647;pointer-events:none}',
-    /* hover 桥接：向下覆盖按钮与弹窗之间的 10px 间隙，按钮→弹窗移动不丢失悬停（菜单雏形） */
+    '.wbs-explore-pop{position:fixed;bottom:0;left:0;transform:translateY(6px);width:280px;max-width:84vw;opacity:0;visibility:hidden;transition:opacity .18s ease,transform .18s ease,visibility 0s linear .18s;z-index:22;pointer-events:none;font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif}',
     '.wbs-explore-pop::before{content:"";position:absolute;left:-12px;right:-12px;bottom:-14px;height:14px}',
-    '.wbs-explore-inline:hover .wbs-explore-pop,.wbs-explore-pop:hover{opacity:1;visibility:visible;transform:translateX(-50%) translateY(0);pointer-events:auto}',
-    /* 点击选项后关闭面板（wbs-menu-closed 期间强制隐藏，重新进入按钮区后恢复可展示） */
-    '.wbs-explore-inline.wbs-menu-closed .wbs-explore-pop{opacity:0;visibility:hidden;pointer-events:none;transform:translateX(-50%) translateY(6px)}',
+    '.wbs-explore-pop.is-open{opacity:1;visibility:visible;transform:translateY(0);pointer-events:auto}',
     /* 弹窗卡片：适配插件主题的毛玻璃；面板整体为默认箭头，仅选项 hover 变点击手型 */
     '.wbs-explore-card{position:relative;padding:8px;border-radius:12px;background:color-mix(in srgb,var(--wb-bg-popover,#fff) 62%,transparent);backdrop-filter:blur(18px) saturate(1.3);-webkit-backdrop-filter:blur(18px) saturate(1.3);border:1px solid var(--wb-border-subtle,#ececec);box-shadow:0 12px 32px rgba(0,0,0,.18);color:var(--wb-color-text-primary,#1f1f1f);cursor:default}',
     'html[data-wbs-theme-id="nebula"] .wbs-explore-card{background:color-mix(in srgb,var(--wb-bg-popover,#1a1729) 88%,transparent);background-color:color-mix(in srgb,var(--wb-bg-popover,#1a1729) 88%,transparent);box-shadow:0 14px 36px rgba(0,0,0,.38)}',
@@ -15744,6 +15989,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '.wbs-sess-seg-btn:hover{color:var(--wb-color-text-primary,#1f1f1f)}',
     '.wbs-sess-seg-btn.active{background:var(--wb-button-primary-bg,#1f1f1f);color:var(--wb-button-primary-fg,#fff);box-shadow:0 1px 4px rgba(0,0,0,.2)}',
     '.wbs-sess-toolbar{display:flex;align-items:center;flex-wrap:wrap;gap:6px;margin-bottom:8px}',
+    '.wbs-sess-export-progress{flex:0 0 auto;min-width:0;margin:0 0 8px;padding:9px 10px;border:1px solid var(--wb-border-subtle);border-radius:9px;background:var(--wb-bg-secondary);color:var(--wb-color-text-primary);font-size:11px;line-height:1.5}.wbs-sess-export-progress[hidden],.wbs-sess-export-progress [hidden]{display:none}.wbs-sess-export-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.wbs-sess-export-head strong{flex:1;font-size:12px}.wbs-sess-export-progress progress{display:block;width:100%;height:5px;margin:7px 0;accent-color:var(--wbs-primary)}.wbs-sess-export-progress progress[hidden]{display:none}.wbs-sess-export-progress [data-export-detail]{overflow-wrap:anywhere;color:var(--wb-color-text-secondary)}',
     '.wbs-sess-copy-progress{box-sizing:border-box;margin:0 0 8px;padding:9px 10px;border:1px solid var(--wb-border-default,#e5e5e5);border-radius:9px;background:color-mix(in srgb,var(--wb-bg-secondary,#fff) 82%,transparent);box-shadow:0 2px 8px rgba(0,0,0,.04)}',
     '.wbs-sess-copy-progress[hidden]{display:none!important}.wbs-sess-copy-head{display:flex;align-items:center;gap:6px;min-width:0}.wbs-sess-copy-icon{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;flex:0 0 20px;border-radius:6px;background:color-mix(in srgb,var(--wb-button-primary-bg,#1f1f1f) 9%,transparent);color:var(--wb-button-primary-bg,#1f1f1f)}.wbs-sess-copy-title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11.5px;font-weight:650;color:var(--wb-color-text-primary,#1f1f1f)}',
     '.wbs-sess-copy-detail{margin:4px 0 6px 26px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10.5px;line-height:1.35;color:var(--wb-icon-tertiary,#8a8f98)}.wbs-sess-copy-track{height:4px;margin-left:26px;overflow:hidden;border-radius:999px;background:var(--wb-bg-tertiary,#e9eaed)}.wbs-sess-copy-fill{display:block;height:100%;width:0;border-radius:inherit;background:var(--wb-accent-blue,var(--wb-button-primary-bg,#1f1f1f));transition:width .2s ease}.wbs-sess-copy-progress.is-done .wbs-sess-copy-fill{background:#2f9e63}.wbs-sess-copy-progress.is-partial .wbs-sess-copy-fill{background:#d48a19}.wbs-sess-copy-progress.is-error .wbs-sess-copy-fill{background:#d84a4a}',
@@ -16169,22 +16415,25 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '@keyframes wbs-credit-robot-alert{0%,100%{transform:translateY(0)}45%{transform:translateY(-5px)}75%{transform:translateY(1px)}}',
     '.wbs-usage-modal-mask{position:fixed!important;inset:0!important;z-index:2147483647!important;box-sizing:border-box;padding:24px;border-radius:0!important;background:rgba(15,18,24,.36);backdrop-filter:blur(5px);-webkit-backdrop-filter:blur(5px)}',
     '.wbs-token-stats-modal{width:min(980px,calc(100vw - 48px));max-width:calc(100vw - 48px);height:min(84vh,800px);max-height:calc(100vh - 48px);display:flex;flex-direction:column;overflow:hidden;border:1px solid var(--wb-border-default,rgba(20,24,32,.14));border-radius:16px;padding:0;box-shadow:0 24px 80px rgba(15,18,24,.22)}',
-    '.wbs-usage-header{position:sticky;top:0;z-index:4;flex-shrink:0;padding:20px 22px 0;border-bottom:1px solid var(--wb-border-subtle,#eee);background:color-mix(in srgb,var(--wb-bg-popover,#fff) 94%,transparent);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px)}.wbs-usage-scroll{min-height:0;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;flex:1;padding:8px 22px 22px}.wbs-usage-dashboard{scrollbar-width:none}.wbs-usage-dashboard::-webkit-scrollbar{display:none}.wbs-token-stats-modal>.wbs-modal-actions{flex-shrink:0;padding:13px 22px;border-top:1px solid var(--wb-border-subtle,#eee);background:var(--wb-bg-popover,#fff)}.wbs-token-stats-modal .wbs-token-model-scroll{max-height:280px;overflow-y:auto}.wbs-token-stats-modal .wbs-token-model-scroll:after{display:none}.wbs-credit-query-content{position:relative;min-height:430px}',
+    '.wbs-usage-header{position:sticky;top:0;z-index:4;flex-shrink:0;padding:20px 22px 0;border-bottom:1px solid var(--wb-border-subtle,#eee);background:color-mix(in srgb,var(--wb-bg-popover,#fff) 94%,transparent);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px)}.wbs-usage-scroll{min-height:0;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;flex:1;padding:8px 22px 22px}.wbs-usage-dashboard{scrollbar-width:none}.wbs-usage-dashboard::-webkit-scrollbar{display:none}.wbs-token-stats-modal>.wbs-modal-actions{flex-shrink:0;padding:13px 22px;border-top:1px solid var(--wb-border-subtle,#eee);background:var(--wb-bg-popover,#fff)}.wbs-token-stats-modal .wbs-token-model-scroll{overflow:visible}.wbs-token-stats-modal .wbs-token-model-scroll:after{display:none}.wbs-credit-query-content{position:relative;min-height:430px}',
     '.wbs-token-stats-head{display:flex;align-items:center;justify-content:space-between;gap:10px}',
     '.wbs-token-source-note{margin:0 0 12px;font-size:11px;line-height:1.6;color:var(--wb-icon-secondary,#667085);overflow-wrap:anywhere}',
     '.wbs-usage-tabs{display:flex;gap:18px;margin:13px 0 0;border-bottom:1px solid var(--wb-border-subtle,#eee)}.wbs-usage-tabs button{border:0;border-bottom:2px solid transparent;background:transparent;color:var(--wb-icon-secondary,#667085);padding:7px 2px 9px;font:inherit;font-size:12px;cursor:pointer;transition:color .15s,border-color .15s}.wbs-usage-tabs button.active{border-bottom-color:var(--wb-color-text-primary,#1f1f1f);color:var(--wb-color-text-primary,#1f1f1f);font-weight:700}.wbs-credit-stats-note{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:10px 0;color:var(--wb-icon-secondary,#667085);font-size:11px;line-height:1.5}.wbs-credit-sync{height:26px;padding:0 9px;border:1px solid var(--wb-border-default,#e2e4e8);border-radius:7px;background:var(--wb-bg-tertiary,#f5f6f8);color:var(--wb-color-text-primary,#1f1f1f);font:inherit;font-size:11px;cursor:pointer}.wbs-credit-sync:disabled{opacity:.6;cursor:wait}.wbs-credit-stats-body{min-height:240px}',
     '.wbs-usage-period{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:16px 0 12px;color:var(--wb-color-text-secondary,#667085);font-size:11px}.wbs-usage-segment{display:inline-flex;align-items:center;gap:2px;max-width:100%;padding:3px;border:1px solid var(--wb-border-subtle,#eee);border-radius:9px;background:var(--wb-bg-tertiary,#f5f6f8)}.wbs-usage-segment button{min-width:55px;height:27px;padding:0 9px;border:0;border-radius:6px;background:transparent;color:var(--wb-color-text-secondary,#667085);font:inherit;font-size:11px;cursor:pointer;white-space:nowrap}.wbs-usage-segment button.active{background:var(--wb-bg-popover,#fff);color:var(--wb-color-text-primary,#1f1f1f);font-weight:600;box-shadow:0 1px 4px rgba(0,0,0,.1)}.wbs-usage-segment button:disabled{opacity:.55;cursor:wait}.wbs-usage-segment button:focus-visible,.wbs-trend-legend button:focus-visible{outline:2px solid var(--wbs-primary);outline-offset:2px}',
-    '.wbs-trend-panel{--wbs-trend-series-1:#388fc6;--wbs-trend-series-2:#df806a;--wbs-trend-series-3:#269f8b;--wbs-trend-series-4:#a179c6;--wbs-trend-series-5:#d8759b;--wbs-trend-series-6:#759c41;--wbs-trend-series-7:#b27d3c;--wbs-trend-series-8:#559db1;--wbs-trend-series-9:#c46b71;--wbs-trend-series-10:#7b86c2;--wbs-trend-series-11:#6b9b78;--wbs-trend-series-12:#b878aa}',
-    'html.cb-dark #wbs-token-stats-modal .wbs-trend-panel,html[data-theme="dark"] #wbs-token-stats-modal .wbs-trend-panel,body[data-vscode-theme-name*="dark" i] #wbs-token-stats-modal .wbs-trend-panel,html[data-wbs-theme-id="dark"] #wbs-token-stats-modal .wbs-trend-panel,html[data-wbs-theme-id="cyber-purple"] #wbs-token-stats-modal .wbs-trend-panel,html[data-wbs-theme-id="nebula"] #wbs-token-stats-modal .wbs-trend-panel{--wbs-trend-series-1:#72bfeb;--wbs-trend-series-2:#f4a78d;--wbs-trend-series-3:#67cdb8;--wbs-trend-series-4:#bda0e0;--wbs-trend-series-5:#ed9ab9;--wbs-trend-series-6:#b1ce74;--wbs-trend-series-7:#dbb274;--wbs-trend-series-8:#8fc8d6;--wbs-trend-series-9:#e99a9f;--wbs-trend-series-10:#aab2ed;--wbs-trend-series-11:#94c8a2;--wbs-trend-series-12:#d9a1cd}',
+    '.wbs-trend-panel,.wbs-usage-pie-section{--wbs-trend-series-1:#36A2EB;--wbs-trend-series-2:#FF6384;--wbs-trend-series-3:#FFCE56;--wbs-trend-series-4:#4BC0C0;--wbs-trend-series-5:#9966FF;--wbs-trend-series-6:#FF9F40;--wbs-trend-series-7:#C9CBCF;--wbs-trend-series-8:#7BC8F6;--wbs-trend-series-9:#F58BA7;--wbs-trend-series-10:#F5D76E;--wbs-trend-series-11:#73D3D3;--wbs-trend-series-12:#B89DFF}',
+    'html.cb-dark #wbs-token-stats-modal :is(.wbs-trend-panel,.wbs-usage-pie-section),html[data-theme="dark"] #wbs-token-stats-modal :is(.wbs-trend-panel,.wbs-usage-pie-section),body[data-vscode-theme-name*="dark" i] #wbs-token-stats-modal :is(.wbs-trend-panel,.wbs-usage-pie-section),body[data-vscode-theme-name*="night" i] #wbs-token-stats-modal :is(.wbs-trend-panel,.wbs-usage-pie-section),html[data-wbs-theme-id="dark"] #wbs-token-stats-modal :is(.wbs-trend-panel,.wbs-usage-pie-section),html[data-wbs-theme-id="cyber-purple"] #wbs-token-stats-modal :is(.wbs-trend-panel,.wbs-usage-pie-section),html[data-wbs-theme-id="nebula"] #wbs-token-stats-modal :is(.wbs-trend-panel,.wbs-usage-pie-section){--wbs-trend-series-1:#36A2EB;--wbs-trend-series-2:#FF6384;--wbs-trend-series-3:#FFCE56;--wbs-trend-series-4:#4BC0C0;--wbs-trend-series-5:#9966FF;--wbs-trend-series-6:#FF9F40;--wbs-trend-series-7:#C9CBCF;--wbs-trend-series-8:#7BC8F6;--wbs-trend-series-9:#F58BA7;--wbs-trend-series-10:#F5D76E;--wbs-trend-series-11:#73D3D3;--wbs-trend-series-12:#B89DFF}',
     '.wbs-trend-controls{display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap;margin-bottom:9px}.wbs-trend-modes{flex-shrink:0}.wbs-trend-modes button{min-width:48px}.wbs-trend-legend{display:flex;align-items:center;gap:6px;flex:1;flex-wrap:wrap;min-width:140px;max-height:74px;overflow-y:auto;scrollbar-width:none}.wbs-trend-legend::-webkit-scrollbar{display:none}.wbs-trend-legend button{display:inline-flex;align-items:center;gap:6px;max-width:165px;height:27px;padding:0 8px;border:1px solid var(--wb-border-subtle,#eee);border-radius:6px;background:var(--wb-bg-popover,#fff);color:var(--wb-color-text-secondary,#667085);font:inherit;font-size:11px;cursor:pointer;opacity:.55}.wbs-trend-legend button.active{opacity:1;color:var(--wb-color-text-primary,#1f1f1f)}.wbs-trend-legend button i{flex:none;width:8px;height:8px;border-radius:50%;background:var(--wbs-series-color);color:var(--wbs-series-color)}.wbs-trend-legend button span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.wbs-trend-no-series{font-size:11px;color:var(--wb-color-text-secondary,#667085)}',
     '.wbs-token-stats-actions{display:flex;justify-content:flex-end;gap:7px;margin:2px 0 12px}.wbs-token-stats-actions button{height:30px;padding:0 14px;border-radius:7px;font:inherit;font-size:11px;cursor:pointer}.wbs-token-stats-search{border:1px solid var(--wb-button-primary-bg,#1f1f1f);background:var(--wb-button-primary-bg,#1f1f1f);color:var(--wb-button-primary-text,#fff)}.wbs-token-stats-reset{border:1px solid var(--wb-border-default,#e2e4e8);background:var(--wb-bg-tertiary,#f5f6f8);color:var(--wb-color-text-secondary,#667085)}.wbs-token-stats-actions button:disabled{opacity:.55;cursor:wait}',
     '.wbs-token-stats-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px}',
     '.wbs-token-stats-grid>div{position:relative;display:flex;min-width:0;overflow:hidden;flex-direction:column;gap:6px;padding:14px 12px 13px;border:1px solid var(--wb-border-subtle,#eee);border-radius:9px;background:var(--wb-bg-popover,#fff)}',
     '.wbs-token-stats-grid span{font-size:10.5px;color:var(--wb-icon-secondary,#667085)}',
     '.wbs-token-stats-grid strong{font-size:17px;line-height:1.25;color:var(--wb-color-text-primary,#1f1f1f);font-variant-numeric:tabular-nums}.wbs-usage-columns{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px;align-items:start}',
+    '.wbs-usage-pie{display:grid;grid-template-columns:116px minmax(0,1fr);gap:14px;align-items:start;min-width:0}.wbs-pie-plot{width:116px;height:116px;margin-top:4px}.wbs-pie-plot svg{display:block;width:100%;height:100%;overflow:visible}.wbs-pie-slice{fill:var(--wbs-pie-color);stroke:var(--wb-bg-popover);stroke-width:1.5;outline:none;transition:opacity .12s,filter .12s}.has-pie-preview .wbs-pie-slice:not(.is-preview){opacity:.35}.wbs-pie-slice.is-preview,.wbs-pie-slice:focus-visible{fill:var(--wbs-pie-color);filter:drop-shadow(0 2px 3px rgba(0,0,0,.12))}.wbs-pie-subtitle{display:flex;align-items:baseline;flex-wrap:wrap;gap:6px;margin:-5px 0 12px;color:var(--wb-color-text-secondary);font-size:10px}.wbs-pie-subtitle strong{font-size:13px;font-weight:600;color:var(--wb-color-text-primary);font-variant-numeric:tabular-nums}.wbs-pie-tooltip{position:fixed;z-index:20;max-width:min(260px,calc(100vw - 24px));padding:9px 11px;border:1px solid var(--wb-border-subtle);border-radius:8px;background:var(--wb-bg-popover);color:var(--wb-color-text-primary);box-shadow:0 4px 16px rgba(0,0,0,.12);pointer-events:none;font-size:11px;line-height:1.6;overflow-wrap:anywhere}.wbs-pie-tooltip[hidden]{display:none}.wbs-pie-tooltip strong{font-weight:600}.wbs-pie-tooltip [data-pie-tip-detail]{color:var(--wb-color-text-secondary)}',
+    '.wbs-pie-legend{min-width:0;overflow:visible}.wbs-pie-row{display:grid;grid-template-columns:8px minmax(0,1fr) auto 40px;gap:6px;align-items:center;min-height:33px;border-bottom:0;font-size:11px;color:var(--wb-color-text-primary)}.wbs-pie-row>i{width:7px;height:7px;border-radius:50%}.wbs-pie-name{min-width:0;overflow-wrap:anywhere;line-height:1.4}.wbs-pie-name small{display:block;font-size:10px;color:var(--wb-color-text-secondary);font-weight:400}.wbs-pie-row>b{font-weight:600;font-variant-numeric:tabular-nums}.wbs-pie-percent{text-align:right;color:var(--wb-color-text-secondary);font-variant-numeric:tabular-nums}.wbs-pie-other>summary{cursor:pointer;list-style:none}.wbs-pie-other>summary::-webkit-details-marker{display:none}.wbs-pie-other>summary .wbs-pie-name:before{content:"▸ ";color:var(--wb-icon-secondary)}.wbs-pie-other[open]>summary .wbs-pie-name:before{content:"▾ "}.wbs-pie-other>summary:hover{background:var(--wb-bg-hover)}.wbs-pie-other>summary:focus-visible{outline:2px solid var(--wb-accent-blue);outline-offset:-2px}.wbs-pie-details{padding-left:10px}',
+    '.wbs-pie-row.is-preview{background:var(--wb-bg-hover);border-radius:5px}.wbs-pie-row{padding:3px 4px;box-sizing:border-box}@media(max-width:900px) and (min-width:701px),(max-width:420px){.wbs-usage-pie{grid-template-columns:90px minmax(0,1fr);gap:8px}.wbs-pie-plot{width:90px;height:90px}.wbs-pie-row{grid-template-columns:6px minmax(0,1fr) auto;gap:4px}.wbs-pie-percent{grid-column:3;font-size:10px}.wbs-pie-row>b{align-self:end}.wbs-pie-name{grid-row:span 2}}',
     '.wbs-token-stats-section{margin-top:20px;border-top:1px solid var(--wb-border-subtle,#eee);padding-top:14px}.wbs-token-stats-section-title{font-size:12.5px;font-weight:700;color:var(--wb-color-text-primary,#1f1f1f);margin-bottom:11px}',
     '.wbs-token-stats-chart{display:block;height:176px;overflow-x:auto;overflow-y:hidden;padding:5px 12px;border:1px solid var(--wb-border-subtle,#eee);border-radius:10px;background:var(--wb-bg-secondary,#fafafa);scrollbar-width:none}.wbs-token-stats-chart::-webkit-scrollbar{display:none}.wbs-usage-trend-canvas{display:block;height:166px}.wbs-usage-trend-canvas:focus-visible{outline:2px solid var(--wbs-primary);outline-offset:-3px;border-radius:5px}.wbs-usage-trend-tooltip{width:max-content;min-width:104px;max-width:min(320px,calc(100vw - 20px));display:flex;flex-direction:column;gap:6px;padding:8px 11px;font-size:11px;line-height:1.35;pointer-events:none;white-space:nowrap}.wbs-usage-trend-tooltip[hidden]{display:none}.wbs-usage-trend-tooltip span{color:var(--wb-color-text-secondary,#5f6368)}.wbs-usage-trend-tooltip [data-trend-values]{display:flex;flex-direction:column;gap:3px}.wbs-usage-trend-tooltip [data-trend-values]>div{display:flex;justify-content:space-between;gap:18px}.wbs-usage-trend-tooltip [data-trend-values] span{max-width:180px;overflow:hidden;text-overflow:ellipsis}.wbs-usage-trend-tooltip strong{font-size:13px;font-variant-numeric:tabular-nums}',
-    '.wbs-token-model-scroll{position:relative;max-height:250px;overflow-y:auto;scrollbar-width:thin}.wbs-token-model-scroll:after{content:"";position:sticky;display:block;bottom:0;height:28px;margin-top:-28px;background:linear-gradient(to bottom,transparent,color-mix(in srgb,var(--wb-bg-popover,#fff) 92%,transparent));pointer-events:none;opacity:1;transition:opacity .16s}.wbs-token-model-scroll.at-end:after,.wbs-token-model-scroll.no-overflow:after{opacity:0}.wbs-token-stats-table{display:flex;flex-direction:column}.wbs-token-stats-table>div{display:grid;grid-template-columns:minmax(0,1fr) 88px 58px;gap:8px;align-items:center;min-height:30px;border-bottom:1px solid var(--wb-border-subtle,#eee);font-size:11px;color:var(--wb-color-text-secondary,#667085)}.wbs-token-stats-table>div:last-child{border-bottom:0}.wbs-token-stats-table span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.wbs-token-stats-table b{color:var(--wb-color-text-primary,#1f1f1f);font-variant-numeric:tabular-nums;text-align:right}.wbs-token-stats-table em{font-style:normal;color:var(--wb-icon-tertiary,#8a8f98);text-align:right}',
+    '.wbs-token-model-scroll{position:relative;overflow:visible}.wbs-token-model-scroll:after{display:none}.wbs-token-stats-table{display:flex;flex-direction:column}.wbs-token-stats-table>div{display:grid;grid-template-columns:minmax(0,1fr) 88px 58px;gap:8px;align-items:center;min-height:30px;border-bottom:1px solid var(--wb-border-subtle,#eee);font-size:11px;color:var(--wb-color-text-secondary,#667085)}.wbs-token-stats-table>div:last-child{border-bottom:0}.wbs-token-stats-table span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.wbs-token-stats-table b{color:var(--wb-color-text-primary,#1f1f1f);font-variant-numeric:tabular-nums;text-align:right}.wbs-token-stats-table em{font-style:normal;color:var(--wb-icon-tertiary,#8a8f98);text-align:right}',
     '.wbs-token-stats-loading{min-height:410px;display:flex;align-items:center;justify-content:center;color:var(--wb-icon-secondary,#667085);font-size:12px}.wbs-token-stats-content{position:relative;min-height:410px}.wbs-token-stats-body{min-height:410px}.wbs-token-stats-overlay{position:absolute;inset:0;z-index:2;display:flex;align-items:center;justify-content:center;border-radius:9px;background:color-mix(in srgb,var(--wb-bg-popover,#fff) 38%,transparent);color:var(--wb-icon-secondary,#667085);backdrop-filter:blur(1.5px);-webkit-backdrop-filter:blur(1.5px)}.wbs-token-stats-overlay[hidden],.wbs-token-stats-overlay span[hidden]{display:none!important}.wbs-token-stats-spinner{display:flex;flex-direction:column;align-items:center;gap:10px;color:var(--wb-icon-secondary,#667085);font-size:11px}.wbs-token-stats-spinner svg{width:24px;height:24px;animation:wbs-token-spin .8s linear infinite;color:var(--wb-icon-secondary,#667085)}.wbs-token-stats-spinner circle{fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-dasharray:36 22}@keyframes wbs-token-spin{to{transform:rotate(360deg)}}.wbs-token-stats-empty{font-size:12px;line-height:1.6;color:var(--wb-icon-tertiary,#8a8f98)}.wbs-token-empty-trend{margin:auto;text-align:center}.wbs-token-empty-model{display:flex!important;align-items:center;justify-content:center;min-height:150px;text-align:center}.wbs-token-model-scroll.no-overflow:has(.wbs-token-empty-model){max-height:none}',
     'html.cb-dark #wbs-token-stats-modal,html[data-theme="dark"] #wbs-token-stats-modal,body[data-vscode-theme-name*="dark" i] #wbs-token-stats-modal{color-scheme:dark;background:rgba(0,0,0,.56)}#wbs-token-stats-modal .wbs-token-stats-modal{box-sizing:border-box}.wbs-token-stats-modal{position:relative}.wbs-credit-stats-toolbar{display:flex;gap:8px;align-items:center;justify-content:space-between;flex-wrap:wrap;font-size:11px;color:var(--wb-icon-secondary,#667085)}.wbs-token-stats-grid.wbs-credit-stats-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.wbs-credit-chart{height:176px}.wbs-credit-sync{height:auto;min-height:28px;white-space:normal}.wbs-credit-sync-overlay{position:absolute;inset:0;z-index:5;display:flex;align-items:center;justify-content:center;padding:16px;background:color-mix(in srgb,var(--wb-bg-popover,#fff) 84%,transparent);backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);border-radius:inherit;pointer-events:auto}.wbs-credit-sync-overlay[hidden],[data-credit-result][hidden],[data-usage-pane][hidden]{display:none!important}.wbs-credit-sync-progress{display:flex;flex-direction:column;align-items:stretch;gap:12px;width:min(100%,340px);font-size:12px;line-height:1.6;overflow-wrap:anywhere;color:var(--wb-color-text-primary,#1f1f1f)}.wbs-credit-sync-progress>span{color:var(--wb-icon-secondary,#667085)}.wbs-credit-sync-progress progress{width:100%;height:8px;accent-color:var(--wb-button-primary-bg,#1f1f1f)}.wbs-credit-sync-progress button{align-self:center}.wbs-usage-tabs button:focus-visible,.wbs-credit-sync:focus-visible{outline:2px solid var(--wb-color-text-primary,#1f1f1f);outline-offset:2px}',
     '@media(max-width:700px){.wbs-usage-modal-mask{padding:12px}.wbs-usage-columns{grid-template-columns:1fr}.wbs-token-stats-modal{width:calc(100vw - 24px);max-width:calc(100vw - 24px);height:calc(100vh - 24px);max-height:calc(100vh - 24px)}.wbs-token-stats-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}',

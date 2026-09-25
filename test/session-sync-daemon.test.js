@@ -65,7 +65,7 @@ test('account two continuation updates account one and never account three', asy
   assert.equal((await h.copy()).copiedBytes, 0);
 });
 
-test('automatic first copy to an account with no physical target uses the fast snapshot path', async t => {
+test('automatic first copy to an account with no physical target streams snapshots and file copies', async t => {
   const h = harness(t);
   lib.removeAutoCopySessionMember(h.root, h.lineage, 'two', 'b');
   h.rows.delete('b');
@@ -79,8 +79,8 @@ test('automatic first copy to an account with no physical target uses the fast s
   try {
     const result = await h.copy();
     assert.equal(result.status, 'copied');
-    assert.ok(syncReads > 0, 'first-time copies should use the synchronous snapshot path');
-    assert.equal(asyncReads, 0, 'first-time copies should not pay the async snapshot path');
+    assert.equal(syncReads, 0, 'first-time copies must not buffer whole sessions');
+    assert.ok(asyncReads > 0, 'first-time copies must use streaming snapshots');
     const mapping = lib.getAutoCopyMapping(h.root, h.lineage, 'two');
     assert.equal(mapping.targetStateRevision, h.ctx.sessionCopyStableStateRevision(h.rows.get(result.targetId)),
       'new mappings must record the inserted target row revision');
