@@ -8,6 +8,8 @@ const crypto = require('node:crypto');
 const { StringDecoder } = require('node:string_decoder');
 const identityKeys = new Set(['sessionId', 'conversationId', 'ownerConversationId', 'session_id', 'conversation_id']);
 const SKIP_LOCAL_DIR = /^workspace\/sessions\/[^/]+\/(?:modify_backup|\.modify_backup_meta)$/;
+const SYNC_BACKUP_DIR = /^sync-[A-Za-z0-9_-]+$/;
+const DEFAULT_SYNC_BACKUP_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 const digest = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
 
 // WorkBuddy appends session-meta lifecycle records when a conversation is
@@ -683,6 +685,44 @@ function unchanged(snapshot) {
   return now.files.size === snapshot.files.size && [...snapshot.files].every(([key, file]) => now.files.get(key)?.hash === file.hash);
 }
 
+function removeSyncBackup(backup) {
+  try { fs.rmSync(backup, { recursive: true, force: true }); } catch (_) {}
+}
+
+async function removeSyncBackupAsync(backup) {
+  try { await fs.promises.rm(backup, { recursive: true, force: true }); } catch (_) {}
+}
+
+// Successful and fully rolled-back syncs have no remaining reader for their
+// snapshots. Keep only recovery-needed backups, and age out crash leftovers
+// when the daemon starts so old versions cannot grow the data directory forever.
+function pruneSyncBackups(backupRoot, options = {}) {
+  const now = Number.isFinite(options.now) ? options.now : Date.now();
+  const maxAgeMs = Number.isFinite(options.maxAgeMs) && options.maxAgeMs >= 0
+    ? options.maxAgeMs : DEFAULT_SYNC_BACKUP_MAX_AGE_MS;
+  const result = { removed: 0, retainedRecovery: 0 };
+  let entries;
+  try { entries = fs.readdirSync(backupRoot, { withFileTypes: true }); }
+  catch (_) { return result; }
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !SYNC_BACKUP_DIR.test(entry.name)) continue;
+    const backup = path.join(backupRoot, entry.name);
+    let status = '';
+    try {
+      const journal = JSON.parse(fs.readFileSync(path.join(backup, 'journal.json'), 'utf8'));
+      status = typeof journal.status === 'string' ? journal.status : '';
+    } catch (_) {}
+    if (status === 'recovery-needed') { result.retainedRecovery++; continue; }
+    let ageMs = 0;
+    try { ageMs = Math.max(0, now - fs.statSync(backup).mtimeMs); } catch (_) { continue; }
+    const remove = status === 'committed' || status === 'rolled-back' ||
+      (ageMs >= maxAgeMs && (status === 'prepared' || !status));
+    if (!remove) continue;
+    try { fs.rmSync(backup, { recursive: true, force: true }); result.removed++; } catch (_) {}
+  }
+  return result;
+}
+
 function targetRelative(logical, id) {
   return logical.split('/').map(part => part === '__session__' ? id : part === '__session__.jsonl' ? id + '.jsonl' : part === '__session__.json' ? id + '.json' : part).join('/');
 }
@@ -773,6 +813,7 @@ async function applySnapshot(source, target, options) {
     // Metadata already committed: a journal I/O failure must not undo files.
     let journalPending = false;
     try { save(); } catch (_) { journalPending = true; }
+    removeSyncBackup(backup);
     // Count only newly published payload bytes. Backups, unchanged files and
     // removals are not copied session data; rolled-back writes never reach here.
     const copiedBytes = changes.reduce((sum, change) => sum + (change.bytes ? change.bytes.length : 0), 0);
@@ -793,6 +834,7 @@ async function applySnapshot(source, target, options) {
     }
     journal.status = incomplete ? 'recovery-needed' : 'rolled-back';
     try { save(); } catch (_) { /* Keep the original failure and retained backup. */ }
+    if (!incomplete) removeSyncBackup(backup);
     throw error;
   }
 }
@@ -905,6 +947,7 @@ async function applySnapshotAsync(source, target, options) {
     journal.status = 'committed';
     let journalPending = false;
     try { await save(); } catch (_) { journalPending = true; }
+    await removeSyncBackupAsync(backup);
     const copiedBytes = changes.reduce((sum, change) => sum + (change.hash === null ? 0 : change.size), 0);
     return { backup, copied: changes.length, copiedBytes, journalPending, totalBytes };
   } catch (error) {
@@ -926,11 +969,12 @@ async function applySnapshotAsync(source, target, options) {
     }
     journal.status = incomplete ? 'recovery-needed' : 'rolled-back';
     try { await save(); } catch (_) { /* Keep the original failure and retained backup. */ }
+    if (!incomplete) await removeSyncBackupAsync(backup);
     throw error;
   }
 }
 
 module.exports = {
   readSessionSizes, readSnapshot, readSnapshotAsync, readSessionFingerprintAsync, readSessionQuickFingerprintAsync, compareSnapshots, selectTargetSnapshot,
-  applySnapshot, applySnapshotAsync,
+  applySnapshot, applySnapshotAsync, pruneSyncBackups,
 };

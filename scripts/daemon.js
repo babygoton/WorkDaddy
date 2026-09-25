@@ -420,8 +420,8 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 // 1.2.145：识别仅 updated_at 的激活漂移，清除无变更脏标记；无结果任务不再弹同步进度窗口。
 // 1.2.126：5.6 加密账号改为密文原样备份、内存解密；导入兼容明文 token，
 //          刷新结果不把解密后的 token 写回加密备份。
-const DAEMON_VERSION = '1.2.167';
-const DAEMON_BUILD_ID = 'release-1.2.167-20260925-theme-optout-sync';
+const DAEMON_VERSION = '1.2.169';
+const DAEMON_BUILD_ID = 'release-1.2.169-20260925-theme-guard-session-backup-retention';
 const usageReporter = createUsageReporter({ profile: PROFILE.id, version: DAEMON_VERSION });
 configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const automationDiscovery = createAutomationDiscovery({
@@ -6917,13 +6917,18 @@ function nativeAppearanceSyncExpression() {
       } catch (_) {}
       try { delete window.__wbsNativeAppearanceSheet; delete window.__wbsNativeAppearanceKey; } catch (_) {}
     }
+    function setAttr(el, name, value) {
+      // 同值 setAttribute 也会触发 MutationObserver（WorkBuddy ThemeManager 据此重应用主题），
+      // 幂等写入避免与官方主题机制互相惊动形成无限回写。
+      if (el.getAttribute(name) !== value) el.setAttribute(name, value);
+    }
     function setMode(mode) {
       var dark = mode === 'dark';
-      h.setAttribute('data-theme', mode);
+      setAttr(h, 'data-theme', mode);
       h.classList.toggle('cb-dark', dark); h.classList.toggle('cb-light', !dark);
       h.classList.toggle('dark', dark); h.classList.toggle('light', !dark);
-      b.setAttribute('data-vscode-theme-kind', dark ? 'vscode-dark' : 'vscode-light');
-      b.setAttribute('data-vscode-theme-name', dark ? 'IDE Night' : 'IDE Light');
+      setAttr(b, 'data-vscode-theme-kind', dark ? 'vscode-dark' : 'vscode-light');
+      setAttr(b, 'data-vscode-theme-name', dark ? 'IDE Night' : 'IDE Light');
       b.classList.toggle('vscode-dark', dark); b.classList.toggle('vscode-light', !dark);
       b.classList.toggle('cb-dark', dark); b.classList.toggle('cb-light', !dark);
       b.classList.toggle('dark', dark); b.classList.toggle('light', !dark);
@@ -6959,6 +6964,9 @@ function nativeAppearanceSyncExpression() {
     }
     sync();
     try {
+      // 释放接管后可能仍有旧版/并发应用泄漏的 250ms 外观守护在跑；bump token
+      // 让它们下一次 fire 时自杀，避免用陈旧 wantedMode 与原生外观无限拉扯。
+      window.__wbsThemeAppearanceGuardToken = (window.__wbsThemeAppearanceGuardToken || 0) + 1;
       if (window.__wbsNativeAppearanceSync) clearInterval(window.__wbsNativeAppearanceSync);
       window.__wbsNativeAppearanceSync = setInterval(sync, 500);
     } catch (_) {}
@@ -6980,6 +6988,8 @@ async function releaseThemeByCdp() {
     expression: `(function () {
       var WBS_UID = ${JSON.stringify(uid || null)};
       try {
+        // bump token：历史遗留（旧版并发应用泄漏）的 250ms 外观守护下一次 fire 即自杀。
+        window.__wbsThemeAppearanceGuardToken = (window.__wbsThemeAppearanceGuardToken || 0) + 1;
         if (window.__wbsThemeAppearanceGuard) {
           clearInterval(window.__wbsThemeAppearanceGuard);
           clearTimeout(window.__wbsThemeAppearanceGuardStop);
@@ -7304,6 +7314,12 @@ async function applyThemeByCdp(id, options = {}) {
       delete window.__wbsNativeAppearanceSync; delete window.__wbsNativeAppearanceSheet; delete window.__wbsNativeAppearanceKey;
     } catch (_) {}
     if (window.__wbsThemeGuard) window.__wbsThemeGuard.disconnect();
+    // 清理上一次应用遗留的 250ms 外观守护：历史上这里只覆盖 window 上的句柄，
+    // 并发/重复应用会泄漏旧 interval（10s 自停读的是共享 window 句柄，只有最后一个能被清），
+    // 泄漏的守护用陈旧 wantedMode 持续回写 DOM/localStorage，是关闭接管后主题无限来回切换的根因。
+    try { if (window.__wbsThemeAppearanceGuard) clearInterval(window.__wbsThemeAppearanceGuard); } catch (_) {}
+    try { if (window.__wbsThemeAppearanceGuardStop) clearTimeout(window.__wbsThemeAppearanceGuardStop); } catch (_) {}
+    try { delete window.__wbsThemeAppearanceGuard; delete window.__wbsThemeAppearanceGuardStop; } catch (_) {}
     var WBS_UID = ${JSON.stringify(uid || null)};
     // WorkDaddy 自定义主题已应用标记：theme-patches 里部分规则用 html[data-wbs-theme] 限定
     // 只在 WorkDaddy 内置自定义主题下生效（官方默认主题不激活）。
@@ -7439,6 +7455,17 @@ async function applyThemeByCdp(id, options = {}) {
       b.setAttribute('data-vscode-theme-name', name);
       h.setAttribute('data-theme', mode);
     }
+    // wbsSyncNativeThemeIdempotent：250ms 守护/keeper 的周期调用路径，属性同值时不写。
+    function wbsSyncNativeThemeQuiet(mode) {
+      var isLight = mode === 'light';
+      var kind = isLight ? 'vscode-light' : 'vscode-dark';
+      var name = isLight ? 'IDE Light' : 'IDE Night';
+      if (h.getAttribute('data-theme') === mode &&
+          b.getAttribute('data-vscode-theme-kind') === kind &&
+          b.getAttribute('data-vscode-theme-name') === name) return false;
+      wbsSyncNativeTheme(mode);
+      return true;
+    }
     if (${takeoverEnabled ? 'true' : 'false'}) wbsPrepareNativeAppearance();
     var s = document.getElementById('wbs-theme-style');
     if (${id === 'default' || id === 'dark' ? 'true' : 'false'}) {
@@ -7543,14 +7570,23 @@ async function applyThemeByCdp(id, options = {}) {
       function wbsHoldNativeAppearance() {
         if (!wbsHasSpecialNativeAppearance()) return;
         wbsClearNativeCustomCss();
-        wbsSyncNativeTheme(wantedMode);
+        wbsSyncNativeThemeQuiet(wantedMode);
         keepSelectedTheme();
       }
       wbsHoldNativeAppearance();
-      window.__wbsThemeAppearanceGuard = setInterval(wbsHoldNativeAppearance, 250);
+      // token + 闭包句柄双保险：任何并发/重复应用都不会泄漏旧 interval；
+      // 万一泄漏（如被新版 token 顶替），旧 interval 下一次 fire 即自杀。
+      var wbsGuardToken = (window.__wbsThemeAppearanceGuardToken = (window.__wbsThemeAppearanceGuardToken || 0) + 1);
+      var wbsGuardInterval = setInterval(function () {
+        if (window.__wbsThemeAppearanceGuardToken !== wbsGuardToken) { try { clearInterval(wbsGuardInterval); } catch (_) {} return; }
+        wbsHoldNativeAppearance();
+      }, 250);
+      window.__wbsThemeAppearanceGuard = wbsGuardInterval;
       window.__wbsThemeAppearanceGuardStop = setTimeout(function () {
-        try { clearInterval(window.__wbsThemeAppearanceGuard); } catch (_) {}
-        try { delete window.__wbsThemeAppearanceGuard; delete window.__wbsThemeAppearanceGuardStop; } catch (_) {}
+        try { clearInterval(wbsGuardInterval); } catch (_) {}
+        if (window.__wbsThemeAppearanceGuard === wbsGuardInterval) {
+          try { delete window.__wbsThemeAppearanceGuard; delete window.__wbsThemeAppearanceGuardStop; } catch (_) {}
+        }
       }, 10000);
     }
     var cs = getComputedStyle(b);
@@ -11106,6 +11142,10 @@ process.on('unhandledRejection', (reason) => {
 
 ensureDirs(DATA_DIR, log);
 if (!acquireDaemonLock()) process.exit(0);
+const sessionBackupCleanup = sessionSync.pruneSyncBackups(path.join(DATA_DIR, 'session-sync-backups'));
+if (sessionBackupCleanup.removed || sessionBackupCleanup.retainedRecovery) {
+  log(`[session-sync-backups] 启动清理 ${sessionBackupCleanup.removed} 个无用备份，保留 ${sessionBackupCleanup.retainedRecovery} 个 recovery-needed 备份`);
+}
 ensureAgentBridge(DATA_DIR, { profileId: PROFILE.id });
 const automationAgentInboxTimer = setInterval(() => {
   const imported = importAgentInbox(DATA_DIR, { profileId: PROFILE.id });
