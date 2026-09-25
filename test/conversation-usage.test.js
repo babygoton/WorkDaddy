@@ -5,7 +5,13 @@ const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
 
-const { collectConversationUsage, conversationMessagesToMarkdown } = require('../scripts/inject.js');
+const { collectConversationUsage, conversationMessagesToMarkdown, conversationUsageHeadline } = require('../scripts/inject.js');
+
+test('conversation usage hides the total prefix until a completed call exists', () => {
+  assert.deepEqual(conversationUsageHeadline(null), { prefix: '共', message: '读取中…' });
+  assert.deepEqual(conversationUsageHeadline({ calls: 0 }), { prefix: '', message: '等待会话完成' });
+  assert.deepEqual(conversationUsageHeadline({ calls: 1 }), { prefix: '共', message: '' });
+});
 
 test('conversation copy preserves complete user and assistant Markdown from the message store', () => {
   const markdown = conversationMessagesToMarkdown([
@@ -89,7 +95,8 @@ test('conversation usage UI uses a body-fixed mount, bottom spacer and message s
   assert.match(source, /window\.innerHeight - anchorBottom/);
   assert.match(source, /positionConversationUsage\(\);[\s\S]{0,120}updateConversationUsageScrollState\(\)/);
   assert.match(source, /wbs-session-usage-summary\.is-hidden/);
-  assert.match(source, /wbs-session-usage-label', '共'/);
+  assert.match(source, /conversationUsageHeadline\(state\)/);
+  assert.match(source, /等待会话完成/);
   assert.match(source, /wbs-session-usage-copy/);
   assert.match(source, /复制整个会话/);
   assert.match(source, /event\.target\.closest\('\.wbs-session-usage-copy'\)/);

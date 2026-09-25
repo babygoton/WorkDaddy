@@ -97,6 +97,12 @@ function collectConversationUsage(messages) {
   };
 }
 
+function conversationUsageHeadline(state) {
+  if (!state) return { prefix: '共', message: '读取中…' };
+  if (!(Number(state.calls) > 0)) return { prefix: '', message: '等待会话完成' };
+  return { prefix: '共', message: '' };
+}
+
 // 将官方消息 store 中的用户/助手消息还原成可直接粘贴的 Markdown。
 // 消息列表可能被虚拟化，复制必须依赖完整 store，而不是当前 DOM 中的节点。
 function conversationMessagesToMarkdown(messages) {
@@ -912,6 +918,7 @@ function findLatestManualAutomationRun(tasks, runs) {
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     collectConversationUsage: collectConversationUsage,
+    conversationUsageHeadline: conversationUsageHeadline,
     conversationMessagesToMarkdown: conversationMessagesToMarkdown,
     createUsageActivity: createUsageActivity,
     createBuildLifecycle: createBuildLifecycle,
@@ -1514,7 +1521,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '面板入口：': 'Panel entry:', '右下角机器人按钮': 'Bottom-right robot button', '已连接': 'Connected', '未连接': 'Not connected',
     'Token 用量': 'Token usage', '正在读取统计…': 'Loading statistics…', '搜索': 'Search', '重置': 'Reset', '调用': 'Calls', '输入': 'Input', '输出': 'Output', '导入方式': 'Import method', '复制提示词': 'Copy prompt', '导入 WorkDaddy 加密文件': 'Import WorkDaddy encrypted file', '导入 WorkDaddy 导出的账号备份，选择文件后输入导出密码。': 'Import an account backup exported by WorkDaddy, then enter its export password.', '导入 JSON 文件': 'Import JSON file', '可以导入其他工具导出的明文账号。请先让 WorkBuddy 按指定格式整理，再选择生成的 JSON 文件。': 'Import plain-text accounts exported by another tool. Ask WorkBuddy to convert them to the required format, then choose the generated JSON file.', '把其他工具导出的账号文本发给 WorkBuddy，让它只输出符合 WorkDaddy 格式的 JSON，然后复制保存为文件。': 'Send the account text exported by another tool to WorkBuddy. Ask it to output only WorkDaddy-compatible JSON, then save it as a file.', '提示词已复制': 'Prompt copied', '选择文件': 'Choose file',
     '缓存读取': 'Cache read', '缓存写入': 'Cache write',
-    ' 个文件，解析失败': ' files, parse failures', ' 行': ' lines', '暂无可统计的 Token 用量': 'No Token usage found', '会话用量': 'Conversation usage', '本会话用量': 'This conversation usage', '本会话用量明细': 'Conversation usage details', '暂无已完成用量': 'No completed usage yet', '读取中…': 'Loading…', '未知模型': 'Unknown model', '总计': 'Total', '在会话底部显示 Token、积分和模型汇总': 'Show Token, credits and model summary at the bottom of conversations',
+    ' 个文件，解析失败': ' files, parse failures', ' 行': ' lines', '暂无可统计的 Token 用量': 'No Token usage found', '会话用量': 'Conversation usage', '本会话用量': 'This conversation usage', '本会话用量明细': 'Conversation usage details', '暂无已完成用量': 'No completed usage yet', '等待会话完成': 'Waiting for the session to finish', '读取中…': 'Loading…', '未知模型': 'Unknown model', '总计': 'Total', '在会话底部显示 Token、积分和模型汇总': 'Show Token, credits and model summary at the bottom of conversations',
     '当前积分段已用完': 'The current credit segment is used up', '积分将在': ' credits expire in', '到期': ' expires', '要切换账号吗？': 'Switch account?', '可以切换到账号': 'Can switch to account', '检测到积分到期时间最临近的账号': 'The account with the nearest credit expiry is', '积分将于': ' credits expire within', '内过期': '', '较长时间': 'a long time', ' 小时 ': ' hr ', ' 分': ' min',
     '切换到此账号': 'Switch to this account', '今天不再提醒': 'Do not remind me again today', '关闭': 'Close',
     '切换中…': 'Switching…', 'Token 用量统计': 'Token usage statistics', ' 分钟后': ' minutes', ' 小时后': ' hours', ' 天后': ' days',
@@ -2552,14 +2559,11 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       main.textContent = '';
       body.textContent = '';
       var calls = state && state.calls || 0;
-      if (!state) {
-        main.appendChild(el('span', 'wbs-session-usage-label', '共'));
-        main.appendChild(el('span', 'wbs-session-usage-loading', '读取中…'));
-      } else if (!calls) {
-        main.appendChild(el('span', 'wbs-session-usage-label', '共'));
-        main.appendChild(el('span', 'wbs-session-usage-loading', '暂无已完成用量'));
+      var headline = conversationUsageHeadline(state);
+      if (headline.prefix) main.appendChild(el('span', 'wbs-session-usage-label', headline.prefix));
+      if (headline.message) {
+        main.appendChild(el('span', 'wbs-session-usage-loading', headline.message));
       } else {
-        main.appendChild(el('span', 'wbs-session-usage-label', '共'));
         main.appendChild(el('span', 'wbs-session-usage-number', formatUsageTokens(state.tokens) + ' Token'));
         main.appendChild(el('span', 'wbs-session-usage-separator', '·'));
         main.appendChild(el('span', 'wbs-session-usage-number', formatUsageCredit(state.credit, state.creditKnown) + ' 积分'));
