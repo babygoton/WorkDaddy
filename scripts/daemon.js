@@ -420,8 +420,8 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 // 1.2.145：识别仅 updated_at 的激活漂移，清除无变更脏标记；无结果任务不再弹同步进度窗口。
 // 1.2.126：5.6 加密账号改为密文原样备份、内存解密；导入兼容明文 token，
 //          刷新结果不把解密后的 token 写回加密备份。
-const DAEMON_VERSION = '1.2.185';
-const DAEMON_BUILD_ID = 'release-1.2.185-20260926-reapply-native-theme';
+const DAEMON_VERSION = '1.2.186';
+const DAEMON_BUILD_ID = 'release-1.2.186-20260926-model-rate-limit';
 const usageReporter = createUsageReporter({ profile: PROFILE.id, version: DAEMON_VERSION });
 configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const automationDiscovery = createAutomationDiscovery({
@@ -9193,6 +9193,38 @@ function handleApi(req, res) {
     });
   }
 
+  // Renderer reports only the structured model-rate-limit fields. Never accept
+  // raw provider errors, prompts, response bodies, or credentials here.
+  if (req.method === 'POST' && p === '/api/model-rate-limit') {
+    return readBody(req).then(async (body) => {
+      try {
+        const uid = String(body && body.uid || '').trim();
+        const modelId = String(body && body.modelId || '').trim();
+        if (!/^[A-Za-z0-9_-]{1,128}$/.test(uid)) return json(res, 400, { ok: false, error: 'uid 格式无效' });
+        if (!/^[^\x00-\x1F\x7F]{1,160}$/.test(modelId)) return json(res, 400, { ok: false, error: '模型 ID 无效' });
+        const account = listAccounts(DATA_DIR).find((item) => String(item.uid) === uid);
+        if (!account) return json(res, 404, { ok: false, error: '账号不存在' });
+        const reasonCode = body && body.reasonCode === null ? null : Number(body && body.reasonCode);
+        if (reasonCode !== 6004) return json(res, 400, { ok: false, error: '仅记录模型限流 code 6004' });
+        const resetAt = body && body.resetAt === null ? null : Number(body && body.resetAt);
+        if (resetAt !== null && (!Number.isSafeInteger(resetAt) || resetAt < Date.now() - 86400000 || resetAt > Date.now() + 90 * 86400000)) {
+          return json(res, 400, { ok: false, error: '解封时间无效' });
+        }
+        await CREDIT_USAGE_STORE.saveModelRateLimit({
+          uid, modelId,
+          modelName: String(body && body.modelName || '').slice(0, 256),
+          resetAt,
+          observedAt: Date.now(),
+          source: String(body && body.source || 'renderer-error').slice(0, 80),
+          reasonCode,
+        });
+        return json(res, 200, { ok: true });
+      } catch (error) {
+        return json(res, 400, { ok: false, error: error.message });
+      }
+    });
+  }
+
   if (req.method === 'GET' && p === '/api/accounts') {
     const accounts = listAccounts(DATA_DIR);
     const checkinAutomationEnabled = readAutomations(DATA_DIR).some(task => task.enabled && stepsContainCheckin(task.steps));
@@ -9214,17 +9246,24 @@ function handleApi(req, res) {
             activityStreak: growthStreakCache.peek(a.uid),
           });
         });
-        return listDailyUsage(enriched, today)
+        return CREDIT_USAGE_STORE.listModelRateLimits(accounts.map((a) => a.uid), Date.now()).catch((error) => {
+            log('[model-rate-limit] 读取 SQLite 标记失败: ' + error.message);
+            return {};
+          })
+        .then((modelRateLimits) => {
+          const withLimits = enriched.map((account) => Object.assign({}, account, { modelRateLimits: modelRateLimits[account.uid] || [] }));
+          return listDailyUsage(withLimits, today)
           .then((summaries) => {
-            const withUsage = enriched.map((account) => summaries[account.uid]
+            const withUsage = withLimits.map((account) => summaries[account.uid]
               ? Object.assign({}, account, { todayUsage: summaries[account.uid] })
               : account);
             return json(res, 200, { ok: true, checkinAutomationEnabled, current: currentAccount(), primaryUid: primaryAccountStore.get(), accountOrder: getAccountOrder(DATA_DIR), accounts: withUsage });
           })
           .catch((error) => {
             log('[credits-usage] 读取本地今日用量失败: ' + error.message);
-            return json(res, 200, { ok: true, checkinAutomationEnabled, current: currentAccount(), primaryUid: primaryAccountStore.get(), accountOrder: getAccountOrder(DATA_DIR), accounts: enriched });
+            return json(res, 200, { ok: true, checkinAutomationEnabled, current: currentAccount(), primaryUid: primaryAccountStore.get(), accountOrder: getAccountOrder(DATA_DIR), accounts: withLimits });
           });
+        });
       });
   }
 

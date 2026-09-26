@@ -101,6 +101,23 @@ function createCreditUsageStore(options = {}) {
         CREATE INDEX IF NOT EXISTS idx_daily_checkin_uid_date
         ON daily_checkin_records (profile_id, uid, checkin_date)
       `);
+      await db.run(`
+        CREATE TABLE IF NOT EXISTS model_rate_limit_records (
+          profile_id TEXT NOT NULL,
+          uid TEXT NOT NULL,
+          model_id TEXT NOT NULL,
+          model_name TEXT NOT NULL DEFAULT '',
+          reset_at INTEGER,
+          observed_at INTEGER NOT NULL,
+          source TEXT NOT NULL DEFAULT '',
+          reason_code INTEGER,
+          PRIMARY KEY (profile_id, uid, model_id)
+        )
+      `);
+      await db.run(`
+        CREATE INDEX IF NOT EXISTS idx_model_rate_limit_uid_reset
+        ON model_rate_limit_records (profile_id, uid, reset_at)
+      `);
       try { fs.chmodSync(dbPath, 0o600); } catch (_) {}
     })().catch((error) => {
       initPromise = null;
@@ -326,6 +343,65 @@ function createCreditUsageStore(options = {}) {
     try { fs.chmodSync(dbPath, 0o600); } catch (_) {}
   }
 
+  async function saveModelRateLimit({ uid, modelId, modelName, resetAt, observedAt, source, reasonCode }) {
+    await initialize();
+    const accountUid = validIdentity(uid, 'uid');
+    const id = validIdentity(modelId, 'model id');
+    const name = String(modelName || '').slice(0, 256);
+    const observed = Number(observedAt);
+    if (!Number.isSafeInteger(observed) || observed < 0) throw new Error('限流观察时间无效');
+    let reset = resetAt === null || resetAt === undefined || resetAt === '' ? null : Number(resetAt);
+    if (reset !== null && (!Number.isSafeInteger(reset) || reset < 0)) throw new Error('限流解封时间无效');
+    const reason = reasonCode === null || reasonCode === undefined ? null : Number(reasonCode);
+    if (reason !== null && !Number.isSafeInteger(reason)) throw new Error('限流 code 无效');
+    await db.run(
+      `INSERT INTO model_rate_limit_records
+         (profile_id, uid, model_id, model_name, reset_at, observed_at, source, reason_code)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(profile_id, uid, model_id) DO UPDATE SET
+         model_name = excluded.model_name,
+         reset_at = excluded.reset_at,
+         observed_at = excluded.observed_at,
+         source = excluded.source,
+         reason_code = excluded.reason_code`,
+      [profileId, accountUid, id, name, reset, observed, String(source || '').slice(0, 80), reason]
+    );
+    try { fs.chmodSync(dbPath, 0o600); } catch (_) {}
+  }
+
+  async function listModelRateLimits(uids, now) {
+    await initialize();
+    const accountUids = Array.from(new Set((Array.isArray(uids) ? uids : []).map((uid) => validIdentity(uid, 'uid'))));
+    if (!accountUids.length) return {};
+    const timestamp = Number(now === undefined ? Date.now() : now);
+    if (!Number.isSafeInteger(timestamp) || timestamp < 0) throw new Error('限流查询时间无效');
+    const placeholders = accountUids.map(() => '?').join(',');
+    await db.run(
+      `DELETE FROM model_rate_limit_records
+       WHERE profile_id = ? AND reset_at IS NOT NULL AND reset_at <= ? AND uid IN (${placeholders})`,
+      [profileId, timestamp, ...accountUids]
+    );
+    const rows = await db.all(
+      `SELECT uid, model_id, model_name, reset_at, observed_at, source, reason_code
+       FROM model_rate_limit_records
+       WHERE profile_id = ? AND uid IN (${placeholders})
+       ORDER BY uid ASC, observed_at DESC, model_id ASC`,
+      [profileId, ...accountUids]
+    );
+    const result = {};
+    for (const row of rows) {
+      if (!accountUids.includes(row.uid)) continue;
+      if (!result[row.uid]) result[row.uid] = [];
+      result[row.uid].push({
+        modelId: String(row.model_id), modelName: String(row.model_name || ''),
+        resetAt: row.reset_at === null ? null : Number(row.reset_at),
+        observedAt: Number(row.observed_at), source: String(row.source || ''),
+        reasonCode: row.reason_code === null ? null : Number(row.reason_code),
+      });
+    }
+    return result;
+  }
+
   return {
     dailyUsageForUid,
     listDailyUsageRange,
@@ -337,6 +413,8 @@ function createCreditUsageStore(options = {}) {
     saveSuccessfulSync,
     saveHistoryUsage,
     saveDailyCheckin,
+    saveModelRateLimit,
+    listModelRateLimits,
   };
 }
 

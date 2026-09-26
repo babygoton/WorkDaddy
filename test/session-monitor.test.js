@@ -140,6 +140,9 @@ test('session monitor interrupted gate accepts exactly what the judge would cont
     assert.equal(decision(snapshot).trigger, true, 'judge should continue ' + JSON.stringify(snapshot));
     assert.equal(interrupted(snapshot), true, 'gate should bind ' + JSON.stringify(snapshot));
   });
+  // 终局的模型限频/额度错误不应自动续跑，但必须绑定一次以记录限频状态。
+  assert.equal(interrupted({ assistantId: 'req-rate-limit', terminal: true, terminalKnown: true, rateLimited: true }), true);
+  assert.equal(interrupted({ assistantId: 'req-quota', terminal: true, terminalKnown: true, quotaExhausted: true }), true);
   // 仍在运行 / 等决策 / 恢复中：交给 in-progress 分支，不重复绑定
   assert.equal(interrupted({ assistantId: 'a', error: true, busy: true }), false);
   assert.equal(interrupted({ assistantId: 'a', error: true, blocked: true }), false);
@@ -292,6 +295,29 @@ test('compat discovers multiple capability-shaped controllers and de-duplicates 
   root.children.push(child);
   const doc = { querySelector(selector) { return selector === '#root > div' ? root : null; } };
   assert.deepEqual(compat.findConversationControllers(doc).map((c) => c.conversationId), ['a', 'b']);
+});
+
+test('auto-continue controller discovery accepts AI controllers without getMessagesViewState', () => {
+  const inject = fs.readFileSync(path.join(__dirname, '../scripts/inject.js'), 'utf8');
+  const start = inject.indexOf('function acFindConversationController()');
+  const end = inject.indexOf('function acCaptureControllerError', start);
+  const source = inject.slice(start, end);
+  assert.match(source, /typeof controller\.messageStore\.getState === 'function'/);
+  assert.doesNotMatch(source, /typeof controller\.getMessagesViewState === 'function'/);
+  assert.match(source, /\[props\.value, props\.controller, props\.adapter\]/);
+});
+
+test('quota and model rate limit stops surface one renderer toast', () => {
+  const start = injectSource.indexOf('function acNotifyLimit(snapshot)');
+  const end = injectSource.indexOf('function acPickBodyBlock', start);
+  const source = injectSource.slice(start, end);
+  assert.match(source, /snapshot\.rateLimited/);
+  assert.match(source, /snapshot\.quotaExhausted/);
+  assert.match(source, /acLimitToastSeen/);
+  assert.match(source, /toast\(message, true, root\)/);
+  assert.match(source, /当前账号额度已耗尽，已停止自动发送/);
+  assert.match(source, /当前模型已触发频率限制，已停止自动发送/);
+  assert.doesNotMatch(source, /Auto-Continue 已停止/);
 });
 
 test('compat discovers the global session resource by capabilities', () => {

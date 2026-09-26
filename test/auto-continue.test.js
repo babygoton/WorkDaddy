@@ -7,6 +7,8 @@
 const assert = require('assert');
 const {
   classifyAutoContinueReply,
+  normalizeAutoContinueError,
+  classifyAutoContinueError,
   classifyAutoContinueControllerSnapshot,
   autoContinueMessageText,
   autoContinueControllerCompleted,
@@ -172,6 +174,11 @@ function acSupported(platform) {
     { trigger: true, reason: 'error-ui' },
   );
   assert.deepStrictEqual(
+    classifyAutoContinueReply({ observed: true, error: true, terminal: true, serviceErrorFallback: true }),
+    { trigger: false, reason: 'completion-actions' },
+    'terminal + renderer fallback 是已结束请求，绝不重复发送',
+  );
+  assert.deepStrictEqual(
     classifyAutoContinueReply({ observed: true, looksTruncated: true, assistantTextLength: 240 }),
     { trigger: true, reason: 'truncated-reply' },
   );
@@ -269,6 +276,14 @@ function acSupported(platform) {
     'store error 直接触发续跑判定',
   );
   assert.deepStrictEqual(
+    classifyAutoContinueControllerSnapshot({ assistantId: 'req-a-assistant', error: true, terminal: true, serviceErrorFallback: true }),
+    { trigger: false, reason: 'completion-actions' },
+  );
+  assert.deepStrictEqual(
+    classifyAutoContinueControllerSnapshot({ assistantId: 'req-a-assistant', error: true, errorCode: 6004, rateLimited: true }),
+    { trigger: false, reason: 'model-rate-limited' },
+  );
+  assert.deepStrictEqual(
     classifyAutoContinueControllerSnapshot({ assistantId: 'req-a-assistant', manualStop: true }),
     { trigger: false, reason: 'manual-stop' },
     '用户主动取消绝不自动续跑',
@@ -280,6 +295,25 @@ function acSupported(platform) {
   assert.strictEqual(autoContinueControllerCompleted({ terminalKnown: false, complete: true }), true,
     '旧版无 terminal 字段时兼容 complete');
   console.log('✓ controller/store 终局判定（busy/complete/terminal/incomplete/error/manual-stop）');
+}
+
+/* ===== 测试 13b：官方额度/限流错误码不可自动重试，且只保留白名单字段 ===== */
+{
+  const normalized = normalizeAutoContinueError({
+    code: 6004,
+    requestModelId: 'deepseek-v4.1-flash',
+    message: 'rate limit; reset at 2026-09-26 14:32:00 UTC+8',
+    terminal: { bizCode: 6004, details: { resetAt: '2026-09-26 14:32:00 UTC+8' } },
+  });
+  assert.equal(normalized.rateLimited, true);
+  assert.equal(normalized.nonRetryable, true);
+  assert.equal(normalized.requestModelId, 'deepseek-v4.1-flash');
+  assert.ok(Number.isFinite(normalized.resetAt));
+  assert.equal(Object.prototype.hasOwnProperty.call(normalized, 'message'), false);
+  assert.deepStrictEqual(classifyAutoContinueError({ code: 14018 }), {
+    quotaExhausted: true, rateLimited: false, authFailure: false, nonRetryable: true, code: 14018,
+  });
+  console.log('✓ 官方 14018/6004 错误码停止自动继续，错误快照不保留原文');
 }
 
 /* ===== 测试 14：消息正文从结构化 blocks 提取，不依赖 DOM ===== */

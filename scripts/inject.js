@@ -367,14 +367,84 @@ function classifyAutoContinueReply(snapshot) {
   if (!s.observed || s.busy || s.manualStop) {
     return { trigger: false, reason: s.manualStop ? 'manual-stop' : 'not-idle' };
   }
+  // WorkBuddy reports a terminal assistant message together with a renderer
+  // error/fallback marker for quota and provider failures. Terminal evidence
+  // wins so a finished request can never cause another automatic send.
+  if (s.completionMarker || s.hasCompletionActions || s.terminal || s.complete) {
+    return { trigger: false, reason: s.completionMarker ? 'completion-marker' : 'completion-actions' };
+  }
+  if (s.serviceErrorFallback) {
+    return { trigger: false, reason: 'service-error-fallback' };
+  }
+  if (s.nonRetryableError || s.quotaExhausted || s.rateLimited || s.authFailure) {
+    return { trigger: false, reason: s.rateLimited ? 'model-rate-limited' : (s.quotaExhausted ? 'quota-exhausted' : 'non-retryable-error') };
+  }
   if (s.error || s.networkFailure) {
     return { trigger: true, reason: s.networkFailure ? 'network-failure' : 'error-ui' };
   }
-  if (s.completionMarker || s.hasCompletionActions) {
-    return { trigger: false, reason: s.completionMarker ? 'completion-marker' : 'completion-actions' };
-  }
   if (s.looksTruncated) return { trigger: true, reason: 'truncated-reply' };
   return { trigger: false, reason: 'no-incomplete-evidence' };
+}
+
+var AUTO_CONTINUE_QUOTA_CODES = { 14012: true, 14014: true, 14018: true, 14019: true, 6004: true };
+
+function normalizeAutoContinueError(error) {
+  if (!error || typeof error !== 'object') return null;
+  var terminal = error.terminal && typeof error.terminal === 'object' ? error.terminal : {};
+  var details = terminal.details && typeof terminal.details === 'object' ? terminal.details : {};
+  function numberValue() {
+    for (var i = 0; i < arguments.length; i++) {
+      var n = Number(arguments[i]);
+      if (Number.isSafeInteger(n)) return n;
+    }
+    return null;
+  }
+  var code = numberValue(error.code, error.bizCode, terminal.bizCode, details.code);
+  var statusCode = numberValue(error.statusCode, error.status, error.httpStatus);
+  var requestModelId = String(error.requestModelId || error.modelId || details.requestModelId || '').slice(0, 160);
+  var category = String(error.category || error.type || details.category || '').slice(0, 80).toLowerCase();
+  var message = String(error.message || terminal.message || details.message || '').slice(0, 240);
+  var rateLimited = code === 6004 || statusCode === 429 || /rate.?limit|频率|限流/i.test(category + ' ' + message);
+  var quotaExhausted = code === 14018 || code === 14012 || code === 14014 || code === 14019 || /quota|credit|额度|积分|余额/i.test(category + ' ' + message);
+  var authFailure = statusCode === 401 || statusCode === 403 || /auth|credential|登录|认证/i.test(category + ' ' + message);
+  var resetAt = null;
+  var resetSource = details.resetAt || details.reset_at || terminal.resetAt || error.resetAt;
+  if (resetSource === undefined || resetSource === null || resetSource === '') {
+    var resetMatch = /(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}(?:\s+UTC[+-]\d{1,2})?)/i.exec(message);
+    if (resetMatch) resetSource = resetMatch[1];
+  }
+  if (resetSource !== undefined && resetSource !== null && resetSource !== '') {
+    var resetNumber = Number(resetSource);
+    if (Number.isFinite(resetNumber)) resetAt = resetNumber < 1e12 ? Math.round(resetNumber * 1000) : Math.round(resetNumber);
+    else {
+      var resetText = String(resetSource).trim();
+      var parsed = Date.parse(resetText.replace(' UTC+8', '+08:00').replace(' UTC+0800', '+08:00').replace(' ', 'T'));
+      if (Number.isFinite(parsed)) resetAt = parsed;
+    }
+  }
+  return {
+    code: code,
+    statusCode: statusCode,
+    category: category,
+    requestModelId: requestModelId,
+    resetAt: resetAt,
+    rateLimited: rateLimited,
+    quotaExhausted: quotaExhausted,
+    authFailure: authFailure,
+    nonRetryable: rateLimited || quotaExhausted || authFailure || AUTO_CONTINUE_QUOTA_CODES[code] === true,
+    terminal: terminal === error.terminal || terminal.isTerminal === true,
+  };
+}
+
+function classifyAutoContinueError(error) {
+  var normalized = normalizeAutoContinueError(error) || {};
+  return {
+    quotaExhausted: !!normalized.quotaExhausted,
+    rateLimited: !!normalized.rateLimited,
+    authFailure: !!normalized.authFailure,
+    nonRetryable: !!normalized.nonRetryable,
+    code: normalized.code == null ? null : normalized.code,
+  };
 }
 
 // WorkBuddy 新版 ConversationController 把会话运行态与消息时间线放在 store 中。
@@ -390,6 +460,13 @@ function classifyAutoContinueControllerSnapshot(snapshot) {
     networkFailure: !!s.networkFailure,
     completionMarker: !!s.completionMarker,
     hasCompletionActions: !!(s.complete || s.terminal),
+    complete: !!s.complete,
+    terminal: !!s.terminal,
+    serviceErrorFallback: !!s.serviceErrorFallback,
+    quotaExhausted: !!s.quotaExhausted,
+    rateLimited: !!s.rateLimited,
+    authFailure: !!s.authFailure,
+    nonRetryableError: !!s.nonRetryableError,
     looksTruncated: !!s.assistantId && !s.busy && !s.complete && !s.terminal,
   });
 }
@@ -419,6 +496,11 @@ function controllerAutoContinueDecision(snapshot) {
     error: s.error,
     networkFailure: s.networkFailure,
     completionMarker: s.completionMarker,
+    serviceErrorFallback: s.serviceErrorFallback,
+    quotaExhausted: s.quotaExhausted,
+    rateLimited: s.rateLimited,
+    authFailure: s.authFailure,
+    nonRetryableError: s.nonRetryableError,
     // 新版明确暴露 isRequestTerminal 时只认该字段；旧版没有该字段才退回 complete。
     complete: s.terminalKnown ? false : s.complete,
     terminal: s.terminal,
@@ -664,6 +746,10 @@ function isSessionMonitorInProgress(snapshot) {
 function isSessionMonitorInterrupted(snapshot) {
   var s = snapshot || {};
   if (!s || s.busy || s.blocked || s.hydrating) return false; // 运行/等决策/恢复中：交给 in-progress 分支
+  // 额度/限频错误通常同时带有 terminal=true 和 serviceErrorFallback=true。
+  // 它们必须进入一次监控判定，先落盘模型限频记录并刷新账号标签；
+  // controllerAutoContinueDecision 仍会因终局证据返回 trigger=false，因此不会自动重试。
+  if (s.rateLimited || s.quotaExhausted) return true;
   return controllerAutoContinueDecision(s).trigger === true;
 }
 
@@ -926,6 +1012,8 @@ if (typeof module !== 'undefined' && module.exports) {
     createFabAppearance: createFabAppearance,
     classifySessionHealth: classifySessionHealth,
     classifyAutoContinueReply: classifyAutoContinueReply,
+    normalizeAutoContinueError: normalizeAutoContinueError,
+    classifyAutoContinueError: classifyAutoContinueError,
     classifyAutoContinueControllerSnapshot: classifyAutoContinueControllerSnapshot,
     autoContinueMessageText: autoContinueMessageText,
     autoContinueControllerCompleted: autoContinueControllerCompleted,
@@ -1384,6 +1472,8 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '开启后 WorkBuddy 需要你决策时会用弹窗提问（写入全局自定义指令，所有会话生效）': 'When enabled, WorkBuddy asks with a dialog when your decision is needed (written to the global custom prompt; affects all sessions)',
     '当前没有进行中的会话，无法开启「所有会话结束允许休眠」': 'No active sessions; cannot enable “Allow sleep when all sessions end”',
     '进行中的会话': 'active session(s)', '预计剩余': 'Estimated remaining', ' 秒': ' seconds', ' 分': ' minutes',
+    '预计解封：': 'Reset estimate: ', '预计解封：时间未知': 'Reset estimate: unknown', '预计解封': 'Reset estimate', '时间未知': 'Time unknown', '模型限流': 'Model rate limited', '模型限流·': 'Model rate limited ·', '模型频率限制': 'Model rate limit', '账号状态': 'Account status', '当前没有有效的模型限流记录': 'No active model rate-limit records',
+    '当前模型已触发频率限制，已停止自动发送': 'This model is rate limited; automatic sending stopped', '当前账号额度已耗尽，已停止自动发送': 'This account has no credits left; automatic sending stopped', '模型：': 'Model: ',
     '无法打开安装程序': 'Could not open the installer',
     '安装程序已打开，请按提示退出 WorkBuddy 并完成安装。': 'The installer is open. Please quit WorkBuddy as prompted and finish installing.',
     '停止旧服务…': 'Stopping old service…', '发现新版本，准备更新…': 'New version available; preparing to update…',
@@ -1790,6 +1880,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>' +
     '<polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
   var CREDIT_SUMMARY_ICON = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 20h16M7 16V9m5 7V4m5 12v-5"/></svg>';
+  var MODEL_RATE_LIMIT_ICON = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/></svg>';
   var TOKEN_STATS_ICON =
     '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
     '<path d="M4 19V5M4 19h16"/><path d="m7 15 3-4 3 2 5-7"/></svg>';
@@ -5665,6 +5756,9 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         left = rect.left - tipRect.width - gap;
         if (left < 8) left = rect.right + gap;
         top = rect.top - 8;
+      } else if (placement === 'below') {
+        left = rect.left + rect.width / 2 - tipRect.width / 2;
+        top = rect.bottom + gap;
       } else {
         top = rect.top - tipRect.height - gap;
         if (top < 8) top = rect.bottom + gap;
@@ -5741,6 +5835,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         '<span class="wbs-acct-stat-divider"></span>' +
         '<div class="wbs-acct-stat"><span>总积分</span><strong id="wbs-acct-total">-</strong></div>' +
         '<button class="wbs-acct-eye" type="button" data-act="credit-summary" title="汇总" aria-label="积分汇总" aria-expanded="false">' + CREDIT_SUMMARY_ICON + '</button>' +
+        '<button class="wbs-acct-eye" type="button" data-act="model-rate-limit-summary" title="模型限流" aria-label="模型限流" aria-expanded="false">' + MODEL_RATE_LIMIT_ICON + '</button>' +
         '</div>' +
         '<div class="wbs-acct-actions">' +
         '<button class="wbs-acct-io wbs-acct-icon" type="button" data-act="token-stats" title="用量统计" aria-label="用量统计">' + TOKEN_STATS_ICON + '</button>' +
@@ -5755,6 +5850,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       root.querySelector('[data-act="account-more"]').addEventListener('click', openAccountOrderModal);
       setupCreditSummary();
       setupDailyProgressPopover();
+      setupModelRateLimitPopover();
       logoutBtn = root.querySelector('[data-act="logout"]');
       var eyeBtn = root.querySelector('.wbs-acct-eye');
       if (eyeBtn) eyeBtn.addEventListener('click', toggleAccountMask);
@@ -6171,6 +6267,124 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       listen(document, 'keydown', function (event) { if (event.key === 'Escape') hide(true); });
       closeDailyProgressPopover = function () { hide(true); };
       registerDisposer(function () { hide(true); closeDailyProgressPopover = null; refreshDailyProgressPopover = null; });
+    }
+
+    function setupModelRateLimitPopover() {
+      if (!accountsPane) return;
+      var popup = ensureStatusPopover();
+      var activeBadge = null;
+      var pinned = false;
+      var popoverHovered = false;
+      var hideTimer = null;
+      function findBadge(target) {
+        var node = target;
+        while (node && node !== accountsPane) {
+          if (node.nodeType === 1 && node.classList && node.classList.contains('wbs-model-rate-limit')) return node;
+          node = node.parentNode;
+        }
+        return null;
+      }
+      function hide(force) {
+        clearTimeout(hideTimer);
+        if ((pinned || popoverHovered) && !force) return;
+        var previous = activeBadge;
+        if (previous) previous.setAttribute('aria-expanded', 'false');
+        activeBadge = null;
+        pinned = false;
+        popoverHovered = false;
+        hideStatusPopover(previous);
+      }
+      function deferHide() {
+        clearTimeout(hideTimer);
+        hideTimer = setBuildTimeout(function () {
+          if (popup && popup.matches && popup.matches(':hover')) {
+            popoverHovered = true;
+            return;
+          }
+          hide(false);
+        }, 220);
+      }
+      function show(badge, shouldPin) {
+        clearTimeout(hideTimer);
+        if (!badge) return;
+        if (activeBadge && activeBadge !== badge) activeBadge.setAttribute('aria-expanded', 'false');
+        activeBadge = badge;
+        pinned = !!shouldPin;
+        badge.setAttribute('aria-expanded', 'true');
+        var uid = badge.getAttribute('data-uid');
+        var account = state.accounts.filter(function (item) { return String(item.uid) === String(uid); })[0];
+        popup = showStatusPopover(badge, modelRateLimitPopoverHtml(account), 'rate-limit', 'side');
+      }
+      var summaryButton = accountsPane.querySelector('[data-act="model-rate-limit-summary"]');
+      function showSummary(shouldPin) {
+        if (!summaryButton) return;
+        clearTimeout(hideTimer);
+        if (activeBadge && activeBadge !== summaryButton) activeBadge.setAttribute('aria-expanded', 'false');
+        activeBadge = summaryButton;
+        pinned = !!shouldPin;
+        summaryButton.setAttribute('aria-expanded', 'true');
+        popup = showStatusPopover(summaryButton, modelRateLimitSummaryPopoverHtml(state.accounts), 'rate-limit-summary', 'below');
+      }
+      listen(accountsPane, 'mouseover', function (event) {
+        var badge = findBadge(event.target);
+        if (!badge || badge === activeBadge) return;
+        show(badge, false);
+      });
+      listen(accountsPane, 'mouseout', function (event) {
+        var from = findBadge(event.target);
+        var to = findBadge(event.relatedTarget);
+        if (from && from !== to) deferHide();
+      });
+      listen(accountsPane, 'focusin', function (event) {
+        var badge = findBadge(event.target);
+        if (badge) show(badge, false);
+      });
+      listen(accountsPane, 'focusout', function (event) {
+        if (findBadge(event.target)) deferHide();
+      });
+      listen(accountsPane, 'click', function (event) {
+        var badge = findBadge(event.target);
+        if (!badge) return;
+        event.preventDefault();
+        event.stopPropagation();
+        if (activeBadge === badge && pinned) hide(true);
+        else show(badge, true);
+      });
+      listen(accountsPane, 'keydown', function (event) {
+        var badge = findBadge(event.target);
+        if (badge && (event.key === 'Enter' || event.key === ' ')) {
+          event.preventDefault();
+          if (activeBadge === badge && pinned) hide(true);
+          else show(badge, true);
+        }
+        if (event.key === 'Escape') hide(true);
+      });
+      if (summaryButton) {
+        listen(summaryButton, 'mouseenter', function () { showSummary(false); });
+        listen(summaryButton, 'mouseleave', deferHide);
+        listen(summaryButton, 'focus', function () { showSummary(false); });
+        listen(summaryButton, 'blur', deferHide);
+        listen(summaryButton, 'click', function (event) {
+          event.preventDefault();
+          event.stopPropagation();
+          if (activeBadge === summaryButton && pinned) hide(true);
+          else showSummary(true);
+        });
+        listen(summaryButton, 'keydown', function (event) {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            if (activeBadge === summaryButton && pinned) hide(true);
+            else showSummary(true);
+          }
+        });
+      }
+      listen(popup, 'mouseenter', function () { popoverHovered = true; clearTimeout(hideTimer); });
+      listen(popup, 'mouseleave', function () { popoverHovered = false; deferHide(); });
+      listen(popup, 'pointerdown', function (event) { event.stopPropagation(); });
+      listen(window, 'resize', function () { hide(true); });
+      listen(accountsPane, 'scroll', function () { hide(true); }, true);
+      listen(document, 'keydown', function (event) { if (event.key === 'Escape') hide(true); });
+      registerDisposer(function () { hide(true); });
     }
 
     function closeSecureTransferModal(mask) {
@@ -11115,6 +11329,11 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       baselineAssistantKey: '', // 当前会话「切换后/开启后」最后一条已有助手消息的稳定 key（baseline，绝不判定）
       awaitingNewReply: false,  // 是否仍在等待新回复：为 true 时 baseline 消息的 feedback/文本变化/重排均不解除判定，不安排 settle
     };
+    // sessionStore 在 terminal 状态落地后会清空 error。短暂保留结构化白名单，
+    // 让同一轮 subscriber 回调仍能识别 6004/14018，而不保存原始错误正文。
+    var acErrorSnapshots = Object.create(null);
+    var acRateLimitRecorded = Object.create(null);
+    var acCurrentUidPromise = null;
     var acRunning = false;
     var acStatusTimer = null;
     var acMonitorRegistry = createSessionMonitorRegistry({ maxLogs: 180 });
@@ -11273,6 +11492,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
 
     /* 监控状态常驻展示：开关开启期间卡片标题右侧固定显示「监控激活会话中」 */
     var acStatusVisible = false;
+    var acLimitToastSeen = Object.create(null);
     function acShowStatus() {
       acStatusVisible = true;
       if (acStatusTimer) { clearTimeout(acStatusTimer); acStatusTimer = null; } // 清掉弱提示残留定时
@@ -11299,6 +11519,26 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         if (s && s.textContent === msg) s.textContent = '';
         if (acRunning && restore) acShowStatus(); // 弱提示结束恢复状态常驻
       }, 4000);
+    }
+
+    function acNotifyLimit(snapshot) {
+      if (!snapshot || (!snapshot.rateLimited && !snapshot.quotaExhausted)) return;
+      var reason = snapshot.rateLimited ? 'model-rate-limited' : 'quota-exhausted';
+      var key = [snapshot.conversationId || '', snapshot.assistantId || '', reason, snapshot.errorResetAt || ''].join('|');
+      if (acLimitToastSeen[key]) return;
+      acLimitToastSeen[key] = true;
+      var message = wbsTranslateString(
+        snapshot.rateLimited ? '当前模型已触发频率限制，已停止自动发送' : '当前账号额度已耗尽，已停止自动发送',
+        WBS_LANGUAGE
+      );
+      if (snapshot.rateLimited) {
+        var model = String(snapshot.errorModelName || snapshot.errorRequestModelId || '').trim();
+        if (model) message += '，' + wbsTranslateString('模型：', WBS_LANGUAGE) + model;
+        if (snapshot.errorResetAt) {
+          message += '，' + wbsTranslateString('预计解封：', WBS_LANGUAGE) + fmtDateTime(snapshot.errorResetAt);
+        }
+      }
+      toast(message, true, root);
     }
 
     /** 取正文块：内容容器直接子块中排除 widget/推理/元信息折叠，优先最后一段文本内容块（_assistantTextContent/markdown） */
@@ -11720,11 +11960,21 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
               var cur = el[key], seen = 0;
               while (cur && seen++ < 650) {
                 var props = cur.memoizedProps;
-                var controller = props && props.value;
-                if (controller && controller.conversationId && controller.messageStore && controller.sessionStore &&
-                    typeof controller.getSessionViewState === 'function' && typeof controller.getMessagesViewState === 'function') {
-                  if (!fallback) fallback = controller;
-                  if (!activeId || String(controller.conversationId) === String(activeId)) return controller;
+                // WorkBuddy classic stores the controller in props.value, while
+                // the AI/new-teams renderer exposes the same capability-shaped
+                // object as props.controller or props.adapter. Inspect all three
+                // so the structured error monitor is actually started in both
+                // clients; this does not depend on composer button state.
+                var candidates = props && [props.value, props.controller, props.adapter];
+                for (var candi = 0; candidates && candi < candidates.length; candi++) {
+                  var controller = candidates[candi];
+                  if (controller && controller.conversationId && controller.messageStore && controller.sessionStore &&
+                      typeof controller.messageStore.getState === 'function' &&
+                      typeof controller.sessionStore.getState === 'function' &&
+                      typeof controller.getSessionViewState === 'function') {
+                    if (!fallback) fallback = controller;
+                    if (!activeId || String(controller.conversationId) === String(activeId)) return controller;
+                  }
                 }
                 cur = cur.return;
               }
@@ -11739,6 +11989,47 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       } catch (e) { return null; }
     }
 
+    function acCaptureControllerError(controller) {
+      if (!controller || !controller.conversationId || !controller.sessionStore || typeof controller.sessionStore.getState !== 'function') return null;
+      try {
+        var state = controller.sessionStore.getState() || {};
+        var normalized = normalizeAutoContinueError(state.error || state.warning);
+        if (!normalized) return null;
+        var key = String(controller.conversationId);
+        var messageState = controller.messageStore && controller.messageStore.getState ? controller.messageStore.getState() : {};
+        var latest = selectAutoContinueAssistant(messageState);
+        acErrorSnapshots[key] = { error: normalized, assistantId: latest && String(latest.id || latest.requestId || '') };
+        return normalized;
+      } catch (_) { return null; }
+    }
+
+    function acRecordModelRateLimit(snapshot) {
+      if (!snapshot || !snapshot.rateLimited) return;
+      var modelId = String(snapshot.errorRequestModelId || 'unknown-model').slice(0, 160);
+      var code = Number(snapshot.errorCode);
+      var signature = [snapshot.conversationId, snapshot.assistantId, modelId, code, snapshot.errorResetAt || ''].join('|');
+      if (acRateLimitRecorded[signature]) return;
+      acRateLimitRecorded[signature] = true;
+      if (!acCurrentUidPromise) acCurrentUidPromise = api('/api/current').then(function (current) { return String(current && current.uid || '').trim(); }).catch(function () { return ''; });
+      acCurrentUidPromise.then(function (uid) {
+        if (!uid) return;
+        return api('/api/model-rate-limit', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            uid: uid,
+            modelId: modelId,
+            modelName: snapshot.errorModelName || modelId,
+            resetAt: snapshot.errorResetAt || null,
+            reasonCode: Number.isSafeInteger(code) ? code : 6004,
+            source: 'renderer-error',
+          }),
+        }).then(function () {
+          try { window.dispatchEvent(new Event('workdaddy:accounts-updated')); } catch (_) {}
+        }).catch(function () {});
+      });
+    }
+
     function acControllerSnapshot(controller) {
       if (!controller) return null;
       try {
@@ -11749,9 +12040,18 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         var sessionState = controller.sessionStore.getState();
         var error = sessionState && sessionState.error;
         var warning = sessionState && sessionState.warning;
-        var errText = [error && error.code, error && error.message, warning && warning.code, warning && warning.message].filter(Boolean).join(' ');
+        var liveError = normalizeAutoContinueError(error || warning);
+        if (liveError) acErrorSnapshots[String(controller.conversationId)] = { error: liveError, assistantId: assistant && String(assistant.id || assistant.requestId || '') };
+        var rememberedRecord = acErrorSnapshots[String(controller.conversationId)] || null;
+        var currentAssistantId = assistant && String(assistant.id || assistant.requestId || '');
+        var rememberedError = rememberedRecord && (!rememberedRecord.assistantId || !currentAssistantId || rememberedRecord.assistantId === currentAssistantId)
+          ? rememberedRecord.error : null;
+        if (rememberedRecord && currentAssistantId && rememberedRecord.assistantId && rememberedRecord.assistantId !== currentAssistantId) delete acErrorSnapshots[String(controller.conversationId)];
+        var normalizedError = liveError || rememberedError;
+        var errText = [error && error.code, warning && warning.code].filter(Boolean).join(' ');
         var text = autoContinueMessageText(assistant);
         var extra = assistant && assistant.extra || {};
+        var modelId = String((extra && (extra.modelId || extra.model)) || (assistant && (assistant.modelId || assistant.model)) || (session && (session.model || session.modelId)) || '').slice(0, 160);
         return {
           conversationId: String(controller.conversationId || ''),
           version: Number(messageState.version || 0),
@@ -11763,8 +12063,18 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
           terminalKnown: Object.prototype.hasOwnProperty.call(extra, 'isRequestTerminal'),
           terminal: !!(assistant && extra.isRequestTerminal === true),
           manualStop: !!extra.isCancelled,
-          error: !!error || !!(errorView && (errorView.error || errorView.hasError)),
+          error: !!error || !!(errorView && (errorView.error || errorView.hasError)) || !!normalizedError,
           networkFailure: /network|offline|timeout|connection|网络|离线|超时|连接/i.test(errText),
+          errorCode: normalizedError && normalizedError.code,
+          errorStatusCode: normalizedError && normalizedError.statusCode,
+          errorRequestModelId: normalizedError && normalizedError.requestModelId || modelId,
+          errorModelName: modelId,
+          errorResetAt: normalizedError && normalizedError.resetAt,
+          quotaExhausted: !!(normalizedError && normalizedError.quotaExhausted),
+          rateLimited: !!(normalizedError && normalizedError.rateLimited),
+          authFailure: !!(normalizedError && normalizedError.authFailure),
+          nonRetryableError: !!(normalizedError && normalizedError.nonRetryable),
+          serviceErrorFallback: !!(extra && extra.isServiceErrorFallback),
           blocked: !!(session && (session.isPending || session.state === 'pending')),
           busy: !!(session && (session.isBusy || session.isRunActive || session.isTurnActive || session.isSending || session.isPending)) ||
             !!messageState.streamingRequestId || !!messageState.streamingMessageId,
@@ -11815,6 +12125,8 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         acLogR('controller-blocked', 'controller-blocked', { id: snap.assistantId, state: snap.state }, 3000);
         return;
       }
+      acRecordModelRateLimit(snap);
+      acNotifyLimit(snap);
       if (c.awaitingNewReply) {
         if (!snap.assistantId || snap.assistantId === c.baselineAssistantKey) return;
         c.awaitingNewReply = false;
@@ -11871,7 +12183,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       c.controllerUnsubs = [];
       var notify = function () {
         if (!acRunning || controller !== acCtx.controller) return;
-        try { acControllerCheck(); } catch (e) {}
+        try { acCaptureControllerError(controller); acControllerCheck(); } catch (e) {}
       };
       try { c.controllerUnsubs.push(controller.sessionStore.subscribe(notify)); } catch (e) {}
       try { c.controllerUnsubs.push(controller.messageStore.subscribe(notify)); } catch (e) {}
@@ -12419,6 +12731,8 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       }
       var snapshot = acControllerSnapshot(session.controller);
       if (!snapshot || !snapshot.conversationId) return;
+      acRecordModelRateLimit(snapshot);
+      acNotifyLimit(snapshot);
       session.lastSeen = Date.now();
       session.title = session.title || acSessionTitle(session.controller);
       acMonitorRegistry.ensure(session.id, { title: session.title });
@@ -12549,7 +12863,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
           session.baselineAssistantKey = initialSnapshot.assistantId || '';
         }
       }
-      var notify = function () { acMultiCheckSession(session); };
+      var notify = function () { acCaptureControllerError(controller); acMultiCheckSession(session); };
       try { if (controller.sessionStore && typeof controller.sessionStore.subscribe === 'function') session.unsubs.push(controller.sessionStore.subscribe(notify)); } catch (_) {}
       try { if (controller.messageStore && typeof controller.messageStore.subscribe === 'function') session.unsubs.push(controller.messageStore.subscribe(notify)); } catch (_) {}
       if (initialSnapshot && (isSessionMonitorInProgress(initialSnapshot) || isSessionMonitorInterrupted(initialSnapshot) || !session.resourceActive)) acMultiCheckSession(session);
@@ -13636,6 +13950,13 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
     }
 
+    function fmtDateTimeSeconds(ts) {
+      if (!ts) return '-';
+      var d = new Date(ts);
+      var p = function (n) { return String(n).padStart(2, '0'); };
+      return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+    }
+
     function fmtCredits(value) {
       if (value === null || value === undefined || value === '') return '-';
       var n = Number(value);
@@ -13707,6 +14028,66 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     function checkinBadgeHtml(a) {
       var tag = checkinHtml(a);
       return tag ? '<span class="wbs-checkin-slot">' + tag + '</span>' : '';
+    }
+
+    function modelRateLimitTip(record) {
+      var name = String(record && (record.modelName || record.modelId) || '未知模型');
+      var reset = record && record.resetAt ? Number(record.resetAt) : 0;
+      var line = reset && isFinite(reset)
+        ? wbsTranslateString('预计解封：', WBS_LANGUAGE) + fmtDateTimeSeconds(reset) + '（' + wbsTranslateString(fmtCreditExpiry(reset), WBS_LANGUAGE) + '）'
+        : wbsTranslateString('预计解封：时间未知', WBS_LANGUAGE);
+      return name + '\n' + line;
+    }
+
+    function modelRateLimitBadgeHtml(a) {
+      var records = a && Array.isArray(a.modelRateLimits) ? a.modelRateLimits.filter(function (record) {
+        return record && record.modelId;
+      }) : [];
+      if (!records.length) return '';
+      var details = records.map(modelRateLimitTip).join('\n\n');
+      var label = records.length === 1 ? wbsTranslateString('模型限流', WBS_LANGUAGE) : wbsTranslateString('模型限流·', WBS_LANGUAGE) + records.length;
+      var attr = esc(details).replace(/"/g, '&quot;');
+      var uid = escAttr(a && a.uid || '');
+      return '<span class="wbs-model-rate-limit-slot"><button type="button" class="wbs-model-rate-limit wbs-ck wbs-checkin-tag ok" data-uid="' + uid + '" aria-label="' + attr + '" aria-controls="wbs-status-popover" aria-expanded="false">' + esc(label) + '</button></span>';
+    }
+
+    function modelRateLimitPopoverHtml(account) {
+      var records = account && Array.isArray(account.modelRateLimits) ? account.modelRateLimits.filter(function (record) {
+        return record && record.modelId;
+      }) : [];
+      var rows = records.map(function (record) {
+        var name = String(record.modelName || record.modelId || '未知模型');
+        var reset = record.resetAt ? Number(record.resetAt) : 0;
+        var resetText = reset && isFinite(reset) ? fmtDateTimeSeconds(reset) : wbsTranslateString('时间未知', WBS_LANGUAGE);
+        var remaining = reset && isFinite(reset) ? '（' + wbsTranslateString(fmtCreditExpiry(reset), WBS_LANGUAGE) + '）' : '';
+        return '<div class="wbs-daily-detail wbs-model-rate-limit-detail"><i class="rate-limit"></i>' +
+          '<span>' + wbsTranslateString('模型限流', WBS_LANGUAGE) + '</span><b class="wbs-model-rate-limit-model">' + esc(name) + '</b>' +
+          '<span>' + wbsTranslateString('预计解封', WBS_LANGUAGE) + '</span><b class="wbs-model-rate-limit-reset">' + esc(resetText + remaining) + '</b></div>';
+      }).join('');
+      return '<div class="wbs-daily-popover-head"><strong>' + wbsTranslateString('模型频率限制', WBS_LANGUAGE) + '</strong><span>' + wbsTranslateString('账号状态', WBS_LANGUAGE) + '</span></div>' +
+        (rows || '<div class="wbs-daily-popover-empty">' + wbsTranslateString('当前没有有效的模型限流记录', WBS_LANGUAGE) + '</div>');
+    }
+
+    function modelRateLimitSummaryPopoverHtml(accounts) {
+      var groups = [];
+      (Array.isArray(accounts) ? accounts : []).forEach(function (account) {
+        var records = account && Array.isArray(account.modelRateLimits) ? account.modelRateLimits.filter(function (record) {
+          return record && record.modelId;
+        }) : [];
+        if (!records.length) return;
+        var rawAccountName = String(account.nickname || account.phone || account.uin || account.uid || '未命名账号');
+        var accountName = state.mask ? maskAccountName(rawAccountName) : rawAccountName;
+        var rows = records.map(function (record) {
+          var name = String(record.modelName || record.modelId || '未知模型');
+          var reset = record.resetAt ? Number(record.resetAt) : 0;
+          var resetText = reset && isFinite(reset) ? fmtDateTimeSeconds(reset) : wbsTranslateString('时间未知', WBS_LANGUAGE);
+          var remaining = reset && isFinite(reset) ? '（' + wbsTranslateString(fmtCreditExpiry(reset), WBS_LANGUAGE) + '）' : '';
+          return '<div class="wbs-model-rate-limit-summary-row"><b class="wbs-model-rate-limit-model">' + esc(name) + '</b><span class="wbs-model-rate-limit-reset-label">' + wbsTranslateString('预计解封', WBS_LANGUAGE) + '</span><b class="wbs-model-rate-limit-reset">' + esc(resetText + remaining) + '</b></div>';
+        }).join('');
+        groups.push('<section class="wbs-model-rate-limit-account-group"><div class="wbs-model-rate-limit-account-head"><strong>' + esc(accountName) + '</strong><span>' + records.length + wbsTranslateString(' 个模型', WBS_LANGUAGE) + '</span></div>' + rows + '</section>');
+      });
+      return '<div class="wbs-daily-popover-head"><strong>' + wbsTranslateString('模型频率限制', WBS_LANGUAGE) + '</strong><span>' + wbsTranslateString('{n} 个账号', WBS_LANGUAGE).replace('{n}', groups.length) + '</span></div>' +
+        (groups.join('') || '<div class="wbs-daily-popover-empty">' + wbsTranslateString('当前没有有效的模型限流记录', WBS_LANGUAGE) + '</div>');
     }
 
     function creditBlockHtml(credits, segments, account) {
@@ -14609,6 +14990,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         var editionBadge = a.type === 'personal' ? '个人版' : (a.enterpriseName ? a.enterpriseName : (a.type ? '企业' : ''));
         var badge = editionBadge ? '<span class="wbs-badge">' + esc(editionBadge) + '</span>' : '';
         var checkinBadge = checkinBadgeHtml(a);
+        var modelRateLimitBadge = typeof modelRateLimitBadgeHtml === 'function' ? modelRateLimitBadgeHtml(a) : '';
         var invalidAuthBadge = a.authValid === false ? '<span class="wbs-badge wbs-auth-invalid">认证数据无效</span>' : '';
         // 当前登录账号隐藏操作；认证已过期的账号保留删除，但隐藏切换，避免进入登录页。
         var expired = isIdentityExpired(a);
@@ -14627,7 +15009,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         var idVal = state.mask ? maskAccountId(rawId) : rawId;
         card.innerHTML =
           '<div class="wbs-info">' +
-          '<div class="wbs-row1"><div class="wbs-name-group"><span class="wbs-name">' + esc(nameVal) + '</span>' + badge + dailyRingsHtml(a) + checkinBadge + invalidAuthBadge + '</div>' + ops + '</div>' +
+          '<div class="wbs-row1"><div class="wbs-name-group"><span class="wbs-name">' + esc(nameVal) + '</span>' + badge + dailyRingsHtml(a) + checkinBadge + modelRateLimitBadge + invalidAuthBadge + '</div>' + ops + '</div>' +
           '<div class="wbs-meta wbs-secondary-row">' +
           '<div class="wbs-mi wbs-phone-cell' + (isUinMode ? ' wbs-uin-cell' : '') + '"><span class="wbs-lbl">' + idLbl + '</span><span class="wbs-val">' + esc(idVal) + '</span></div>' +
           '<div class="wbs-mi wbs-token-cell"><span class="wbs-lbl">有效期至</span><span class="wbs-val' + (ts.warn ? ' wbs-warn' : '') + '">' + esc(ts.label) + '</span></div>' +
@@ -15009,6 +15391,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
               state.accounts[j].activityStreak = a.activityStreak;
             }
             if (Object.prototype.hasOwnProperty.call(a, 'todayUsage')) state.accounts[j].todayUsage = a.todayUsage;
+            state.accounts[j].modelRateLimits = Array.isArray(a.modelRateLimits) ? a.modelRateLimits : [];
             byUid[a.uid] = state.accounts[j];
             break;
           }
@@ -15029,6 +15412,14 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
           else checkinSlot.remove();
         } else if (checkinBadge && nameGroup) {
           nameGroup.insertAdjacentHTML('beforeend', checkinBadge);
+        }
+        var modelLimitSlot = nameGroup && nameGroup.querySelector('.wbs-model-rate-limit-slot');
+        var modelLimitBadge = typeof modelRateLimitBadgeHtml === 'function' ? modelRateLimitBadgeHtml(account) : '';
+        if (modelLimitSlot) {
+          if (modelLimitBadge) modelLimitSlot.outerHTML = modelLimitBadge;
+          else modelLimitSlot.remove();
+        } else if (modelLimitBadge && nameGroup) {
+          nameGroup.insertAdjacentHTML('beforeend', modelLimitBadge);
         }
         if (cell) {
           var hidden = isIdentityExpired(account);
@@ -15731,6 +16122,9 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '.wbs-daily-rings,.wbs-checkin-tag.ok{--wbs-badge-bg:var(--wb-color-text-primary,#1f1f1f);--wbs-badge-fg:var(--wb-bg-popover,#fff);background:var(--wbs-badge-bg);border-color:transparent;color:var(--wbs-badge-fg);box-shadow:none}.wbs-daily-rings{--wbs-liquid-fill:rgba(255,255,255,.46);--wbs-liquid-bg:rgba(255,255,255,.14);--wbs-liquid-ink:#fff}.wbs-daily-rings .wbs-daily-streak-label.is-pending{color:inherit;opacity:.75}.wbs-daily-rings:hover,.wbs-daily-rings[aria-expanded="true"]{background:color-mix(in srgb,var(--wbs-badge-bg) 84%,white);box-shadow:0 2px 8px rgba(0,0,0,.14)}',
     ':is(html.cb-dark,html[data-theme="dark"],html[data-wbs-theme-id="dark"],html[data-wbs-theme-id="cyber-purple"],html[data-wbs-theme-id="nebula"],body[data-vscode-theme-name*="dark" i]) .wbs-daily-rings,:is(html.cb-dark,html[data-theme="dark"],html[data-wbs-theme-id="dark"],html[data-wbs-theme-id="cyber-purple"],html[data-wbs-theme-id="nebula"],body[data-vscode-theme-name*="dark" i]) .wbs-checkin-tag.ok{--wbs-badge-bg:rgba(255,255,255,.085);--wbs-badge-fg:var(--wb-color-text-primary,#f6f5ff);background:var(--wbs-badge-bg);border:1px solid rgba(255,255,255,.12);color:var(--wbs-badge-fg);box-shadow:inset 0 1px 0 rgba(255,255,255,.08);backdrop-filter:blur(12px) saturate(1.08);-webkit-backdrop-filter:blur(12px) saturate(1.08)}:is(html.cb-dark,html[data-theme="dark"],html[data-wbs-theme-id="dark"],html[data-wbs-theme-id="cyber-purple"],html[data-wbs-theme-id="nebula"],body[data-vscode-theme-name*="dark" i]) .wbs-daily-rings{--wbs-liquid-fill:rgba(170,160,235,.62);--wbs-liquid-bg:rgba(255,255,255,.12);--wbs-liquid-ink:#f6f5ff}:is(html.cb-dark,html[data-theme="dark"],html[data-wbs-theme-id="dark"],html[data-wbs-theme-id="cyber-purple"],html[data-wbs-theme-id="nebula"],body[data-vscode-theme-name*="dark" i]) .wbs-daily-rings:hover,:is(html.cb-dark,html[data-theme="dark"],html[data-wbs-theme-id="dark"],html[data-wbs-theme-id="cyber-purple"],html[data-wbs-theme-id="nebula"],body[data-vscode-theme-name*="dark" i]) .wbs-daily-rings[aria-expanded="true"]{background:rgba(255,255,255,.14);box-shadow:inset 0 1px 0 rgba(255,255,255,.1),0 3px 10px rgba(0,0,0,.12)}',
     '.wbs-checkin-tag.fail{background:rgba(239,68,68,.1);color:#dc2626}',
+    '.wbs-model-rate-limit-slot{display:inline-flex;align-items:center;min-width:0}.wbs-model-rate-limit{appearance:none;-webkit-appearance:none;font:inherit;cursor:pointer;transition:background-color .15s,box-shadow .15s,color .15s}.wbs-model-rate-limit:hover,.wbs-model-rate-limit[aria-expanded="true"]{background:color-mix(in srgb,var(--wbs-badge-bg) 84%,white);box-shadow:0 2px 8px rgba(0,0,0,.14)}.wbs-model-rate-limit:focus-visible{outline:2px solid color-mix(in srgb,var(--wbs-badge-bg) 45%,transparent);outline-offset:2px}',
+    '.wbs-status-popover.is-rate-limit{width:500px;max-width:calc(100vw - 16px);overflow-x:auto}.wbs-status-popover.is-rate-limit-summary{width:360px;max-width:calc(100vw - 16px);overflow-x:auto}.wbs-model-rate-limit-detail{grid-template-columns:8px auto minmax(0,1fr) auto auto;gap:7px}.wbs-model-rate-limit-detail b{white-space:nowrap;overflow-wrap:normal}.wbs-model-rate-limit-detail .wbs-model-rate-limit-model{text-align:left}.wbs-model-rate-limit-detail i.rate-limit{color:var(--wb-color-text-primary,#1f1f1f)}.wbs-model-rate-limit-account-group{padding:7px 0 2px;border-top:1px solid var(--wb-border-subtle,rgba(20,24,32,.1))}.wbs-model-rate-limit-account-group:first-of-type{padding-top:0;border-top:0}.wbs-model-rate-limit-account-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:0 2px 2px}.wbs-model-rate-limit-account-head strong{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px}.wbs-model-rate-limit-account-head span{flex:0 0 auto;color:var(--wb-icon-tertiary,#7c818b);font-size:10px;white-space:nowrap}.wbs-model-rate-limit-summary-row{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,auto);align-items:center;gap:7px;min-height:28px;margin-top:4px;padding:0 8px;border:1px solid var(--wb-border-subtle,rgba(20,24,32,.1));border-radius:8px;background:color-mix(in srgb,var(--wb-bg-secondary,#f6f7f8) 72%,transparent)}.wbs-model-rate-limit-summary-row>span{color:var(--wb-color-text-secondary,#5f6368);white-space:nowrap}.wbs-model-rate-limit-summary-row>b{min-width:0;font-size:11px;font-weight:650;white-space:nowrap;overflow-wrap:normal}.wbs-model-rate-limit-summary-row .wbs-model-rate-limit-model{text-align:left}.wbs-model-rate-limit-summary-row .wbs-model-rate-limit-reset{text-align:right}',
+    ':is(html.cb-dark,html[data-theme="dark"],body[data-vscode-theme-name*="dark" i]) .wbs-model-rate-limit:hover,:is(html.cb-dark,html[data-theme="dark"],body[data-vscode-theme-name*="dark" i]) .wbs-model-rate-limit[aria-expanded="true"]{background:rgba(255,255,255,.14);box-shadow:inset 0 1px 0 rgba(255,255,255,.1),0 3px 10px rgba(0,0,0,.12)}',
     '.wbs-ck.pending{color:var(--wb-icon-tertiary,#999)}',
     '.wbs-ck.fail{color:#f53f3f}',
     /* 右侧操作图标按钮：更轻量 */
@@ -16305,7 +16699,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '.wbs-credit-summary-chart{max-height:230px;overflow:auto;overscroll-behavior:contain}.wbs-credit-summary-row{display:grid;grid-template-columns:68px minmax(30px,1fr) 58px;align-items:center;gap:8px;min-height:28px}.wbs-credit-summary-row>span{font-size:11px;color:var(--wb-color-text-secondary)}.wbs-credit-summary-row>b{text-align:right;font-size:11px;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}.wbs-credit-summary-track{display:flex;align-items:stretch;gap:2px;height:8px;border-radius:4px;background:var(--wb-bg-tertiary);overflow:visible}.wbs-credit-summary-track .wbs-credit-segment{height:8px;min-width:3px}.wbs-credit-summary-track i{display:block;height:100%;border-radius:4px;}.wbs-credit-summary-foot{border-top:1px solid var(--wb-border-subtle);padding-top:8px;margin-top:8px}',
     'html.cb-dark .wbs-credit-summary-popover,html[data-theme="dark"] .wbs-credit-summary-popover,body[data-vscode-theme-name="IDE Night"] .wbs-credit-summary-popover{background:var(--wb-bg-popover,var(--wb-bg-primary));color:var(--wb-color-text-primary);border-color:var(--wb-border-default)}',
     '@media(max-width:600px){.wbs-acct-toolbar{flex-wrap:wrap;gap:8px}.wbs-acct-summary{flex-wrap:wrap}.wbs-acct-actions{margin-left:auto}}',
-    '.wbs-acct-summary{display:flex;align-items:center;gap:12px;min-width:0}',
+    '.wbs-acct-summary{display:flex;align-items:center;gap:12px;min-width:0}.wbs-acct-summary>[data-act="model-rate-limit-summary"]{margin-left:-7px}',
     '.wbs-acct-eye{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;padding:0;border:none;border-radius:6px;background:transparent;color:var(--wb-icon-secondary,var(--wb-color-text-secondary,#666));cursor:pointer;flex-shrink:0;transition:color .15s,background-color .15s}',
     '.wbs-acct-eye:hover{background:var(--wb-bg-hover,#f0f0f0);color:var(--wb-color-text,#222)}',
     '.wbs-acct-eye:active{transform:scale(.94)}',

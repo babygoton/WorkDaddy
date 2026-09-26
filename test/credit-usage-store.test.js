@@ -121,3 +121,20 @@ test('history backfill preserves the today anchor, deduplicates, and distinguish
   assert.equal(rows.find(r=>r.date==='2026-08-28').used,2.5);
   assert.equal(rows.find(r=>r.date==='2026-08-28').count,1);
 });
+
+test('stores multiple model rate limits and removes expired reset times', async (t) => {
+  const tmp = tempStore();
+  t.after(() => fs.rmSync(tmp.dir, { recursive: true, force: true }));
+  await tmp.store.saveModelRateLimit({ uid: 'u1', modelId: 'deepseek-v4.1-flash', modelName: 'DeepSeek V4.1 Flash', resetAt: 5000, observedAt: 1000, reasonCode: 6004, source: 'renderer-error' });
+  await tmp.store.saveModelRateLimit({ uid: 'u1', modelId: 'gpt-5.6', modelName: 'GPT-5.6', resetAt: null, observedAt: 1100, reasonCode: 6004, source: 'renderer-error' });
+  await tmp.store.saveModelRateLimit({ uid: 'u2', modelId: 'model-x', modelName: 'Model X', resetAt: 9000, observedAt: 1200, reasonCode: 6004, source: 'renderer-error' });
+  assert.deepEqual(await tmp.store.listModelRateLimits(['u1', 'u2'], 4000), {
+    u1: [
+      { modelId: 'gpt-5.6', modelName: 'GPT-5.6', resetAt: null, observedAt: 1100, source: 'renderer-error', reasonCode: 6004 },
+      { modelId: 'deepseek-v4.1-flash', modelName: 'DeepSeek V4.1 Flash', resetAt: 5000, observedAt: 1000, source: 'renderer-error', reasonCode: 6004 },
+    ],
+    u2: [{ modelId: 'model-x', modelName: 'Model X', resetAt: 9000, observedAt: 1200, source: 'renderer-error', reasonCode: 6004 }],
+  });
+  const afterExpiry = await tmp.store.listModelRateLimits(['u1', 'u2'], 6000);
+  assert.deepEqual(afterExpiry.u1, [{ modelId: 'gpt-5.6', modelName: 'GPT-5.6', resetAt: null, observedAt: 1100, source: 'renderer-error', reasonCode: 6004 }]);
+});

@@ -114,6 +114,17 @@ test('panel refresh exposes an explicit current-account check-in reconciliation 
   assert.match(ui, /current\.checkin = \{ ok: !!result\.ok/);
 });
 
+test('model rate limit route and account snapshots expose only structured 6004 records', () => {
+  assert.match(source, /p === '\/api\/model-rate-limit'/);
+  const route = source.slice(source.indexOf("p === '/api/model-rate-limit'"), source.indexOf("if (req.method === 'GET' && p === '/api/accounts')"));
+  assert.match(route, /reasonCode !== 6004/);
+  assert.match(route, /modelName/);
+  assert.doesNotMatch(route, /body\.message|body\.response|body\.raw/);
+  const accounts = source.slice(source.indexOf("if (req.method === 'GET' && p === '/api/accounts')"), source.indexOf('// 查询指定账号的剩余积分'));
+  assert.match(accounts, /listModelRateLimits/);
+  assert.match(accounts, /modelRateLimits/);
+});
+
 test('failed or stale cache records never suppress today\'s check-in request', async () => {
   for (const cached of [
     {date:'2026-09-08',ok:false,verified:false,code:0,message:'HTTP 500'},
