@@ -420,8 +420,8 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 // 1.2.145：识别仅 updated_at 的激活漂移，清除无变更脏标记；无结果任务不再弹同步进度窗口。
 // 1.2.126：5.6 加密账号改为密文原样备份、内存解密；导入兼容明文 token，
 //          刷新结果不把解密后的 token 写回加密备份。
-const DAEMON_VERSION = '1.2.183';
-const DAEMON_BUILD_ID = 'release-1.2.183-20260926-restore-theme-from-page-account';
+const DAEMON_VERSION = '1.2.184';
+const DAEMON_BUILD_ID = 'release-1.2.184-20260926-prefer-page-account-theme';
 const usageReporter = createUsageReporter({ profile: PROFILE.id, version: DAEMON_VERSION });
 configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const automationDiscovery = createAutomationDiscovery({
@@ -7075,7 +7075,7 @@ async function restoreNativeAppearanceByCdp() {
         var WBS_UID = ${JSON.stringify(uid)};
         // 多账号文件同时存在时 daemon 可能无法唯一解析当前 auth；页面 URL
         // 仍带有 WorkBuddy 正在展示的 accountSnapshot，优先用它定位快照。
-        if (!WBS_UID) try {
+        try {
           var rawAccount = new URL(location.href).searchParams.get('accountSnapshot');
           for (var decodeAttempt = 0; rawAccount && decodeAttempt < 3; decodeAttempt++) {
             try { rawAccount = decodeURIComponent(rawAccount); } catch (_) { break; }
@@ -7381,7 +7381,7 @@ async function applyThemeByCdp(id, options = {}) {
       window.__wbsThemeAppearanceGuardToken = (window.__wbsThemeAppearanceGuardToken || 0) + 1;
     } catch (_) {}
     var WBS_UID = ${JSON.stringify(uid || null)};
-    if (!WBS_UID) try {
+    try {
       var rawAccount = new URL(location.href).searchParams.get('accountSnapshot');
       for (var decodeAttempt = 0; rawAccount && decodeAttempt < 3; decodeAttempt++) {
         try { rawAccount = decodeURIComponent(rawAccount); } catch (_) { break; }
