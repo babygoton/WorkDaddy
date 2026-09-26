@@ -10,7 +10,7 @@ test('theme takeover is visible above theme choices and retains the saved settin
   const theme = section('function buildThemePane()', 'function buildEnhancePane()');
   const sessions = section('function buildSessionsPane()', 'function wireSessionsPane()');
   assert.match(theme, /id="wbs-theme-takeover"/);
-  assert.match(theme, /<div class="wbs-pcard-title">接管 WorkBuddy 主题<\/div>/);
+  assert.match(theme, /<div class="wbs-pcard-title">接管主题<\/div>/);
   assert.doesNotMatch(theme, /关闭后，加载和切换账号时保留 WorkBuddy 的主题/);
   assert.match(source, /\.wbs-theme-takeover-row>\.wbs-pcard-title\{[^}]*flex:1/);
   assert.ok(theme.indexOf('id="wbs-theme-takeover"') < theme.indexOf('id="wbs-theme-seg"'));
@@ -23,11 +23,13 @@ test('theme takeover is visible above theme choices and retains the saved settin
   const apply = section('function applySessionModule(', 'function syncSessionModule()');
   assert.match(apply, /themePane && themePane.querySelector\('#wbs-theme-takeover'\)/);
   assert.match(theme, /id="wbs-theme-appearance-options"/);
-  assert.match(theme, /wbs-avatar-card wbs-theme-managed/);
-  assert.match(theme, /wbs-fab-settings wbs-theme-managed/);
+  assert.match(theme, /class="wbs-pcard wbs-avatar-card"/);
+  assert.ok(theme.indexOf('wbs-avatar-card') < theme.indexOf('wbs-fab-settings'));
+  assert.ok(theme.indexOf('wbs-fab-settings') < theme.indexOf('id="wbs-theme-takeover"'));
+  assert.match(theme, /class="wbs-pcard wbs-fab-settings"/);
   assert.match(theme, /wbs-wallpaper-card wbs-theme-managed/);
   assert.match(source, /function syncThemeTakeoverVisibility\(enabled\)/);
-  assert.match(source, /avatarLibrary\.select\('default'\)/);
+
 });
 test('theme choices do not activate official data-theme scopes and robot radios reuse their visual component', () => {
   const pane = section('function buildThemePane()', 'function buildEnhancePane()');
@@ -86,4 +88,35 @@ test('theme takeover off hides every managed theme module and blocks custom them
   assert.match(visibility, /node\.style\.display = visible \? '' : 'none'/);
   assert.match(source, /var visible = sessState\.themeTakeover && themeId === 'nebula'/);
   assert.match(source, /if \(!sessState\.themeTakeover\) return;\s+var id = segBtn/);
+});
+
+
+test('theme takeover toggles only theme controls without changing the selected avatar', () => {
+  const managed = [{ style: {} }, { style: {} }];
+  let avatarChanges = 0;
+  const context = {
+    themePane: { querySelectorAll: selector => {
+      assert.equal(selector, '.wbs-theme-managed');
+      return managed;
+    } },
+    avatarLibrary: { snapshot: () => ({ selected: 'workdaddy' }), select: () => { avatarChanges++; } },
+    applyAvatar: () => { avatarChanges++; },
+  };
+  vm.runInNewContext(section('function syncThemeTakeoverVisibility(', '    // 主题 pane 事件绑定'), context);
+  context.syncThemeTakeoverVisibility(false);
+  assert.ok(managed.every(node => node.style.display === 'none'));
+  context.syncThemeTakeoverVisibility(true);
+  assert.ok(managed.every(node => node.style.display === ''));
+  assert.equal(avatarChanges, 0);
+  assert.match(source, /\.wbs-theme-takeover-row:has\(#wbs-theme-takeover:not\(:checked\)\)\{margin-bottom:0;padding-bottom:0;border-bottom:0\}/);
+});
+
+
+test('glass panel controls keep opaque primary colors without changing composer buttons', () => {
+  const rule = source.split('\n').find(line => line.includes('html[data-wbs-theme-id="nebula"] .wbs-panel,'));
+  assert.ok(rule, 'glass overrides are scoped to WorkDaddy panel and modal surfaces');
+  assert.match(rule, /html\[data-wbs-theme-id="nebula"\] \.wbs-modal/);
+  assert.match(rule, /--wb-button-primary-bg:var\(--wb-palette-white-90\)/);
+  assert.match(rule, /--wb-button-primary-fg:var\(--wb-bg-primary\)/);
+  assert.doesNotMatch(rule, /\.wbs-root|\.wbs-stash-inline|\.wbs-fab/);
 });

@@ -420,8 +420,8 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 // 1.2.145：识别仅 updated_at 的激活漂移，清除无变更脏标记；无结果任务不再弹同步进度窗口。
 // 1.2.126：5.6 加密账号改为密文原样备份、内存解密；导入兼容明文 token，
 //          刷新结果不把解密后的 token 写回加密备份。
-const DAEMON_VERSION = '1.2.171';
-const DAEMON_BUILD_ID = 'release-1.2.171-20260926-session-backup-usage';
+const DAEMON_VERSION = '1.2.176';
+const DAEMON_BUILD_ID = 'release-1.2.176-20260926-clear-native-skin';
 const usageReporter = createUsageReporter({ profile: PROFILE.id, version: DAEMON_VERSION });
 configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const automationDiscovery = createAutomationDiscovery({
@@ -6897,7 +6897,14 @@ function getTheme(id) {
       const sub = path.join(THEMES_DIR, safeId, 'theme.json');
       if (fs.existsSync(sub)) t = JSON.parse(fs.readFileSync(sub, 'utf8'));
     }
-    if (t && t.colors) return t;
+    if (t && t.colors) {
+      // 毛玻璃的透明常量也是主题定义的一部分；旧安装的配色文件同样生效。
+      if (id === 'nebula') t.colors = { ...t.colors,
+        '--wb-button-primary-bg': 'transparent', '--wb-bg-secondary': 'transparent',
+        '--wb-button-primary-fg': 'var(--wb-color-text-primary)',
+      };
+      return t;
+    }
   } catch (_) {}
   if (BUILTIN_THEMES[id]) return BUILTIN_THEMES[id];
   return null;
@@ -6974,78 +6981,18 @@ function nativeAppearanceSyncExpression() {
 }
 
 async function startNativeAppearanceSyncByCdp() {
-  if (!cdp.connected) return;
+  if (!cdp.connected || readSessionState().themeTakeoverEnabled !== false) return;
   await cdpSend('Runtime.evaluate', { expression: nativeAppearanceSyncExpression(), returnByValue: true });
 }
 
 async function releaseThemeByCdp() {
   themeApplyGeneration++;
   if (!cdp.connected) return;
-  let _accUid = null;
-  try { const _a = currentAccount(); _accUid = _a ? _a.uid : null; } catch (_) {}
-  const uid = (typeof _accUid === 'string' && _accUid) ? _accUid : null;
-  const result = await cdpSend('Runtime.evaluate', {
-    expression: `(function () {
-      var WBS_UID = ${JSON.stringify(uid || null)};
-      try {
-        // bump token：历史遗留（旧版并发应用泄漏）的 250ms 外观守护下一次 fire 即自杀。
-        window.__wbsThemeAppearanceGuardToken = (window.__wbsThemeAppearanceGuardToken || 0) + 1;
-        if (window.__wbsThemeAppearanceGuard) {
-          clearInterval(window.__wbsThemeAppearanceGuard);
-          clearTimeout(window.__wbsThemeAppearanceGuardStop);
-          delete window.__wbsThemeAppearanceGuard;
-          delete window.__wbsThemeAppearanceGuardStop;
-        }
-      } catch (_) {}
-      // 接管主题期间保存了 WorkBuddy 的账号级外观；关闭接管时恢复，保证
-      // WorkBuddy 的特殊主题不会因为一次接管而丢失。
-      try {
-        if (WBS_UID) {
-          var snapshotKey = 'workdaddy.theme.native-snapshot::' + WBS_UID;
-          var rawSnapshot = localStorage.getItem(snapshotKey);
-          if (rawSnapshot) {
-            var snapshot = JSON.parse(rawSnapshot);
-            var accountSuffix = '::' + WBS_UID;
-            var removeKeys = [];
-            for (var si = 0; si < localStorage.length; si++) {
-              var sk = localStorage.key(si);
-              if (!sk) continue;
-              if ((sk.indexOf('workbuddy.appearance.mode::') === 0 ||
-                   sk.indexOf('workbuddy.appearance.state::') === 0 ||
-                   sk.indexOf('workbuddy.appearance.lastApplied::') === 0) && sk.endsWith(accountSuffix)) {
-                removeKeys.push(sk);
-              }
-            }
-            for (var sr = 0; sr < removeKeys.length; sr++) localStorage.removeItem(removeKeys[sr]);
-            var globalKeys = ['agent-ui-theme', 'workbuddy.appearance.lastApplied', 'workbuddy.appearance.lastApplied.css', 'workbuddy.appearance.lastApplied::__identity'];
-            for (var sg = 0; sg < globalKeys.length; sg++) localStorage.removeItem(globalKeys[sg]);
-            var savedKeys = Array.isArray(snapshot.keys) ? snapshot.keys : [];
-            var savedMap = {};
-            for (var skn = 0; skn < savedKeys.length; skn++) {
-              if (Array.isArray(savedKeys[skn]) && savedKeys[skn].length >= 2) {
-                savedMap[savedKeys[skn][0]] = savedKeys[skn][1];
-                localStorage.setItem(savedKeys[skn][0], savedKeys[skn][1]);
-              }
-            }
-            // Keep the exact snapshot bytes. WorkBuddy's special appearances
-            // use their own resource key and CSS payload; normalising them to
-            // light/dark here makes the settings window appear selected while
-            // the main page stays on the forced takeover mode.
-            localStorage.removeItem(snapshotKey);
-          }
-        }
-      } catch (_) {}
-      if (window.__wbsThemeGuard) window.__wbsThemeGuard.disconnect();
-      delete window.__wbsThemeGuard;
-      var style = document.getElementById('wbs-theme-style');
-      if (style) style.remove();
-      document.documentElement.removeAttribute('data-wbs-theme');
-      document.documentElement.removeAttribute('data-wbs-theme-id');
-    })()`,
-    returnByValue: true,
-  });
-  if (result && result.exceptionDetails) throw new Error('释放主题接管失败');
-  await startNativeAppearanceSyncByCdp();
+  const releaseGeneration = themeApplyGeneration;
+  // 仅在关闭开关时切一次官方浅色，随后继续同步用户在官方设置中选择的外观。
+  const result = await applyThemeByCdp('default', { release: true });
+  if (releaseGeneration === themeApplyGeneration) await startNativeAppearanceSyncByCdp();
+  return result;
 }
 
 async function restoreNativeAppearanceByCdp() {
@@ -7093,7 +7040,8 @@ async function restoreSavedTheme() {
   if (!PROFILE.capabilities.theme) return;
   if (!cdp.connected) return;
   if (readSessionState().themeTakeoverEnabled === false) {
-    await restoreNativeAppearanceByCdp();
+    // 重载/重连时保留官方选择，不能再次触发关闭开关的一次性浅色重置。
+    await startNativeAppearanceSyncByCdp();
     return;
   }
   let id = 'default';
@@ -7185,10 +7133,11 @@ function themeVarsCss(isDark, id) {
   let out = '';
   const declOf = (vars) => Object.keys(vars || {}).map((k) => k + ':' + vars[k] + ';').join('');
   for (const b of mod.body || []) {
+    if (b.themeId && b.themeId !== id) continue;
     if (b.darkOnly && !isDark) continue;
     const lead = b.darkOnly ? pre : '';
     const d = declOf(b.vars);
-    if (d) out += lead + 'body[data-vscode-theme-name]{' + d + '}';
+    if (d) out += (b.includeRoot ? 'html[data-wbs-theme-id],' : '') + lead + 'body[data-vscode-theme-name]{' + d + '}';
   }
   for (const s of mod.scoped || []) {
     if (s.themeId && s.themeId !== id) continue;
@@ -7214,10 +7163,42 @@ function readBackgroundBlur() {
 
 async function applyThemeByCdp(id, options = {}) {
   if (!PROFILE.capabilities.theme) throw new Error(`${PROFILE.name} 暂不支持主题功能`);
+  if (options.release && readSessionState().themeTakeoverEnabled !== false) return { applied: false, takeover: true };
   if (options.automatic && readSessionState().themeTakeoverEnabled === false) return { applied: false, takeover: false };
+  if (!options.automatic && !options.nativeOnly && !options.release) themeApplyGeneration++;
   const applyGeneration = themeApplyGeneration;
   if (!cdp.connected) throw new Error('CDP 未连接');
-  const takeoverEnabled = readSessionState().themeTakeoverEnabled !== false;
+  const takeoverEnabled = !options.nativeOnly && readSessionState().themeTakeoverEnabled !== false;
+  if (id === 'nebula' && takeoverEnabled) {
+    // 分开两个 CDP 回合：释放自定义 CSS/守护，让官方深色真正渲染，再接管毛玻璃。
+    // 不改持久化接管开关，避免中途失败或并发操作留下错误的用户设置。
+    await applyThemeByCdp('dark', { ...options, nativeOnly: true });
+    if (applyGeneration !== themeApplyGeneration || readSessionState().themeTakeoverEnabled === false) return { applied: false, cancelled: true };
+    const settled = await cdpSend('Runtime.evaluate', {
+      expression: `new Promise(function (resolve) {
+        var done = false, fallback;
+        function finish() {
+          if (done) return;
+          done = true; clearTimeout(fallback);
+          var native = null;
+          try { native = JSON.parse(localStorage.getItem('agent-ui-theme') || 'null'); } catch (_) {}
+          resolve({ ready: document.documentElement.getAttribute('data-theme') === 'dark' &&
+            document.body.getAttribute('data-vscode-theme-name') === 'IDE Night' &&
+            native && native.theme === 'dark' && !document.documentElement.hasAttribute('data-skin') &&
+            document.documentElement.style.colorScheme === 'dark' &&
+            !document.getElementById('wbs-theme-style') && !window.__wbsThemeGuard });
+        }
+        fallback = setTimeout(finish, 500);
+        setTimeout(function () {
+          if (typeof requestAnimationFrame === 'function') requestAnimationFrame(function () { requestAnimationFrame(finish); });
+          else finish();
+        }, 120);
+      })`,
+      awaitPromise: true, returnByValue: true, timeout: 2000,
+    });
+    if (applyGeneration !== themeApplyGeneration || readSessionState().themeTakeoverEnabled === false) return { applied: false, cancelled: true };
+    if (!settled || settled.exceptionDetails || !settled.result || !settled.result.value || !settled.result.value.ready) throw new Error('官方深色主题尚未就绪，请重试毛玻璃主题');
+  }
   let _accUid = null;
   try { const _a = currentAccount(); _accUid = _a ? _a.uid : null; } catch (_) {}
   const uid = (typeof _accUid === 'string' && _accUid) ? _accUid : null;
@@ -7314,12 +7295,16 @@ async function applyThemeByCdp(id, options = {}) {
       delete window.__wbsNativeAppearanceSync; delete window.__wbsNativeAppearanceSheet; delete window.__wbsNativeAppearanceKey;
     } catch (_) {}
     if (window.__wbsThemeGuard) window.__wbsThemeGuard.disconnect();
+    delete window.__wbsThemeGuard;
     // 清理上一次应用遗留的 250ms 外观守护：历史上这里只覆盖 window 上的句柄，
     // 并发/重复应用会泄漏旧 interval（10s 自停读的是共享 window 句柄，只有最后一个能被清），
     // 泄漏的守护用陈旧 wantedMode 持续回写 DOM/localStorage，是关闭接管后主题无限来回切换的根因。
     try { if (window.__wbsThemeAppearanceGuard) clearInterval(window.__wbsThemeAppearanceGuard); } catch (_) {}
     try { if (window.__wbsThemeAppearanceGuardStop) clearTimeout(window.__wbsThemeAppearanceGuardStop); } catch (_) {}
-    try { delete window.__wbsThemeAppearanceGuard; delete window.__wbsThemeAppearanceGuardStop; } catch (_) {}
+    try {
+      delete window.__wbsThemeAppearanceGuard; delete window.__wbsThemeAppearanceGuardStop;
+      window.__wbsThemeAppearanceGuardToken = (window.__wbsThemeAppearanceGuardToken || 0) + 1;
+    } catch (_) {}
     var WBS_UID = ${JSON.stringify(uid || null)};
     // WorkDaddy 自定义主题已应用标记：theme-patches 里部分规则用 html[data-wbs-theme] 限定
     // 只在 WorkDaddy 内置自定义主题下生效（官方默认主题不激活）。
@@ -7346,7 +7331,7 @@ async function applyThemeByCdp(id, options = {}) {
       };
     }
     function wbsSnapshotNativeAppearance() {
-      if (!WBS_UID) return;
+      if (!WBS_UID || ${options.release ? 'true' : 'false'}) return;
       try {
         var snapshotKey = 'workdaddy.theme.native-snapshot::' + WBS_UID;
         if (localStorage.getItem(snapshotKey)) return;
@@ -7370,14 +7355,19 @@ async function applyThemeByCdp(id, options = {}) {
       } catch (_) {}
     }
     function wbsClearNativeCustomCss() {
+      // ThemeManager 遇到 data-skin 会直接跳过主题同步；即使皮肤 CSS 已清空，
+      // 也必须先解除这个标记，再发出 theme-kind 通知，才能更新官方组件状态。
+      var skinId = h.getAttribute('data-skin');
+      h.removeAttribute('data-skin');
       try {
+        if (document.querySelectorAll) document.querySelectorAll('style[data-skin-sheet]').forEach(function (sheet) { sheet.textContent = ''; });
         var raw = localStorage.getItem('workbuddy.appearance.lastApplied.css');
         var cssState = null;
         var applied = null;
         try { cssState = JSON.parse(raw || 'null'); } catch (_) {}
         try { applied = JSON.parse(localStorage.getItem('workbuddy.appearance.lastApplied') || 'null'); } catch (_) {}
         var css = String((cssState || {}).css || '');
-        var resourceKey = String((cssState || {}).resourceKey || (applied || {}).resourceKey || '');
+        var resourceKey = String(skinId || (cssState || {}).resourceKey || (applied || {}).resourceKey || '');
         var special = !!resourceKey && resourceKey !== 'light' && resourceKey !== 'dark';
         if ((!css && !special) || !document.adoptedStyleSheets || !document.adoptedStyleSheets.length) return;
         var kept = [];
@@ -7394,6 +7384,11 @@ async function applyThemeByCdp(id, options = {}) {
             text.indexOf('--cb-color') !== -1
           );
           if (text !== css && !looksLikeCustomSkin) kept.push(sheet);
+          else if (typeof sheet.replaceSync === 'function') {
+            // 官方 SkinManager 持有这张 sheet；保留挂载，避免后续官方换肤写入
+            // 一张已被我们移除的 sheet，表现为“怎么切都没有效果”。
+            sheet.replaceSync(''); kept.push(sheet);
+          }
         }
         if (kept.length !== document.adoptedStyleSheets.length) document.adoptedStyleSheets = kept;
       } catch (_) {}
@@ -7425,22 +7420,13 @@ async function applyThemeByCdp(id, options = {}) {
         }
       } catch (e7) {}
     }
-    function wbsPrepareNativeAppearance() {
-      if (!WBS_UID) return;
-      // WorkBuddy 的特殊皮肤会在 React effect 中再次覆盖 html/body；先把
-      // 当前账号切到官方浅色并清理已注入的皮肤 CSS，再落下 WorkDaddy 主题。
+    function wbsPrepareNativeAppearance(mode) {
+      // 先清理官方特殊皮肤，再切换官方底色；毛玻璃直接用深色打底。
       wbsSnapshotNativeAppearance();
       wbsClearNativeCustomCss();
-      wbsSyncAppearanceKeys('light');
-      try {
-        localStorage.setItem('agent-ui-theme', JSON.stringify({ theme: 'light', followSystem: false, vsCodeThemeName: 'IDE Light', vsCodeThemeKind: 'vscode-light' }));
-        localStorage.setItem('workbuddy.appearance.lastApplied', JSON.stringify(wbsBuiltinAppearance('light')));
-      } catch (_) {}
-      h.setAttribute('data-theme', 'light');
-      h.classList.remove('cb-dark');
-      b.setAttribute('data-vscode-theme-kind', 'vscode-light');
-      b.setAttribute('data-vscode-theme-name', 'IDE Light');
-      b.classList.remove('vscode-dark');
+      wbsSyncNativeTheme(mode);
+      h.classList.toggle('cb-dark', mode === 'dark');
+      b.classList.toggle('vscode-dark', mode === 'dark');
     }
     function wbsSyncNativeTheme(mode) {
       var isLight = mode === 'light';
@@ -7466,7 +7452,15 @@ async function applyThemeByCdp(id, options = {}) {
       wbsSyncNativeTheme(mode);
       return true;
     }
-    if (${takeoverEnabled ? 'true' : 'false'}) wbsPrepareNativeAppearance();
+    if (${takeoverEnabled || options.release || options.nativeOnly ? 'true' : 'false'}) wbsPrepareNativeAppearance(${JSON.stringify(id === 'nebula' || options.nativeOnly ? 'dark' : 'light')});
+    if (${options.release || options.nativeOnly ? 'true' : 'false'}) {
+      wbsClearNativeCustomCss();
+      // 清掉特殊皮肤缓存与旧快照，重载后仍由官方浅色设置启动。
+      try {
+        localStorage.removeItem('workbuddy.appearance.lastApplied.css');
+        if (${options.release ? 'true' : 'false'} && WBS_UID) localStorage.removeItem('workdaddy.theme.native-snapshot::' + WBS_UID);
+      } catch (_) {}
+    }
     var s = document.getElementById('wbs-theme-style');
     if (${id === 'default' || id === 'dark' ? 'true' : 'false'}) {
       if (s) s.remove();
@@ -7535,7 +7529,7 @@ async function applyThemeByCdp(id, options = {}) {
       wbsSyncNativeTheme(wantedMode);
     }
     keepSelectedTheme();
-    if (${readSessionState().themeTakeoverEnabled !== false} && typeof MutationObserver !== 'undefined') {
+    if (${takeoverEnabled ? 'true' : 'false'} && typeof MutationObserver !== 'undefined') {
       var guard = new MutationObserver(keepSelectedTheme);
       guard.observe(h, { attributes: true, attributeFilter: ['class', 'data-theme'] });
       guard.observe(b, { attributes: true, attributeFilter: ['class', 'data-vscode-theme-kind', 'data-vscode-theme-name'] });
@@ -7604,7 +7598,9 @@ async function applyThemeByCdp(id, options = {}) {
       } else if (attempt) {
         await cdpActivatePage();
       }
-      // A navigation retry must respect an opt-out saved while CDP was reconnecting.
+      // 重连重试也必须服从后续主题选择或关闭接管，不能把过期阶段重新应用。
+      if (applyGeneration !== themeApplyGeneration) return { applied: false, cancelled: true };
+      if (options.release && (readSessionState().themeTakeoverEnabled !== false || applyGeneration !== themeApplyGeneration)) return { applied: false, takeover: readSessionState().themeTakeoverEnabled !== false };
       if (options.automatic && (readSessionState().themeTakeoverEnabled === false || applyGeneration !== themeApplyGeneration)) return { applied: false, takeover: false };
       r = await cdpSend('Runtime.evaluate', { expression: expr, returnByValue: true });
       if (r && r.exceptionDetails) {
@@ -10333,6 +10329,7 @@ function handleApi(req, res) {
       if (id !== 'default' && !getTheme(id)) return json(res, 404, { ok: false, error: '主题不存在: ' + id });
       return applyThemeByCdp(id)
         .then((info) => {
+          if (info.cancelled) return json(res, 409, { ok: false, error: '主题切换已被后续操作取消' });
           try {
             fs.writeFileSync(path.join(DATA_DIR, 'current-theme.json'), JSON.stringify({ id, at: new Date().toISOString() }, null, 2));
           } catch (error) {

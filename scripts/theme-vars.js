@@ -14,6 +14,16 @@ module.exports = {
   // body 级变量（作用域 body[data-vscode-theme-name]）
   body: [
     {
+      themeId: 'nebula',
+      includeRoot: true,
+      // 毛玻璃按钮透出背景；前景沿用主题文字色，避免深色图标失去对比。
+      vars: {
+        '--wb-button-primary-bg': 'transparent !important',
+        '--wb-bg-secondary': 'transparent !important',
+        '--wb-button-primary-fg': 'var(--wb-color-text-primary)',
+      },
+    },
+    {
       darkOnly: true,
       vars: {
         // 官方 .cb-* 组件变量深色下仍是浅色值（浅灰 #f5f5f5 / #d1d5db），全局重定向为主题深色
@@ -33,6 +43,16 @@ module.exports = {
   ],
   // 组件作用域级变量：官方在这些组件上定义了局部浅色硬编码，必须同作用域重定向（直接定义 > 继承）
   scoped: [
+    {
+      themeId: 'nebula',
+      sel: '[data-theme],.vscode-dark,.dark,.cb-dark,.cr-theme',
+      // 官方主题容器也可能直接定义同名变量，覆盖必须落在同一作用域。
+      vars: {
+        '--wb-button-primary-bg': 'transparent !important',
+        '--wb-bg-secondary': 'transparent !important',
+        '--wb-button-primary-fg': 'var(--wb-color-text-primary)',
+      },
+    },
     {
       sel: '.cr-tool-head__primary-tooltip-anchor',
       themeId: 'nebula',

@@ -39,15 +39,18 @@ test('robot appearance restores per-profile preferences and rejects unknown styl
   const options = { key: 'robot-cn', storage: { getItem: key => values.get(key), setItem: (key, value) => values.set(key, value) },
     fab: { setAttribute: (key, value) => attrs.set(key, value) } };
   const style = createFabAppearance(options);
-  assert.equal(style.get(), 'black');
+  assert.equal(style.get(), 'theme');
   style.set('black');
   assert.equal(attrs.get('data-wbs-robot-style'), 'black');
   assert.equal(createFabAppearance(options).get(), 'black');
-  assert.equal(createFabAppearance({ ...options, key: 'robot-ai' }).get(), 'black');
+  assert.equal(createFabAppearance({ ...options, key: 'robot-ai' }).get(), 'theme');
   style.set('glass');
   assert.equal(createFabAppearance(options).get(), 'glass');
+  style.set('theme');
+  assert.equal(createFabAppearance(options).get(), 'theme');
+  assert.equal(attrs.get('data-wbs-robot-style'), 'theme');
   style.set('invalid');
-  assert.equal(style.get(), 'glass');
+  assert.equal(style.get(), 'theme');
 });
 
 test('panel owns the brand and groups robot controls; message shadow is the last theme card', () => {
@@ -61,6 +64,9 @@ test('panel owns the brand and groups robot controls; message shadow is the last
   const robot = pane.slice(pane.indexOf('wbs-fab-settings'), pane.indexOf('wbs-wallpaper-card'));
   assert.match(robot, /wbs-robot-style/);
   assert.match(robot, /wbs-fab-auto-dock/);
+  assert.ok(robot.indexOf('value="theme"') < robot.indexOf('value="white"'));
+  assert.ok(robot.indexOf('value="theme"') < robot.indexOf('value="black"'));
+  assert.ok(robot.indexOf('value="theme"') < robot.indexOf('value="glass"'));
 });
 
 // Exercise the actual panel wiring: browser timers reject an options object as `this`.
@@ -90,4 +96,22 @@ test('panel five-click wiring preserves the browser timer receiver and reveals d
   assert.equal(context.hiddenToolsUnlocked, true);
   assert.equal(picker.style.display, '');
   assert.equal(card.style.display, '');
+});
+
+
+test('composer controls use live primary button tokens with no dark glass override', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../scripts/inject.js'), 'utf8');
+  const start = source.indexOf('    function applyThemeButtonColors()');
+  const end = source.indexOf('    function positionStash()', start);
+  const context = { stashBtn: { style: {} }, exploreBtn: { style: {} } };
+  vm.runInNewContext(source.slice(start, end), context);
+  context.applyThemeButtonColors();
+  for (const button of [context.stashBtn, context.exploreBtn]) {
+    assert.equal(button.style.background, 'var(--wb-button-primary-bg)');
+    assert.equal(button.style.color, 'var(--wb-button-primary-fg)');
+  }
+  const patches = require('../scripts/theme-patches.js');
+  assert.ok(!patches.some(patch => patch.css.includes('.wbs-stash-inline')));
+  assert.match(source, /value="theme"><span>主题色<\/span>/);
+  assert.match(source, /data-wbs-robot-style="theme"[^\n]*--wbs-robot-shell:var\(--wb-button-primary-bg\)/);
 });

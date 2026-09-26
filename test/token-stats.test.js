@@ -162,20 +162,21 @@ test('usage statistics modal uses a larger responsive dashboard layout in both t
   assert.match(source, /@media\(max-width:700px\)[\s\S]{0,220}\.wbs-usage-columns\{grid-template-columns:1fr\}/);
 });
 
-test('breakdown lines use distinct chart-only colors across light and dark themes', () => {
+test('usage charts derive all series from WorkBuddy theme tokens', () => {
   const source = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'inject.js'), 'utf8');
   const colors = source.match(/function usageTrendColors\(\) \{([\s\S]*?)\n    \}/);
   assert.ok(colors);
+  const palette = source.match(/\.wbs-trend-panel,\.wbs-usage-pie-section\{([^}]+)\}/)[1];
+  assert.doesNotMatch(palette, /#[0-9a-f]|rgba?\(/i);
+  assert.match(palette, /--wbs-trend-series-1:var\(--wb-palette-blue-5\)/);
+  assert.match(palette, /--wbs-trend-series-2:var\(--wb-palette-purple-5\)/);
+  assert.equal((palette.match(/--wbs-trend-series-\d+:/g) || []).length, 12);
+  const chart = source.slice(source.indexOf('function renderUsageTrendChart'), source.indexOf('function usageTimeSegmentHtml'));
+  assert.doesNotMatch(chart, /--wbs-primary|34,197,94|#[0-9a-f]{3,8}/i);
   assert.doesNotMatch(colors[1], /--wbs-primary|--wb-color-text/);
-  assert.match(source, /\.wbs-trend-panel,\.wbs-usage-pie-section\{--wbs-trend-series-1:#/);
-  assert.match(source, /--wbs-trend-series-1:#36A2EB;--wbs-trend-series-2:#FF6384;--wbs-trend-series-3:#FFCE56/);
-  assert.match(source, /--wbs-trend-series-4:#4BC0C0;--wbs-trend-series-5:#9966FF;--wbs-trend-series-6:#FF9F40/);
   assert.match(source, /getComputedStyle\(panel\)\.getPropertyValue\('--wbs-trend-series-1'\)/);
   assert.doesNotMatch(source, /\.wbs-pie-legend\{[^}]*max-height/);
   assert.doesNotMatch(source, /\.wbs-token-model-scroll\{[^}]*max-height/);
-  assert.match(source, /html\.cb-dark #wbs-token-stats-modal :is\(\.wbs-trend-panel,\.wbs-usage-pie-section\)/);
-  assert.match(source, /html\[data-theme="dark"\] #wbs-token-stats-modal :is\(\.wbs-trend-panel,\.wbs-usage-pie-section\)/);
-  assert.match(source, /body\[data-vscode-theme-name\*="dark" i\] #wbs-token-stats-modal :is\(\.wbs-trend-panel,\.wbs-usage-pie-section\)/);
   assert.match(source, /state\.colorSlots\[mode\]/);
   assert.match(source, /slots\.delete\(key\)/);
   assert.match(source, /new Set\(groups\.map\(function \(group\) \{ return group\.key; \}\)\)/);

@@ -69,8 +69,8 @@ module.exports = [
   },
   {
     id: 'patch-15',
-    desc: '弹窗/tooltip 通用深色适配：dropdown/popover/popper/picker-panel/menu-panel 背景默认白，深色下覆盖。排除官方新组件体系(cr-theme/cr-popover/cr-menu——官方自带深色适配)与官方 hash 触发器容器(_dropdownRoot_——仅定位容器，不应着色，否则更多按钮出现黑底)',
-    css: 'html[data-theme="dark"] body[data-vscode-theme-name] [class*="dropdown"]:not([class*="toolbar"]):not([class*="cr-theme"]):not([class*="_dropdownRoot_"]),html[data-theme="dark"] body[data-vscode-theme-name] [class*="popover"]:not([class*="cr-theme"]),html[data-theme="dark"] body[data-vscode-theme-name] [class*="popper"]:not([class*="cr-theme"]),html[data-theme="dark"] body[data-vscode-theme-name] [class*="picker-panel"]:not([class*="cr-theme"]),html[data-theme="dark"] body[data-vscode-theme-name] [class*="menu-panel"]:not([class*="cr-theme"]){background:var(--wb-bg-popover) !important;color:var(--wb-color-text-primary);border-color:var(--wb-border-subtle) !important;box-shadow:0 6px 24px rgba(0,0,0,0.5) !important;}html[data-theme="dark"] body[data-vscode-theme-name] [class*="tooltip"]:not([class*="chat"]):not([class*="message"]){background:var(--wb-bg-popover) !important;color:var(--wb-color-text-primary);}html[data-theme="dark"] body[data-vscode-theme-name] [class*="dropdown"]:not([class*="cr-theme"]):not([class*="_dropdownRoot_"]) [class*="item"]:hover,html[data-theme="dark"] body[data-vscode-theme-name] [class*="popover"]:not([class*="cr-theme"]) [class*="item"]:hover{background:var(--wb-bg-hover) !important;}',
+    desc: '弹窗/tooltip 通用深色适配：dropdown/popover/popper/picker-panel/menu-panel 背景默认白，深色下覆盖。排除官方新组件体系(cr-theme/cr-popover/cr-menu——官方自带深色适配)与官方 hash/tooltip 触发器容器（仅定位容器，不应着色，否则文件链接、复制与发送按钮出现黑底）',
+    css: 'html[data-theme="dark"] body[data-vscode-theme-name] [class*="dropdown"]:not([class*="toolbar"]):not([class*="cr-theme"]):not([class*="_dropdownRoot_"]),html[data-theme="dark"] body[data-vscode-theme-name] [class*="popover"]:not([class*="cr-theme"]),html[data-theme="dark"] body[data-vscode-theme-name] [class*="popper"]:not([class*="cr-theme"]),html[data-theme="dark"] body[data-vscode-theme-name] [class*="picker-panel"]:not([class*="cr-theme"]),html[data-theme="dark"] body[data-vscode-theme-name] [class*="menu-panel"]:not([class*="cr-theme"]){background:var(--wb-bg-popover) !important;color:var(--wb-color-text-primary);border-color:var(--wb-border-subtle) !important;box-shadow:0 6px 24px rgba(0,0,0,0.5) !important;}html[data-theme="dark"] body[data-vscode-theme-name] [class*="tooltip"]:not([class*="chat"]):not([class*="message"]):not(.cr-clickable-path-tooltip-anchor):not(.cr-code-block__copy-tooltip):not(.cr-send-button__tooltip-wrapper){background:var(--wb-bg-popover) !important;color:var(--wb-color-text-primary);}html[data-theme="dark"] body[data-vscode-theme-name] [class*="dropdown"]:not([class*="cr-theme"]):not([class*="_dropdownRoot_"]) [class*="item"]:hover,html[data-theme="dark"] body[data-vscode-theme-name] [class*="popover"]:not([class*="cr-theme"]) [class*="item"]:hover{background:var(--wb-bg-hover) !important;}',
   },
   {
     id: 'patch-16',
@@ -191,11 +191,6 @@ module.exports = [
     id: 'patch-40',
     desc: '输入框父组件(_input-area-container--opaque-main-area)透明；输入框主体 _mainArea 改毛玻璃（用户要求：父透明 + 输入框本体毛玻璃）。加 dark 前缀提特异性，压过 bgCssStr 后注入的 40% 背景',
     css: 'html[data-theme="dark"] body[data-vscode-theme-name] [class*="_input-area-container_"]{background:transparent !important;backdrop-filter:none !important;-webkit-backdrop-filter:none !important;}html[data-theme="dark"] body[data-vscode-theme-name] [class*="_input-area-container_"] [class*="_mainArea_"]{background:color-mix(in srgb,var(--wb-bg-primary) 40%,transparent) !important;backdrop-filter:blur(20px) saturate(1.15) !important;-webkit-backdrop-filter:blur(20px) saturate(1.15) !important;}',
-  },
-  {
-    id: 'patch-41',
-    desc: '插件暂存按钮(wbs-stash-inline)深色下改毛玻璃背景：半透明 bg-primary + backdrop blur，与输入框毛玻璃一致；颜色/阴影走主题变量',
-    css: 'html[data-theme="dark"] body[data-vscode-theme-name] .wbs-stash-inline{background:color-mix(in srgb,var(--wb-bg-primary) 62%,transparent) !important;color:var(--wb-color-text-primary) !important;backdrop-filter:blur(16px) saturate(1.15) !important;-webkit-backdrop-filter:blur(16px) saturate(1.15) !important;box-shadow:0 1px 4px rgba(0,0,0,0.4) !important;}',
   },
   {
     id: 'patch-42',
@@ -507,6 +502,18 @@ module.exports = [
     themeId: 'nebula',
     desc: '毛玻璃主题下左侧模板切换按钮与代码块复制提示去掉官方背景色，避免出现实心色块',
     css: ':is(html.cb-dark,html[data-theme="dark"]) body[data-vscode-theme-name] .teams-container .industry-template-switcher__host>button.wb-button.wb-button--secondary,:is(html.cb-dark,html[data-theme="dark"]) body[data-vscode-theme-name] .teams-container .industry-template-switcher__host>button.wb-button.wb-button--secondary:hover,:is(html.cb-dark,html[data-theme="dark"]) body[data-vscode-theme-name] .teams-container .industry-template-switcher__host>button.wb-button.wb-button--secondary:focus-visible,:is(html.cb-dark,html[data-theme="dark"]) body[data-vscode-theme-name] .teams-container .industry-template-switcher__host>button.wb-button.wb-button--secondary:active,:is(html.cb-dark,html[data-theme="dark"]) body[data-vscode-theme-name] .cr-code-like-box__header>span.cr-code-block__copy-tooltip,:is(html.cb-dark,html[data-theme="dark"]) body[data-vscode-theme-name] .cr-code-like-box__header>span.cr-code-block__copy-tooltip:hover,body[data-vscode-theme-name="IDE Night"] .teams-container .industry-template-switcher__host>button.wb-button.wb-button--secondary,body[data-vscode-theme-name="IDE Night"] .teams-container .industry-template-switcher__host>button.wb-button.wb-button--secondary:hover,body[data-vscode-theme-name="IDE Night"] .teams-container .industry-template-switcher__host>button.wb-button.wb-button--secondary:focus-visible,body[data-vscode-theme-name="IDE Night"] .teams-container .industry-template-switcher__host>button.wb-button.wb-button--secondary:active,body[data-vscode-theme-name="IDE Night"] .cr-code-like-box__header>span.cr-code-block__copy-tooltip,body[data-vscode-theme-name="IDE Night"] .cr-code-like-box__header>span.cr-code-block__copy-tooltip:hover{background:transparent !important;background-color:transparent !important;backdrop-filter:none !important;-webkit-backdrop-filter:none !important;box-shadow:none !important;}',
+  },
+  {
+    id: 'patch-105',
+    themeId: 'nebula',
+    desc: '毛玻璃发送按钮的实心圆底来自 SVG 复合路径；只保留原图的箭头子路径，停止/语音等其他图标不匹配。移除主题样式即恢复官方图标。',
+    css: 'html[data-wbs-theme-id="nebula"] .cr-send-button__icon svg[viewBox="0 0 32 32"]>path[d^="M16 32C24.8366"]{d:path("M16 19.2104C15.5529 19.2104 15.1342 19.4074 14.2968 19.8015L12.9369 20.4415C12.6768 20.5639 12.4283 20.6835 12.1915 20.7975C10.6375 21.5456 9.588 22.0508 9.0686 21.5057C8.5493 20.9605 9.1048 19.9367 9.9273 18.4208C10.0527 18.1898 10.1842 17.9474 10.3191 17.6935L14.2338 10.3247C14.3137 10.1743 14.3891 10.03 14.461 9.8925C15.0315 8.8018 15.3821 8.1315 16 8.1315C16.6179 8.1315 16.9685 8.8018 17.539 9.8925C17.6109 10.03 17.6863 10.1743 17.7662 10.3247L21.6809 17.6935C21.8158 17.9474 21.9473 18.1898 22.0727 18.4208C22.8952 19.9367 23.4507 20.9605 22.9314 21.5057C22.412 22.0508 21.3625 21.5456 19.8085 20.7975C19.5717 20.6835 19.3232 20.5639 19.0631 20.4415L17.7032 19.8015C16.8658 19.4074 16.4471 19.2104 16 19.2104Z") !important;fill:var(--wb-button-primary-fg) !important;}',
+  },
+  {
+    id: 'patch-106',
+    themeId: 'nebula',
+    desc: '毛玻璃下文件链接与代码复制控件透明：外层 tooltip 触发器不应有弹窗底色，内层文件标签使用独立的 cr-symbol 背景变量，也需单独清除。',
+    css: 'html[data-wbs-theme-id="nebula"] body[data-vscode-theme-name] .cr-clickable-path-tooltip-anchor,html[data-wbs-theme-id="nebula"] body[data-vscode-theme-name] .cr-clickable-path,html[data-wbs-theme-id="nebula"] body[data-vscode-theme-name] .cr-code-block__copy-tooltip,html[data-wbs-theme-id="nebula"] body[data-vscode-theme-name] .cr-code-block__copy-button{background:transparent !important;}',
   },
   /* 原 patch-82（AI 端快捷短语弹层 z-index 抬升）已移入 inject.js 常驻样式：
      theme-patches 仅在非默认主题时注入，默认浅色主题下会失效；层级修复不依赖主题，随注入脚本常驻更可靠。 */

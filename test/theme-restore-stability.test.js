@@ -22,7 +22,7 @@ test('default theme is restored after navigation just like a custom theme', asyn
   assert.deepEqual(applied, ['default']);
 });
 
-async function themeExpression(id, takeover = true, accountUid = null) {
+async function themeExpression(id, takeover = true, accountUid = null, options = {}) {
   const start = source.indexOf('async function applyThemeByCdp(id, options = {})');
   const end = source.indexOf('\n/**', start);
   let expression;
@@ -32,10 +32,10 @@ async function themeExpression(id, takeover = true, accountUid = null) {
     themeApplyGeneration: 0,
     currentAccount: () => accountUid ? { uid: accountUid } : null, getTheme: () => ({ dark: id !== 'default', colors: {} }),
     LOCAL_THEME_OVERRIDES: [], themeExtrasCss: () => '', themeVarsCss: () => '',
-    cdpSend: async (_, params) => { expression = params.expression; return { result: { value: { applied: true } } }; },
+    cdpSend: async (_, params) => { expression = params.expression; return { result: { value: { applied: true, ready: true } } }; },
   };
   vm.runInNewContext(source.slice(start, end), context);
-  await context.applyThemeByCdp(id);
+  await context.applyThemeByCdp(id, options);
   return expression;
 }
 
@@ -127,20 +127,20 @@ test('native theme choices cannot be shadowed by a custom theme file with the sa
 });
 
 
-test('theme takeover opt-out survives reload and never applies the saved theme', async () => {
+test('theme takeover opt-out follows native appearance on reload without forcing light', async () => {
   const start = source.indexOf('async function restoreSavedTheme()');
   const applied = [];
   const context = {
     PROFILE: { capabilities: { theme: true } }, cdp: { connected: true },
     DATA_DIR: '/test', path, fs: { existsSync: () => true, readFileSync: () => '{"id":"nebula"}' },
     readSessionState: () => ({ themeTakeoverEnabled: false }),
-    restoreNativeAppearanceByCdp: async () => {},
+    startNativeAppearanceSyncByCdp: async () => applied.push('native'),
     applyThemeByCdp: async id => applied.push(id),
   };
   vm.runInNewContext(source.slice(start, source.indexOf('\n/**', start)), context);
   await context.restoreSavedTheme();
   await context.restoreSavedTheme();
-  assert.deepEqual(applied, []);
+  assert.deepEqual(applied, ['native', 'native']);
 });
 
 test('session settings default to takeover and retain opt-out when editing other switches', () => {
@@ -166,49 +166,41 @@ test('manual theme changes still work with takeover off but install no theme gua
   assert.equal(observers.filter(o => o.active).length, 0);
 });
 
-test('turning off takeover releases the guard and custom CSS without rewriting native preferences', async () => {
+test('turning off takeover forces native light and removes special CSS and stale guards', async () => {
   const { context, document, observers } = renderer();
-  vm.runInNewContext(await themeExpression('nebula'), context);
-  const before = [...['agent-ui-theme', 'workbuddy.appearance.lastApplied'].map(key => context.localStorage.getItem(key))];
+  const uid = 'current';
+  vm.runInNewContext(await themeExpression('nebula', true, uid), context);
+  const oldGuard = context.window.__wbsThemeGuard;
+  document.adoptedStyleSheets = [
+    { cssRules: [{ cssText: ':root { --wb-bg-primary: pink; }' }] },
+    { cssRules: [{ cssText: '.official { color: red; }' }] },
+  ];
+  context.localStorage.setItem('workbuddy.appearance.lastApplied.css', JSON.stringify({ resourceKey: 'special', css: ':root { --wb-bg-primary: pink; }' }));
+  context.localStorage.setItem('workbuddy.appearance.mode::personal::personal::other', 'dark');
+  const daemon = {
+    cdp: { connected: true }, themeApplyGeneration: 0,
+    readSessionState: () => ({ themeTakeoverEnabled: false }),
+    startNativeAppearanceSyncByCdp: async () => {},
+    applyThemeByCdp: async (id, options) => {
+      assert.equal(id, 'default');
+      assert.equal(options.release, true);
+      vm.runInNewContext(await themeExpression(id, false, uid, options), context);
+    },
+  };
   const start = source.indexOf('async function releaseThemeByCdp()');
-  const daemon = { cdp: { connected: true }, themeApplyGeneration: 0, startNativeAppearanceSyncByCdp: async () => {}, cdpSend: async (_, params) => { vm.runInNewContext(params.expression, context); return {}; } };
-  vm.runInNewContext(source.slice(start, source.indexOf('\n/**', start)), daemon);
+  vm.runInNewContext(source.slice(start, source.indexOf('async function restoreNativeAppearanceByCdp()', start)), daemon);
   await daemon.releaseThemeByCdp();
   assert.equal(document.getElementById('wbs-theme-style'), null);
+  assert.equal(oldGuard.active, false);
   assert.equal(observers.filter(o => o.active).length, 0);
-  assert.equal(context.window.__wbsThemeGuard, undefined);
-  assert.equal(document.documentElement.getAttribute('data-theme'), 'dark');
-  assert.deepEqual(['agent-ui-theme', 'workbuddy.appearance.lastApplied'].map(key => context.localStorage.getItem(key)), before);
-});
-
-test('releasing takeover preserves the exact WorkBuddy special appearance snapshot', async () => {
-  const { context, document } = renderer();
-  const uid = 'account-special';
-  const accountKey = 'workbuddy.appearance.lastApplied::personal::' + uid;
-  const modeKey = 'workbuddy.appearance.mode::personal::personal::' + uid;
-  const special = JSON.stringify({ kind: 'theme', resourceKey: 'theme-ripple', appearance: 'light' });
-  const globalTheme = JSON.stringify({ theme: 'light', followSystem: false, vsCodeThemeName: 'IDE Light', vsCodeThemeKind: 'vscode-light' });
-  context.localStorage.setItem('workdaddy.theme.native-snapshot::' + uid, JSON.stringify({ keys: [
-    [accountKey, special], [modeKey, 'light'],
-    ['workbuddy.appearance.state::personal::' + uid, JSON.stringify({ currentTheme: 'theme-ripple' })],
-    ['agent-ui-theme', globalTheme],
-    ['workbuddy.appearance.lastApplied', special],
-    ['workbuddy.appearance.lastApplied.css', JSON.stringify({ resourceKey: 'theme-ripple', css: ':root{}' })],
-  ] }));
-  context.currentAccount = () => ({ uid });
-  context.cdp = { connected: true };
-  context.themeApplyGeneration = 0;
-  context.startNativeAppearanceSyncByCdp = async () => {};
-  context.cdpSend = async (_, params) => { vm.runInNewContext(params.expression, context); return {}; };
-  const start = source.indexOf('async function releaseThemeByCdp()');
-  vm.runInNewContext(source.slice(start, source.indexOf('\n/**', start)), context);
-  await context.releaseThemeByCdp();
-  assert.equal(context.localStorage.getItem(accountKey), special);
-  assert.equal(context.localStorage.getItem(modeKey), 'light');
-  assert.equal(context.localStorage.getItem('workbuddy.appearance.lastApplied'), special);
-  assert.equal(context.localStorage.getItem('workbuddy.appearance.lastApplied.css'), JSON.stringify({ resourceKey: 'theme-ripple', css: ':root{}' }));
+  assert.equal(document.documentElement.getAttribute('data-theme'), 'light');
+  assert.equal(document.body.getAttribute('data-vscode-theme-name'), 'IDE Light');
+  assert.equal(JSON.parse(context.localStorage.getItem('agent-ui-theme')).theme, 'light');
+  assert.equal(JSON.parse(context.localStorage.getItem('workbuddy.appearance.lastApplied')).resourceKey, 'light');
+  assert.equal(context.localStorage.getItem('workbuddy.appearance.lastApplied.css'), null);
   assert.equal(context.localStorage.getItem('workdaddy.theme.native-snapshot::' + uid), null);
-  assert.equal(document.documentElement.getAttribute('data-wbs-theme'), null);
+  assert.equal(context.localStorage.getItem('workbuddy.appearance.mode::personal::personal::other'), 'dark');
+  assert.equal(document.adoptedStyleSheets.length, 1);
 });
 
 test('native opt-out syncs WorkBuddy special CSS from the settings window', () => {
@@ -270,4 +262,196 @@ test('theme switch invalidates an in-flight automatic restore before CDP evaluat
   assert.match(apply, /applyGeneration !== themeApplyGeneration/);
   assert.match(release, /themeApplyGeneration\+\+/);
   assert.match(route, /themeApplyGeneration\+\+/);
+});
+
+
+test('a pending light reset cannot overwrite takeover re-enabled during a CDP retry', async () => {
+  let takeover = false;
+  let evaluations = 0;
+  const context = {
+    PROFILE: { capabilities: { theme: true } }, cdp: { connected: true, ws: { readyState: 1 } },
+    readSessionState: () => ({ themeTakeoverEnabled: takeover }), themeApplyGeneration: 0,
+    currentAccount: () => null, getTheme: () => ({ dark: false, colors: {} }),
+    LOCAL_THEME_OVERRIDES: [], themeExtrasCss: () => '', themeVarsCss: () => '',
+    cdpSend: async () => { evaluations++; takeover = true; context.themeApplyGeneration++; return { result: { value: { pending: true } } }; },
+    cdpActivatePage: async () => {},
+    setTimeout: resolve => resolve(),
+  };
+  const start = source.indexOf('async function applyThemeByCdp(id, options = {})');
+  vm.runInNewContext(source.slice(start, source.indexOf('\n/**', start)), context);
+  const result = await context.applyThemeByCdp('default', { release: true });
+  assert.equal(evaluations, 1);
+  assert.equal(result.applied, false);
+});
+
+
+test('release resets light once then follows official dark and special skins across reconnects', async () => {
+  const { context, document } = renderer();
+  const intervals = new Map();
+  let nextTimer = 0, lightResets = 0;
+  context.setInterval = fn => { intervals.set(++nextTimer, fn); return nextTimer; };
+  context.clearInterval = id => intervals.delete(id);
+  context.clearTimeout = () => {};
+  context.CSSStyleSheet = class {
+    replaceSync(css) { this.cssRules = [{ cssText: css }]; }
+  };
+  document.adoptedStyleSheets = [];
+  const tick = () => [...intervals.values()].forEach(fn => fn());
+  const daemon = {
+    PROFILE: { capabilities: { theme: true } }, cdp: { connected: true }, themeApplyGeneration: 0,
+    readSessionState: () => ({ themeTakeoverEnabled: false }),
+    cdpSend: async (_, params) => { vm.runInNewContext(params.expression, context); return {}; },
+    applyThemeByCdp: async (id, options) => {
+      lightResets++;
+      vm.runInNewContext(await themeExpression(id, false, 'current', options), context);
+    },
+  };
+  const start = source.indexOf('function nativeAppearanceSyncExpression()');
+  vm.runInNewContext(source.slice(start, source.indexOf('async function restoreNativeAppearanceByCdp()', start)), daemon);
+  const restoreStart = source.indexOf('async function restoreSavedTheme()');
+  vm.runInNewContext(source.slice(restoreStart, source.indexOf('\n/**', restoreStart)), daemon);
+  await daemon.releaseThemeByCdp();
+  assert.equal(document.documentElement.getAttribute('data-theme'), 'light');
+  assert.equal(intervals.size, 1, 'release must resume official settings-window synchronization');
+  context.localStorage.setItem('workbuddy.appearance.lastApplied', JSON.stringify({ resourceKey: 'dark', appearance: 'dark' }));
+  tick();
+  assert.equal(document.documentElement.getAttribute('data-theme'), 'dark');
+  const css = ':root { --wb-button-primary-bg: purple; }';
+  context.localStorage.setItem('workbuddy.appearance.lastApplied', JSON.stringify({ resourceKey: 'ripple', appearance: 'light' }));
+  context.localStorage.setItem('workbuddy.appearance.lastApplied.css', JSON.stringify({ resourceKey: 'ripple', css }));
+  tick();
+  assert.equal(document.documentElement.getAttribute('data-theme'), 'light');
+  assert.equal(document.adoptedStyleSheets.length, 1);
+  assert.equal(document.adoptedStyleSheets[0].cssRules[0].cssText, css);
+  await daemon.restoreSavedTheme();
+  await daemon.restoreSavedTheme();
+  tick();
+  assert.equal(lightResets, 1, 'reconnects must preserve the user-selected native theme');
+  assert.equal(intervals.size, 1, 'reconnects must replace the prior sync interval');
+  assert.equal(document.adoptedStyleSheets.length, 1);
+  assert.equal(context.localStorage.getItem('workbuddy.appearance.lastApplied.css'), JSON.stringify({ resourceKey: 'ripple', css }));
+  context.localStorage.removeItem('workbuddy.appearance.lastApplied.css');
+  context.localStorage.setItem('workbuddy.appearance.lastApplied', JSON.stringify({ resourceKey: 'dark', appearance: 'dark' }));
+  tick();
+  assert.equal(document.documentElement.getAttribute('data-theme'), 'dark');
+  assert.equal(document.adoptedStyleSheets.length, 0);
+});
+
+
+test('nebula prepares official dark before injecting glass styles without an intermediate light write', async () => {
+  const { context, document } = renderer();
+  const steps = [];
+  const setItem = context.localStorage.setItem;
+  context.localStorage.setItem = (key, value) => {
+    if (key === 'agent-ui-theme') steps.push(JSON.parse(value).theme);
+    setItem(key, value);
+  };
+  const appendChild = document.head.appendChild;
+  document.head.appendChild = node => {
+    if (node.id === 'wbs-theme-style') {
+      assert.equal(document.documentElement.getAttribute('data-theme'), 'dark');
+      assert.equal(document.body.getAttribute('data-vscode-theme-name'), 'IDE Night');
+      assert.equal(JSON.parse(context.localStorage.getItem('agent-ui-theme')).theme, 'dark');
+      steps.push('glass');
+    }
+    appendChild(node);
+  };
+  vm.runInNewContext(await themeExpression('nebula', true, 'current'), context);
+  assert.equal(steps[0], 'dark');
+  assert.ok(steps.includes('glass'));
+  assert.ok(!steps.includes('light'));
+});
+
+test('only nebula overrides primary button background to transparent', () => {
+  const context = { loadThemeVars: () => require('../scripts/theme-vars.js') };
+  const start = source.indexOf('function themeVarsCss(isDark, id)');
+  vm.runInNewContext(source.slice(start, source.indexOf('function readBackgroundBlur()', start)), context);
+  const css = context.themeVarsCss(true, 'nebula');
+  assert.match(css, /html\[data-wbs-theme-id\]/);
+  assert.match(css, /body\[data-vscode-theme-name\]\{[^}]*--wb-button-primary-bg:transparent(?: !important)?;/);
+  assert.match(css, /--wb-bg-secondary:transparent !important/);
+  assert.match(css, /\.dark/);
+  for (const [dark, id] of [[false, 'default'], [true, 'dark'], [false, 'eye-care'], [true, 'cyber-purple']]) {
+    assert.doesNotMatch(context.themeVarsCss(dark, id), /--wb-button-primary-bg:transparent/);
+  }
+});
+
+
+test('nebula releases custom CSS and guards, waits for official dark, then reapplies glass', async () => {
+  const { context, document, observers } = renderer();
+  vm.runInNewContext(await themeExpression('nebula', true, 'current'), context);
+  const stages = [];
+  const daemon = {
+    PROFILE: { capabilities: { theme: true } }, cdp: { connected: true }, themeApplyGeneration: 0,
+    readSessionState: () => ({ themeTakeoverEnabled: true }), currentAccount: () => ({ uid: 'current' }),
+    getTheme: id => ({ dark: id !== 'default', colors: {} }),
+    LOCAL_THEME_OVERRIDES: [], themeExtrasCss: () => '', themeVarsCss: () => '',
+    cdpSend: async (_, params) => {
+      if (params.awaitPromise) {
+        stages.push('settle');
+        assert.equal(document.getElementById('wbs-theme-style'), null);
+        assert.equal(observers.filter(o => o.active).length, 0);
+        assert.equal(document.documentElement.getAttribute('data-theme'), 'dark');
+        assert.equal(JSON.parse(context.localStorage.getItem('agent-ui-theme')).theme, 'dark');
+        return { result: { value: { ready: true } } };
+      }
+      const value = vm.runInNewContext(params.expression, context);
+      stages.push(document.getElementById('wbs-theme-style') ? 'glass' : 'native');
+      return { result: { value } };
+    },
+  };
+  const start = source.indexOf('async function applyThemeByCdp(id, options = {})');
+  vm.runInNewContext(source.slice(start, source.indexOf('\n/**', start)), daemon);
+  await daemon.applyThemeByCdp('nebula');
+  assert.deepEqual(stages, ['native', 'settle', 'glass']);
+  assert.equal(observers.filter(o => o.active).length, 1);
+});
+
+test('native dark clears a stale skin marker before notifying the official theme observer', async () => {
+  for (const uid of ['current', null]) {
+    const { context, document } = renderer();
+    const h = document.documentElement, b = document.body;
+    h.setAttribute('data-skin', 'theme-tkbera');
+    let officialMode = 'light';
+    const set = b.setAttribute;
+    b.setAttribute = (name, value) => {
+      set(name, value);
+      // WorkBuddy ThemeManager ignores theme-kind notifications while a skin is active.
+      if (name === 'data-vscode-theme-kind' && !h.getAttribute('data-skin')) officialMode = value === 'vscode-dark' ? 'dark' : 'light';
+    };
+    // No CSS cache or adopted sheet remains: marker cleanup must not depend on them.
+    vm.runInNewContext(await themeExpression('dark', true, uid, { nativeOnly: true }), context);
+    assert.equal(h.getAttribute('data-skin'), null);
+    assert.equal(officialMode, 'dark');
+  }
+});
+
+test('clearing a native skin preserves its stylesheet attachment for later official selections', async () => {
+  const { context, document } = renderer();
+  const skin = { cssRules: [{ cssText: ':root{--wb-bg-primary:pink}' }], replaceSync(css) { this.cssRules = css ? [{ cssText: css }] : []; } };
+  document.adoptedStyleSheets = [skin];
+  document.documentElement.setAttribute('data-skin', 'special');
+  context.localStorage.setItem('workbuddy.appearance.lastApplied.css', JSON.stringify({ resourceKey: 'special', css: ':root{--wb-bg-primary:pink}' }));
+  vm.runInNewContext(await themeExpression('default', true, 'current'), context);
+  assert.equal(document.adoptedStyleSheets[0], skin);
+  assert.equal(skin.cssRules.length, 0);
+  skin.replaceSync(':root{--wb-bg-primary:blue}');
+  assert.equal(document.adoptedStyleSheets[0].cssRules[0].cssText, ':root{--wb-bg-primary:blue}');
+});
+
+test('nebula resolves transparent constants even from an existing installed theme file', () => {
+  const start = source.indexOf('function getTheme(id)');
+  const ctx = { THEMES_DIR: '/themes', path, BUILTIN_THEMES: {}, fs: {
+    existsSync: () => true,
+    readFileSync: () => JSON.stringify({ id: 'nebula', image: 'custom.webp', colors: {
+      '--wb-button-primary-bg': 'white', '--wb-bg-secondary': '#111113', '--wb-color-text-primary': '#eee',
+    } }),
+  } };
+  vm.runInNewContext(source.slice(start, source.indexOf('\n/**', start)), ctx);
+  const theme = ctx.getTheme('nebula');
+  assert.equal(theme.colors['--wb-button-primary-bg'], 'transparent');
+  assert.equal(theme.colors['--wb-bg-secondary'], 'transparent');
+  assert.equal(theme.colors['--wb-color-text-primary'], '#eee');
+  assert.equal(theme.image, 'custom.webp');
+  assert.equal(ctx.getTheme('other').colors['--wb-bg-secondary'], '#111113');
 });
