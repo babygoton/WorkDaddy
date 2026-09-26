@@ -32,6 +32,14 @@ test('theme pane keeps avatar controls visible and gates wallpaper controls to f
   assert.match(inject, /syncWallpaperCardVisibility\('nebula'\)/);
 });
 
+test('wallpaper loading leaves the loading state on daemon timeout and can retry', () => {
+  const load = inject.slice(inject.indexOf('function loadWallpapers(force)'), inject.indexOf('\n    function setOpen(', inject.indexOf('function loadWallpapers(force)')));
+  assert.match(load, /wallpaperTimeout/);
+  assert.match(load, /Promise\.race\(\[wallpaperRequest, wallpaperTimeout\]\)/);
+  assert.match(load, /grid\.dataset\.loaded = ''/);
+  assert.match(load, /壁纸加载失败（daemon 不可达）/);
+});
+
 test('theme pane uses the requested blur labels and frosted glass switch', () => {
   assert.match(inject, /<div class="wbs-pcard-title">毛玻璃主题<\/div>/);
   assert.doesNotMatch(inject, /data-wbs-theme-option=/);
