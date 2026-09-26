@@ -168,10 +168,13 @@ test('usage charts derive all series from WorkBuddy theme tokens', () => {
   assert.ok(colors);
   const palette = source.match(/\.wbs-trend-panel,\.wbs-usage-pie-section\{([^}]+)\}/)[1];
   assert.doesNotMatch(palette, /#[0-9a-f]|rgba?\(/i);
-  assert.match(palette, /--wbs-trend-series-1:var\(--wb-button-primary-bg\)/);
-  assert.match(palette, /--wbs-trend-series-2:color-mix\(in srgb,var\(--wb-button-primary-bg\)/);
-  assert.match(palette, /--wbs-trend-series-12:color-mix\(in srgb,var\(--wb-button-primary-bg\)/);
+  assert.match(palette, /--wbs-chart-base:var\(--wbs-credit-theme-color,var\(--wbs-primary\)\)/);
+  assert.match(palette, /--wbs-trend-series-1:var\(--wbs-chart-base\)/);
+  assert.match(palette, /--wbs-trend-series-2:color-mix\(in srgb,var\(--wbs-chart-base\)/);
+  assert.match(palette, /--wbs-trend-series-12:color-mix\(in srgb,var\(--wbs-chart-base\)/);
   assert.doesNotMatch(palette, /--wb-palette-(blue|purple|green|cyan|red|orange)-5/);
+  assert.match(source, /html\[data-theme="dark"\][\s\S]*--wbs-primary:#7f77dd/);
+  assert.match(source, /--wbs-credit-theme-color:var\(--wb-button-primary-bg\)/);
   assert.equal((palette.match(/--wbs-trend-series-\d+:/g) || []).length, 12);
   const chart = source.slice(source.indexOf('function renderUsageTrendChart'), source.indexOf('function usageTimeSegmentHtml'));
   assert.doesNotMatch(chart, /--wbs-primary|34,197,94|#[0-9a-f]{3,8}/i);
