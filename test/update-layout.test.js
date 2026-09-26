@@ -1,6 +1,7 @@
 const assert = require('node:assert/strict');
 const childProcess = require('node:child_process');
 const fs = require('node:fs');
+const net = require('node:net');
 const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
@@ -427,6 +428,23 @@ test('Windows launcher keeps local port probing and profile CDP candidates defin
   assert.match(launcher, /'workbuddy-cn': \[9222/);
   assert.match(launcher, /'workbuddy-ai': \[9223/);
   assert.match(launcher, /isTargetForProfile\(target, PROFILE\)/);
+});
+
+test('Windows launcher has an OS-assigned CDP fallback when profile ports are unavailable', async () => {
+  const launcherSource = read('win-launcher.js');
+  assert.match(launcherSource, /function reserveEphemeralCdpPort\(\)/);
+  assert.match(launcherSource, /server\.listen\(\{ host: HOST, port: 0 \}/);
+  assert.match(launcherSource, /const ephemeralPort = await reserveEphemeralCdpPort\(\)/);
+  assert.match(launcherSource, /CDP_PORT_DYNAMIC/);
+
+  const launcher = require(path.join(repoRoot, 'scripts', 'win-launcher.js'));
+  const port = await launcher.reserveEphemeralCdpPort();
+  assert.ok(Number.isInteger(port) && port >= 1024 && port <= 65535);
+  await new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.once('error', reject);
+    server.listen({ host: '127.0.0.1', port }, () => server.close((error) => error ? reject(error) : resolve()));
+  });
 });
 
 test('Windows launcher propagates the WorkBuddy AI UI port to child processes', { skip: process.platform !== 'win32' }, () => {

@@ -84,6 +84,7 @@ const cliCdpPort = process.argv.find((arg) => /^--cdp-port=\d+$/i.test(arg));
 const HAS_EXPLICIT_CDP_PORT = Boolean(process.env.WBSWITCH_CDP_PORT || cliCdpPort);
 let CDP_PORT = parseInt(process.env.WBSWITCH_CDP_PORT || (cliCdpPort ? cliCdpPort.split('=')[1] : '') || String(DEFAULT_CDP_PORT), 10);
 process.env.WBSWITCH_CDP_PORT = String(CDP_PORT);
+let CDP_PORT_DYNAMIC = false;
 const CDP_PORT_FILE = path.join(DATA_DIR, 'cdp-port.json');
 // 便携版/低速磁盘上的 WorkBuddy 首次启动可能超过 20 秒；超时只应在足够长的窗口后报告。
 const CDP_STARTUP_TIMEOUT_MS = 60000;
@@ -248,7 +249,7 @@ function cdpPortCandidates() {
   const result = [];
   const profilePorts = PROFILE_CDP_PORTS[PROFILE.id] || [DEFAULT_CDP_PORT];
   const add = (port) => { if (validCdpPort(port) && !result.includes(port)) result.push(port); };
-  if (HAS_EXPLICIT_CDP_PORT || profilePorts.includes(CDP_PORT)) add(CDP_PORT);
+  if (HAS_EXPLICIT_CDP_PORT || profilePorts.includes(CDP_PORT) || CDP_PORT_DYNAMIC) add(CDP_PORT);
   const savedPort = readCdpPortFile();
   if (profilePorts.includes(savedPort)) add(savedPort);
   for (const port of profilePorts) add(port);
@@ -280,6 +281,23 @@ function isLocalPortAvailable(port) {
     };
     server.once('error', () => finish(false));
     server.listen({ host: HOST, port }, () => finish(true));
+  });
+}
+
+function reserveEphemeralCdpPort() {
+  return new Promise((resolve) => {
+    const server = net.createServer();
+    let settled = false;
+    const finish = (port) => {
+      if (settled) return;
+      settled = true;
+      try { server.close(() => resolve(validCdpPort(port) ? port : 0)); } catch (_) { resolve(validCdpPort(port) ? port : 0); }
+    };
+    server.once('error', () => finish(0));
+    server.listen({ host: HOST, port: 0 }, () => {
+      const address = server.address();
+      finish(address && typeof address === 'object' ? Number(address.port) : 0);
+    });
   });
 }
 
@@ -352,7 +370,16 @@ async function configureCdpPort() {
       return port;
     }
   }
-  throw new Error('当前 profile 的 CDP 端口均被占用，无法启动 WorkBuddy');
+  const ephemeralPort = await reserveEphemeralCdpPort();
+  if (ephemeralPort) {
+    CDP_PORT = ephemeralPort;
+    CDP_PORT_DYNAMIC = true;
+    process.env.WBSWITCH_CDP_PORT = String(ephemeralPort);
+    writeCdpPortFile(ephemeralPort);
+    log('固定 CDP 端口均不可用，选择系统动态端口: ' + ephemeralPort);
+    return ephemeralPort;
+  }
+  throw new Error('当前 profile 的固定 CDP 端口均不可用，且无法分配备用端口，无法启动 WorkBuddy');
 }
 
 function strictPowerShellLines(cmd) {
@@ -1788,4 +1815,5 @@ module.exports = {
   tasklistProcessIds,
   workBuddyRunning,
   cdpPortCandidates,
+  reserveEphemeralCdpPort,
 };
