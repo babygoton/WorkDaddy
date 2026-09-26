@@ -420,8 +420,8 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 // 1.2.145：识别仅 updated_at 的激活漂移，清除无变更脏标记；无结果任务不再弹同步进度窗口。
 // 1.2.126：5.6 加密账号改为密文原样备份、内存解密；导入兼容明文 token，
 //          刷新结果不把解密后的 token 写回加密备份。
-const DAEMON_VERSION = '1.2.176';
-const DAEMON_BUILD_ID = 'release-1.2.176-20260926-clear-native-skin';
+const DAEMON_VERSION = '1.2.181';
+const DAEMON_BUILD_ID = 'release-1.2.181-20260926-restore-native-theme-chart-colors';
 const usageReporter = createUsageReporter({ profile: PROFILE.id, version: DAEMON_VERSION });
 configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const automationDiscovery = createAutomationDiscovery({
@@ -3267,6 +3267,8 @@ function automationSwitchAccount(account, options = {}) {
       if (active && active.uid === uid) return { ok: true, uid, switched: false };
       automationSwitchProgress(options, options.restore ? 'restoring-account' : 'switching-account');
       releaseRendererReload = beginRendererReloadPriority();
+      await preserveAccountSwitchTheme(uid);
+      if (options.isCancelled && options.isCancelled()) throw new Error('任务已停止');
       const acct = switchTo(DATA_DIR, uid, log);
       pendingAutomationAccountSwitch = { account: { uid: acct.uid, nickname: acct.nickname } };
       await reloadWorkBuddyPage();
@@ -6910,6 +6912,68 @@ function getTheme(id) {
   return null;
 }
 
+// 在官方加载目标账号前迁移当前外观。WorkBuddy syncCloudTheme 优先消费
+// currentTheme + pendingSync.theme，再由官方队列同步云端；只写 currentTheme
+// 会被启动时的旧云端选择覆盖。这里不安装 hook，也不改其他账号或皮肤 CSS。
+function accountSwitchThemeExpression(targetUid) {
+  return `(async function () {
+    var uid = ${JSON.stringify(targetUid)};
+    if (typeof uid !== 'string' || !/^[A-Za-z0-9_-]{1,160}$/.test(uid)) return { prepared: false };
+    var theme;
+    try { theme = JSON.parse(localStorage.getItem('workbuddy.appearance.lastApplied') || 'null'); } catch (_) {}
+    if (!theme || typeof theme.resourceKey !== 'string' || !/^[a-z0-9][a-z0-9_-]{0,63}$/.test(theme.resourceKey)) return { prepared: false };
+    // 官方跨窗口初始化会把 appearanceTheme 写回当前账号并清掉 pendingSync。
+    // 仅清这个旧的跨窗口缓存，让账号状态与待同步选择成为启动依据；后续手动
+    // 换肤仍会由官方 setPreference 写入新的值，不需要拦截或替换任何函数。
+    if (typeof globalThis.wb?.config?.setPreference === 'function') {
+      await globalThis.wb.config.setPreference('appearanceTheme', null);
+    }
+    var resource = theme.resourceKey;
+    var mode = theme.appearance === 'dark' || resource === 'dark' ? 'dark' : 'light';
+    var statePrefix = 'workbuddy.appearance.state::';
+    var lastPrefix = 'workbuddy.appearance.lastApplied::';
+    var modePrefix = 'workbuddy.appearance.mode::';
+    var suffix = '::' + uid;
+    var scopes = new Set(['personal']);
+    var modeKeys = new Set([modePrefix + 'personal::personal' + suffix]);
+    for (var i = 0; i < localStorage.length; i++) {
+      var key = localStorage.key(i);
+      if (!key || !key.endsWith(suffix)) continue;
+      if (key.indexOf(statePrefix) === 0) scopes.add(key.slice(statePrefix.length, -suffix.length));
+      else if (key.indexOf(lastPrefix) === 0) scopes.add(key.slice(lastPrefix.length, -suffix.length));
+      else if (key.indexOf(modePrefix) === 0) {
+        modeKeys.add(key);
+        var namespace = key.slice(modePrefix.length, -suffix.length).split('::');
+        if (namespace.length === 2 && namespace[1]) scopes.add(namespace[1]);
+      }
+    }
+    scopes.forEach(function (scope) {
+      var key = statePrefix + scope + suffix, previous = {};
+      try { previous = JSON.parse(localStorage.getItem(key) || '{}') || {}; } catch (_) {}
+      var state = Object.assign({}, previous, { currentTheme: resource,
+        pendingSync: Object.assign({}, previous.pendingSync, { theme: resource }) });
+      localStorage.setItem(key, JSON.stringify(state));
+      localStorage.setItem(lastPrefix + scope + suffix, JSON.stringify(theme));
+    });
+    modeKeys.forEach(function (key) { localStorage.setItem(key, mode); });
+    return { prepared: true };
+  })()`;
+}
+
+async function preserveAccountSwitchTheme(targetUid) {
+  if (!PROFILE.capabilities.theme || !cdp.connected) return false;
+  try {
+    const result = await cdpSend('Runtime.evaluate', {
+      expression: accountSwitchThemeExpression(targetUid), returnByValue: true, awaitPromise: true, timeout: 1500,
+    });
+    return !!(result && !result.exceptionDetails && result.result && result.result.value && result.result.value.prepared);
+  } catch (_) {
+    // 外观迁移失败不阻断登录文件切换；不输出账号配置、皮肤资源或 CDP 异常内容。
+    log('[theme] 切换前外观同步未完成');
+    return false;
+  }
+}
+
 // WorkBuddy 的外观设置在独立窗口中运行。关闭接管后，主会话窗口不会
 // 自动收到特殊皮肤的 adoptedStyleSheet，因此只同步 WorkBuddy 自己保存
 // 的 CSS 资源；浅色/深色仍由 WorkBuddy 原生状态负责。
@@ -6989,9 +7053,13 @@ async function releaseThemeByCdp() {
   themeApplyGeneration++;
   if (!cdp.connected) return;
   const releaseGeneration = themeApplyGeneration;
-  // 仅在关闭开关时切一次官方浅色，随后继续同步用户在官方设置中选择的外观。
+  // 先释放 WorkDaddy 注入，再恢复接管前保存的 WorkBuddy 外观；没有快照时
+  // 才由官方同步流程决定当前主题。
   const result = await applyThemeByCdp('default', { release: true });
-  if (releaseGeneration === themeApplyGeneration) await startNativeAppearanceSyncByCdp();
+  if (releaseGeneration === themeApplyGeneration) {
+    await restoreNativeAppearanceByCdp();
+    if (releaseGeneration === themeApplyGeneration) await startNativeAppearanceSyncByCdp();
+  }
   return result;
 }
 
@@ -7044,11 +7112,8 @@ async function restoreSavedTheme() {
     await startNativeAppearanceSyncByCdp();
     return;
   }
-  let id = 'default';
-  try {
-    const f = path.join(DATA_DIR, 'current-theme.json');
-    if (fs.existsSync(f)) id = String(JSON.parse(fs.readFileSync(f, 'utf8')).id || 'default');
-  } catch (_) {}
+  // WorkDaddy 主题接管固定为毛玻璃；官方浅色/深色由关闭接管后的 WorkBuddy 自己管理。
+  let id = 'nebula';
   await applyThemeByCdp(id, { automatic: true });
 }
 
@@ -7393,6 +7458,14 @@ async function applyThemeByCdp(id, options = {}) {
         if (kept.length !== document.adoptedStyleSheets.length) document.adoptedStyleSheets = kept;
       } catch (_) {}
     }
+    function wbsWriteAppearanceState(key, mode) {
+      var state = {};
+      try { state = JSON.parse(localStorage.getItem(key) || '{}') || {}; } catch (_) {}
+      state.currentTheme = mode;
+      // 切换账号前留下的官方待同步状态必须保留到云端初始化完成。
+      if (state.pendingSync && state.pendingSync.theme) state.pendingSync.theme = mode;
+      localStorage.setItem(key, JSON.stringify(state));
+    }
     function wbsSyncAppearanceKeys(mode) {
       try {
         if (!WBS_UID) return;
@@ -7405,7 +7478,7 @@ async function applyThemeByCdp(id, options = {}) {
           if (k.indexOf('workbuddy.appearance.mode::') === 0) {
             localStorage.setItem(k, mode);
           } else if (k.indexOf('workbuddy.appearance.state::') === 0) {
-            try { localStorage.setItem(k, JSON.stringify({ currentTheme: mode })); } catch (e3) {}
+            try { wbsWriteAppearanceState(k, mode); } catch (e3) {}
           } else if (k.indexOf('workbuddy.appearance.lastApplied::') === 0) {
             try { localStorage.setItem(k, JSON.stringify(builtin)); accountLastAppliedFound = true; } catch (e4) {}
           }
@@ -7413,7 +7486,7 @@ async function applyThemeByCdp(id, options = {}) {
         // 当前账号兜底键（个人版默认 accountType=personal、eid=personal），保证新账号也跟随
         if (WBS_UID) {
           localStorage.setItem('workbuddy.appearance.mode::personal::personal::' + WBS_UID, mode);
-          try { localStorage.setItem('workbuddy.appearance.state::personal::' + WBS_UID, JSON.stringify({ currentTheme: mode })); } catch (e5) {}
+          try { wbsWriteAppearanceState('workbuddy.appearance.state::personal::' + WBS_UID, mode); } catch (e5) {}
           if (!accountLastAppliedFound) {
             try { localStorage.setItem('workbuddy.appearance.lastApplied::personal::' + WBS_UID, JSON.stringify(builtin)); } catch (e6) {}
           }
@@ -7455,11 +7528,10 @@ async function applyThemeByCdp(id, options = {}) {
     if (${takeoverEnabled || options.release || options.nativeOnly ? 'true' : 'false'}) wbsPrepareNativeAppearance(${JSON.stringify(id === 'nebula' || options.nativeOnly ? 'dark' : 'light')});
     if (${options.release || options.nativeOnly ? 'true' : 'false'}) {
       wbsClearNativeCustomCss();
-      // 清掉特殊皮肤缓存与旧快照，重载后仍由官方浅色设置启动。
-      try {
-        localStorage.removeItem('workbuddy.appearance.lastApplied.css');
-        if (${options.release ? 'true' : 'false'} && WBS_UID) localStorage.removeItem('workdaddy.theme.native-snapshot::' + WBS_UID);
-      } catch (_) {}
+        // 清掉特殊皮肤缓存；外观快照留给 releaseThemeByCdp 立即恢复。
+        try {
+          localStorage.removeItem('workbuddy.appearance.lastApplied.css');
+        } catch (_) {}
     }
     var s = document.getElementById('wbs-theme-style');
     if (${id === 'default' || id === 'dark' ? 'true' : 'false'}) {
@@ -8743,7 +8815,7 @@ function handleApi(req, res) {
         const state = setSessionSwitch(body.name, body.enabled);
         if (body.name === 'themeTakeoverEnabled') {
           themeApplyGeneration++;
-          if (state.themeTakeoverEnabled) await restoreSavedTheme();
+          if (state.themeTakeoverEnabled) await applyThemeByCdp('nebula');
           else await releaseThemeByCdp();
         }
         return json(res, 200, { ok: true, ...state });
@@ -10792,6 +10864,7 @@ function handleApi(req, res) {
             currentConversationRow = { ...ownerRows[0], id: currentConversationId };
           }
         }
+        if (sourceUid !== uid) await preserveAccountSwitchTheme(uid);
         const acct = switchTo(DATA_DIR, uid, log);
         const hint = '登录文件已切换，请重启 WorkBuddy 使新账号生效';
         let reloaded = false;

@@ -17,6 +17,7 @@ function harness(rules, owner = 'source') {
     beginRendererReloadPriority: () => () => events.push('release-reload'),
     assertAccountSwitchIdle: async () => () => events.push('release-switch'),
     currentAccount: () => ({ uid: 'source' }),
+    preserveAccountSwitchTheme: async uid => { assert.equal(uid, 'target'); events.push('preserve-theme'); },
     sqliteQuery: async () => owner ? [{ user_id: owner, cwd: '/current-workspace' }] : [],
     switchTo: (_, uid) => { events.push('switch'); return { uid }; },
     reloadWorkBuddyPage: async () => { events.push('reload'); },
@@ -43,7 +44,7 @@ test('switch route reloads without syncing when no rule is enabled', async () =>
   assert.equal(result.status, 200);
   assert.equal(result.body.reloaded, true);
   assert.equal(h.jobs.length, 0);
-  assert.deepEqual(h.events, ['switch', 'reload', 'release-reload', 'release-switch']);
+  assert.deepEqual(h.events, ['preserve-theme', 'switch', 'reload', 'release-reload', 'release-switch']);
 });
 
 for (const rules of [

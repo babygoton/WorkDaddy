@@ -23,19 +23,18 @@ test('theme pane exposes a percentage blur slider and syncs it with the daemon',
   assert.match(inject, /JSON\.stringify\(\{ blur: pct \/ 100 \}\)/);
 });
 
-test('theme pane keeps avatar controls visible and gates wallpaper controls to WorkDaddy theme', () => {
+test('theme pane keeps avatar controls visible and gates wallpaper controls to frosted takeover', () => {
   assert.doesNotMatch(inject, /背景与头像/);
   assert.match(inject, /wbs-avatar-card/);
   assert.match(inject, /<div class="wbs-pcard wbs-wallpaper-card wbs-theme-managed" id="wbs-wallpaper-card" style="display:none">/);
   assert.match(inject, /function syncWallpaperCardVisibility\(themeId\)/);
-  assert.match(inject, /var visible = sessState\.themeTakeover && themeId === 'nebula'/);
-  assert.match(inject, /syncWallpaperCardVisibility\(id\)/);
-  assert.match(inject, /syncWallpaperCardVisibility\(cur\)/);
+  assert.match(inject, /var visible = sessState\.themeTakeover/);
+  assert.match(inject, /syncWallpaperCardVisibility\('nebula'\)/);
 });
 
-test('theme pane uses the requested blur labels and nebula tab', () => {
-  // 主题第 4 个 tab 文案为「毛玻璃」，且词典含英文 Frosted glass
-  assert.match(inject, /data-wbs-theme-option="nebula">毛玻璃<\/button>/);
+test('theme pane uses the requested blur labels and frosted glass switch', () => {
+  assert.match(inject, /<div class="wbs-pcard-title">毛玻璃主题<\/div>/);
+  assert.doesNotMatch(inject, /data-wbs-theme-option=/);
   assert.match(inject, /'毛玻璃': 'Frosted glass'/);
   assert.doesNotMatch(inject, /背景毛玻璃<span class="wbs-blur-hint">0% 不调节背景图<\/span>/);
   assert.match(inject, /<label class="wbs-blur-label" for="wbs-bg-blur-range">背景毛玻璃<\/label>/);

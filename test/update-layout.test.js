@@ -958,7 +958,7 @@ test('account cards keep the compact three-row layout', () => {
   assert.doesNotMatch(script, /data-tip="' \+ attrTip \+ '" title=/);
   assert.match(script, /creditOpacity\(row\.days\)/);
   assert.match(script, /creditOpacity\(segment\.expiresAt/);
-  assert.match(script, /\.wbs-credit-segment,\.wbs-credit-summary-fill\{background:rgba\(var\(--wbs-primary-rgb,34,197,94\),var\(--wbs-credit-alpha,1\)\)/);
+  assert.match(script, /\.wbs-credit-segment,\.wbs-credit-summary-fill\{background:color-mix\(in srgb,var\(--wbs-credit-theme-color,var\(--wbs-primary\)\) calc\(var\(--wbs-credit-alpha,1\) \* 100%\),transparent\)/);
   ['dark', 'cyber-purple', 'nebula'].forEach((themeId) => {
     assert.match(script, new RegExp('html\\[data-wbs-theme-id="' + themeId + '"\\][\\s\\S]*--wbs-primary-rgb:127,119,221'));
   });

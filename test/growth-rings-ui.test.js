@@ -148,6 +148,17 @@ test('growth primary is green in light and blue-purple in dark, cyber, and glass
   assert.match(inject, /\.wbs-growth-tier b\{[^}]*color:var\(--wb-color-text-secondary/);
 });
 
+test('growth status colors reuse WorkBuddy primary theme constants', () => {
+  const vars = inject.match(/\.wbs-daily-rings,\.wbs-status-popover\{[^']+/);
+  assert.ok(vars);
+  assert.match(vars[0], /--wbs-ring-growth:var\(--wb-button-primary-bg/);
+  assert.match(vars[0], /--wbs-ring-cat:var\(--wb-button-primary-bg/);
+  assert.match(vars[0], /--wbs-tip-credit:var\(--wb-button-primary-bg/);
+  assert.match(vars[0], /--wbs-liquid-fill:var\(--wb-button-primary-bg/);
+  assert.match(inject, /\.wbs-session-copy-icon\{[^}]*var\(--wb-button-primary-bg/);
+  assert.doesNotMatch(inject, /\.wbs-session-copy-summary-line\.is-copied\{color:#238a5b/);
+});
+
 test('growth actions open the official center and never write through local growth routes', async () => {
   assert.match(inject, /https:\/\/www\.workbuddy\.cn\/profile\/growth-center/);
   assert.match(inject, /data-wbs-growth-official/);
@@ -275,4 +286,15 @@ test('travel countdown formats a live arrival time without dropping hours or zer
   assert.equal(format(now + 3_723_000, now), '1小时 02分 03秒');
   assert.equal(format(now + 65_000, now), '01分 05秒');
   assert.equal(format(now, now), '');
+});
+
+test('growth plan primary actions use WorkBuddy button theme tokens', () => {
+  const action = inject.match(/\.wbs-growth-task-action\{[^']+/);
+  assert.ok(action, 'growth action style exists');
+  assert.match(action[0], /var\(--wb-button-primary-bg/);
+  assert.match(action[0], /var\(--wb-button-primary-fg/);
+  assert.doesNotMatch(action[0], /color:var\(--wbs-ring-growth\)/);
+  const hover = inject.match(/\.wbs-growth-task-action:hover[^']+/);
+  assert.ok(hover);
+  assert.match(hover[0], /var\(--wb-button-primary-hover-bg/);
 });

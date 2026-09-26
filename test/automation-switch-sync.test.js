@@ -9,11 +9,12 @@ const tick = () => new Promise(resolve => setImmediate(resolve));
 
 function harness() {
   let active = { uid: 'a' }, reloadPriority = 0;
-  const switches = [], jobs = [], phases = [];
+  const switches = [], jobs = [], phases = [], themeTargets = [];
   const ctx = {
     PROFILE: { kind: 'workbuddy' }, DATA_DIR: '/synthetic', log() {},
     cdp: { connected: true }, cdpSend: async () => ({ result: { value: false } }),
-    currentAccount: () => active, switchTo: (_dir, uid) => { switches.push(uid); return (active = { uid }); },
+    preserveAccountSwitchTheme: async uid => { themeTargets.push(uid); },
+    currentAccount: () => active, switchTo: (_dir, uid) => { assert.equal(themeTargets.at(-1), uid, 'appearance is prepared before replacing the account'); switches.push(uid); return (active = { uid }); },
     reloadWorkBuddyPage: async () => {}, pendingAutomationAccountSwitch: null,
     dispatchAutomationEvent() {}, mainFrameNavigationSerial: 1,
     beginRendererReloadPriority: () => { reloadPriority++; return () => { reloadPriority--; }; },
@@ -116,4 +117,17 @@ test('an empty message-file session does not block automation account switching'
   h.jobs[0].finish('partial', [{ status: 'failed', error: '会话消息文件没有消息，未同步' }]);
   await run;
   assert.deepEqual(h.switches, ['b']);
+});
+
+
+test('cancelling during theme preparation prevents account replacement', async () => {
+  const h = harness();
+  let release, cancelled = false;
+  h.ctx.preserveAccountSwitchTheme = () => new Promise(resolve => { release = resolve; });
+  const run = h.ctx.automationSwitchAccount({ uid: 'b' }, { ...h.options, isCancelled: () => cancelled });
+  await tick(); await tick();
+  cancelled = true; release();
+  await assert.rejects(run, /任务已停止/);
+  assert.deepEqual(h.switches, []);
+  assert.equal(h.priority(), 0);
 });

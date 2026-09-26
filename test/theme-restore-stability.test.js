@@ -7,7 +7,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 const source = fs.readFileSync(path.join(__dirname, '../scripts/daemon.js'), 'utf8');
 
-test('default theme is restored after navigation just like a custom theme', async () => {
+test('theme takeover always restores the frosted theme after navigation', async () => {
   const start = source.indexOf('async function restoreSavedTheme()');
   const end = source.indexOf('\n/**', start);
   const applied = [];
@@ -19,7 +19,7 @@ test('default theme is restored after navigation just like a custom theme', asyn
   };
   vm.runInNewContext(source.slice(start, end), context);
   await context.restoreSavedTheme();
-  assert.deepEqual(applied, ['default']);
+  assert.deepEqual(applied, ['nebula']);
 });
 
 async function themeExpression(id, takeover = true, accountUid = null, options = {}) {
@@ -166,10 +166,24 @@ test('manual theme changes still work with takeover off but install no theme gua
   assert.equal(observers.filter(o => o.active).length, 0);
 });
 
-test('turning off takeover forces native light and removes special CSS and stale guards', async () => {
+test('turning off takeover restores the WorkBuddy appearance saved before takeover', async () => {
   const { context, document, observers } = renderer();
   const uid = 'current';
+  context.localStorage.setItem('agent-ui-theme', JSON.stringify({ theme: 'dark', followSystem: false, vsCodeThemeName: 'IDE Night', vsCodeThemeKind: 'vscode-dark' }));
+  context.localStorage.setItem('workbuddy.appearance.lastApplied', JSON.stringify({ resourceKey: 'dark', appearance: 'dark' }));
+  context.localStorage.setItem('workbuddy.appearance.mode::personal::personal::' + uid, 'dark');
+  context.localStorage.setItem('workbuddy.appearance.state::personal::' + uid, JSON.stringify({ currentTheme: 'dark' }));
+  context.localStorage.setItem('workbuddy.appearance.lastApplied::personal::' + uid, JSON.stringify({ resourceKey: 'dark', appearance: 'dark' }));
   vm.runInNewContext(await themeExpression('nebula', true, uid), context);
+  // Seed the persisted pre-takeover snapshot explicitly; the helper above
+  // captures the final CDP expression, while this test focuses on release.
+  context.localStorage.setItem('workdaddy.theme.native-snapshot::' + uid, JSON.stringify({ keys: [
+    ['agent-ui-theme', JSON.stringify({ theme: 'dark', followSystem: false, vsCodeThemeName: 'IDE Night', vsCodeThemeKind: 'vscode-dark' })],
+    ['workbuddy.appearance.lastApplied', JSON.stringify({ resourceKey: 'dark', appearance: 'dark' })],
+    ['workbuddy.appearance.mode::personal::personal::' + uid, 'dark'],
+    ['workbuddy.appearance.state::personal::' + uid, JSON.stringify({ currentTheme: 'dark' })],
+    ['workbuddy.appearance.lastApplied::personal::' + uid, JSON.stringify({ resourceKey: 'dark', appearance: 'dark' })],
+  ] }));
   const oldGuard = context.window.__wbsThemeGuard;
   document.adoptedStyleSheets = [
     { cssRules: [{ cssText: ':root { --wb-bg-primary: pink; }' }] },
@@ -180,7 +194,14 @@ test('turning off takeover forces native light and removes special CSS and stale
   const daemon = {
     cdp: { connected: true }, themeApplyGeneration: 0,
     readSessionState: () => ({ themeTakeoverEnabled: false }),
-    startNativeAppearanceSyncByCdp: async () => {},
+    currentAccount: () => ({ uid }),
+    cdpSend: async (_, params) => { vm.runInNewContext(params.expression, context); return {}; },
+    startNativeAppearanceSyncByCdp: async () => {
+      const applied = JSON.parse(context.localStorage.getItem('workbuddy.appearance.lastApplied') || '{}');
+      const dark = applied.appearance === 'dark' || applied.resourceKey === 'dark';
+      document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+      document.body.setAttribute('data-vscode-theme-name', dark ? 'IDE Night' : 'IDE Light');
+    },
     applyThemeByCdp: async (id, options) => {
       assert.equal(id, 'default');
       assert.equal(options.release, true);
@@ -189,14 +210,16 @@ test('turning off takeover forces native light and removes special CSS and stale
   };
   const start = source.indexOf('async function releaseThemeByCdp()');
   vm.runInNewContext(source.slice(start, source.indexOf('async function restoreNativeAppearanceByCdp()', start)), daemon);
+  const restoreNativeStart = source.indexOf('async function restoreNativeAppearanceByCdp()');
+  vm.runInNewContext(source.slice(restoreNativeStart, source.indexOf('/** 恢复已保存的主题', restoreNativeStart)), daemon);
   await daemon.releaseThemeByCdp();
   assert.equal(document.getElementById('wbs-theme-style'), null);
   assert.equal(oldGuard.active, false);
   assert.equal(observers.filter(o => o.active).length, 0);
-  assert.equal(document.documentElement.getAttribute('data-theme'), 'light');
-  assert.equal(document.body.getAttribute('data-vscode-theme-name'), 'IDE Light');
-  assert.equal(JSON.parse(context.localStorage.getItem('agent-ui-theme')).theme, 'light');
-  assert.equal(JSON.parse(context.localStorage.getItem('workbuddy.appearance.lastApplied')).resourceKey, 'light');
+  assert.equal(document.documentElement.getAttribute('data-theme'), 'dark');
+  assert.equal(document.body.getAttribute('data-vscode-theme-name'), 'IDE Night');
+  assert.equal(JSON.parse(context.localStorage.getItem('agent-ui-theme')).theme, 'dark');
+  assert.equal(JSON.parse(context.localStorage.getItem('workbuddy.appearance.lastApplied')).resourceKey, 'dark');
   assert.equal(context.localStorage.getItem('workbuddy.appearance.lastApplied.css'), null);
   assert.equal(context.localStorage.getItem('workdaddy.theme.native-snapshot::' + uid), null);
   assert.equal(context.localStorage.getItem('workbuddy.appearance.mode::personal::personal::other'), 'dark');
@@ -308,6 +331,8 @@ test('release resets light once then follows official dark and special skins acr
   };
   const start = source.indexOf('function nativeAppearanceSyncExpression()');
   vm.runInNewContext(source.slice(start, source.indexOf('async function restoreNativeAppearanceByCdp()', start)), daemon);
+  const restoreNativeStart = source.indexOf('async function restoreNativeAppearanceByCdp()');
+  vm.runInNewContext(source.slice(restoreNativeStart, source.indexOf('/** 恢复已保存的主题', restoreNativeStart)), daemon);
   const restoreStart = source.indexOf('async function restoreSavedTheme()');
   vm.runInNewContext(source.slice(restoreStart, source.indexOf('\n/**', restoreStart)), daemon);
   await daemon.releaseThemeByCdp();
@@ -454,4 +479,13 @@ test('nebula resolves transparent constants even from an existing installed them
   assert.equal(theme.colors['--wb-color-text-primary'], '#eee');
   assert.equal(theme.image, 'custom.webp');
   assert.equal(ctx.getTheme('other').colors['--wb-bg-secondary'], '#111113');
+});
+
+
+test('early custom theme restore preserves pending official synchronization for the switched account', async () => {
+  const { context } = renderer();
+  const key = 'workbuddy.appearance.state::personal::target';
+  context.localStorage.setItem(key, JSON.stringify({ currentTheme: 'dark', pendingSync: { theme: 'dark' } }));
+  vm.runInNewContext(await themeExpression('nebula', true, 'target'), context);
+  assert.equal(JSON.parse(context.localStorage.getItem(key)).pendingSync.theme, 'dark');
 });
