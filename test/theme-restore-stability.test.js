@@ -141,6 +141,8 @@ test('theme takeover opt-out follows native appearance on reload without forcing
   await context.restoreSavedTheme();
   await context.restoreSavedTheme();
   assert.deepEqual(applied, ['native', 'native']);
+  assert.match(source, /accountSnapshot/);
+  assert.match(source, /workdaddy\.theme\.native-snapshot::' \+ WBS_UID/);
 });
 
 test('session settings default to takeover and retain opt-out when editing other switches', () => {
