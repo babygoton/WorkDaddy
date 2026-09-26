@@ -228,6 +228,37 @@ test('turning off takeover restores the WorkBuddy appearance saved before takeov
   assert.equal(document.adoptedStyleSheets.length, 1);
 });
 
+test('turning off takeover reapplies the saved official special theme', async () => {
+  const { context } = renderer();
+  const uid = 'current';
+  const savedTheme = {
+    kind: 'theme', resourceKey: 'theme-wind', appearance: 'light',
+    nameZh: '有风', nameEn: 'Wind', vipLevel: 'free', updatedAt: 0,
+  };
+  const calls = [];
+  context.wb = { config: { setPreference: async (key, value) => { calls.push([key, value]); } } };
+  context.localStorage.setItem('workdaddy.theme.native-snapshot::' + uid, JSON.stringify({ keys: [
+    ['agent-ui-theme', JSON.stringify({ theme: 'light', followSystem: false, vsCodeThemeName: 'IDE Light', vsCodeThemeKind: 'vscode-light' })],
+    ['workbuddy.appearance.lastApplied', JSON.stringify(savedTheme)],
+    ['workbuddy.appearance.lastApplied.css', JSON.stringify({ resourceKey: 'theme-wind', css: ':root { --wb-button-primary-bg: #8a6f4d; }' })],
+    ['workbuddy.appearance.state::personal::' + uid, JSON.stringify({ currentTheme: 'theme-wind' })],
+    ['workbuddy.appearance.lastApplied::personal::' + uid, JSON.stringify(savedTheme)],
+  ] }));
+  const daemon = {
+    cdp: { connected: true },
+    currentAccount: () => ({ uid }),
+    cdpSend: async (_, params) => {
+      const value = await vm.runInNewContext(params.expression, context);
+      return { result: { value } };
+    },
+    startNativeAppearanceSyncByCdp: async () => {},
+  };
+  const start = source.indexOf('async function restoreNativeAppearanceByCdp()');
+  vm.runInNewContext(source.slice(start, source.indexOf('/** 恢复已保存的主题', start)), daemon);
+  await daemon.restoreNativeAppearanceByCdp();
+  assert.deepEqual(calls, [['appearanceTheme', 'theme-wind']]);
+});
+
 test('native opt-out syncs WorkBuddy special CSS from the settings window', () => {
   const start = source.indexOf('function nativeAppearanceSyncExpression()');
   const end = source.indexOf('\nasync function releaseThemeByCdp()', start);

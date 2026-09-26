@@ -420,8 +420,8 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 // 1.2.145：识别仅 updated_at 的激活漂移，清除无变更脏标记；无结果任务不再弹同步进度窗口。
 // 1.2.126：5.6 加密账号改为密文原样备份、内存解密；导入兼容明文 token，
 //          刷新结果不把解密后的 token 写回加密备份。
-const DAEMON_VERSION = '1.2.184';
-const DAEMON_BUILD_ID = 'release-1.2.184-20260926-prefer-page-account-theme';
+const DAEMON_VERSION = '1.2.185';
+const DAEMON_BUILD_ID = 'release-1.2.185-20260926-reapply-native-theme';
 const usageReporter = createUsageReporter({ profile: PROFILE.id, version: DAEMON_VERSION });
 configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const automationDiscovery = createAutomationDiscovery({
@@ -7071,7 +7071,7 @@ async function restoreNativeAppearanceByCdp() {
   if (!uid) return;
   try {
     await cdpSend('Runtime.evaluate', {
-      expression: `(function () {
+      expression: `(async function () {
         var WBS_UID = ${JSON.stringify(uid)};
         // 多账号文件同时存在时 daemon 可能无法唯一解析当前 auth；页面 URL
         // 仍带有 WorkBuddy 正在展示的 accountSnapshot，优先用它定位快照。
@@ -7102,12 +7102,38 @@ async function restoreNativeAppearanceByCdp() {
         var saved = Array.isArray(snapshot.keys) ? snapshot.keys : [];
         var savedMap = {};
         for (var s = 0; s < saved.length; s++) if (Array.isArray(saved[s]) && saved[s].length >= 2) { savedMap[saved[s][0]] = saved[s][1]; localStorage.setItem(saved[s][0], saved[s][1]); }
+        // WorkBuddy's official cross-window appearance sync consumes a resource
+        // key through config.setPreference. Restoring localStorage alone leaves
+        // the renderer's ThemeManager on the temporary light/dark base theme,
+        // so special themes such as "有风" never rebuild their real variables.
+        // Prefer the global snapshot, then fall back to the current account's
+        // scoped lastApplied entry when older snapshots lack the global key.
+        var savedTheme = null;
+        try { savedTheme = JSON.parse(savedMap['workbuddy.appearance.lastApplied'] || 'null'); } catch (_) {}
+        if (!savedTheme || typeof savedTheme.resourceKey !== 'string') {
+          for (var savedKey in savedMap) {
+            if (savedKey.indexOf('workbuddy.appearance.lastApplied::') !== 0 || !savedKey.endsWith(suffix)) continue;
+            try {
+              var scopedTheme = JSON.parse(savedMap[savedKey] || 'null');
+              if (scopedTheme && typeof scopedTheme.resourceKey === 'string') { savedTheme = scopedTheme; break; }
+            } catch (_) {}
+          }
+        }
+        var reapplied = false;
+        if (savedTheme && /^[a-z0-9][a-z0-9_-]{0,63}$/.test(savedTheme.resourceKey) &&
+            typeof globalThis.wb?.config?.setPreference === 'function') {
+          try {
+            await globalThis.wb.config.setPreference('appearanceTheme', savedTheme.resourceKey);
+            reapplied = true;
+          } catch (_) {}
+        }
         // Preserve the saved WorkBuddy resource key and CSS payload verbatim;
         // special appearances must remain selectable after takeover is off.
         localStorage.removeItem(snapshotKey);
-        return { restored: true };
+        return { restored: true, reapplied: reapplied,
+          resourceKey: savedTheme && savedTheme.resourceKey || null };
       })()`,
-      returnByValue: true,
+      returnByValue: true, awaitPromise: true,
     });
     await startNativeAppearanceSyncByCdp();
   } catch (_) {}
