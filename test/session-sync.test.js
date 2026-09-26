@@ -224,6 +224,33 @@ test('async successful update removes its rollback backup', async t => {
   assert.deepEqual(fs.readdirSync(backupRoot), []);
 });
 
+test('async rollback backup contains only target files changed by the sync', async t => {
+  const f = fixture(t);
+  f.write('a', base); f.write('b', [...base, message('user', 'next')]);
+  for (const id of ['a', 'b']) {
+    const file = path.join(f.root, 'workspace', 'sessions', id, 'editor-settings.json');
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, '{"enabled":true}\n');
+  }
+  const backupRoot = path.join(f.root, 'backups');
+  await assert.rejects(applySnapshotAsync(
+    await readSnapshotAsync(f.root, 'b', ['a', 'b']),
+    await readSnapshotAsync(f.root, 'a', ['a', 'b']),
+    {
+      backupRoot,
+      commit: async () => {
+        fs.writeFileSync(f.file('a'), 'official write');
+        throw Error('DB failure');
+      },
+    }
+  ), /DB failure/);
+  const backups = fs.readdirSync(backupRoot);
+  assert.equal(backups.length, 1);
+  const files = fs.readdirSync(path.join(backupRoot, backups[0], 'files', 'projects', 'project'));
+  assert.deepEqual(files, ['__session__.jsonl']);
+  assert.equal(fs.existsSync(path.join(backupRoot, backups[0], 'files', 'workspace')), false);
+});
+
 test('async publication rolls back commit failures without overwriting concurrent official writes', async t => {
   const f = fixture(t);
   f.write('a', [...base, message('user', 'continued')]);
@@ -267,6 +294,38 @@ test('successful update removes its rollback backup and never changes a third co
   assert.deepEqual(fs.readFileSync(f.file('c')), original);
   assert.equal(fs.existsSync(result.backup), false);
   assert.deepEqual(fs.readdirSync(backupRoot), []);
+});
+
+test('rollback backup contains only target files changed by the sync', async t => {
+  const f = fixture(t);
+  f.write('a', base); f.write('b', [...base, message('user', 'next')]);
+  for (const id of ['a', 'b']) {
+    const file = path.join(f.root, 'workspace', 'sessions', id, 'editor-settings.json');
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, '{"enabled":true}\n');
+  }
+  const backupRoot = path.join(f.root, 'backups');
+  await assert.rejects(applySnapshot(f.read('b'), f.read('a'), {
+    backupRoot,
+    commit: async () => {
+      // Simulate a concurrent official write after publication. The rollback
+      // must retain its backup so the recovery case is inspectable.
+      fs.writeFileSync(f.file('a'), 'official write');
+      throw Error('DB failure');
+    },
+  }), /DB failure/);
+  const backups = fs.readdirSync(backupRoot);
+  assert.equal(backups.length, 1);
+  const backupFiles = [];
+  const visit = (directory, relative = '') => {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const next = relative ? path.join(relative, entry.name) : entry.name;
+      if (entry.isDirectory()) visit(path.join(directory, entry.name), next);
+      else if (next !== 'journal.json') backupFiles.push(next);
+    }
+  };
+  visit(path.join(backupRoot, backups[0], 'files'));
+  assert.deepEqual(backupFiles, [path.join('projects', 'project', '__session__.jsonl')]);
 });
 
 test('backup pruning removes completed and stale crash journals but keeps recovery-needed data', t => {
