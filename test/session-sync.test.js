@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { readSnapshot, readSnapshotAsync, readSessionFingerprintAsync, readSessionQuickFingerprintAsync, compareSnapshots, applySnapshot, applySnapshotAsync, pruneSyncBackups } = require('../scripts/session-sync.js');
+const { readSnapshot, readSnapshotAsync, readSessionFingerprintAsync, readSessionQuickFingerprintAsync, compareSnapshots, applySnapshot, applySnapshotAsync, pruneSyncBackups, inspectSyncBackups } = require('../scripts/session-sync.js');
 
 const message = (role, text) => ({ type: 'message', role, content: [{ type: 'text', text }] });
 const base = [message('user', 'question'), message('assistant', 'answer')];
@@ -348,6 +348,26 @@ test('backup pruning removes completed and stale crash journals but keeps recove
   assert.equal(result.retainedRecovery, 1);
   assert.equal(fs.existsSync(path.join(root, 'sync-prepared-new')), true);
   assert.equal(fs.existsSync(path.join(root, 'sync-recovery')), true);
+});
+
+test('backup inspection reports bytes and recovery-needed count without reading payloads', t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wbs-backup-inspect-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const backupRoot = path.join(root, 'backups');
+  const recovery = path.join(backupRoot, 'sync-recovery');
+  const prepared = path.join(backupRoot, 'sync-prepared');
+  fs.mkdirSync(path.join(recovery, 'files'), { recursive: true });
+  fs.mkdirSync(path.join(prepared, 'files'), { recursive: true });
+  fs.writeFileSync(path.join(recovery, 'files', 'old.jsonl'), '12345');
+  fs.writeFileSync(path.join(prepared, 'files', 'pending.jsonl'), '12');
+  fs.writeFileSync(path.join(recovery, 'journal.json'), JSON.stringify({ status: 'recovery-needed' }));
+  fs.writeFileSync(path.join(prepared, 'journal.json'), JSON.stringify({ status: 'prepared' }));
+  const stats = inspectSyncBackups(backupRoot);
+  assert.equal(stats.count, 2);
+  assert.equal(stats.recoveryCount, 1);
+  assert.equal(stats.pendingCount, 1);
+  assert.equal(stats.recoveryBytes, 5 + Buffer.byteLength('{"status":"recovery-needed"}'));
+  assert.equal(stats.totalBytes, stats.recoveryBytes + 2 + Buffer.byteLength('{"status":"prepared"}'));
 });
 test('failed commit restores target bytes; source changes abort before publication', async t => {
   const f = fixture(t); f.write('a', base); f.write('b', [...base, message('user', 'next')]);

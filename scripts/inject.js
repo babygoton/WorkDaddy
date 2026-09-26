@@ -1069,6 +1069,11 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '目标会话正在变化，已停止同步': 'The target session is changing. Sync was stopped',
     '源会话正在变化，已停止同步': 'The source session is changing. Sync was stopped',
     '会话文件校验失败': 'Session file verification failed',
+    '同步备份': 'Sync backups', '读取占用中…': 'Reading storage…', '清理已完成或过期的同步备份': 'Clean completed or expired sync backups',
+    '占用': 'Used', ' 份': ' item(s)', ' 份待恢复': ' item(s) awaiting recovery', '清理中…': 'Cleaning…', '清理': 'Clean up',
+    '只清理已完成或过期备份，待恢复备份会保留': 'Only completed or expired backups are removed; recovery-needed backups are kept',
+    '占用暂时无法读取': 'Storage usage is temporarily unavailable', '已清理': 'Cleaned ', ' 份同步备份': ' sync backup(s)',
+    '没有可清理的同步备份': 'No sync backups to clean', '清理同步备份失败:': 'Failed to clean sync backups: ',
     '收起': 'Collapse',
     '输入框仍有内容，未确认发送；不会自动重发': 'The composer still contains text, so sending was not confirmed. It will not be retried automatically',
     '派猫猫旅行': 'Send Buddy traveling',
@@ -7754,7 +7759,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     }
 
     // ===== 会话 pane（构建：账号/时间筛选 + 按空间分组[默认2条/展开全部] + 刷新 + 批量操作[迁移/删除]）=====
-    var sessionsState = { uid: undefined, currentUid: '', range: 'all', minBytes: 0, totalBytes: null, list: [], selected: {}, wsExpanded: {}, accounts: [], batchMode: false, autoCopy: null, autoCopyAll: false, autoCopyJob: null, autoCopyPollTimer: null };
+    var sessionsState = { uid: undefined, currentUid: '', range: 'all', minBytes: 0, totalBytes: null, list: [], selected: {}, wsExpanded: {}, accounts: [], batchMode: false, autoCopy: null, autoCopyAll: false, autoCopyJob: null, autoCopyPollTimer: null, syncBackups: null, syncBackupBusy: false };
     function isTaskSessionRecordUI(s) {
       // 任务（未选择项目/一次性）会话：以官方 is_playground=1 为准。
       // 普通工作区也用 WorkBuddy\\YYYY-MM-DD-HH-MM-SS 命名，仅凭 cwd 无法区分。
@@ -7867,6 +7872,10 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         '<div class="wbs-sess-copy-progress" id="wbs-sess-copy-progress" role="status" aria-live="polite" hidden>' +
         '<div class="wbs-sess-copy-head"><span class="wbs-sess-copy-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></span><strong class="wbs-sess-copy-title">正在同步会话</strong></div>' +
         '<div class="wbs-sess-copy-detail"></div><div class="wbs-sess-copy-track" role="progressbar" aria-label="会话同步进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span class="wbs-sess-copy-fill"></span></div>' +
+        '</div>' +
+        '<div class="wbs-sess-backup-card" id="wbs-sess-backup-card" role="status" aria-live="polite">' +
+        '<div class="wbs-sess-backup-main"><span class="wbs-sess-backup-title">同步备份</span><span class="wbs-sess-backup-detail" id="wbs-sess-backup-detail">读取占用中…</span></div>' +
+        '<button class="wbs-sess-bbtn wbs-sess-backup-clean" id="wbs-sess-backup-clean" type="button" title="清理已完成或过期的同步备份">清理</button>' +
         '</div>' +
         '<input type="file" id="wbs-sess-import-file" accept=".wds,.json,application/json,application/octet-stream" style="display:none">' +
         '<div class="wbs-sess-list" id="wbs-sess-list"></div>' +
@@ -8004,6 +8013,46 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       }).catch(function (e) {
         listEl.innerHTML = '<div class="wbs-empty">会话加载失败: ' + esc(e.message || e) + '</div>';
       });
+      loadSessionBackups();
+    }
+
+    function renderSessionBackups() {
+      var card = sessionsPane && sessionsPane.querySelector('#wbs-sess-backup-card');
+      var detail = sessionsPane && sessionsPane.querySelector('#wbs-sess-backup-detail');
+      var button = sessionsPane && sessionsPane.querySelector('#wbs-sess-backup-clean');
+      if (!card || !detail || !button) return;
+      var stats = sessionsState.syncBackups;
+      if (!stats) { detail.textContent = '读取占用中…'; return; }
+      var text = '占用 ' + sessionCopySizeText(stats.totalBytes || 0);
+      if (stats.count) text += ' · ' + stats.count + ' 份';
+      if (stats.recoveryCount) text += ' · ' + stats.recoveryCount + ' 份待恢复';
+      detail.textContent = text;
+      card.classList.toggle('has-recovery', !!stats.recoveryCount);
+      button.disabled = sessionsState.syncBackupBusy || !stats.count || !((stats.pendingCount || 0) || (stats.totalBytes || 0));
+      button.textContent = sessionsState.syncBackupBusy ? '清理中…' : '清理';
+      button.title = stats.recoveryCount ? '只清理已完成或过期备份，待恢复备份会保留' : '清理已完成或过期的同步备份';
+    }
+    function loadSessionBackups() {
+      api('/api/sessions/sync-backups').then(function (result) {
+        sessionsState.syncBackups = result && result.backups || { count: 0, totalBytes: 0, recoveryCount: 0, pendingCount: 0 };
+        renderSessionBackups();
+      }).catch(function () {
+        sessionsState.syncBackups = null;
+        var detail = sessionsPane && sessionsPane.querySelector('#wbs-sess-backup-detail');
+        if (detail) detail.textContent = '占用暂时无法读取';
+      });
+    }
+    function cleanupSessionBackups() {
+      if (sessionsState.syncBackupBusy) return;
+      sessionsState.syncBackupBusy = true;
+      renderSessionBackups();
+      api('/api/sessions/sync-backups/cleanup', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })
+        .then(function (result) {
+          sessionsState.syncBackups = result && result.backups || sessionsState.syncBackups;
+          toast(result && result.removed ? '已清理 ' + result.removed + ' 份同步备份' : '没有可清理的同步备份', false, root);
+        })
+        .catch(function (error) { toast('清理同步备份失败: ' + (error.message || error), true, root); })
+        .finally(function () { sessionsState.syncBackupBusy = false; renderSessionBackups(); });
     }
 
     function filteredSessions() {
@@ -8329,6 +8378,8 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     }
 
     function wireSessionsPane() {
+      var backupClean = sessionsPane.querySelector('#wbs-sess-backup-clean');
+      if (backupClean && typeof cleanupSessionBackups === 'function') backupClean.addEventListener('click', cleanupSessionBackups);
       var exportCard = sessionsPane.querySelector('#wbs-sess-export-progress');
       if (exportCard) {
         exportCard.querySelector('[data-export-cancel]').addEventListener('click', function () {
@@ -15996,8 +16047,10 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '.wbs-sess-export-progress{flex:0 0 auto;min-width:0;margin:0 0 8px;padding:9px 10px;border:1px solid var(--wb-border-subtle);border-radius:9px;background:var(--wb-bg-secondary);color:var(--wb-color-text-primary);font-size:11px;line-height:1.5}.wbs-sess-export-progress[hidden],.wbs-sess-export-progress [hidden]{display:none}.wbs-sess-export-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.wbs-sess-export-head strong{flex:1;font-size:12px}.wbs-sess-export-progress progress{display:block;width:100%;height:5px;margin:7px 0;accent-color:var(--wbs-primary)}.wbs-sess-export-progress progress[hidden]{display:none}.wbs-sess-export-progress [data-export-detail]{overflow-wrap:anywhere;color:var(--wb-color-text-secondary)}',
     '.wbs-sess-copy-progress{box-sizing:border-box;margin:0 0 8px;padding:9px 10px;border:1px solid var(--wb-border-default,#e5e5e5);border-radius:9px;background:color-mix(in srgb,var(--wb-bg-secondary,#fff) 82%,transparent);box-shadow:0 2px 8px rgba(0,0,0,.04)}',
     '.wbs-sess-copy-progress[hidden]{display:none!important}.wbs-sess-copy-head{display:flex;align-items:center;gap:6px;min-width:0}.wbs-sess-copy-icon{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;flex:0 0 20px;border-radius:6px;background:color-mix(in srgb,var(--wb-button-primary-bg,#1f1f1f) 9%,transparent);color:var(--wb-button-primary-bg,#1f1f1f)}.wbs-sess-copy-title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11.5px;font-weight:650;color:var(--wb-color-text-primary,#1f1f1f)}',
+    '.wbs-sess-backup-card{display:flex;align-items:center;gap:8px;flex:0 0 auto;margin:0 0 8px;padding:7px 9px;border:1px solid var(--wb-border-subtle,#ececec);border-radius:9px;background:color-mix(in srgb,var(--wb-bg-secondary,#fff) 78%,transparent);color:var(--wb-color-text-primary,#1f1f1f)}.wbs-sess-backup-card.has-recovery{border-color:color-mix(in srgb,#d48a19 42%,var(--wb-border-default,#e5e5e5))}.wbs-sess-backup-main{display:flex;align-items:baseline;gap:7px;min-width:0;flex:1}.wbs-sess-backup-title{font-size:11px;font-weight:650;white-space:nowrap}.wbs-sess-backup-detail{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10.5px;color:var(--wb-icon-tertiary,#8a8f98)}.wbs-sess-backup-clean{height:25px;padding:0 9px;font-size:11px;flex:0 0 auto}.wbs-sess-backup-clean:disabled{opacity:.5;cursor:not-allowed}',
     '.wbs-sess-copy-detail{margin:4px 0 6px 26px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10.5px;line-height:1.35;color:var(--wb-icon-tertiary,#8a8f98)}.wbs-sess-copy-track{height:4px;margin-left:26px;overflow:hidden;border-radius:999px;background:var(--wb-bg-tertiary,#e9eaed)}.wbs-sess-copy-fill{display:block;height:100%;width:0;border-radius:inherit;background:var(--wb-accent-blue,var(--wb-button-primary-bg,#1f1f1f));transition:width .2s ease}.wbs-sess-copy-progress.is-done .wbs-sess-copy-fill{background:#2f9e63}.wbs-sess-copy-progress.is-partial .wbs-sess-copy-fill{background:#d48a19}.wbs-sess-copy-progress.is-error .wbs-sess-copy-fill{background:#d84a4a}',
     'html.cb-dark .wbs-sess-copy-progress,html[data-theme="dark"] .wbs-sess-copy-progress,body[data-vscode-theme-name*="dark" i] .wbs-sess-copy-progress{border-color:var(--wb-border-default,rgba(255,255,255,.14));background:color-mix(in srgb,var(--wb-bg-secondary,#25262a) 88%,transparent);box-shadow:0 3px 12px rgba(0,0,0,.18)}',
+    'html.cb-dark .wbs-sess-backup-card,html[data-theme="dark"] .wbs-sess-backup-card,body[data-vscode-theme-name*="dark" i] .wbs-sess-backup-card{border-color:var(--wb-border-default,rgba(255,255,255,.14));background:color-mix(in srgb,var(--wb-bg-secondary,#25262a) 88%,transparent)}',
     '.wbs-sess-refresh{display:flex;align-items:center;justify-content:center;flex-shrink:0;padding:7px;border:1px solid var(--wb-border-default,#e5e5e5);border-radius:9px;background:var(--wb-bg-popover,#fff);color:var(--wb-icon-secondary,#555);font-size:12px;cursor:pointer;line-height:1;transition:all .15s}',
     '.wbs-sess-refresh:hover{background:var(--wb-bg-hover,#f5f5f5);color:var(--wb-color-text-primary,#1f1f1f)}',
     '.wbs-sess-bbtn{display:inline-flex;align-items:center;justify-content:center;gap:4px;padding:7px 12px;border:1px solid var(--wb-border-default,#e5e5e5);border-radius:9px;background:var(--wb-bg-popover,#fff);color:var(--wb-icon-secondary,#555);font-size:12px;cursor:pointer;line-height:1;transition:all .15s}',

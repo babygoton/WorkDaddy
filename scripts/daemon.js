@@ -420,8 +420,8 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 // 1.2.145：识别仅 updated_at 的激活漂移，清除无变更脏标记；无结果任务不再弹同步进度窗口。
 // 1.2.126：5.6 加密账号改为密文原样备份、内存解密；导入兼容明文 token，
 //          刷新结果不把解密后的 token 写回加密备份。
-const DAEMON_VERSION = '1.2.170';
-const DAEMON_BUILD_ID = 'release-1.2.170-20260926-session-delta-backup';
+const DAEMON_VERSION = '1.2.171';
+const DAEMON_BUILD_ID = 'release-1.2.171-20260926-session-backup-usage';
 const usageReporter = createUsageReporter({ profile: PROFILE.id, version: DAEMON_VERSION });
 configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const automationDiscovery = createAutomationDiscovery({
@@ -9689,6 +9689,22 @@ function handleApi(req, res) {
   }
   if (req.method === 'POST' && p === '/api/sleep-now') {
     return sleepNow() ? json(res, 200, { ok: true }) : json(res, 500, { ok: false, error: '立即休眠失败' });
+  }
+
+  // 会话同步回滚备份：只返回占用与状态摘要，不返回备份内容。
+  // Keep this expression self-contained because old renderer test harnesses
+  // evaluate only handleApi without the daemon module's top-level imports.
+  const syncBackupRoot = String(DATA_DIR || '') + (String(DATA_DIR || '').endsWith('/') || String(DATA_DIR || '').endsWith('\\') ? '' : '/') + 'session-sync-backups';
+  if (req.method === 'GET' && p === '/api/sessions/sync-backups') {
+    return json(res, 200, { ok: true, backups: sessionSync.inspectSyncBackups(syncBackupRoot) });
+  }
+  if (req.method === 'POST' && p === '/api/sessions/sync-backups/cleanup') {
+    return readBody(req).then((body) => {
+      const requestedDays = Number(body && body.maxAgeDays);
+      const maxAgeDays = Number.isFinite(requestedDays) ? Math.min(365, Math.max(1, requestedDays)) : 30;
+      const result = sessionSync.pruneSyncBackups(syncBackupRoot, { maxAgeMs: maxAgeDays * 24 * 60 * 60 * 1000 });
+      return json(res, 200, { ok: true, removed: result.removed, retainedRecovery: result.retainedRecovery, maxAgeDays, backups: sessionSync.inspectSyncBackups(syncBackupRoot) });
+    }).catch((error) => json(res, 400, { ok: false, error: error.message }));
   }
 
   // 会话列表：GET /api/sessions?uid=<账号uid>&range=today|7d|30d|all（uid 缺省=当前账号；uid=空=全部账号）

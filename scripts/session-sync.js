@@ -723,6 +723,47 @@ function pruneSyncBackups(backupRoot, options = {}) {
   return result;
 }
 
+// Return lightweight operational metadata for the local rollback area. This
+// deliberately reads directory entries and stat metadata only; backup
+// contents never leave the machine and are never included in the response.
+function inspectSyncBackups(backupRoot) {
+  const result = { count: 0, totalBytes: 0, recoveryCount: 0, recoveryBytes: 0, pendingCount: 0 };
+  let entries;
+  try { entries = fs.readdirSync(backupRoot, { withFileTypes: true }); }
+  catch (_) { return result; }
+  const sizeOf = (file) => {
+    let info;
+    try { info = fs.lstatSync(file); } catch (_) { return 0; }
+    if (info.isSymbolicLink()) return 0;
+    if (info.isFile()) return info.size;
+    if (!info.isDirectory()) return 0;
+    let total = 0;
+    let children;
+    try { children = fs.readdirSync(file); } catch (_) { return 0; }
+    for (const child of children) total += sizeOf(path.join(file, child));
+    return total;
+  };
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !SYNC_BACKUP_DIR.test(entry.name)) continue;
+    const backup = path.join(backupRoot, entry.name);
+    let status = '';
+    try {
+      const journal = JSON.parse(fs.readFileSync(path.join(backup, 'journal.json'), 'utf8'));
+      status = typeof journal.status === 'string' ? journal.status : '';
+    } catch (_) {}
+    const bytes = sizeOf(backup);
+    result.count++;
+    result.totalBytes += bytes;
+    if (status === 'recovery-needed') {
+      result.recoveryCount++;
+      result.recoveryBytes += bytes;
+    } else if (status === 'prepared' || !status) {
+      result.pendingCount++;
+    }
+  }
+  return result;
+}
+
 function targetRelative(logical, id) {
   return logical.split('/').map(part => part === '__session__' ? id : part === '__session__.jsonl' ? id + '.jsonl' : part === '__session__.json' ? id + '.json' : part).join('/');
 }
@@ -992,5 +1033,5 @@ async function applySnapshotAsync(source, target, options) {
 
 module.exports = {
   readSessionSizes, readSnapshot, readSnapshotAsync, readSessionFingerprintAsync, readSessionQuickFingerprintAsync, compareSnapshots, selectTargetSnapshot,
-  applySnapshot, applySnapshotAsync, pruneSyncBackups,
+  applySnapshot, applySnapshotAsync, pruneSyncBackups, inspectSyncBackups,
 };
