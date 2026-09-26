@@ -126,6 +126,7 @@ const {
   checkinDisplayValue,
   getAccountOrder,
   setAccountOrder,
+  setAccountNote,
 } = require('./lib.js');
 const { createThirdPartyImport } = require('./third-party-models.js');
 const { extractCreditSegments, sortCreditSegments, mergeCreditSegments, parseEnterpriseUsage, ENTERPRISE_EDITIONS } = require('./credit-segments.js');
@@ -420,8 +421,8 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 // 1.2.145：识别仅 updated_at 的激活漂移，清除无变更脏标记；无结果任务不再弹同步进度窗口。
 // 1.2.126：5.6 加密账号改为密文原样备份、内存解密；导入兼容明文 token，
 //          刷新结果不把解密后的 token 写回加密备份。
-const DAEMON_VERSION = '1.2.186';
-const DAEMON_BUILD_ID = 'release-1.2.186-20260926-model-rate-limit';
+const DAEMON_VERSION = '1.2.187';
+const DAEMON_BUILD_ID = 'release-1.2.187-20260927-account-notes';
 const usageReporter = createUsageReporter({ profile: PROFILE.id, version: DAEMON_VERSION });
 configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const automationDiscovery = createAutomationDiscovery({
@@ -9158,6 +9159,13 @@ function handleApi(req, res) {
   if (req.method === 'POST' && p === '/api/accounts/primary') {
     return readBody(req).then((body) => {
       try { return json(res, 200, { ok: true, primaryUid: primaryAccountStore.set(body.uid) }); }
+      catch (error) { return json(res, 400, { ok: false, error: error.message }); }
+    });
+  }
+
+  if (req.method === 'POST' && p === '/api/accounts/note') {
+    return readBody(req).then((body) => {
+      try { return json(res, 200, { ok: true, account: setAccountNote(DATA_DIR, body) }); }
       catch (error) { return json(res, 400, { ok: false, error: error.message }); }
     });
   }

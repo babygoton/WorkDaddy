@@ -1652,6 +1652,18 @@ function setAccountOrder(dataDir, value) {
   return getAccountOrder(dataDir);
 }
 
+/** 备注仅写入当前 profile 的元数据，保留认证备份和其他账号设置。 */
+function setAccountNote(dataDir, value) {
+  if (!value || typeof value.uid !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(value.uid) ||
+      ['__proto__', 'prototype', 'constructor'].includes(value.uid)) throw new Error('无效的账号');
+  if (typeof value.note !== 'string' || value.note.length > 2000) throw new Error('备注不能超过 2000 个字符');
+  if (!fs.existsSync(backupPath(dataDir, value.uid))) throw new Error('账号不存在或已删除');
+  const meta = readMeta(dataDir);
+  meta.accounts[value.uid] = Object.assign({}, meta.accounts[value.uid], { note: value.note });
+  writeMeta(dataDir, meta);
+  return { uid: value.uid, note: value.note };
+}
+
 /** 列出所有已备份账号（直接读备份文件提取展示字段，按最近刷新时间倒序） */
 function listAccounts(dataDir) {
   if (!ACTIVE_PROFILE.capabilities.accounts) return [];
@@ -1672,6 +1684,7 @@ function listAccounts(dataDir) {
     const item = {
       uid,
       sort: Number.isSafeInteger(savedSort) && savedSort > 0 ? savedSort : 0,
+      note: typeof (orderMeta.accounts[uid] || {}).note === 'string' ? orderMeta.accounts[uid].note : '',
       nickname: '',
       phone: '',
       uin: '',
@@ -1863,6 +1876,7 @@ module.exports = {
   wdCompatDecryptAuthJson, // [wd-compat]
   getAccountOrder,
   setAccountOrder,
+  setAccountNote,
   readModelsFile,
   writeModelsFile,
   writeModelBackup,

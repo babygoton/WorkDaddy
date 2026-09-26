@@ -1100,6 +1100,15 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
   var WBS_ACCOUNT_MASK_KEY = 'workdaddy.account.mask.' + PROFILE_ID;
   var WBS_INITIAL_AUTO_COPY_ALL_KEY = 'workdaddy.initial.autoCopyAllSessions.' + PROFILE_ID;
   var WBS_I18N_EN = {
+    '账号备注': 'Account note',
+    '查看或编辑账号备注': 'View or edit account note',
+    '暂无备注，点击添加…': 'No note yet. Click to add…',
+    '未保存 ·': 'Unsaved ·',
+    '已保存': 'Saved',
+    '无效的账号': 'Invalid account',
+    '备注不能超过 2000 个字符': 'Notes must be text and no longer than 2000 characters',
+    '账号不存在或已删除': 'Account not found or deleted',
+
     '导出会话会在后台完成，文件保存到下载目录。': 'Export runs in the background and saves to Downloads.',
     '正在准备导出…': 'Preparing export…', '正在导出会话…': 'Exporting sessions…',
     '正在取消导出…': 'Cancelling export…', '会话导出已取消': 'Session export cancelled',
@@ -5709,6 +5718,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     var statusPopover = null;
     var statusPopoverOwner = null;
     var closeDailyProgressPopover = null;
+    var closeAccountNotePopover = null;
     var refreshDailyProgressPopover = null;
     var dailyProgressRefreshPromises = {};
     var creditTooltipSegment = null;
@@ -5850,6 +5860,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       root.querySelector('[data-act="account-more"]').addEventListener('click', openAccountOrderModal);
       setupCreditSummary();
       setupDailyProgressPopover();
+      setupAccountNotePopover();
       setupModelRateLimitPopover();
       logoutBtn = root.querySelector('[data-act="logout"]');
       var eyeBtn = root.querySelector('.wbs-acct-eye');
@@ -6141,6 +6152,160 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         toast('无法确认当前登录账号', true, root);
         return false;
       });
+    }
+
+    function setupAccountNotePopover() {
+      if (!accountsPane) return;
+      var popup = el('div', 'wbs-account-note-popover');
+      popup.id = 'wbs-account-note-popover';
+      popup.hidden = true;
+      popup.setAttribute('role', 'dialog');
+      popup.setAttribute('aria-label', '账号备注');
+      popup.innerHTML = '<div class="wbs-account-note-head"><label for="wbs-account-note-input">账号备注</label><button type="button" class="wbs-icon-btn" data-note-close title="关闭" aria-label="关闭"><svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5"><path d="m4 4 8 8m0-8-8 8"/></svg></button></div>' +
+        '<textarea id="wbs-account-note-input" maxlength="2000" placeholder="暂无备注，点击添加…" rows="4"></textarea>' +
+        '<div class="wbs-account-note-footer"><span role="status" aria-live="polite"></span><button type="button" class="wbs-modal-btn" data-note-cancel>取消</button><button type="button" class="wbs-modal-btn primary" data-note-save>保存</button></div>';
+      document.body.appendChild(popup);
+      var input = popup.querySelector('textarea');
+      var save = popup.querySelector('[data-note-save]');
+      var cancel = popup.querySelector('[data-note-cancel]');
+      var status = popup.querySelector('[role="status"]');
+      var owner = null, uid = '', saved = '', saving = false, hideTimer = null, restoringFocus = false;
+      var drafts = Object.create(null);
+      function trigger(target) { return target && target.closest ? target.closest('.wbs-account-name') : null; }
+      function dirty() { return input.value !== saved; }
+      function update() {
+        save.disabled = saving || !dirty();
+        cancel.disabled = saving;
+        input.readOnly = saving;
+        save.textContent = saving ? '保存中…' : '保存';
+        status.textContent = saving ? '正在保存' : dirty() ? '未保存 · ' + input.value.length + '/2000' : '';
+      }
+      function hide(returnFocus) {
+        clearTimeout(hideTimer);
+        if (!owner) return;
+        if (dirty()) drafts[uid] = input.value;
+        else delete drafts[uid];
+        var previous = owner;
+        previous.setAttribute('aria-expanded', 'false');
+        owner = null;
+        popup.hidden = true;
+        if (returnFocus && previous.isConnected) {
+          restoringFocus = true;
+          previous.focus();
+          restoringFocus = false;
+        }
+      }
+      function position() {
+        if (!owner) return;
+        var rect = owner.getBoundingClientRect();
+        var bounds = accountsPane.getBoundingClientRect();
+        if (!owner.isConnected || !rect.width || rect.bottom < bounds.top || rect.top > bounds.bottom) { hide(false); return; }
+        var box = popup.getBoundingClientRect();
+        var left = Math.max(8, Math.min(rect.left - 5, window.innerWidth - box.width - 8));
+        var top = rect.bottom + 8;
+        if (top + box.height > window.innerHeight - 8) top = rect.top - box.height - 8;
+        popup.style.left = Math.round(left) + 'px';
+        popup.style.top = Math.round(Math.max(8, top)) + 'px';
+      }
+      function show(button, edit) {
+        clearTimeout(hideTimer);
+        if (restoringFocus) return;
+        if (owner !== button) {
+          // Hovering a different name must not replace an in-progress edit.
+          if (owner && (saving || dirty() || popup.contains(document.activeElement)) && !edit) return;
+          if (saving) return;
+          hide(false);
+          uid = button.getAttribute('data-uid');
+          var account = state.accounts.filter(function (a) { return String(a.uid) === uid; })[0];
+          if (!account) return;
+          saved = account.note || '';
+          input.value = Object.prototype.hasOwnProperty.call(drafts, uid) ? drafts[uid] : saved;
+          owner = button;
+          owner.setAttribute('aria-expanded', 'true');
+          popup.hidden = false;
+          update();
+          position();
+        }
+        if (edit && owner) input.focus();
+      }
+      function deferHide() {
+        clearTimeout(hideTimer);
+        hideTimer = setBuildTimeout(function () {
+          if (saving || dirty() || popup.matches(':hover') || popup.contains(document.activeElement) ||
+              (owner && (owner.matches(':hover') || owner === document.activeElement))) return;
+          hide(false);
+        }, 220);
+      }
+      function submit() {
+        if (!owner || saving || !dirty()) return;
+        var savingUid = uid, value = input.value;
+        saving = true;
+        update();
+        api('/api/accounts/note', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ uid: savingUid, note: value }) })
+          .then(function () {
+            if (!alive) return;
+            state.accounts.forEach(function (a) { if (String(a.uid) === savingUid) a.note = value; });
+            delete drafts[savingUid];
+            saved = value;
+            saving = false;
+            update();
+            status.textContent = '已保存';
+          }).catch(function () {
+            if (!alive) return;
+            saving = false;
+            update();
+            status.textContent = '保存失败，请重试';
+          });
+      }
+      listen(accountsPane, 'mouseover', function (event) {
+        var button = trigger(event.target);
+        if (button && !button.contains(event.relatedTarget)) show(button, false);
+      });
+      listen(accountsPane, 'mouseout', function (event) {
+        var button = trigger(event.target);
+        if (button && !button.contains(event.relatedTarget)) deferHide();
+      });
+      listen(accountsPane, 'focusin', function (event) { var button = trigger(event.target); if (button) show(button, false); });
+      listen(accountsPane, 'focusout', deferHide);
+      listen(accountsPane, 'click', function (event) {
+        var button = trigger(event.target);
+        if (!button) return;
+        event.stopPropagation();
+        show(button, true);
+      });
+      listen(accountsPane, 'keydown', function (event) {
+        var button = trigger(event.target);
+        if (!button) return;
+        if (event.key === 'ArrowDown' || (event.key === 'Tab' && !event.shiftKey && owner === button)) {
+          event.preventDefault(); event.stopPropagation(); show(button, true);
+        }
+      });
+      listen(popup, 'mouseenter', function () { clearTimeout(hideTimer); });
+      listen(popup, 'mouseleave', deferHide);
+      listen(popup, 'focusout', deferHide);
+      ['pointerdown', 'mousedown', 'mouseup', 'dblclick', 'keyup', 'keypress', 'wheel'].forEach(function (type) {
+        listen(popup, type, function (event) { event.stopPropagation(); });
+      });
+      listen(popup, 'input', function (event) { event.stopPropagation(); update(); });
+      listen(popup, 'keydown', function (event) {
+        event.stopPropagation();
+        if (event.key === 'Escape') { event.preventDefault(); hide(true); }
+        if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') { event.preventDefault(); submit(); }
+      });
+      listen(popup, 'click', function (event) {
+        event.stopPropagation();
+        if (event.target.closest('[data-note-save]')) submit();
+        if (event.target.closest('[data-note-cancel]') && !saving) { input.value = saved; hide(true); }
+        if (event.target.closest('[data-note-close]')) hide(true);
+      });
+      listen(document, 'pointerdown', function (event) {
+        if (owner && !popup.contains(event.target) && !owner.contains(event.target)) hide(false);
+      }, true);
+      listen(document, 'keydown', function (event) { if (owner && event.key === 'Escape') { event.stopPropagation(); hide(true); } });
+      listen(panel, 'scroll', position, true);
+      listen(window, 'resize', position);
+      closeAccountNotePopover = function () { hide(false); };
+      registerDisposer(function () { hide(false); popup.remove(); closeAccountNotePopover = null; });
     }
 
     function setupDailyProgressPopover() {
@@ -7299,6 +7464,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
 
     // ===== Tab 切换 =====
     function switchTab(name) {
+      if (typeof closeAccountNotePopover === 'function') closeAccountNotePopover();
       var tabs = root.querySelectorAll('.wbs-tab');
       var panes = root.querySelectorAll('.wbs-pane');
       for (var i = 0; i < tabs.length; i++) tabs[i].classList.toggle('active', tabs[i].getAttribute('data-tab') === name);
@@ -10415,6 +10581,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         sortAccountsByCreditExpiry();
         reorderAccountCards();
       }
+      if (!open && typeof closeAccountNotePopover === 'function') closeAccountNotePopover();
       state.open = open;
       panel.classList.toggle('show', open);
       fab.classList.toggle('hidden', open); // 打开时隐藏按钮
@@ -14975,6 +15142,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       }
       state.accountLayoutKey = layoutKey;
       if (!list) { list = el('div', 'wbs-acct-list'); accountsPane.insertBefore(list, accountsPane.firstChild); }
+      if (typeof closeAccountNotePopover === 'function') closeAccountNotePopover();
       list.innerHTML = '';
       if (!state.accounts.length) {
         list.appendChild(el('div', 'wbs-empty', '还没有备份账号。打开/登录一次 WorkBuddy 后会自动备份，稍后再来查看。'));
@@ -15009,7 +15177,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         var idVal = state.mask ? maskAccountId(rawId) : rawId;
         card.innerHTML =
           '<div class="wbs-info">' +
-          '<div class="wbs-row1"><div class="wbs-name-group"><span class="wbs-name">' + esc(nameVal) + '</span>' + badge + dailyRingsHtml(a) + checkinBadge + modelRateLimitBadge + invalidAuthBadge + '</div>' + ops + '</div>' +
+          '<div class="wbs-row1"><div class="wbs-name-group"><button type="button" class="wbs-account-name" data-uid="' + escAttr(a.uid) + '" aria-label="查看或编辑账号备注" aria-haspopup="dialog" aria-controls="wbs-account-note-popover" aria-expanded="false"><span class="wbs-name">' + esc(nameVal) + '</span><span class="wbs-account-name-edit" aria-hidden="true">' + MODEL_EDIT_SVG + '</span></button>' + badge + dailyRingsHtml(a) + checkinBadge + modelRateLimitBadge + invalidAuthBadge + '</div>' + ops + '</div>' +
           '<div class="wbs-meta wbs-secondary-row">' +
           '<div class="wbs-mi wbs-phone-cell' + (isUinMode ? ' wbs-uin-cell' : '') + '"><span class="wbs-lbl">' + idLbl + '</span><span class="wbs-val">' + esc(idVal) + '</span></div>' +
           '<div class="wbs-mi wbs-token-cell"><span class="wbs-lbl">有效期至</span><span class="wbs-val' + (ts.warn ? ' wbs-warn' : '') + '">' + esc(ts.label) + '</span></div>' +
@@ -16049,6 +16217,10 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '.wbs-row1{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:7px;min-height:26px}',
     '.wbs-name-group{display:flex;align-items:center;flex-wrap:wrap;gap:6px;min-width:0}.wbs-checkin-slot{display:inline-flex;align-items:center;flex-wrap:wrap;gap:5px}',
     '.wbs-name{font-size:14px;font-weight:600;color:var(--wb-color-text-primary,#1f1f1f)}',
+    '.wbs-account-name{position:relative;display:inline-flex;align-items:center;min-width:0;max-width:calc(100% - 24px);margin-right:24px;padding:0;border:0;background:transparent;font:inherit;text-align:left;cursor:pointer;isolation:isolate}.wbs-account-name .wbs-name{position:relative;z-index:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.wbs-account-name:before{content:"";position:absolute;inset:-4px -27px -4px -5px;border:1px solid var(--wb-border-subtle,#e5e7eb);border-radius:7px;background:var(--wb-bg-popover,#fff);box-shadow:0 2px 7px rgba(0,0,0,.08);opacity:0;transition:opacity 200ms ease;pointer-events:none}.wbs-account-name-edit{position:absolute;left:100%;top:50%;display:flex;align-items:center;justify-content:center;width:24px;height:24px;color:var(--wb-icon-secondary,#666);opacity:0;transform:translate(-3px,-50%);transition:opacity 200ms ease,transform 200ms ease;pointer-events:none}.wbs-account-name-edit svg{width:13px;height:13px}.wbs-card:hover .wbs-account-name,.wbs-account-name:focus-visible,.wbs-account-name[aria-expanded="true"]{z-index:2}.wbs-card:hover .wbs-account-name:before,.wbs-account-name:focus-visible:before,.wbs-account-name[aria-expanded="true"]:before{opacity:1}.wbs-card:hover .wbs-account-name-edit,.wbs-account-name:focus-visible .wbs-account-name-edit,.wbs-account-name[aria-expanded="true"] .wbs-account-name-edit{opacity:1;transform:translate(0,-50%);pointer-events:auto}.wbs-account-name-edit:hover{color:var(--wb-color-text-primary,#1f1f1f)}.wbs-account-name:focus-visible{outline:2px solid var(--wb-accent-primary,var(--wb-color-text-primary,#1f1f1f));outline-offset:4px;border-radius:4px}',
+    '.wbs-account-note-popover{position:fixed;z-index:2147483647;box-sizing:border-box;width:280px;max-width:calc(100vw - 16px);max-height:calc(100vh - 16px);overflow:auto;padding:10px;border:1px solid var(--wb-border-subtle,#e5e7eb);border-radius:12px;background:color-mix(in srgb,var(--wb-bg-popover,#fff) 94%,transparent);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);box-shadow:0 10px 30px rgba(0,0,0,.16);color:var(--wb-color-text-primary,#1f1f1f);font:12px/1.5 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;overscroll-behavior:contain}.wbs-account-note-popover[hidden]{display:none}.wbs-account-note-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:7px;font-weight:600}.wbs-account-note-head .wbs-icon-btn{width:22px;height:22px}.wbs-account-note-popover textarea{display:block;box-sizing:border-box;width:100%;min-height:86px;max-height:180px;resize:vertical;padding:8px;border:1px solid var(--wb-border-default,#ddd);border-radius:8px;background:var(--wb-bg-secondary,#f7f8fa);color:inherit;font:inherit;line-height:1.6;overflow-wrap:anywhere;user-select:text}.wbs-account-note-popover textarea::placeholder{color:var(--wb-color-text-secondary,#777)}.wbs-account-note-popover textarea:focus-visible,.wbs-account-note-popover button:focus-visible{outline:2px solid var(--wb-accent-primary,var(--wb-color-text-primary,#1f1f1f));outline-offset:2px}.wbs-account-note-footer{display:flex;align-items:center;gap:6px;margin-top:9px}.wbs-account-note-footer [role="status"]{flex:1;min-width:0;overflow-wrap:anywhere;font-size:11px;color:var(--wb-color-text-secondary,#666)}.wbs-account-note-footer .wbs-modal-btn{flex:none;padding:4px 9px;font-size:11px}.wbs-account-note-footer .primary{background:var(--wb-button-primary-bg,#1f1f1f);border-color:var(--wb-button-primary-bg,#1f1f1f);color:var(--wb-button-primary-fg,#fff)}.wbs-account-note-footer .primary:hover:not(:disabled){background:var(--wb-button-primary-hover-bg,var(--wb-button-primary-bg,#333))}.wbs-account-note-footer button:disabled{opacity:.45;cursor:default}',
+    ':is(html.cb-dark,html[data-theme="dark"],body[data-vscode-theme-name*="dark" i]) .wbs-account-note-popover{background:color-mix(in srgb,var(--wb-bg-popover,#202126) 94%,transparent);border-color:var(--wb-border-subtle,#3c3e45);color:var(--wb-color-text-primary,#f2f3f5)}:is(html.cb-dark,html[data-theme="dark"],body[data-vscode-theme-name*="dark" i]) .wbs-account-name:before{background:var(--wb-bg-popover,#202126);border-color:var(--wb-border-subtle,#3c3e45)}:is(html.cb-dark,html[data-theme="dark"],body[data-vscode-theme-name*="dark" i]) .wbs-account-note-popover textarea{background:var(--wb-bg-secondary,#292b31);border-color:var(--wb-border-default,#454750)}:is(html.cb-dark,html[data-theme="dark"],body[data-vscode-theme-name*="dark" i]) :is(.wbs-account-note-footer [role="status"],.wbs-account-name-edit){color:var(--wb-color-text-secondary,#b9bdc7)}',
+    '@media(prefers-reduced-motion:reduce){.wbs-account-name:before,.wbs-account-name-edit{transition:none}}',
     '.wbs-daily-rings{display:inline-flex;width:auto;height:22px;flex:0 0 auto;box-sizing:border-box;align-items:center;justify-content:center;gap:5px;padding:1px 7px 1px 2px;border:0;border-radius:999px;outline:none;cursor:pointer;transition:background-color .15s,box-shadow .15s,color .15s}',
     '.wbs-daily-rings:hover,.wbs-daily-rings[aria-expanded="true"]{background:var(--wbs-primary-soft-hover);box-shadow:0 2px 8px rgba(var(--wbs-primary-rgb),.13),inset 0 1px 0 rgba(255,255,255,.28)}',
     '.wbs-daily-rings:focus-visible{background:color-mix(in srgb,var(--wb-bg-hover,#eef0f3) 86%,transparent);box-shadow:0 0 0 2px color-mix(in srgb,var(--wbs-liquid-fill) 45%,transparent)}',
