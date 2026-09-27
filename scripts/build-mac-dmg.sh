@@ -55,10 +55,13 @@ cp "$APP_ICON" "$APP/Contents/Resources/AppIcon.icns"
 chmod 644 "$APP/Contents/Resources/AppIcon.icns"
 echo "==> 应用图标已同步（背景 #e1e1e1）"
 
-# 2) 只覆盖前端代码（保留壳的其余一切：launcher/Info.plist/builtin/node_modules/theme-audit.js）
+# 2) 覆盖运行时代码和主题配置，保留 launcher/Info.plist/壁纸/node_modules/theme-audit.js。
 for f in daemon.js toast-runtime.js toast-options.js primary-account.js account-credit-cache.js completion-report.js automation-runtime.js automation-model.js automation-packages.js automation-compatibility.js automation-transfer.js automation-discovery.js automation-likes.js automation-zip.js automation.js automation-picker.js token-refresh.js session-db.js session-fork.js session-sync.js session-dirty.js third-party-models.js secure-transfer.js session-transfer.js windows-process-boundary.js windows-installer-launch.js workbuddy-compat.js inject.js theme-patches.js theme-text-shadow.js theme-vars.js credit-segments.js credit-resource-queries.js credit-request-usage.js credit-history-sync.js credit-usage-store.js credit-rotation.js token-stats.js growth-active.js growth-daily.js atomic-file-write.js ui-port.js checkin-result.js lib.js platform.js profiles.js workbuddy-target.js cdp-targets.js sentry-report.js usage-report.js install.sh relaunch-with-cdp.sh uninstall.sh apply-update.sh; do
   [ -f "scripts/$f" ] && cp "scripts/$f" "$APP/Contents/Resources/scripts/$f"
 done
+# Theme tokens are source code too; the reusable shell may contain older colors.
+mkdir -p "$APP/Contents/Resources/scripts/builtin/nebula"
+cp scripts/builtin/nebula/theme.json "$APP/Contents/Resources/scripts/builtin/nebula/theme.json"
 # Injection reads the wordmark at runtime; keep brand assets in both profiles.
 mkdir -p "$APP/Contents/Resources/scripts/assets"
 cp scripts/assets/workdaddy-logo.svg scripts/assets/workdaddy-app-icon.svg scripts/assets/workdaddy-app-icon-source.svg scripts/assets/workbuddy-buddy-mark.svg "$APP/Contents/Resources/scripts/assets/"
