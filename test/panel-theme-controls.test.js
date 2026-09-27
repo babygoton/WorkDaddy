@@ -213,7 +213,7 @@ for (const trigger of ['switch', 'settings refresh']) test('frosted wallpaper st
 });
 
 test('primary actions use native button tokens in every interaction state', () => {
-  for (const selector of ['.wbs-modal-btn.wbs-modal-ok', '.wbs-sess-bbtn.active', '.wbs-acc-switch.armed']) {
+  for (const selector of ['.wbs-modal-btn.wbs-modal-ok', '.wbs-sess-bbtn.active', '.wbs-acc-switch.armed', '.wbs-sess-done']) {
     const start = source.indexOf(selector + '{');
     const rule = source.slice(start, source.indexOf('}', start));
     assert.match(rule, /background:var\(--wb-button-primary-bg/);

@@ -263,7 +263,7 @@ test('automation UI preloads discovery and exposes fuzzy task search and import'
   assert.match(source, /favoriteCount/);
   assert.match(source, /matches\.sort\(function \(left, right\)/);
   assert.match(source, /Number\(right\.favoriteCount\).*Number\(left\.favoriteCount\)/);
-  assert.match(source, /wbs-auto-discovery-favorite\.is-active\{color:var\(--wb-color-text-primary/);
+  assert.match(source, /wbs-auto-discovery-favorite\.is-active\{color:var\(--wb-button-primary-bg/);
   assert.doesNotMatch(source, /wbs-auto-discovery-favorite\.is-active\{color:var\(--wb-accent-blue/);
   assert.match(source, /replaceExisting/);
   assert.match(source, /\/api\/automations\/discovery\?refresh=1/);
