@@ -421,8 +421,10 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 // 1.2.145：识别仅 updated_at 的激活漂移，清除无变更脏标记；无结果任务不再弹同步进度窗口。
 // 1.2.126：5.6 加密账号改为密文原样备份、内存解密；导入兼容明文 token，
 //          刷新结果不把解密后的 token 写回加密备份。
-const DAEMON_VERSION = '1.2.187';
-const DAEMON_BUILD_ID = 'release-1.2.187-20260927-account-notes';
+// 1.2.188：关闭主题接管时跟随 WorkBuddy AI 的原生 agent-ui-theme，避免旧快照覆盖官方浅色/深色选择。
+// 1.2.189：毛玻璃底色等待移至 daemon，避免后台页面定时器节流拖延开关和壁纸加载。
+const DAEMON_VERSION = '1.2.189';
+const DAEMON_BUILD_ID = 'release-1.2.189-20260927-wallpaper-loading';
 const usageReporter = createUsageReporter({ profile: PROFILE.id, version: DAEMON_VERSION });
 configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const automationDiscovery = createAutomationDiscovery({
@@ -7008,12 +7010,17 @@ function nativeAppearanceSyncExpression() {
     function sync() {
       h = document.documentElement; b = document.body;
       if (!h || !b) return;
-      var applied = null, cssState = null;
+      var applied = null, cssState = null, native = null;
       try { applied = JSON.parse(localStorage.getItem('workbuddy.appearance.lastApplied') || 'null'); } catch (_) {}
       try { cssState = JSON.parse(localStorage.getItem('workbuddy.appearance.lastApplied.css') || 'null'); } catch (_) {}
+      // WorkBuddy AI 的原生浅色/深色设置由 ThemeManager 写入 agent-ui-theme；
+      // appearance.lastApplied 只在外观面板/皮肤流程中更新。若优先读取后者，
+      // 关闭 WorkDaddy 接管后官方刚选的浅色/深色会被旧快照每 500ms 改回。
+      try { native = JSON.parse(localStorage.getItem('agent-ui-theme') || 'null'); } catch (_) {}
       var resource = String((cssState && cssState.resourceKey) || (applied && applied.resourceKey) || '');
       var css = String((cssState && cssState.css) || '');
       var special = resource && resource !== 'light' && resource !== 'dark' && css;
+      var nativeMode = native && (native.theme === 'light' || native.theme === 'dark') ? native.theme : null;
       if (special && typeof CSSStyleSheet !== 'undefined' && document.adoptedStyleSheets) {
         var key = resource + ':' + css.length;
         var currentSheets = Array.from(document.adoptedStyleSheets || []);
@@ -7032,7 +7039,7 @@ function nativeAppearanceSyncExpression() {
         return;
       }
       removeNativeSheet();
-      setMode(resource === 'dark' || (applied && applied.appearance === 'dark') ? 'dark' : 'light');
+      setMode(nativeMode || (resource === 'dark' || (applied && applied.appearance === 'dark') ? 'dark' : 'light'));
     }
     sync();
     try {
@@ -7276,27 +7283,21 @@ async function applyThemeByCdp(id, options = {}) {
     // 不改持久化接管开关，避免中途失败或并发操作留下错误的用户设置。
     await applyThemeByCdp('dark', { ...options, nativeOnly: true });
     if (applyGeneration !== themeApplyGeneration || readSessionState().themeTakeoverEnabled === false) return { applied: false, cancelled: true };
+    // Electron 后台窗口会节流 setTimeout/暂停 rAF；由 daemon 等待，
+    // 再同步检查官方底色，不能让开关响应依赖 renderer 的下一帧。
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    if (applyGeneration !== themeApplyGeneration || readSessionState().themeTakeoverEnabled === false) return { applied: false, cancelled: true };
     const settled = await cdpSend('Runtime.evaluate', {
-      expression: `new Promise(function (resolve) {
-        var done = false, fallback;
-        function finish() {
-          if (done) return;
-          done = true; clearTimeout(fallback);
+      expression: `(function () {
           var native = null;
           try { native = JSON.parse(localStorage.getItem('agent-ui-theme') || 'null'); } catch (_) {}
-          resolve({ ready: document.documentElement.getAttribute('data-theme') === 'dark' &&
+          return { ready: document.documentElement.getAttribute('data-theme') === 'dark' &&
             document.body.getAttribute('data-vscode-theme-name') === 'IDE Night' &&
             native && native.theme === 'dark' && !document.documentElement.hasAttribute('data-skin') &&
             document.documentElement.style.colorScheme === 'dark' &&
-            !document.getElementById('wbs-theme-style') && !window.__wbsThemeGuard });
-        }
-        fallback = setTimeout(finish, 500);
-        setTimeout(function () {
-          if (typeof requestAnimationFrame === 'function') requestAnimationFrame(function () { requestAnimationFrame(finish); });
-          else finish();
-        }, 120);
-      })`,
-      awaitPromise: true, returnByValue: true, timeout: 2000,
+            !document.getElementById('wbs-theme-style') && !window.__wbsThemeGuard };
+      })()`,
+      returnByValue: true, timeout: 2000,
     });
     if (applyGeneration !== themeApplyGeneration || readSessionState().themeTakeoverEnabled === false) return { applied: false, cancelled: true };
     if (!settled || settled.exceptionDetails || !settled.result || !settled.result.value || !settled.result.value.ready) throw new Error('官方深色主题尚未就绪，请重试毛玻璃主题');

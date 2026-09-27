@@ -30,6 +30,7 @@ async function themeExpression(id, takeover = true, accountUid = null, options =
     PROFILE: { capabilities: { theme: true } }, cdp: { connected: true },
     readSessionState: () => ({ themeTakeoverEnabled: takeover }),
     themeApplyGeneration: 0,
+    setTimeout: resolve => resolve(),
     currentAccount: () => accountUid ? { uid: accountUid } : null, getTheme: () => ({ dark: id !== 'default', colors: {} }),
     LOCAL_THEME_OVERRIDES: [], themeExtrasCss: () => '', themeVarsCss: () => '',
     cdpSend: async (_, params) => { expression = params.expression; return { result: { value: { applied: true, ready: true } } }; },
@@ -68,6 +69,39 @@ function renderer() {
   };
   return { context, document, observers, flush: () => observers.filter(o => o.active).forEach(o => o.callback([])) };
 }
+
+for (const snapshot of ['light', 'dark', null]) test('native sync follows both official theme buttons with snapshot ' + snapshot, () => {
+  const { context, document } = renderer();
+  const intervals = new Map();
+  let timer = 0;
+  context.setInterval = fn => { intervals.set(++timer, fn); return timer; };
+  context.clearInterval = id => intervals.delete(id);
+  if (snapshot) context.localStorage.setItem('workbuddy.appearance.lastApplied', JSON.stringify({ kind: 'theme', resourceKey: snapshot, appearance: snapshot }));
+  const savedSnapshot = context.localStorage.getItem('workbuddy.appearance.lastApplied');
+  const start = source.indexOf('function nativeAppearanceSyncExpression()');
+  const end = source.indexOf('\nasync function startNativeAppearanceSyncByCdp()', start);
+  const expression = vm.runInNewContext(source.slice(start, end) + '\nnativeAppearanceSyncExpression();', {});
+  vm.runInNewContext(expression, context);
+  for (const mode of ['dark', 'light', 'dark', 'light']) {
+    // Official AI menu calls ThemeManager.setTheme: DOM + agent-ui-theme change,
+    // while the appearance-panel snapshot may be stale or absent.
+    const native = JSON.stringify({ theme: mode, followSystem: false,
+      vsCodeThemeName: mode === 'dark' ? 'IDE Night' : 'IDE Light', vsCodeThemeKind: 'vscode-' + mode });
+    context.localStorage.setItem('agent-ui-theme', native);
+    document.documentElement.setAttribute('data-theme', mode);
+    document.body.setAttribute('data-vscode-theme-kind', 'vscode-' + mode);
+    for (let tick = 0; tick < 3; tick++) [...intervals.values()].forEach(fn => fn());
+    assert.equal(document.documentElement.getAttribute('data-theme'), mode);
+    assert.equal(document.documentElement.classList.contains('cb-dark'), mode === 'dark');
+    assert.equal(document.body.getAttribute('data-vscode-theme-kind'), 'vscode-' + mode);
+    assert.equal(context.localStorage.getItem('agent-ui-theme'), native);
+    assert.equal(context.localStorage.getItem('workbuddy.appearance.lastApplied'), savedSnapshot);
+    // A daemon reconnect must replace the timer and retain the last selection.
+    vm.runInNewContext(expression, context);
+    assert.equal(intervals.size, 1);
+    assert.equal(document.documentElement.getAttribute('data-theme'), mode);
+  }
+});
 
 test('late account appearance cannot override the chosen light or dark theme', async () => {
   for (const id of ['default', 'nebula']) {
@@ -372,6 +406,7 @@ test('release resets light once then follows official dark and special skins acr
   assert.equal(document.documentElement.getAttribute('data-theme'), 'light');
   assert.equal(intervals.size, 1, 'release must resume official settings-window synchronization');
   context.localStorage.setItem('workbuddy.appearance.lastApplied', JSON.stringify({ resourceKey: 'dark', appearance: 'dark' }));
+  context.localStorage.setItem('agent-ui-theme', JSON.stringify({ theme: 'dark', followSystem: false, vsCodeThemeName: 'IDE Night', vsCodeThemeKind: 'vscode-dark' }));
   tick();
   assert.equal(document.documentElement.getAttribute('data-theme'), 'dark');
   const css = ':root { --wb-button-primary-bg: purple; }';
@@ -441,11 +476,12 @@ test('nebula releases custom CSS and guards, waits for official dark, then reapp
   const stages = [];
   const daemon = {
     PROFILE: { capabilities: { theme: true } }, cdp: { connected: true }, themeApplyGeneration: 0,
+    setTimeout: resolve => resolve(),
     readSessionState: () => ({ themeTakeoverEnabled: true }), currentAccount: () => ({ uid: 'current' }),
     getTheme: id => ({ dark: id !== 'default', colors: {} }),
     LOCAL_THEME_OVERRIDES: [], themeExtrasCss: () => '', themeVarsCss: () => '',
     cdpSend: async (_, params) => {
-      if (params.awaitPromise) {
+      if (params.expression.includes('ready:')) {
         stages.push('settle');
         assert.equal(document.getElementById('wbs-theme-style'), null);
         assert.equal(observers.filter(o => o.active).length, 0);
@@ -521,4 +557,39 @@ test('early custom theme restore preserves pending official synchronization for 
   context.localStorage.setItem(key, JSON.stringify({ currentTheme: 'dark', pendingSync: { theme: 'dark' } }));
   vm.runInNewContext(await themeExpression('nebula', true, 'target'), context);
   assert.equal(JSON.parse(context.localStorage.getItem(key)).pendingSync.theme, 'dark');
+});
+
+test('frosted takeover completes even when background renderer timers and animation frames are suspended', async () => {
+  const delays = [];
+  const nativePage = {
+    document: {
+      documentElement: { getAttribute: () => 'dark', hasAttribute: () => false, style: { colorScheme: 'dark' } },
+      body: { getAttribute: () => 'IDE Night' }, getElementById: () => null,
+    },
+    localStorage: { getItem: () => '{"theme":"dark"}' }, window: {},
+    setTimeout() {}, clearTimeout() {}, requestAnimationFrame() {},
+  };
+  let applies = 0;
+  const daemon = {
+    PROFILE: { capabilities: { theme: true } }, cdp: { connected: true }, themeApplyGeneration: 0,
+    readSessionState: () => ({ themeTakeoverEnabled: true }), currentAccount: () => null,
+    getTheme: () => ({ dark: true, colors: {} }),
+    LOCAL_THEME_OVERRIDES: [], themeExtrasCss: () => '', themeVarsCss: () => '',
+    setTimeout: (resolve, ms) => { delays.push(ms); resolve(); },
+    cdpSend: async (_, params) => {
+      if (params.expression.includes('ready:')) return { result: { value: await vm.runInNewContext(params.expression, nativePage) } };
+      applies++;
+      return { result: { value: { applied: true } } };
+    },
+  };
+  const start = source.indexOf('async function applyThemeByCdp(id, options = {})');
+  vm.runInNewContext(source.slice(start, source.indexOf('\n/**', start)), daemon);
+  let deadline;
+  try {
+    await Promise.race([daemon.applyThemeByCdp('nebula'), new Promise((_, reject) => {
+      deadline = setTimeout(() => reject(new Error('Theme switch is waiting for suspended renderer timers')), 100);
+    })]);
+  } finally { clearTimeout(deadline); }
+  assert.equal(applies, 2, 'native dark precedes glass');
+  assert.deepEqual(delays, [120], 'the daemon owns the bounded settle delay');
 });

@@ -1482,7 +1482,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '当前没有进行中的会话，无法开启「所有会话结束允许休眠」': 'No active sessions; cannot enable “Allow sleep when all sessions end”',
     '进行中的会话': 'active session(s)', '预计剩余': 'Estimated remaining', ' 秒': ' seconds', ' 分': ' minutes',
     '预计解封：': 'Reset estimate: ', '预计解封：时间未知': 'Reset estimate: unknown', '预计解封': 'Reset estimate', '时间未知': 'Time unknown', '模型限流': 'Model rate limited', '模型限流·': 'Model rate limited ·', '模型频率限制': 'Model rate limit', '账号状态': 'Account status', '当前没有有效的模型限流记录': 'No active model rate-limit records',
-    '当前模型已触发频率限制，已停止自动发送': 'This model is rate limited; automatic sending stopped', '当前账号额度已耗尽，已停止自动发送': 'This account has no credits left; automatic sending stopped', '模型：': 'Model: ',
+    '当前模型已触发频率限制，已停止自动发送': 'This model is rate limited; automatic sending stopped', '当前账号积分已耗尽': 'This account has no credits left', '模型：': 'Model: ',
     '无法打开安装程序': 'Could not open the installer',
     '安装程序已打开，请按提示退出 WorkBuddy 并完成安装。': 'The installer is open. Please quit WorkBuddy as prompted and finish installing.',
     '停止旧服务…': 'Stopping old service…', '发现新版本，准备更新…': 'New version available; preparing to update…',
@@ -3499,6 +3499,8 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       var themeSwitch = themePane && themePane.querySelector('#wbs-theme-takeover');
       if (themeSwitch) themeSwitch.checked = sessState.themeTakeover;
       syncThemeTakeoverVisibility(sessState.themeTakeover);
+      // 开关确认和异步设置回填也要启动图库加载，不能只在切换主题页时加载。
+      syncWallpaperCardVisibility('nebula');
       if (area) area.style.display = sessState.phrase ? '' : 'none';
       renderQpList();
       renderExploreOptions();
@@ -11695,7 +11697,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       if (acLimitToastSeen[key]) return;
       acLimitToastSeen[key] = true;
       var message = wbsTranslateString(
-        snapshot.rateLimited ? '当前模型已触发频率限制，已停止自动发送' : '当前账号额度已耗尽，已停止自动发送',
+        snapshot.rateLimited ? '当前模型已触发频率限制，已停止自动发送' : '当前账号积分已耗尽',
         WBS_LANGUAGE
       );
       if (snapshot.rateLimited) {

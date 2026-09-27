@@ -315,7 +315,7 @@ test('quota and model rate limit stops surface one renderer toast', () => {
   assert.match(source, /snapshot\.quotaExhausted/);
   assert.match(source, /acLimitToastSeen/);
   assert.match(source, /toast\(message, true, root\)/);
-  assert.match(source, /当前账号额度已耗尽，已停止自动发送/);
+  assert.match(source, /当前账号积分已耗尽/);
   assert.match(source, /当前模型已触发频率限制，已停止自动发送/);
   assert.doesNotMatch(source, /Auto-Continue 已停止/);
 });

@@ -165,3 +165,49 @@ test('custom themes color account and expiry bars with primary token while prese
   assert.match(source, /color-mix\(in srgb,var\(--wbs-credit-theme-color/);
   assert.match(source, /calc\(var\(--wbs-credit-alpha,1\) \* 100%\)/);
 });
+
+for (const trigger of ['switch', 'settings refresh']) test('frosted wallpaper starts loading on ' + trigger + ' without revisiting the tab', async () => {
+  const grid = { dataset: {}, innerHTML: '壁纸加载中…', querySelectorAll: () => [] };
+  const card = { style: {} }, toggle = { checked: false };
+  const nodes = { '#wbs-wallpapers': grid, '#wbs-wallpaper-card': card, '#wbs-theme-takeover': toggle };
+  const requests = [];
+  let resolveWallpapers;
+  const context = {
+    sessState: {}, enhancePane: null, conversationUsageEnabled: false,
+    themePane: { querySelector: selector => nodes[selector] || null, querySelectorAll: () => [card] },
+    root: { querySelector: selector => nodes[selector] || null },
+    API: 'http://127.0.0.1:47833',
+    api: (route, opts) => {
+      requests.push(route);
+      if (route === '/api/wallpapers') return new Promise(resolve => { resolveWallpapers = resolve; });
+      return Promise.resolve({ ok: true, themeTakeoverEnabled: route === '/api/session-module-set' ? JSON.parse(opts.body).enabled : true });
+    },
+    renderQpList() {}, renderExploreOptions() {}, syncStash() {}, lockPanelHeight() {},
+    setTimeout() {}, escAttr: value => value, esc: value => value,
+    toast: message => assert.fail(message),
+  };
+  vm.runInNewContext(section('function applySessionModule(', '    /** 增强页快捷短语列表') +
+    section('function syncWallpaperCardVisibility(', '    // 主题 pane 事件绑定') +
+    section('function loadWallpapers(force)', '    function setOpen('), context);
+  context.applySessionModule({ ok: true, themeTakeoverEnabled: false });
+  context.syncWallpaperCardVisibility('nebula'); // First visit with takeover off.
+  assert.equal(requests.length, 0);
+  if (trigger === 'switch') {
+    toggle.checked = true;
+    await context.setSessionSwitchWire('themeTakeoverEnabled', toggle);
+  } else {
+    context.syncSessionModule();
+    await new Promise(resolve => setImmediate(resolve));
+  }
+  assert.equal(card.style.display, '');
+  assert.equal(requests.filter(route => route === '/api/wallpapers').length, 1);
+  context.applySessionModule({ ok: true, themeTakeoverEnabled: true });
+  assert.equal(requests.filter(route => route === '/api/wallpapers').length, 1, 'pending loads are reused');
+  resolveWallpapers({ wallpapers: [{ name: 'wallpaper-01.webp', title: '官方壁纸 1' }] });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.match(grid.innerHTML, /data-wp="wallpaper-01.webp"/);
+  assert.doesNotMatch(grid.innerHTML, /壁纸加载中/);
+  context.applySessionModule({ ok: true, themeTakeoverEnabled: false });
+  context.applySessionModule({ ok: true, themeTakeoverEnabled: true });
+  assert.equal(requests.filter(route => route === '/api/wallpapers').length, 1, 'loaded wallpaper grid is reused');
+});
