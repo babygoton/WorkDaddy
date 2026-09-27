@@ -211,3 +211,19 @@ for (const trigger of ['switch', 'settings refresh']) test('frosted wallpaper st
   context.applySessionModule({ ok: true, themeTakeoverEnabled: true });
   assert.equal(requests.filter(route => route === '/api/wallpapers').length, 1, 'loaded wallpaper grid is reused');
 });
+
+test('primary actions use native button tokens in every interaction state', () => {
+  for (const selector of ['.wbs-modal-btn.wbs-modal-ok', '.wbs-sess-bbtn.active', '.wbs-acc-switch.armed']) {
+    const start = source.indexOf(selector + '{');
+    const rule = source.slice(start, source.indexOf('}', start));
+    assert.match(rule, /background:var\(--wb-button-primary-bg/);
+    assert.match(rule, /color:var\(--wb-button-primary-fg/);
+  }
+  assert.doesNotMatch(source, /--wb-button-primary-(hover-bg|text)\b/);
+  assert.match(source, /background:var\(--wb-button-primary-bg-disabled/);
+  assert.match(source, /color:var\(--wb-button-primary-fg-disabled/);
+  assert.match(source, /\.wbs-modal-btn:not\(:where\(\.wbs-modal-ok,\.primary\)\)/);
+  const glass = source.split('\n').find(line => line.includes('html[data-wbs-theme-id="nebula"] .wbs-panel,'));
+  assert.match(glass, /\.wbs-account-note-popover/);
+  assert.match(glass, /\.wbs-status-popover/);
+});

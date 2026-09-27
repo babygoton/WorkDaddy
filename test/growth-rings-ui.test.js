@@ -296,5 +296,5 @@ test('growth plan primary actions use WorkBuddy button theme tokens', () => {
   assert.doesNotMatch(action[0], /color:var\(--wbs-ring-growth\)/);
   const hover = inject.match(/\.wbs-growth-task-action:hover[^']+/);
   assert.ok(hover);
-  assert.match(hover[0], /var\(--wb-button-primary-hover-bg/);
+  assert.match(hover[0], /var\(--wb-button-primary-bg-hover/);
 });
