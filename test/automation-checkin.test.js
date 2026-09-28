@@ -98,7 +98,7 @@ test('legacy implicit triggers and pending UI are removed; panel event is explic
   assert.doesNotMatch(ui,/签到中|watchCheckin|stopCheckinPolling/);
   assert.match(ui,/\/api\/automations\/events/);
   const html=ui.slice(ui.indexOf('function checkinHtml'),ui.indexOf('function el(tag'));
-  const ctx={WBS_PROFILE_IS_AI:false};vm.createContext(ctx);vm.runInContext(html,ctx);
+  const ctx={WBS_PROFILE_IS_AI:false,CAPS:{checkin:true}};vm.createContext(ctx);vm.runInContext(html,ctx);
   assert.match(ctx.checkinHtml({}),/pending.*今日未签到/);
   assert.match(ctx.checkinHtml({checkin:{ok:true}}),/tag ok.*今日已签到/);
   assert.doesNotMatch(ctx.checkinHtml({checkin:{ok:false,message:'bad'}}),/bad/);
@@ -159,23 +159,69 @@ test('automation editor assigns remaining height to the code field without an ou
   assert.doesNotMatch(rules,/height:calc\(100% - 164px\)|min-height:190px/);
 });
 
-test('fresh CN receives Buddy travel and check-in disabled while AI keeps the two existing presets', () => {
-  const init = source.slice(source.indexOf("for (const preset of ['close-buddy-popups.json'"), source.indexOf('\nrestoreSleepMode();'));
+test('international profiles retire all old builtins and never install new ones; domestic profiles keep theirs', () => {
+  const start = source.indexOf('if (PROFILE.capabilities.builtinAutomations === false) {');
+  assert.ok(start >= 0);
+  const init = source.slice(start, source.indexOf('\nrestoreSleepMode();'));
   const { PROFILES } = require('../scripts/profiles');
-  for (const id of ['workbuddy-cn', 'workbuddy-ai']) {
+  for (const id of ['workbuddy-cn', 'workbuddy-ai', 'codebuddy-cn', 'codebuddy-intl']) {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wd-presets-'));
     try {
-      const context = { PROFILE: PROFILES[id], DATA_DIR: dir, path, __dirname: path.join(__dirname, '../scripts'), installBuiltinTask: automation.installBuiltinTask, log() {} };
+      if (PROFILES[id].region === 'intl') {
+        for (const preset of ['close-buddy-popups.json', 'keep-accounts-active.json', 'buddy-travel.json', 'daily-account-checkin.json']) automation.installBuiltinTask(dir, path.join(__dirname, '../scripts/builtin/automations', preset), PROFILES[id]);
+      }
+      const context = { PROFILE: PROFILES[id], DATA_DIR: dir, path, __dirname: path.join(__dirname, '../scripts'), installBuiltinTask: automation.installBuiltinTask, removeBuiltinTasks: automation.removeBuiltinTasks, log() {} };
       vm.runInNewContext(init, context);
-      assert.deepEqual(automation.readAutomations(dir).map(t => t.id).sort(), id === 'workbuddy-cn'
+      const domestic = id === 'workbuddy-cn' || id === 'codebuddy-cn';
+      assert.deepEqual(automation.readAutomations(dir).map(t => t.id).sort(), domestic
         ? ['buddy-fuel-station-close-on-account-switch', 'daily-account-checkin', 'daily-growth-and-buddy', 'keep-accounts-active-1-plus-1']
-        : ['buddy-fuel-station-close-on-account-switch', 'keep-accounts-active-1-plus-1']);
-      if (id === 'workbuddy-cn') for (const taskId of ['daily-growth-and-buddy', 'daily-account-checkin']) {
+        : []);
+      if (domestic) for (const taskId of ['daily-growth-and-buddy', 'daily-account-checkin']) {
         assert.equal(automation.readAutomations(dir).find(t => t.id === taskId).enabled, false);
+      }
+      const travel = automation.readAutomations(dir).find(t => t.id === 'daily-growth-and-buddy');
+      if (travel) {
+        const urls = [];
+        const walk = value => {
+          if (!value || typeof value !== 'object') return;
+          if (value.op === 'http.requestAsAccount') urls.push(new URL(value.url).origin);
+          Object.values(value).forEach(walk);
+        };
+        walk(travel.steps);
+        assert.ok(urls.length > 0);
+        const expectedOrigin = PROFILES[id].kind === 'codebuddy' ? PROFILES[id].apiHost : 'https://www.workbuddy.cn';
+        assert.ok(urls.every(origin => origin === expectedOrigin), id + ': preserve WorkBuddy endpoints and isolate CodeBuddy origins');
       }
       automation.writeAutomations(dir, []);
       vm.runInNewContext(init, context);
       assert.equal(automation.readAutomations(dir).length, 0);
     } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  }
+});
+
+test('retiring unsupported builtins preserves imported tasks and unrelated automation settings', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wd-retire-'));
+  try {
+    const file = path.join(__dirname, '../scripts/builtin/automations/daily-account-checkin.json');
+    automation.writeAutomations(dir, [automation.validateTask(JSON.parse(fs.readFileSync(file, 'utf8')))]);
+    automation.installBuiltinTask(dir, file); // Existing imported id is unmanaged.
+    const before = automation.readAutomations(dir);
+    automation.removeBuiltinTasks(dir);
+    assert.deepEqual(automation.readAutomations(dir), before);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('CodeBuddy international has no check-in badge; domestic profiles keep theirs', () => {
+  const ui = fs.readFileSync(path.join(__dirname, '../scripts/inject.js'), 'utf8');
+  const start = ui.indexOf('  function checkinHtml(a) {');
+  const badge = ui.slice(start, ui.indexOf('\n  function activityStreakHtml', start));
+  const { PROFILES } = require('../scripts/profiles');
+  for (const id of Object.keys(PROFILES)) {
+    const ctx = { WBS_PROFILE_IS_AI: id === 'workbuddy-ai', CAPS: PROFILES[id].capabilities };
+    vm.runInNewContext(badge, ctx);
+    if (id === 'codebuddy-intl' || id === 'workbuddy-ai') {
+      assert.equal(ctx.checkinHtml({}), '');
+      assert.equal(ctx.checkinHtml({ checkin: { ok: true } }), '');
+    } else assert.match(ctx.checkinHtml({}), /今日未签到/);
   }
 });

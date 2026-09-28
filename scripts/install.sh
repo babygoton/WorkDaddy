@@ -95,7 +95,7 @@ if ! "$NODE" "$DIR/scripts/sync.js"; then
 fi
 
 echo "==> 清理旧 launchd 注册（WorkDaddy / WorkDaddy AI 不再登录自启）"
-for old_profile in workbuddy-cn workbuddy-ai codebuddy-cn codebuddy-intl; do
+for old_profile in "$PROFILE"; do
   old_label="com.workbuddy.workdaddy.${old_profile}"
   old_plist="$HOME/Library/LaunchAgents/${old_label}.plist"
   launchctl bootout "gui/$(id -u)" "$old_plist" 2>/dev/null || true

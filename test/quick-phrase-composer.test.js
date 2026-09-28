@@ -193,7 +193,7 @@ function delayedButtonHarness({ enableAfter = 3, cancelAfter = Infinity, disable
       probes++; probeTimes.push(clock); clock += probeCost;
       const foreign = { ...button, disabled: false, hasAttribute: () => false, getAttribute: () => null };
       const dom = {
-        document: { activeElement: scoped ? { closest: () => box } : null, querySelector: () => button, querySelectorAll: selector => selector === '.cr-input-box' ? [] : scoped ? [foreign] : [button] },
+        document: { activeElement: scoped ? { closest: () => box } : null, querySelector: selector => selector === '#codebuddy-agents-container' ? null : button, querySelectorAll: selector => selector === '.cr-input-box' ? [] : scoped ? [foreign] : [button] },
         getComputedStyle: () => ({ display: 'block', visibility: 'visible', borderRadius: '50%' }),
       };
       return { result: { value: vm.runInNewContext(params.expression, dom) } };
@@ -255,4 +255,56 @@ test('the five-second deadline includes slow CDP probes and rejects a late ready
   assert.ok(!h.calls.includes('submit'));
   assert.equal(h.calls.filter(m => m === 'Input.insertText').length, 1);
   assert.ok(h.probeTimes.every(at => at < 5000));
+});
+
+test('native CodeBuddy send expression uses the square official button and fails closed if absent', () => {
+  const exprStart = source.indexOf('  const sendExpr = `', start) + '  const sendExpr = `'.length;
+  const exprEnd = source.indexOf('`;', exprStart);
+  const expression = vm.runInNewContext('`' + source.slice(exprStart,exprEnd) + '`');
+  const compat = require('../scripts/workbuddy-compat');
+  const native = {className:'_icon_fixture _active_fixture',closest:()=>null,
+    __reactProps$x:{onClick:function(){ editor.prepareBeforeSubmit?.();editor.flushPendingContentChange(); }},
+    getAttribute:()=>null,getBoundingClientRect:()=>({x:400,y:100,width:24,height:24,bottom:124}),scrollIntoView(){}};
+  const plugin={className:'wbs-explore-inline',closest:()=>({})};
+  const box={querySelectorAll:()=>[plugin,native]};
+  const dom={window:{__wbsWorkBuddyCompat:compat},document:{activeElement:{closest:()=>box},querySelector:()=>({})},getComputedStyle:()=>({display:'flex',visibility:'visible',pointerEvents:'auto'})};
+  let result=vm.runInNewContext(expression,dom);
+  assert.equal(result.ok,true);assert.equal(result.x,412);assert.equal(result.selector,'codebuddy-official-send-button');
+  native.className='_icon_fixture _disabled_fixture';
+  assert.equal(vm.runInNewContext(expression,dom).ok,false);
+  box.querySelectorAll=()=>[plugin];
+  result=vm.runInNewContext(expression,dom);assert.equal(result.ok,false);assert.equal(result.retryable,true);
+});
+
+test('CodeBuddy submits the native control once without compositor-dependent mouse ACKs', async () => {
+  for (const disabled of [false, true]) {
+    let evaluations = 0, submits = 0, mouseClicks = 0;
+    const button = { disabled, className: '_icon_fixture', getAttribute: () => null,
+      getBoundingClientRect: () => ({ width: 24, height: 24 }), click: () => submits++ };
+    const dom = { document: {}, window: { __wbsWorkBuddyCompat: { findCodeBuddySendButton: () => button } },
+      getComputedStyle: () => ({ display: 'flex', visibility: 'visible', pointerEvents: 'auto' }) };
+    const context = { cdp: { connected: true }, log() {}, waitAiIdle: async () => true, setTimeout: fn => fn(),
+      cdpSend: async (method, params) => {
+        if (method !== 'Runtime.evaluate') return {};
+        evaluations++;
+        if (params.expression.includes('codebuddy-submit-once')) return { result: { value: vm.runInNewContext(params.expression, dom) } };
+        return { result: { value: evaluations <= 2 ? { ok: true, hasContent: false } :
+          params.expression.includes('composer-after-submit') ? { ok: true, hasContent: false } :
+          { ok: true, x: 1180, y: 778, selector: 'codebuddy-official-send-button' } } };
+      },
+      cdpMouseClick: async () => mouseClicks++,
+    };
+    vm.runInNewContext(source.slice(start, end), context);
+    const sending = context.sendStashToComposer({ content: { text: 'fixture', items: [] } });
+    if (disabled) await assert.rejects(sending, /发送按钮/);
+    else assert.equal((await sending).sent, true);
+    assert.equal(submits, disabled ? 0 : 1);
+    assert.equal(mouseClicks, 0);
+  }
+});
+
+test('CodeBuddy quick phrase insertion has a non-blocking official adapter fallback', () => {
+  assert.match(source, /requestInsertContentBlocks\(\{contentBlocks:\[\],clearFirst:true\}\)/);
+  assert.match(source, /requestInsertContentBlocks\(\{contentBlocks:\[\{type:'text',text:/);
+  assert.match(source, /fire-and-forget/);
 });

@@ -329,7 +329,13 @@ function createAutomationDiscovery(options) {
     };
   }
 
+  function adoptSharedCache() {
+    const latest = readCache(cacheFile);
+    if (Number(latest.checkedAt) >= Number(state.checkedAt)) state = latest;
+  }
+
   async function refresh() {
+    adoptSharedCache();
     const errors = [];
     const search = await Promise.allSettled([searchGitHub(fetchImpl, marker, pageSize), searchGitee(fetchImpl, marker, pageSize)]);
     const providers = { github: state.providers.github || [], gitee: state.providers.gitee || [] };
@@ -365,6 +371,7 @@ function createAutomationDiscovery(options) {
   }
 
   async function getCatalog(options = {}) {
+    if (!inFlight) adoptSharedCache();
     if (!options.force && now() - Number(state.checkedAt || 0) < CACHE_TTL_MS) return publicCatalog();
     if (!inFlight) inFlight = refresh().finally(() => { inFlight = null; });
     return inFlight;

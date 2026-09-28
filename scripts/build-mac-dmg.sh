@@ -28,19 +28,28 @@ DMG_BACKGROUND_SVG="$DIR/scripts/assets/macos-dmg-background.svg"
 SKIP_FINDER="${WORKDADDY_SKIP_FINDER:-}"
 PROFILE="${WORKDADDY_BUILD_PROFILE:-}"
 if [ -z "$PROFILE" ]; then
-  for profile in workbuddy-cn workbuddy-ai; do
+  for profile in workbuddy-cn workbuddy-ai codebuddy-cn codebuddy-intl; do
     WORKDADDY_BUILD_PROFILE="$profile" bash "$0" || exit $?
   done
   exit 0
 fi
 case "$PROFILE" in
   workbuddy-ai) PACKAGE_APP_NAME="WorkDaddy AI"; OUT="release/macos/WorkDaddy-AI-${VERSION}.dmg" ;;
-  *) PROFILE="workbuddy-cn"; PACKAGE_APP_NAME="WorkDaddy"; OUT="release/macos/WorkDaddy-${VERSION}.dmg" ;;
+  codebuddy-cn) PACKAGE_APP_NAME="CodeDaddy CN"; OUT="release/macos/CodeDaddy-CN-${VERSION}.dmg" ;;
+  codebuddy-intl) PACKAGE_APP_NAME="CodeDaddy"; OUT="release/macos/CodeDaddy-${VERSION}.dmg" ;;
+  workbuddy-cn) PACKAGE_APP_NAME="WorkDaddy"; OUT="release/macos/WorkDaddy-${VERSION}.dmg" ;;
+  *) echo "未知 profile: $PROFILE" >&2; exit 2 ;;
 esac
 
 echo "==> profile: ${PROFILE}"
 echo "==> 版本: ${VERSION}"
 echo "==> 产物: ${OUT}"
+
+# Synchronize source into a temporary shell; keep the reusable app untouched.
+SHELL_STAGE="$(mktemp -d)"
+cp -R "$APP" "$SHELL_STAGE/WorkDaddy.app"
+APP="$SHELL_STAGE/WorkDaddy.app"
+trap 'rm -rf -- "$SHELL_STAGE"' EXIT
 
 # 1) 壳完整性自检：launcher 必须有可执行位（1.0.3 原版为 -rwxr-xr-x）
 chmod 755 "$APP/Contents/MacOS/launcher"
@@ -56,7 +65,7 @@ chmod 644 "$APP/Contents/Resources/AppIcon.icns"
 echo "==> 应用图标已同步（背景 #e1e1e1）"
 
 # 2) 覆盖运行时代码和主题配置，保留 launcher/Info.plist/壁纸/node_modules/theme-audit.js。
-for f in daemon.js toast-runtime.js toast-options.js primary-account.js account-credit-cache.js completion-report.js automation-runtime.js automation-model.js automation-packages.js automation-compatibility.js automation-transfer.js automation-discovery.js automation-likes.js automation-zip.js automation.js automation-picker.js token-refresh.js session-db.js session-fork.js session-sync.js session-dirty.js third-party-models.js secure-transfer.js session-transfer.js windows-process-boundary.js windows-installer-launch.js workbuddy-compat.js inject.js theme-patches.js theme-text-shadow.js theme-vars.js credit-segments.js credit-resource-queries.js credit-request-usage.js credit-history-sync.js credit-usage-store.js credit-rotation.js token-stats.js growth-active.js growth-daily.js atomic-file-write.js ui-port.js checkin-result.js lib.js platform.js profiles.js workbuddy-target.js cdp-targets.js sentry-report.js usage-report.js install.sh relaunch-with-cdp.sh uninstall.sh apply-update.sh; do
+for f in daemon.js renderer-api-bridge.js codebuddy-native.js codebuddy-session-store.js codebuddy-files.js toast-runtime.js toast-options.js primary-account.js account-credit-cache.js completion-report.js automation-runtime.js automation-model.js automation-packages.js automation-compatibility.js automation-transfer.js automation-discovery.js automation-likes.js automation-zip.js automation.js automation-picker.js token-refresh.js session-db.js session-fork.js session-sync.js session-dirty.js third-party-models.js secure-transfer.js session-transfer.js windows-process-boundary.js windows-installer-launch.js workbuddy-compat.js inject.js theme-patches.js theme-text-shadow.js theme-vars.js credit-segments.js credit-resource-queries.js credit-request-usage.js credit-history-sync.js credit-usage-store.js credit-rotation.js token-stats.js growth-active.js growth-daily.js atomic-file-write.js ui-port.js checkin-result.js lib.js platform.js profiles.js workbuddy-target.js cdp-targets.js sentry-report.js usage-report.js install.sh relaunch-with-cdp.sh uninstall.sh apply-update.sh; do
   [ -f "scripts/$f" ] && cp "scripts/$f" "$APP/Contents/Resources/scripts/$f"
 done
 # Theme tokens are source code too; the reusable shell may contain older colors.
@@ -129,7 +138,7 @@ cleanup_dmg_build() {
   if [ -n "$DMG_DEVICE" ]; then
     hdiutil detach "$DMG_DEVICE" -force >/dev/null 2>&1 || true
   fi
-  rm -rf -- "$STAGE" "$DMG_TEMP_DIR"
+  rm -rf -- "$STAGE" "$DMG_TEMP_DIR" "$SHELL_STAGE"
 }
 trap cleanup_dmg_build EXIT
 
@@ -207,6 +216,8 @@ discover_workdaddy_workbuddy_app || true
         raise SystemExit('macOS launcher 缺少 profile case')
     insert_at = case_index + len('esac')
     source = source[:insert_at] + '\n' + function + source[insert_at:]
+# Historical HelloBuddy processes belong to the WorkDaddy profile only.
+source = source.replace('cleanup_legacy() {', 'cleanup_legacy() {\n  [ "$PROFILE" = workbuddy-cn ] || return 0')
 source = source.replace('workbuddy-target.js" --profile="$PROFILE"', 'workbuddy-target.js" --resolve --profile="$PROFILE"')
 # 官方安装不应把自身路径作为 custom target 传给 daemon。仅在用户配置了
 # workbuddy-target.json 时设置 override，并让 launchd plist 保持相同边界。
@@ -292,8 +303,17 @@ replacement = r'''is_workbuddy_cdp() {
       printf '%s' "$body" | grep -qi 'WorkBuddy' &&
         ! printf '%s' "$body" | grep -qiE 'WorkBuddy[[:space:]]*AI|WorkBuddyAI'
       ;;
+    codebuddy-cn|codebuddy-intl)
+      local native_port=9244
+      [ "$PROFILE" = codebuddy-intl ] && native_port=9245
+      curl -fsS --max-time 1 "http://127.0.0.1:$native_port/json/list" >/dev/null 2>&1 || return 1
+      body="$(curl -fsS --max-time 1 "http://127.0.0.1:${p}/json/list" 2>/dev/null || true)"
+      local expected="$APP_NAME"
+      expected="${expected// /%20}"
+      printf '%s' "$body" | grep -Fqi "/${expected}.app/"
+      ;;
     *)
-      printf '%s' "$body" | grep -qiE 'WorkBuddy|CodeBuddy'
+      return 1
       ;;
   esac
 }'''
@@ -303,10 +323,33 @@ if count != 1:
 with open(path, 'w', encoding='utf-8', newline='') as f:
     f.write(updated)
 PY
-if [ "$PROFILE" = "workbuddy-ai" ]; then
-  perl -0pi -e 's/<string>WorkDaddy<\/string>/<string>WorkDaddy AI<\/string>/g' "$PACKAGE_APP/Contents/Info.plist"
-  perl -0pi -e 's/<string>com\.workdaddy\.launcher<\/string>/<string>com.workdaddy.ai.launcher<\/string>/g' "$PACKAGE_APP/Contents/Info.plist"
+python3 - "$PACKAGE_APP/Contents/MacOS/launcher" "$PACKAGE_APP_NAME" <<'PYBRAND'
+from pathlib import Path
+import sys
+file, brand = Path(sys.argv[1]), sys.argv[2]
+text = file.read_text()
+if brand.startswith('CodeDaddy'):
+    marker = '# VPC/便携版可把 app 路径写到数据目录的 workbuddy-target.json；环境变量优先。'
+    guard = '''if ! "$NODE_BIN" -e "require('node:sqlite')" >/dev/null 2>&1; then
+  notify "WorkDaddy" "需要支持 SQLite 的 Node.js 22.13 或更新版本，请升级 Node.js 后重试"
+  exit 1
 fi
+'''
+    if marker not in text:
+        raise SystemExit('macOS launcher 缺少 Node.js 能力检查插入点')
+    text = text.replace(marker, guard + marker, 1)
+text = text.replace('notify "WorkDaddy"', 'notify "' + brand + '"').replace('with title "WorkDaddy"', 'with title "' + brand + '"')
+file.write_text(text)
+PYBRAND
+/usr/libexec/PlistBuddy -c "Set :CFBundleName $PACKAGE_APP_NAME" "$PACKAGE_APP/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName $PACKAGE_APP_NAME" "$PACKAGE_APP/Contents/Info.plist" 2>/dev/null || /usr/libexec/PlistBuddy -c "Add :CFBundleDisplayName string $PACKAGE_APP_NAME" "$PACKAGE_APP/Contents/Info.plist"
+case "$PROFILE" in
+  workbuddy-cn) BUNDLE_ID=com.workdaddy.launcher ;;
+  workbuddy-ai) BUNDLE_ID=com.workdaddy.ai.launcher ;;
+  codebuddy-cn) BUNDLE_ID=com.codedaddy.cn.launcher ;;
+  codebuddy-intl) BUNDLE_ID=com.codedaddy.launcher ;;
+esac
+/usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $BUNDLE_ID" "$PACKAGE_APP/Contents/Info.plist"
 # LaunchServices must own the target app identity, rather than inheriting the shell launcher.
 python3 - "$PACKAGE_APP/Contents/MacOS/launcher" <<'PY'
 import sys
@@ -319,7 +362,12 @@ if [ "$TARGET_APP_BUNDLE" = "$APP_BIN" ] || [ ! -d "$TARGET_APP_BUNDLE" ]; then
   notify "WorkDaddy" "WorkBuddy 应用路径无效，启动失败"
   exit 1
 fi
-if ! /usr/bin/open -a "$TARGET_APP_BUNDLE" --args "--remote-debugging-port=$PORT"; then
+NATIVE_ARGS=()
+case "$PROFILE" in
+  codebuddy-cn) NATIVE_ARGS=(--inspect=127.0.0.1:9244) ;;
+  codebuddy-intl) NATIVE_ARGS=(--inspect=127.0.0.1:9245) ;;
+esac
+if ! /usr/bin/open -a "$TARGET_APP_BUNDLE" --args "--remote-debugging-port=$PORT" "${NATIVE_ARGS[@]}"; then
   notify "WorkDaddy" "无法启动 WorkBuddy，请重试"
   exit 1
 fi'''

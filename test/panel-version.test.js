@@ -21,11 +21,13 @@ test('header reads running client version instead of Chrome or Electron versions
 test('header writes version subtitle as text with a safe unknown-version fallback', () => {
   const begin = source.indexOf("var versionLine = root.querySelector('#wbs-version-line')");
   const finish = source.indexOf("    listen(window, 'workdaddy:automation-toast'", begin);
-  const render = new Function('root', 'navigator', 'WBS_VERSION', 'wbsClientVersion', source.slice(begin, finish));
+  const render = new Function('root', 'navigator', 'WBS_VERSION', 'wbsClientVersion', 'CAPS = {}', 'WBS_BRAND = "WorkDaddy"', source.slice(begin, finish));
   const label = { textContent: '' };
   const root = { querySelector: () => label };
   render(root, { userAgent: 'WorkBuddy/5.5.3' }, '1.2.0', clientVersion);
   assert.equal(label.textContent, '5.5.3 (1.2.0)');
   render(root, { userAgent: 'Chrome/138.0.0.0' }, '1.2.0', clientVersion);
   assert.equal(label.textContent, '(1.2.0)');
+  render(root,{userAgent:'CodeBuddy/4.12.1'},'1.2.192',clientVersion,{apiTransport:'cdp'},'CodeDaddy CN');
+  assert.equal(label.textContent,'(v1.2.192 for CodeDaddy CN)');
 });

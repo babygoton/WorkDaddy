@@ -20,7 +20,7 @@ const DATA_DIR = process.env.WBSWITCH_DATA_DIR || profileDataDir(PROFILE);
 const PID_FILE = path.join(DATA_DIR, 'watchdog.pid');
 const LOG_FILE = path.join(DATA_DIR, 'watchdog.log');
 const DAEMON_FILE = path.join(__dirname, 'daemon.js');
-const LOCK_PORT = PROFILE.id === 'workbuddy-ai' ? 47933 : 47932;
+const LOCK_PORT = ({'workbuddy-cn':47932,'workbuddy-ai':47933,'codebuddy-cn':47934,'codebuddy-intl':47935})[PROFILE.id];
 
 let child = null;
 let stopping = false;

@@ -18,6 +18,7 @@ function runPopupTask(appearAt, failedConfirmations = 0) {
     return selector;
   };
   const context = {
+    PROFILE: { capabilities: {} },
     require: require('node:module').createRequire(path.join(__dirname, '../scripts/automation.js')), module: { exports: {} },
     setTimeout: (callback, ms) => { now += ms; callback(); },
   };
@@ -113,6 +114,7 @@ test('a newer navigation supersedes a running opt-in task instead of dropping it
   const end = source.indexOf('\nfunction onCdpEvent(', start);
   const running = { taskId: 'popup', status: 'running', navigationSerial: 1 };
   const context = {
+    PROFILE: { capabilities: {} },
     taskMatchesEvent: require('../scripts/automation').taskMatchesEvent,
     automationEventKeys: new Set(), mainFrameNavigationSerial: 2, cdpPageSessionId: 'renderer-a',
     automationRuns: new Map([['run', running]]), DATA_DIR: '/test',
@@ -133,6 +135,7 @@ test('pageReady is deduplicated per renderer page rather than per CDP connection
   const end = source.indexOf('\nfunction onCdpEvent(', start);
   const launched = [];
   const context = {
+    PROFILE: { capabilities: {} },
     taskMatchesEvent: () => true,
     automationEventKeys: new Set(), mainFrameNavigationSerial: 7, cdpPageSessionId: 'renderer-a',
     automationRuns: new Map(), DATA_DIR: '/test',
@@ -175,6 +178,7 @@ test('a running cleanup stops before the next navigation begins its own cleanup'
   const executions = [], restored = [];
   const noop = () => {};
   const context = {
+    PROFILE: { capabilities: {} },
     taskIsPassiveCleanup: require('../scripts/automation').taskIsPassiveCleanup, taskMatchesEvent: require('../scripts/automation').taskMatchesEvent, taskNeedsPanelClosed: require('../scripts/automation').taskNeedsPanelClosed,
     ...require('../scripts/automation-runtime'),
     acquireAutomationInput: require('../scripts/automation-runtime').createRendererGate(),
@@ -229,6 +233,7 @@ test('automation DOM click dispatches the located button without undefined reque
   const clicks = [];
   const found = { x: 10, y: 20, w: 20, h: 30, visible: true };
   const context = {
+    PROFILE: { capabilities: {} },
     cdp: { connected: true },
     automationDeepLocatorExpression: () => 'null',
     cdpSend: async () => ({ result: { value: found } }),
@@ -254,6 +259,7 @@ test('popup clicks bypass mouse-move acknowledgement while normal clicks retain 
   const end = source.indexOf('\nfunction cdpSend(', start);
   const events = [];
   const context = {
+    PROFILE: { capabilities: {} },
     cdp: {}, log() {}, cdpFocusDiagnostics: async () => {},
     cdpSend: async (_, params) => events.push(params.type),
   };
@@ -270,6 +276,7 @@ test('waiting for a dismissed button succeeds immediately when its DOM node was 
   const start = source.indexOf('async function automationDomAction(');
   const end = source.indexOf('\nasync function automationHttpRequest(', start);
   const context = {
+    PROFILE: { capabilities: {} },
     cdp: { connected: true },
     automationDeepLocatorExpression: () => 'null',
     cdpSend: async () => ({ result: { value: null } }),

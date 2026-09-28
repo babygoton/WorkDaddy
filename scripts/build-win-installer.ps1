@@ -2,7 +2,7 @@
 param(
   [string]$OutputDirectory = '',
   [string]$IsccPath = '',
-  [ValidateSet('workbuddy-cn', 'workbuddy-ai')][string]$Profile = 'workbuddy-cn',
+  [ValidateSet('workbuddy-cn', 'workbuddy-ai', 'codebuddy-cn', 'codebuddy-intl')][string]$Profile = 'workbuddy-cn',
   [string]$Version = ''
 )
 
@@ -17,10 +17,14 @@ if (-not $versionMatch.Success) { throw 'daemon.js does not contain DAEMON_VERSI
 $version = if ([string]::IsNullOrWhiteSpace($Version)) { $versionMatch.Groups[1].Value } else { $Version.Trim() }
 if ($version -notmatch '^\d+\.\d+\.\d+$') { throw "Invalid daemon version: $version" }
 
-$productName = if ($Profile -eq 'workbuddy-ai') { 'WorkDaddy AI' } else { 'WorkDaddy' }
-$packageName = if ($Profile -eq 'workbuddy-ai') { 'WorkDaddy-AI' } else { 'WorkDaddy' }
-$startDescription = if ($Profile -eq 'workbuddy-ai') { '立即打开 WorkDaddy AI' } else { '立即打开 WorkDaddy' }
-$appGuid = if ($Profile -eq 'workbuddy-ai') {
+$productName = (@{'workbuddy-cn'='WorkDaddy'; 'workbuddy-ai'='WorkDaddy AI'; 'codebuddy-cn'='CodeDaddy CN'; 'codebuddy-intl'='CodeDaddy'})[$Profile]
+$packageName = (@{'workbuddy-cn'='WorkDaddy'; 'workbuddy-ai'='WorkDaddy-AI'; 'codebuddy-cn'='CodeDaddy-CN'; 'codebuddy-intl'='CodeDaddy'})[$Profile]
+$startDescription = ('立即打开 ' + $productName)
+$appGuid = if ($Profile -eq 'codebuddy-cn') {
+  '{{563ABF72-E1F4-4C60-8C6A-B485CC4C5561}'
+} elseif ($Profile -eq 'codebuddy-intl') {
+  '{{399D058D-D944-4333-9935-0CD38C12B44C}'
+} elseif ($Profile -eq 'workbuddy-ai') {
   '{{D1A8A90C-1F55-4E56-8BB2-7F12A39B9D12}'
 } else {
   '{{4B857D52-8C5A-4A9A-A17D-0EE8A34A12C7}'

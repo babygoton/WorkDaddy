@@ -103,15 +103,37 @@ test('composer controls use live primary button tokens with no dark glass overri
   const source = fs.readFileSync(path.join(__dirname, '../scripts/inject.js'), 'utf8');
   const start = source.indexOf('    function applyThemeButtonColors()');
   const end = source.indexOf('    function positionStash()', start);
-  const context = { stashBtn: { style: {} }, exploreBtn: { style: {} } };
+  const context = { CAPS: {}, stashBtn: { style: {} }, exploreBtn: { style: {} } };
   vm.runInNewContext(source.slice(start, end), context);
   context.applyThemeButtonColors();
   for (const button of [context.stashBtn, context.exploreBtn]) {
     assert.equal(button.style.background, 'var(--wb-button-primary-bg)');
     assert.equal(button.style.color, 'var(--wb-button-primary-fg)');
   }
+  context.CAPS.nativeComposer = true;
+  context.applyThemeButtonColors();
+  for (const button of [context.stashBtn, context.exploreBtn]) {
+    assert.equal(button.style.background, 'var(--cb-button-primary)');
+    assert.equal(button.style.color, 'var(--cb-button-primary-foreground)');
+  }
   const patches = require('../scripts/theme-patches.js');
   assert.ok(!patches.some(patch => patch.css.includes('.wbs-stash-inline')));
   assert.match(source, /value="theme"><span>主题色<\/span>/);
-  assert.match(source, /data-wbs-robot-style="theme"[^\n]*--wbs-robot-shell:var\(--wb-button-primary-bg\)/);
+  assert.match(source, /data-wbs-robot-style="theme"[^\n]*--wbs-robot-shell:var\(--wb-button-primary-bg,/);
+});
+
+test('theme robot stays visible when CodeBuddy omits WorkBuddy color tokens', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../scripts/inject.js'), 'utf8');
+  const rule = source.split('\n').find(line => line.includes('.wbs-fab[data-wbs-robot-style="theme"]'));
+  assert.ok(rule.includes('--wbs-robot-shell:var(--wb-button-primary-bg,var(--vscode-button-background,#111))'));
+  assert.ok(rule.includes('--wbs-robot-eye:var(--wb-button-primary-fg,var(--vscode-button-foreground,#fff))'));
+  assert.ok(rule.includes('--wbs-robot-rim:var(--wb-border-subtle,rgba(255,255,255,.55))'));
+});
+
+test('legacy quick phrase hover dimensions cannot override native CodeBuddy buttons', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../scripts/inject.js'), 'utf8');
+  const rules = source.split('\n').filter(line => line.includes('wbs-explore-inline') && line.includes('min-width:32px!important'));
+  assert.equal(rules.length, 1);
+  const selectors = rules[0].slice(rules[0].indexOf("'") + 1, rules[0].indexOf('{')).split(',');
+  for (const selector of selectors) assert.ok(selector.includes(':not(.wbs-composer-native)'), selector);
 });

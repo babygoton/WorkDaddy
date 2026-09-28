@@ -158,6 +158,9 @@ test('stash cleanup clears the official composer store and persistent conversati
   const end = inject.indexOf('\n    // 队列操作超时包装', start);
   assert.match(inject.slice(start, end), /var modernDraftCleared = clearModernComposerDraft\(ed, stashSessionAtClick\)/);
   assert.match(inject.slice(start, end), /if \(modernDraftCleared\) return/);
+  assert.match(inject, /CAPS\.nativeComposer && nativeRef[\s\S]*nativeRef\.clear\(\)/);
+  assert.match(inject, /workdaddyStash: true/);
+  assert.match(inject, /syncQueueDomIds\(sessionId, snapshot\);\s*syncQueueTags\(\)/);
 });
 
 test('theme tab is capability-gated and available to WorkBuddy AI', () => {
@@ -217,7 +220,7 @@ test('modern queue path uses the top-level notifying adapter and clears stale ad
   assert.match(inject, /function handleModernQueueActionClick\(event\)/);
   assert.match(inject, /listen\(document, 'click', handleModernQueueActionClick, true\)/);
   assert.match(inject, /function waitForModernQueueAdapter\(maxMs\)/);
-  assert.match(inject, /var pauseWait = modernAdapter\s*\?/);
+  assert.match(inject, /var pauseWait = \(modernAdapter \|\| CAPS\.nativeComposer\)\s*\?/);
   assert.match(inject, /WBS_COMPAT\.isModernQueueAdapter\(adapter\)/);
   assert.match(inject, /enqueue:not-ready-no-fallback/);
   assert.match(inject, /function warmModernQueueAdapter\(\)/);
@@ -256,4 +259,45 @@ test('modern stash pauses before enqueue and refreshes incomplete snapshots', ()
   assert.match(inject, /id: 'wbs-pending-'/);
   assert.match(inject, /dropModernOptimisticItem\(stashSessionAtClick\)/);
   assert.match(inject, /queueItems\.length === 0[\s\S]*currentItems\.length > 0[\s\S]*snapshot\.runtime == null/);
+});
+
+// CodeBuddy 4.12.1 enqueue calls the orchestrator immediately; a legacy DOM
+// does not imply the old WorkBuddy queue semantics.
+function nativeStashHarness(pauseFailure) {
+  const vm = require('node:vm');
+  const src = fs.readFileSync(path.join(__dirname, '../scripts/inject.js'), 'utf8');
+  const start = src.indexOf('function enqueueToWorkBuddyQueue(content)');
+  const end = src.indexOf('\n    var stashBusy = false;', start);
+  const calls = [];
+  let paused = false, sent = false;
+  const adapter = {
+    currentActiveSessionId: 'fixture-session',
+    pauseConversationMessageQueue: async () => {
+      calls.push('pause');
+      if (pauseFailure) throw new Error('pause unavailable');
+      paused = true;
+      return {runtime: {paused}};
+    },
+    enqueueConversationMessageQueueItem: async () => {
+      calls.push('enqueue'); sent = !paused;
+      return {items:[{id:'fixture-item',status:'pending'}],runtime:{paused}};
+    },
+  };
+  const context = {
+    CAPS: {nativeComposer:true}, window:{__wbsAdapter:adapter}, document:{},
+    WBS_COMPAT: {isModernQueueAdapter:()=>false,hasModernQueueSurface:()=>false},
+    contentToBlocks, withQueueTimeout:p=>p, crumb:()=>{},
+    getModernQueueSnapshot:async(a,s,q)=>q, recordStashQueueItem:()=>{}, guardStashedPause:()=>{},
+  };
+  vm.runInNewContext(src.slice(start,end),context);
+  return {calls, sent:()=>sent, run:()=>context.enqueueToWorkBuddyQueue({text:'fixture',items:[]})};
+}
+test('CodeBuddy legacy-shaped renderer pauses before its auto-dispatching enqueue', async () => {
+  const h=nativeStashHarness(false); await h.run();
+  assert.deepEqual(h.calls,['pause','enqueue']); assert.equal(h.sent(),false);
+});
+test('CodeBuddy pause failure never falls through to enqueue', async () => {
+  const h=nativeStashHarness(true);
+  await assert.rejects(h.run(),/pause unavailable/);
+  assert.deepEqual(h.calls,['pause']); assert.equal(h.sent(),false);
 });

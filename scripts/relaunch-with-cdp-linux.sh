@@ -30,6 +30,11 @@ fi
 
 DIR="$(cd "$(dirname "$0")/.." && pwd)"
 PROFILE="${WBSWITCH_PROFILE:-workbuddy-cn}"
+NATIVE_ARGS=()
+case "$PROFILE" in
+  codebuddy-cn) NATIVE_ARGS=(--inspect=127.0.0.1:9244) ;;
+  codebuddy-intl) NATIVE_ARGS=(--inspect=127.0.0.1:9245) ;;
+esac
 XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
 
 case "$PROFILE" in
@@ -176,6 +181,10 @@ is_workbuddy_cdp() {
 # 这里改用「应用安装目录」作为归属标记 —— CN 是 /opt/WorkBuddy，
 # AI 是 ~/.local/share/workbuddy-ai/app，两者页面 URL 互不含对方目录。
 is_profile_cdp() {
+  case "$PROFILE" in
+    codebuddy-cn) curl_local http://127.0.0.1:9244/json/list >/dev/null 2>&1 || return 1 ;;
+    codebuddy-intl) curl_local http://127.0.0.1:9245/json/list >/dev/null 2>&1 || return 1 ;;
+  esac
   local port="$1" list dir
   list="$(curl_local "http://127.0.0.1:$port/json/list" 2>/dev/null)" || return 1
   [ -n "$list" ] || return 1
@@ -183,13 +192,14 @@ is_profile_cdp() {
   # 必须校验 dir 形态：APP_BIN 为空时 dirname 会给出 "."，
   # 而 grep -F "." 能匹配任何内容 → 变成"人人都算自己人"。
   if [ -n "$dir" ] && [ "${#dir}" -gt 1 ] && [ "${dir#/}" != "$dir" ] \
-     && printf '%s' "$list" | grep -qF "$dir"; then
+     && { printf '%s' "$list" | grep -qF "$dir/" || printf '%s' "$list" | grep -qF "${dir// /%20}/"; }; then
     return 0
   fi
   # 回退：按端专属字样判断（安装目录非默认时仍可用）
   case "$PROFILE" in
     workbuddy-ai) printf '%s' "$list" | grep -qi 'workbuddy-ai' ;;
     workbuddy-cn) printf '%s' "$list" | grep -qi 'workbuddy\.cn\|WorkBuddy/resources' ;;
+    codebuddy-cn|codebuddy-intl) return 1 ;;
     *)            printf '%s' "$list" | grep -qiE 'WorkBuddy|CodeBuddy' ;;
   esac
 }
@@ -398,7 +408,7 @@ launch_plugin() {
     echo "   环境: HOME=${launch_home}（启动器需按真实家目录推导，不能传隔离 HOME）"
   fi
   # setsid：脱离当前会话，避免终端关闭时连带杀掉 WorkBuddy
-  setsid nohup env HOME="$launch_home" "$LAUNCH_TARGET" --remote-debugging-port="$PORT" >/dev/null 2>&1 < /dev/null &
+  setsid nohup env HOME="$launch_home" "$LAUNCH_TARGET" --remote-debugging-port="$PORT" "${NATIVE_ARGS[@]}" >/dev/null 2>&1 < /dev/null &
   disown 2>/dev/null || true
 
   echo "==> 等待 CDP 端口开放（并确认是本 profile 的实例）"

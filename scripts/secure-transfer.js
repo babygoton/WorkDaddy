@@ -118,7 +118,7 @@ function remapSessionArchivePath(relativePath, oldId, newId) {
   const mappings = [
     [new RegExp('^projects/([^/]+)/' + escaped + '\\.jsonl$'), (match) => `projects/${match[1]}/${targetId}.jsonl`],
     [new RegExp('^projects/([^/]+)/' + escaped + '/(.+)$'), (match) => `projects/${match[1]}/${targetId}/${match[2]}`],
-    [new RegExp('^(workspace/sessions|tasks|file-history)/' + escaped + '/(.+)$'), (match) => `${match[1]}/${targetId}/${match[2]}`],
+    [new RegExp('^(workspace/sessions|tasks|file-history|codebuddy-file-tree)/' + escaped + '/(.+)$'), (match) => `${match[1]}/${targetId}/${match[2]}`],
     [new RegExp('^artifact-index/' + escaped + '\\.json$'), () => `artifact-index/${targetId}.json`],
   ];
   for (const [pattern, build] of mappings) {

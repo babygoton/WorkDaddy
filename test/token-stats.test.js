@@ -255,3 +255,17 @@ test('seven-day totals match calendar dates and ignore diagnostic copies', t => 
   assert.equal(stats.totals.input, 32);
   assert.deepEqual(stats.daily.map(x => x.day), ['2026-09-07', '2026-09-12', '2026-09-13']);
 });
+
+test('native request indexes count usage once across copies and cache no message content',t=>{
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),'codedaddy-stats-'));
+  t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
+  const now=Date.now(),files=['a.json','b.json'].map(name=>path.join(root,name));
+  const request={id:'request',startedAt:now-1000,messages:['private-content'],usage:{inputTokens:9,outputTokens:4,cacheTokens:2,cachedWriteTokens:1}};
+  for(const file of files)fs.writeFileSync(file,JSON.stringify({requests:[request]},null,2));
+  const options={now,files,readRecords:text=>JSON.parse(text).requests,sourceSession:()=> 'source',sessionAccounts:{source:'account'}};
+  const result=scanTokenStatsCached(root,options);
+  assert.deepEqual(result.totals,{input:9,output:4,cacheRead:2,cacheWrite:1,calls:1});
+  assert.equal(result.accounts[0].account,'account');
+  assert.equal(scanTokenStatsCached(root,options).totals.calls,1);
+  assert.ok(!fs.readFileSync(path.join(root,'.workdaddy-token-stats-cache.json'),'utf8').includes('private-content'));
+});

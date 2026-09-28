@@ -173,7 +173,7 @@ for (const trigger of ['switch', 'settings refresh']) test('frosted wallpaper st
   const requests = [];
   let resolveWallpapers;
   const context = {
-    sessState: {}, enhancePane: null, conversationUsageEnabled: false,
+    CAPS: {}, sessState: {}, enhancePane: null, conversationUsageEnabled: false,
     themePane: { querySelector: selector => nodes[selector] || null, querySelectorAll: () => [card] },
     root: { querySelector: selector => nodes[selector] || null },
     API: 'http://127.0.0.1:47833',

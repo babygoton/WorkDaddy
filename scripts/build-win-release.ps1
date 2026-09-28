@@ -101,7 +101,7 @@ function Invoke-WindowsInstallerBuild {
   if ($LASTEXITCODE -ne 0) {
     throw "$Profile Setup.exe 生成失败（退出码 $LASTEXITCODE）。"
   }
-  $packageName = if ($Profile -eq 'workbuddy-ai') { 'WorkDaddy-AI' } else { 'WorkDaddy' }
+  $packageName = (@{'workbuddy-cn'='WorkDaddy'; 'workbuddy-ai'='WorkDaddy-AI'; 'codebuddy-cn'='CodeDaddy-CN'; 'codebuddy-intl'='CodeDaddy'})[$Profile]
   $setup = Join-Path $OutputDirectory "$packageName-Setup-$ReleaseVersion.exe"
   $portable = Join-Path $OutputDirectory "$packageName-Portable-$ReleaseVersion.zip"
   if (-not (Test-Path -LiteralPath $setup -PathType Leaf)) {
@@ -161,7 +161,7 @@ try {
 
   New-Item -ItemType Directory -Force -Path $OutputDirectory | Out-Null
   $packages = @()
-  foreach ($profile in @('workbuddy-cn', 'workbuddy-ai')) {
+  foreach ($profile in @('workbuddy-cn', 'workbuddy-ai', 'codebuddy-cn', 'codebuddy-intl')) {
     Invoke-WindowsZipBuild -Bash $bash -Profile $profile -ReleaseVersion $Version -CachedPython $PythonPath -GoExecutable $GoPath
     $packages += Invoke-WindowsInstallerBuild -Profile $profile -ReleaseVersion $Version -Compiler $iscc
   }

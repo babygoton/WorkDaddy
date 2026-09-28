@@ -25,15 +25,15 @@ try { . (Join-Path $PSScriptRoot 'windows-process-boundary.ps1') } catch {
 }
 $ErrorActionPreference = 'Continue'
 if ([string]::IsNullOrWhiteSpace($Profile) -or $Profile -eq '__WBS_DEFAULT_PROFILE__') { $Profile = 'workbuddy-cn' }
-if ($Profile -ne 'workbuddy-ai') { $Profile = 'workbuddy-cn' }
-$productName = if ($Profile -eq 'workbuddy-ai') { 'WorkDaddy AI' } else { 'WorkDaddy' }
+if ($Profile -notin @('workbuddy-cn', 'workbuddy-ai', 'codebuddy-cn', 'codebuddy-intl')) { throw 'Unknown client profile' }
+$productName = (@{'workbuddy-cn'='WorkDaddy'; 'workbuddy-ai'='WorkDaddy AI'; 'codebuddy-cn'='CodeDaddy CN'; 'codebuddy-intl'='CodeDaddy'})[$Profile]
 if ([string]::IsNullOrWhiteSpace($AppDir)) { $AppDir = Join-Path $env:LOCALAPPDATA (Join-Path 'Programs' $productName) }
 if (-not (Test-SameWindowsPath -Left $PSScriptRoot -Right (Join-Path $AppDir 'scripts'))) {
   throw '卸载脚本位置与目标安装目录不一致，拒绝删除'
 }
 $dataRoot = Join-Path $env:APPDATA 'WorkDaddy'
-$dataDir = if ($Profile -eq 'workbuddy-ai') { Join-Path $dataRoot 'profiles\workbuddy-ai' } else { $dataRoot }
-$port = if ($Profile -eq 'workbuddy-ai') { 47833 } else { 47832 }
+$dataDir = if ($Profile -eq 'workbuddy-cn') { $dataRoot } else { Join-Path $dataRoot ('profiles\' + $Profile) }
+$port = (@{'workbuddy-cn'=47832; 'workbuddy-ai'=47833; 'codebuddy-cn'=47834; 'codebuddy-intl'=47835})[$Profile]
 
 Write-Host ('卸载 ' + $productName + '...')
 

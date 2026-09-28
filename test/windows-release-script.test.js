@@ -19,7 +19,7 @@ test('Windows release script interactively builds both profiles for one version'
   assert.deepEqual([...scriptBytes.subarray(0, 3)], [0xef, 0xbb, 0xbf], 'Windows PowerShell 5.1 needs a UTF-8 BOM for Chinese prompts');
   assert.match(source, /Read-Host\s+"[^"]*版本号/);
   assert.match(source, /\$Version -notmatch '\^\\d\+\\\.\\d\+\\\.\\d\+\$'/);
-  assert.match(source, /foreach \(\$profile in @\('workbuddy-cn', 'workbuddy-ai'\)\)/);
+  assert.match(source, /foreach \(\$profile in @\('workbuddy-cn', 'workbuddy-ai', 'codebuddy-cn', 'codebuddy-intl'\)\)/);
   assert.match(source, /build-win-zip\.sh/);
   assert.match(source, /build-win-installer\.ps1/);
   assert.match(source, /-IsccPath \$Compiler \| Out-Host/);
@@ -47,7 +47,7 @@ test('Windows standard relaunch falls back to the Explorer Shell object by execu
 test('Windows watchdog uses an OS-managed profile lock and keeps restart backoff', () => {
   const watchdog = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'watchdog.js'), 'utf8');
   assert.match(watchdog, /net\.createServer\(\)/);
-  assert.match(watchdog, /const LOCK_PORT = PROFILE\.id === 'workbuddy-ai' \? 47933 : 47932/);
+  assert.match(watchdog, /'workbuddy-cn':47932,'workbuddy-ai':47933,'codebuddy-cn':47934,'codebuddy-intl':47935/);
   assert.match(watchdog, /exclusive:\s*true/);
   assert.match(watchdog, /restartDelay = Math\.min\(restartDelay \* 2, 60000\)/);
   assert.doesNotMatch(watchdog, /pending\.json|updateProcessIsActive|powershell|Get-CimInstance|taskkill/i);

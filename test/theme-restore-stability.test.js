@@ -182,7 +182,7 @@ test('theme takeover opt-out follows native appearance on reload without forcing
 test('session settings default to takeover and retain opt-out when editing other switches', () => {
   let settings = { wbs: { session: { seeded: true, state: {}, phrases: [] } } };
   const context = {
-    readWorkbuddySettings: () => structuredClone(settings),
+    PROFILE: {capabilities:{}}, readWorkbuddySettings: () => structuredClone(settings),
     writeWorkbuddySettings: value => { settings = value; }, log() {},
   };
   const start = source.indexOf("const SESS_NS = 'session';");

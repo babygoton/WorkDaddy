@@ -74,7 +74,7 @@ test('real session export/import routes round-trip binary archives and retain ow
   const source = fs.readFileSync(path.join(__dirname, '../scripts/daemon.js'), 'utf8');
   const stored = [], records = [{ id, user_id: 'original-owner', title: 'fixture' }];
   const opened = [];
-  const ctx = { fs, path, os, crypto, Buffer, URL, IS_WIN: false, IS_LINUX: false, runCommand: async (command, args) => { opened.push(args); return {code:0}; }, ...require('../scripts/secure-transfer'),
+  const ctx = { codeBuddyFiles: null, fs, path, os, crypto, Buffer, URL, IS_WIN: false, IS_LINUX: false, runCommand: async (command, args) => { opened.push(args); return {code:0}; }, ...require('../scripts/secure-transfer'),
     writeSessionTransfer, readSessionTransfer, receiveSessionUpload,
     transferPipeline: require('node:stream/promises').pipeline,
     PROFILE: { dataRoot: home }, MAX_SESSION_ID_LENGTH: 200,

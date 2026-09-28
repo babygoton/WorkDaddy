@@ -20,8 +20,10 @@ import (
 )
 
 const (
-	profileCN = "workbuddy-cn"
-	profileAI = "workbuddy-ai"
+	profileCN       = "workbuddy-cn"
+	profileAI       = "workbuddy-ai"
+	profileCodeCN   = "codebuddy-cn"
+	profileCodeIntl = "codebuddy-intl"
 
 	exitFailure           = 4
 	exitElevated          = 5
@@ -468,8 +470,13 @@ func executableDir() (string, error) {
 }
 
 func normalizeProfile(profile string) string {
-	if strings.EqualFold(strings.TrimSpace(profile), profileAI) {
+	switch strings.ToLower(strings.TrimSpace(profile)) {
+	case profileAI:
 		return profileAI
+	case profileCodeCN:
+		return profileCodeCN
+	case profileCodeIntl:
+		return profileCodeIntl
 	}
 	return profileCN
 }
@@ -512,13 +519,19 @@ func dataDir(profile string) (string, error) {
 		return "", errors.New("APPDATA is not available")
 	}
 	root = filepath.Join(root, "WorkDaddy")
-	if profile == profileAI {
-		return filepath.Join(root, "profiles", profileAI), nil
+	if profile != profileCN {
+		return filepath.Join(root, "profiles", profile), nil
 	}
 	return root, nil
 }
 
 func productName(profile string) string {
+	if profile == profileCodeCN {
+		return "CodeDaddy CN"
+	}
+	if profile == profileCodeIntl {
+		return "CodeDaddy"
+	}
 	if profile == profileAI {
 		return "WorkDaddy AI"
 	}
@@ -566,7 +579,34 @@ func configuredTarget(profile string) workBuddyTarget {
 	return target
 }
 
+func codeBuddyBinaryMatches(profile, binary string) bool {
+	if profile != profileCodeCN && profile != profileCodeIntl {
+		return true
+	}
+	if !strings.EqualFold(filepath.Base(binary), "CodeBuddy.exe") {
+		return false
+	}
+	data, err := os.ReadFile(filepath.Join(filepath.Dir(binary), "resources", "app", "product.json"))
+	if err != nil {
+		return false
+	}
+	var product struct {
+		ApplicationName string `json:"applicationName"`
+	}
+	if json.Unmarshal(data, &product) != nil {
+		return false
+	}
+	expected := "buddy"
+	if profile == profileCodeCN {
+		expected = "buddycn"
+	}
+	return product.ApplicationName == expected
+}
+
 func workBuddyImage(profile string) string {
+	if profile == profileCodeCN || profile == profileCodeIntl {
+		return "CodeBuddy.exe"
+	}
 	if target := configuredTarget(profile); len(target.ProcessNames) > 0 {
 		return target.ProcessNames[0]
 	}
@@ -603,12 +643,12 @@ func processNamesForBinary(binary string) []string {
 
 func targetForBinary(profile, binary string) workBuddyTarget {
 	binary = strings.TrimSpace(binary)
-	if (profile != profileCN && profile != profileAI) || !filepath.IsAbs(binary) ||
+	if (profile != profileCN && profile != profileAI && profile != profileCodeCN && profile != profileCodeIntl) || !filepath.IsAbs(binary) ||
 		!strings.EqualFold(filepath.Ext(binary), ".exe") || strings.ContainsAny(binary, "\r\n") {
 		return workBuddyTarget{}
 	}
 	info, err := os.Stat(binary)
-	if err != nil || info.IsDir() {
+	if err != nil || info.IsDir() || !codeBuddyBinaryMatches(profile, binary) {
 		return workBuddyTarget{}
 	}
 	return workBuddyTarget{ProfileID: profile, Binary: filepath.Clean(binary), ProcessNames: processNamesForBinary(binary)}
@@ -687,7 +727,7 @@ func matchingWorkBuddyProcessesForTarget(profile string, target workBuddyTarget)
 		pathMatches := target.Binary == "" || (record.Path != "" &&
 			samePath(filepath.Dir(record.Path), filepath.Dir(target.Binary)) &&
 			strings.EqualFold(filepath.Base(record.Path), record.Name))
-		if nameMatches && pathMatches {
+		if nameMatches && pathMatches && codeBuddyBinaryMatches(profile, record.Path) {
 			matched = append(matched, record)
 		}
 	}
@@ -1036,6 +1076,12 @@ func stopLifecycle(profile, appDir string, elevated bool) int {
 // profileUiPorts returns the fixed UI-port candidates for a profile in
 // preference order. They mirror scripts/ui-port.js PROFILE_UI_PORTS.
 func profileUiPorts(profile string) []int {
+	if profile == profileCodeCN {
+		return []int{47834, 17834, 27834, 37834}
+	}
+	if profile == profileCodeIntl {
+		return []int{47835, 17835, 27835, 37835}
+	}
 	if profile == profileAI {
 		return []int{47833, 17833, 27833, 37833}
 	}

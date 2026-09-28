@@ -279,3 +279,15 @@ test('daemon includes a disabled check-in preset without a risk prompt', () => {
   assert.match(daemon, /daily-account-checkin\.json/);
   assert.doesNotMatch(inject, /showCheckinRiskOnOpen/);
 });
+
+test('separate clients reuse the newest public catalog while retaining their own compatibility', async t => {
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'wd-discovery-shared-'));
+  t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
+  const f=fixture();
+  const offline=createAutomationDiscovery({dataDir:dir,now:f.now,runtime:{...runtime,profileId:'codebuddy-cn'},fetchImpl:async()=>{throw Error('offline');}});
+  const workbuddy=createAutomationDiscovery({dataDir:dir,now:f.now,runtime,fetchImpl:f.fetchImpl,pageSize:2});
+  const first=await workbuddy.getCatalog({force:true});assert.ok(first.tasks.length);
+  const second=await offline.getCatalog();assert.equal(second.tasks.length,first.tasks.length);
+  const failedRefresh=await offline.getCatalog({force:true});assert.equal(failedRefresh.tasks.length,first.tasks.length);
+  assert.equal(failedRefresh.stale,true);
+});

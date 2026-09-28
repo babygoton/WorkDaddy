@@ -221,6 +221,16 @@ main_menu() {
 #   不带参数 = 弹出选择框；带参数 = 直接执行对应动作（供独立桌面快捷方式使用）
 REQUEST="${1:-}"
 case "$REQUEST" in
+  codebuddy-cn|codebuddy-intl)
+    CODE_NAME="CodeBuddy"; [ "$REQUEST" = codebuddy-cn ] && CODE_NAME="CodeBuddy CN"
+    CODE_STATUS="$(env WBSWITCH_PROFILE="$REQUEST" bash "$REL" --status 2>/dev/null)"
+    if [ "$(field "$CODE_STATUS" app)" = running ] && [ "$(field "$CODE_STATUS" cdp_ready)" != yes ]; then
+      confirm_restart "$CODE_NAME" || exit 0
+    fi
+    run_action "正在启动 $CODE_NAME" env WBSWITCH_PROFILE="$REQUEST" bash "$REL" --ensure
+    exit $? ;;
+esac
+case "$REQUEST" in
   ""|cn|ai|both|services|info) ;;
   -h|--help)
     echo "用法: bash scripts/launch-gui-linux.sh [cn|ai|both|services|info]"

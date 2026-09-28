@@ -1,7 +1,7 @@
 param(
   [Parameter(Mandatory = $true)][string]$BoundaryPath,
   [Parameter(Mandatory = $true)][string]$AppDir,
-  [ValidateSet('workbuddy-cn', 'workbuddy-ai')][string]$Profile = 'workbuddy-cn',
+  [ValidateSet('workbuddy-cn', 'workbuddy-ai', 'codebuddy-cn', 'codebuddy-intl')][string]$Profile = 'workbuddy-cn',
   [Parameter(Mandatory = $true)][string]$ExpectedVersion
 )
 
@@ -25,8 +25,8 @@ try {
     (New-Object Text.UTF8Encoding($false)))
   . $BoundaryPath
   $dataRoot = Join-Path $env:APPDATA 'WorkDaddy'
-  $dataDir = if ($Profile -eq 'workbuddy-ai') { Join-Path $dataRoot 'profiles\workbuddy-ai' } else { $dataRoot }
-  $uiPort = if ($Profile -eq 'workbuddy-ai') { 47833 } else { 47832 }
+  $dataDir = if ($Profile -eq 'workbuddy-cn') { $dataRoot } else { Join-Path $dataRoot ('profiles\' + $Profile) }
+  $uiPort = (@{'workbuddy-cn'=47832; 'workbuddy-ai'=47833; 'codebuddy-cn'=47834; 'codebuddy-intl'=47835})[$Profile]
   Stop-VerifiedWorkDaddyLifecycle `
     -DataDir $dataDir `
     -Port $uiPort `

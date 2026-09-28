@@ -37,13 +37,24 @@ const appPath = (name, winExec, winDir) =>
       ? plat.linuxAppBinary(LINUX_APP_KIND[name] || 'workbuddy')
       : `/Applications/${name}.app`;
 
+// Both Windows editions use CodeBuddy.exe. Read the official product identity
+// before selecting or stopping a process; folder names are not reliable.
+function isCodeBuddyBinary(binary, profileId) {
+  if (!['codebuddy-cn','codebuddy-intl'].includes(profileId)) return false;
+  try {
+    if (path.basename(binary).toLowerCase() !== 'codebuddy.exe') return false;
+    const product = JSON.parse(fs.readFileSync(path.join(path.dirname(binary),'resources','app','product.json'),'utf8'));
+    return product.applicationName === (profileId === 'codebuddy-cn' ? 'buddycn' : 'buddy');
+  } catch (_) { return false; }
+}
+
 function sharedDataDir() {
   return path.join(appSupport, 'WorkDaddy');
 }
 
 const PROFILES = {
   'workbuddy-cn': {
-    id: 'workbuddy-cn', name: 'WorkBuddy', appName: 'WorkDaddy', region: 'cn', kind: 'workbuddy', mode: 'agents',
+    id: 'workbuddy-cn', name: 'WorkBuddy', appName: 'WorkDaddy', packageName: 'WorkDaddy', region: 'cn', kind: 'workbuddy', mode: 'agents',
     appPath: appPath('WorkBuddy'),
     dataRoot: path.join(home, '.workbuddy'),
     authFile: path.join(extensionAuth, 'workbuddy-desktop.info'),
@@ -55,7 +66,7 @@ const PROFILES = {
     targetHints: ['workbuddy'],
   },
   'workbuddy-ai': {
-    id: 'workbuddy-ai', name: 'WorkBuddy AI', appName: 'WorkDaddy AI', region: 'intl', kind: 'workbuddy', mode: 'agents',
+    id: 'workbuddy-ai', name: 'WorkBuddy AI', appName: 'WorkDaddy AI', packageName: 'WorkDaddy-AI', region: 'intl', kind: 'workbuddy', mode: 'agents',
     // Windows 安装目录无空格：%LOCALAPPDATA%\Programs\WorkBuddyAI\WorkBuddyAI.exe（PR#8 实机确认）
     appPath: appPath('WorkBuddy AI', 'WorkBuddyAI.exe', 'WorkBuddyAI'),
     dataRoot: path.join(home, '.workbuddy-ai'),
@@ -65,29 +76,35 @@ const PROFILES = {
     // 两者独立（勿改共用）。“从 XX 导入”即把另一端文件中的模型合并进本端文件。
     modelsFile: path.join(home, '.workbuddy-ai', 'models.json'),
     apiHost: 'https://www.workbuddy.ai',
-    capabilities: { accounts: true, sessions: true, models: true, stashPrompt: true, theme: true, checkin: true, growthDaily: false },
+    capabilities: { accounts: true, sessions: true, models: true, stashPrompt: true, theme: true, checkin: true, growthDaily: false, builtinAutomations: false },
     targetHints: ['workbuddy ai', 'workbuddy'],
   },
   'codebuddy-cn': {
-    id: 'codebuddy-cn', name: 'CodeBuddy CN', region: 'cn', kind: 'codebuddy', mode: 'auto',
-    appPath: appPath('CodeBuddy CN'),
-    dataRoot: path.join(appSupport, 'CodeBuddy CN'),
-    authFile: null,
+    id: 'codebuddy-cn', name: 'CodeBuddy CN', appName: 'CodeDaddy CN', packageName: 'CodeDaddy-CN', nativeDebugPort: 9244, oauthPlatform:'ide', authApiHost:'https://copilot.tencent.com', region: 'cn', kind: 'codebuddy', mode: 'auto',
+    appPath: appPath('CodeBuddy CN', 'CodeBuddy.exe'),
+    historyRoot: path.dirname(path.dirname(extensionAuth)),
+    userDataRoot: path.join(appSupport, 'CodeBuddy CN'),
+    dataRoot: path.join(home, '.codebuddy'),
+    authFile: path.join(sharedDataDir(), 'profiles', 'codebuddy-cn', 'native-current.info'),
     sessionDb: path.join(appSupport, 'CodeBuddy CN', 'codebuddy-sessions.vscdb'),
-    modelsFile: path.join(appSupport, 'CodeBuddy CN', 'User', 'globalStorage', 'state.vscdb'),
+    // CodeBuddy 的自定义模型配置由 Electron 主进程写入用户目录；
+    // User/globalStorage/state.vscdb 只保存 VS Code 状态，不是模型配置。
+    modelsFile: path.join(home, '.codebuddy', 'models.json'),
     apiHost: 'https://www.codebuddy.cn',
-    capabilities: { accounts: false, sessions: true, models: false, stashPrompt: false, theme: false, checkin: true },
+    capabilities: { accounts: true, sessions: true, models: true, stashPrompt: false, nativeComposer: true, theme: true, themeTakeover: false, enhance: false, panelAppearance: 'light', robotStyle: 'black', apiTransport: 'cdp', checkin: true, growthDaily: true },
     targetHints: ['codebuddy cn'],
   },
   'codebuddy-intl': {
-    id: 'codebuddy-intl', name: 'CodeBuddy', region: 'intl', kind: 'codebuddy', mode: 'auto',
+    id: 'codebuddy-intl', name: 'CodeBuddy', appName: 'CodeDaddy', packageName: 'CodeDaddy', nativeDebugPort: 9245, oauthPlatform:'ide', authApiHost:'https://www.codebuddy.ai', region: 'intl', kind: 'codebuddy', mode: 'auto',
     appPath: appPath('CodeBuddy'),
-    dataRoot: path.join(appSupport, 'CodeBuddy'),
-    authFile: null,
+    historyRoot: path.dirname(path.dirname(extensionAuth)),
+    userDataRoot: path.join(appSupport, 'CodeBuddy'),
+    dataRoot: path.join(home, '.codebuddy'),
+    authFile: path.join(sharedDataDir(), 'profiles', 'codebuddy-intl', 'native-current.info'),
     sessionDb: path.join(appSupport, 'CodeBuddy', 'codebuddy-sessions.vscdb'),
-    modelsFile: path.join(appSupport, 'CodeBuddy', 'User', 'globalStorage', 'state.vscdb'),
+    modelsFile: path.join(home, '.codebuddy', 'models.json'),
     apiHost: 'https://www.codebuddy.ai',
-    capabilities: { accounts: false, sessions: true, models: false, stashPrompt: false, theme: false, checkin: true },
+    capabilities: { accounts: true, sessions: true, models: true, stashPrompt: false, nativeComposer: true, theme: true, themeTakeover: false, enhance: false, panelAppearance: 'light', robotStyle: 'black', apiTransport: 'cdp', checkin: false, builtinAutomations: false },
     targetHints: ['codebuddy'],
   },
 };
@@ -143,7 +160,7 @@ function listProfiles() { return Object.values(PROFILES).map((p) => ({ ...p, cap
 
 function listInstalledModelSources(activeId) {
   const active = PROFILES[activeId];
-  return ['workbuddy-cn', 'workbuddy-ai']
+  return Object.keys(PROFILES)
     .filter((id) => id !== activeId)
     .map((id) => PROFILES[id])
     .map((profile) => {
@@ -161,8 +178,7 @@ function listInstalledModelSources(activeId) {
         available,
         shared,
       };
-    })
-    .filter((source) => source.installed || source.available || source.shared);
+    });
 }
 
 function profileDataDir(profile, configured) {
@@ -171,4 +187,4 @@ function profileDataDir(profile, configured) {
   return path.join(sharedDataDir(), 'profiles', profile.id);
 }
 
-module.exports = { PROFILES, applyWorkBuddyTarget, getProfile, listProfiles, listInstalledModelSources, profileDataDir, sharedDataDir };
+module.exports = { isCodeBuddyBinary, PROFILES, applyWorkBuddyTarget, getProfile, listProfiles, listInstalledModelSources, profileDataDir, sharedDataDir };

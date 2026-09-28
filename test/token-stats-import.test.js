@@ -34,7 +34,7 @@ function fixture(t) {
 // no running daemon, real account, model request or renderer is involved.
 function transferHelpers(root, sessionAccounts) {
   const source = fs.readFileSync(path.join(__dirname, '../scripts/daemon.js'), 'utf8');
-  const context = { fs, path, crypto, Buffer, ...transfer, PROFILE: { dataRoot: root },
+  const context = { codeBuddyFiles: null, fs, path, crypto, Buffer, ...transfer, PROFILE: { dataRoot: root },
     MAX_SESSION_ID_LENGTH: 200, log: () => {}, currentAccount: () => ({ uid: 'account-A' }),
     sqliteRun: async (sql, values) => { sessionAccounts[values[0]] = values[2]; },
     deleteSessionFiles: () => { throw new Error('Unexpected import rollback'); } };
