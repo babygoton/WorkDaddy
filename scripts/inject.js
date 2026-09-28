@@ -2336,6 +2336,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     var registerDisposer = lifecycle.registerDisposer;
     var nativePanelMount = null;
     function mountPersistentOverlay(node) {
+      node.setAttribute('data-wbs-panel-overlay', '');
       if (CAPS.panelAppearance === 'light') node.setAttribute('data-wbs-appearance', 'light');
       document.body.appendChild(node);
       if (nativePanelMount) nativePanelMount.keep(node);
@@ -10861,6 +10862,21 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       setOpen(true);
     });
     root.querySelector('[data-act="close"]').addEventListener('click', function () { setOpen(false); });
+
+    function closePanelOnOutsidePointerDown(event) {
+      if (!state.open || (event.button !== undefined && event.button !== 0)) return;
+      // Popovers can be portaled to body. Treat those and modal masks as part
+      // of the panel, including controls inside a shadow root's composed path.
+      var path = typeof event.composedPath === 'function' ? event.composedPath() : [event.target];
+      for (var i = 0; i < path.length; i++) {
+        var node = path[i];
+        if (!node) continue;
+        if (node === root || (node.nodeType && root.contains(node))) return;
+        if (node.closest && node.closest('[data-wbs-panel-overlay],.wbs-modal-mask,.wbs-panel-modal-mask')) return;
+      }
+      setOpen(false);
+    }
+    listen(document, 'pointerdown', closePanelOnOutsidePointerDown, true);
 
     // 供 daemon 程序化开合面板：等价于「点机器人按钮/点关闭按钮」，复用同一 setOpen，
     // 保证 DOM(.show/.hidden) 与 state.open 始终一致、完全可逆，不做任何 display 硬改。
