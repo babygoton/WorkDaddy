@@ -432,8 +432,8 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 // 1.2.188：关闭主题接管时跟随 WorkBuddy AI 的原生 agent-ui-theme，避免旧快照覆盖官方浅色/深色选择。
 // 1.2.189：毛玻璃底色等待移至 daemon，避免后台页面定时器节流拖延开关和壁纸加载。
 // 1.2.191：CodeDaddy 共用完整面板，通过本机 CDP 适配通信、原生登录态和会话缓存。
-const DAEMON_VERSION = '1.2.202';
-const DAEMON_BUILD_ID = 'release-1.2.202-20260928-panel-outside-dismiss';
+const DAEMON_VERSION = '1.2.203';
+const DAEMON_BUILD_ID = 'release-1.2.203-20260928-session-list-refresh';
 const usageReporter = createUsageReporter({ profile: PROFILE.id, version: DAEMON_VERSION });
 configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const automationDiscovery = createAutomationDiscovery({
@@ -5497,6 +5497,7 @@ function startAutoCopyJob(sourceUid, targetUid, plan, labels) {
       }
     };
     await Promise.all(Array.from({ length: concurrency }, () => processNext()));
+    await refreshCopiedSessionList(job);
     job.details = job.details.filter(Boolean);
     job.status = job.conflicts ? 'conflict' : (job.failed || job.partial ? 'partial' : 'done');
     job.finishedAt = Date.now();
@@ -5512,6 +5513,41 @@ function startAutoCopyJob(sourceUid, targetUid, plan, labels) {
   autoCopyQueue.push({ job, run, complete });
   runAutoCopyQueue();
   return job;
+}
+
+async function refreshCopiedSessionList(job) {
+  // WorkBuddy copies commit SQLite directly, bypassing its list-change bus.
+  // Its first post-switch snapshot can therefore predate this batch. Use the
+  // official collection refresh (including grouped folders), never navigation
+  // or a second renderer reload. CodeBuddy already publishes native upserts;
+  // it has a different store and must not enter this SDK path.
+  if (PROFILE.kind !== 'workbuddy' || !(job.copied || job.partial || job.conflicts)) return;
+  if (!cdp.connected || String((currentAccount() || {}).uid || '') !== String(job.targetUid)) return;
+  let timer;
+  try {
+    const response = await Promise.race([
+      cdpSend('Runtime.evaluate', {
+        expression: `(async function () {
+          var conversations = window.wb && window.wb.conversations;
+          if (!conversations || typeof conversations.ensureList !== 'function') return false;
+          await conversations.ensureList('local', { view: 'active', page: 1, size: 100000 });
+          return true;
+        })()`,
+        awaitPromise: true,
+        returnByValue: true,
+      }),
+      // The official SDK publishes local rows first, then optionally waits for
+      // cloud folders. A slow cloud response must not hold the copy queue or
+      // delay restoring the selected conversation indefinitely.
+      new Promise(resolve => { timer = setTimeout(() => resolve(null), 2000); }),
+    ]);
+    log('[sessions-auto-copy] 列表刷新' + (response && response.result && response.result.value === true ? '已完成' : '未确认；复制结果已保留'));
+  } catch (_) {
+    // A disconnected renderer cannot invalidate already committed files/rows.
+    log('[sessions-auto-copy] 列表刷新暂不可用；复制结果已保留');
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function publicAutoCopyJob(job) {
