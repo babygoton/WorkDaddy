@@ -25,14 +25,14 @@ try { . (Join-Path $PSScriptRoot 'windows-process-boundary.ps1') } catch {
 }
 $ErrorActionPreference = 'Continue'
 if ([string]::IsNullOrWhiteSpace($Profile) -or $Profile -eq '__WBS_DEFAULT_PROFILE__') { $Profile = 'workbuddy-cn' }
-if ($Profile -ne 'workbuddy-ai') { $Profile = 'workbuddy-cn' }
+if ($Profile -notin @('workbuddy-cn', 'workbuddy-ai', 'codebuddy-cn', 'codebuddy-intl')) { throw 'Unknown client profile' }
 $env:WBSWITCH_PROFILE = $Profile
-$productName = if ($Profile -eq 'workbuddy-ai') { 'WorkDaddy AI' } else { 'WorkDaddy' }
+$productName = (@{'workbuddy-cn'='WorkDaddy'; 'workbuddy-ai'='WorkDaddy AI'; 'codebuddy-cn'='CodeDaddy CN'; 'codebuddy-intl'='CodeDaddy'})[$Profile]
 if ([string]::IsNullOrWhiteSpace($AppDir)) { $AppDir = Join-Path $env:LOCALAPPDATA (Join-Path 'Programs' $productName) }
 $targetScripts = Join-Path $AppDir 'scripts'
 $dataRoot = Join-Path $env:APPDATA 'WorkDaddy'
-$dataDir = if ($Profile -eq 'workbuddy-ai') { Join-Path $dataRoot 'profiles\workbuddy-ai' } else { $dataRoot }
-$uiPort = if ($Profile -eq 'workbuddy-ai') { 47833 } else { 47832 }
+$dataDir = if ($Profile -eq 'workbuddy-cn') { $dataRoot } else { Join-Path $dataRoot ('profiles\' + $Profile) }
+$uiPort = (@{'workbuddy-cn'=47832; 'workbuddy-ai'=47833; 'codebuddy-cn'=47834; 'codebuddy-intl'=47835})[$Profile]
 $env:WBSWITCH_PORT = [string]$uiPort
 $sentryReporter = Join-Path $SrcDir 'sentry-report.js'
 $nodeBin = $null

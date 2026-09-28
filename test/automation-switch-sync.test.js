@@ -14,7 +14,7 @@ function harness() {
     PROFILE: { kind: 'workbuddy' }, DATA_DIR: '/synthetic', log() {},
     cdp: { connected: true }, cdpSend: async () => ({ result: { value: false } }),
     preserveAccountSwitchTheme: async uid => { themeTargets.push(uid); },
-    currentAccount: () => active, switchTo: (_dir, uid) => { assert.equal(themeTargets.at(-1), uid, 'appearance is prepared before replacing the account'); switches.push(uid); return (active = { uid }); },
+    currentAccount: () => active, switchAccountForProfile: (uid) => { assert.equal(themeTargets.at(-1), uid, 'appearance is prepared before replacing the account'); switches.push(uid); return (active = { uid }); },
     reloadWorkBuddyPage: async () => {}, pendingAutomationAccountSwitch: null,
     dispatchAutomationEvent() {}, mainFrameNavigationSerial: 1,
     beginRendererReloadPriority: () => { reloadPriority++; return () => { reloadPriority--; }; },

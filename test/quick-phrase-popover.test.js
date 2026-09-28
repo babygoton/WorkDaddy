@@ -20,7 +20,7 @@ test('quick phrase popup escapes composer stacking, bridges hover, and cleans up
   const document = Object.assign(element(), { body: element() });
   const button = element({ left: 320, top: 660, width: 32, height: 32 });
   const popup = element(); popup.parentElement = button;
-  const context = { document, window, setTimeout(fn) { const id = ++nextTimer; timers.set(id, fn); return id; }, clearTimeout: id => timers.delete(id) };
+  const context = { CAPS: {}, document, window, mountPersistentOverlay: node=>document.body.appendChild(node), setTimeout(fn) { const id = ++nextTimer; timers.set(id, fn); return id; }, clearTimeout: id => timers.delete(id) };
   const start = source.indexOf('    function mountExplorePopover(');
   vm.runInNewContext(source.slice(start, source.indexOf('    function acMenuClose()', start)), context);
   const menu = context.mountExplorePopover(button, popup);

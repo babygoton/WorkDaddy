@@ -7,8 +7,8 @@ const { createHash } = require('node:crypto');
 const TOKEN_FIELDS = {
   input: ['input_tokens', 'prompt_tokens', 'inputTokens', 'promptTokens'],
   output: ['output_tokens', 'completion_tokens', 'outputTokens', 'completionTokens'],
-  cacheRead: ['cache_read_input_tokens', 'cache_read_tokens', 'cacheReadTokens', 'cached_tokens'],
-  cacheWrite: ['cache_creation_input_tokens', 'cache_write_tokens', 'cacheWriteTokens'],
+  cacheRead: ['cache_read_input_tokens', 'cache_read_tokens', 'cacheReadTokens', 'cached_tokens', 'cacheTokens'],
+  cacheWrite: ['cache_creation_input_tokens', 'cache_write_tokens', 'cacheWriteTokens', 'cachedWriteTokens'],
 };
 
 function numberField(value, fields) {
@@ -128,7 +128,10 @@ function parseRecords(root, options = {}) {
     let text;
     try { text = fs.readFileSync(file, 'utf8'); } catch (_) { continue; }
     const occurrences = new Map();
-    for (const line of text.split(/\r?\n/)) {
+    let lines;
+    try { lines = options.readRecords ? options.readRecords(text).map(record => JSON.stringify(record)) : text.split(/\r?\n/); }
+    catch (_) { parseErrors++; parseErrorFiles.add(relative); continue; }
+    for (const line of lines) {
       if (!line.trim()) continue;
       let record;
       try { record = JSON.parse(line); } catch (_) {
@@ -144,7 +147,7 @@ function parseRecords(root, options = {}) {
       if (!record || typeof record !== 'object' || record.isSnapshotUpdate) continue;
       const usage = findUsage(record.message && record.message.usage) || findUsage(record.providerData && record.providerData.usage) || findUsage(record);
       if (!usage) continue;
-      const timestamp = timestampValue(record.timestamp || record.created_at || record.createdAt || usage.timestamp, now);
+      const timestamp = timestampValue(record.timestamp || record.created_at || record.createdAt || record.startedAt || usage.timestamp, now);
       if (!Number.isFinite(timestamp) || timestamp < lowerBound || timestamp > upperBound) continue;
       const input = numberField(usage, TOKEN_FIELDS.input);
       const output = numberField(usage, TOKEN_FIELDS.output);
@@ -164,7 +167,7 @@ function parseRecords(root, options = {}) {
         key: digest + ':' + occurrence,
         file: relative,
         sourceSession: (['sessionId', 'conversationId', 'session_id', 'conversation_id']
-          .map(field => record[field]).find(value => typeof value === 'string' && value.trim()) || '').trim(),
+          .map(field => record[field]).find(value => typeof value === 'string' && value.trim()) || (options.sourceSession && options.sourceSession(file)) || '').trim(),
         timestamp,
         model: model || '',
         account: account || '',
@@ -291,7 +294,7 @@ function aggregateRecords(records, options = {}) {
     else if (account.nickname) byAccount.get(uid).nickname = account.nickname;
   }
   return {
-    source: 'local-workbuddy-jsonl',
+    source: options.source || 'local-workbuddy-jsonl',
     since: bounds.from,
     until: bounds.until,
     totals,
@@ -369,7 +372,7 @@ function aggregateCachedBuckets(buckets, options = {}) {
     else if (account.nickname) byAccount.get(uid).nickname = account.nickname;
   }
   return {
-    source: 'local-workbuddy-jsonl', since: bounds.from, until: bounds.until, totals,
+    source: options.source || 'local-workbuddy-jsonl', since: bounds.from, until: bounds.until, totals,
     daily: Array.from(byDay.values()).sort((a, b) => a.day.localeCompare(b.day)),
     dailyBreakdown: dailyBreakdown.sort((a, b) => a.day.localeCompare(b.day) || a.account.localeCompare(b.account) || a.model.localeCompare(b.model)),
     models: Array.from(byModel.values()).sort((a, b) => (b.input + b.output) - (a.input + a.output)),
@@ -386,7 +389,7 @@ function scanTokenStatsCached(root, options = {}) {
   const file = cacheFile(root, options);
   const cache = readCache(file);
   const hadValidCache = usableCache(cache, now);
-  const currentFiles = walkJsonl(root, options.maxFiles || 5000);
+  const currentFiles = Array.isArray(options.files) ? options.files : walkJsonl(root, options.maxFiles || 5000);
   const todayFiles = {};
   let parsedLines = 0, parseErrors = 0;
   const parseErrorFiles = new Set();

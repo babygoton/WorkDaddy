@@ -139,13 +139,14 @@ NODE
 
 build_package() {
   local profile="$1" package_name="$2" install_root="$3" display_name="$4" output_name="$5"
+  if [ -n "${WORKDADDY_BUILD_PROFILE:-}" ] && [ "$WORKDADDY_BUILD_PROFILE" != "$profile" ]; then return; fi
   local stage="$TEMP/stage-$profile"
   local scripts="$stage$install_root/scripts"
   mkdir -p "$scripts" "$stage/DEBIAN" "$stage/usr/share/applications" \
     "$stage/usr/share/icons/hicolor/1024x1024/apps"
   cp -R "$COMMON/opt/workdaddy/scripts/." "$scripts/"
   cp "$COMMON/usr/share/icons/hicolor/1024x1024/apps/workdaddy.png" \
-    "$stage/usr/share/icons/hicolor/1024x1024/apps/workdaddy-$profile.png"
+    "$stage/usr/share/icons/hicolor/1024x1024/apps/$package_name.png"
   chmod 755 "$scripts/"*-linux.sh
 
   cat > "$stage/DEBIAN/control" <<EOF
@@ -160,13 +161,13 @@ Description: $display_name desktop enhancement for WorkBuddy
  Local CDP integration for the separately installed $display_name client.
 EOF
 
-  cat > "$stage/usr/share/applications/workdaddy-$profile.desktop" <<EOF
+  cat > "$stage/usr/share/applications/$package_name.desktop" <<EOF
 [Desktop Entry]
 Type=Application
 Name=$display_name
 Exec=$install_root/scripts/launch-gui-linux.sh $profile
 TryExec=$install_root/scripts/launch-gui-linux.sh
-Icon=workdaddy-$profile
+Icon=$package_name
 Terminal=false
 Categories=Utility;
 EOF
@@ -277,3 +278,6 @@ PY
 
 build_package cn workdaddy /opt/workdaddy 'WorkDaddy' "WorkDaddy_${VERSION}_${DEB_ARCH}.deb"
 build_package ai workdaddy-ai /opt/workdaddy-ai 'WorkDaddy AI' "WorkDaddy-AI_${VERSION}_${DEB_ARCH}.deb"
+
+build_package codebuddy-cn codedaddy-cn /opt/codedaddy-cn 'CodeDaddy CN' "CodeDaddy-CN_${VERSION}_${DEB_ARCH}.deb"
+build_package codebuddy-intl codedaddy /opt/codedaddy 'CodeDaddy' "CodeDaddy_${VERSION}_${DEB_ARCH}.deb"

@@ -288,8 +288,22 @@ function builtinContentHash(task) {
   return crypto.createHash('sha256').update(JSON.stringify(content)).digest('hex');
 }
 
-function installBuiltinTask(dataDir, file) {
-  const task = validateTask(JSON.parse(fs.readFileSync(file, 'utf8')));
+function installBuiltinTask(dataDir, file, profile) {
+  const preset = JSON.parse(fs.readFileSync(file, 'utf8'));
+  // Reuse the shipped task while keeping authenticated requests on the
+  // selected client's official origin. Imported/user-edited tasks are untouched.
+  if (profile && profile.kind === 'codebuddy') {
+    const adapt = value => {
+      if (!value || typeof value !== 'object') return;
+      if (value.op === 'http.requestAsAccount' && typeof value.url === 'string') {
+        const url = new URL(value.url);
+        if (url.origin === 'https://www.workbuddy.cn') value.url = profile.apiHost + url.pathname + url.search + url.hash;
+      }
+      Object.values(value).forEach(adapt);
+    };
+    adapt(preset);
+  }
+  const task = validateTask(preset);
   const markerFile = path.join(dataDir, 'automation-builtins.json');
   let markers = {};
   try { markers = JSON.parse(fs.readFileSync(markerFile, 'utf8')); } catch (_) {}
@@ -338,6 +352,20 @@ function installBuiltinTask(dataDir, file) {
   writeAutomations(dataDir, next);
   writeMarker(managedMarker());
   return { status: 'upgraded', revision };
+}
+
+// Retire only presets installed by us. Keep imports with the same id and retain
+// markers so a removed preset cannot be reinstalled during a later migration.
+function removeBuiltinTasks(dataDir, ids) {
+  let markers;
+  try { markers = JSON.parse(fs.readFileSync(path.join(dataDir, 'automation-builtins.json'), 'utf8')); }
+  catch (_) { return; }
+  const tasks = readAutomations(dataDir);
+  const remaining = tasks.filter(task => {
+    const marker = markers && markers[task.id];
+    return (ids && !ids.includes(task.id)) || !(marker === true || marker && marker.managed === true);
+  });
+  if (remaining.length !== tasks.length) writeAutomations(dataDir, remaining);
 }
 
 function validateLocator(locator) {
@@ -1033,6 +1061,7 @@ module.exports = {
   stepsContainCheckin,
   taskIsPassiveCleanup,
   installBuiltinTask,
+  removeBuiltinTasks,
   SCHEMA_VERSION,
   CAPABILITIES,
   SUPPORTED_OPS,

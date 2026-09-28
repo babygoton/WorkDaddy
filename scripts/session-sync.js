@@ -896,12 +896,13 @@ async function applySnapshot(source, target, options) {
 }
 
 async function unchangedAsync(snapshot) {
-  const now = await readSnapshotAsync(snapshot.root, snapshot.id, snapshot.aliases, snapshot.cache || null);
+  const now = snapshot.reread ? await snapshot.reread() : await readSnapshotAsync(snapshot.root, snapshot.id, snapshot.aliases, snapshot.cache || null);
   return now.files.size === snapshot.files.size &&
     [...snapshot.files].every(([key, file]) => now.files.get(key)?.hash === file.hash);
 }
 
 async function targetBytesAsync(key, file, source, target) {
+  if (source.rewriteBytes) return source.rewriteBytes(key, file, target);
   if (key !== 'artifact-index/__session__.json') return null;
   const bytes = await readStableBytesAsync(file);
   const index = JSON.parse(bytes.toString('utf8'));
@@ -929,7 +930,7 @@ async function applySnapshotAsync(source, target, options) {
     const hash = bytes ? digest(bytes) : file.hash;
     if (target.files.get(key)?.hash === hash) continue;
     changes.push({
-      key, relative: targetRelative(key, target.id), bytes, sourceFile: file,
+      key, relative: target.resolveRelative ? target.resolveRelative(key) : targetRelative(key, target.id), bytes, sourceFile: file,
       hash, size: bytes ? bytes.length : file.size, mode: file.mode, mtimeMs: file.mtimeMs,
     });
   }
@@ -965,7 +966,7 @@ async function applySnapshotAsync(source, target, options) {
   let totalBytes = 0;
   const verifyPublished = async () => {
     if (!await unchangedAsync(source)) throw Error('源会话正在变化，已停止同步');
-    const now = await readSnapshotAsync(target.root, target.id, target.aliases, target.cache || null);
+    const now = target.reread ? await target.reread() : await readSnapshotAsync(target.root, target.id, target.aliases, target.cache || null);
     if (now.files.size !== expected.size || [...expected].some(([key, hash]) => now.files.get(key)?.hash !== hash)) {
       throw Error('目标会话正在变化，已停止同步');
     }

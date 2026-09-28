@@ -127,7 +127,12 @@ function isTargetForProfile(target, profile) {
  * window shares the same app URL and must not become the CDP session target.
  */
 function selectPageTarget(targets, profile) {
-  const candidates = (Array.isArray(targets) ? targets : []).filter((target) => isTargetForProfile(target, profile));
+  const candidates = (Array.isArray(targets) ? targets : []).filter((target) => {
+    if (!isTargetForProfile(target, profile)) return false;
+    // CodeBuddy's standalone Agents window is distinct from the IDE and its
+    // extension webviews. Wait for that window instead of attaching to the IDE.
+    return profile.kind !== 'codebuddy' || /\/agentManager\.html(?:[?#]|$)/i.test(String(target.url || ''));
+  });
   const score = (target) => {
     const url = String(target && target.url || '');
     if (/windowAppId=settings|windowKind=settings|windowPreset=utility/i.test(url)) return 20;

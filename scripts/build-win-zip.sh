@@ -39,14 +39,17 @@ if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
 fi
 PROFILE="${WORKDADDY_BUILD_PROFILE:-}"
 if [ -z "$PROFILE" ]; then
-  for profile in workbuddy-cn workbuddy-ai; do
+  for profile in workbuddy-cn workbuddy-ai codebuddy-cn codebuddy-intl; do
     WORKDADDY_BUILD_PROFILE="$profile" bash "$0"
   done
   exit 0
 fi
 case "$PROFILE" in
   workbuddy-ai) PACKAGE_NAME="WorkDaddy AI"; OUT="release/windows/WorkDaddy-AI-${VERSION}-win64.zip" ;;
-  *) PROFILE="workbuddy-cn"; PACKAGE_NAME="WorkDaddy"; OUT="release/windows/WorkDaddy-${VERSION}-win64.zip" ;;
+  codebuddy-cn) PACKAGE_NAME="CodeDaddy CN"; OUT="release/windows/CodeDaddy-CN-${VERSION}-win64.zip" ;;
+  codebuddy-intl) PACKAGE_NAME="CodeDaddy"; OUT="release/windows/CodeDaddy-${VERSION}-win64.zip" ;;
+  workbuddy-cn) PACKAGE_NAME="WorkDaddy"; OUT="release/windows/WorkDaddy-${VERSION}-win64.zip" ;;
+  *) echo "未知 profile: $PROFILE" >&2; exit 2 ;;
 esac
 
 echo "==> profile: ${PROFILE}"
@@ -357,6 +360,27 @@ patch('scripts/verify-win.cmd', [
 ])
 print('==>  品牌化替换完成（Start/Stop/install-win/launcher/verify-win + base64 提示）')
 PY
+fi
+# CodeDaddy keeps stable internal launcher filenames; visible labels follow the package.
+if [[ "$PROFILE" == codebuddy-* ]]; then
+  "$PYTHON_BIN" - "$(winpath "$STAGE")" "$PACKAGE_NAME" <<'PYCODE'
+from pathlib import Path
+import sys
+stage, brand = Path(sys.argv[1]), sys.argv[2]
+client = 'CodeBuddy CN' if brand == 'CodeDaddy CN' else 'CodeBuddy'
+for name in ['Start-WorkDaddy.cmd', 'Stop-WorkDaddy.cmd', 'scripts/launcher.cmd', 'scripts/verify-win.cmd']:
+    file = stage / name
+    if not file.exists(): continue
+    raw = file.read_bytes()
+    text = raw.decode('utf-8-sig')
+    for old, new in [('WorkDaddy launcher', brand + ' launcher'), ('WorkDaddy stopped.', brand + ' stopped.'),
+                     ('WorkDaddy lifecycle', brand + ' lifecycle'), ('WorkDaddy Windows', brand + ' Windows'),
+                     ('WorkDaddy 安装包', brand + ' 安装包'), ('WorkDaddy is ready', brand + ' is ready'),
+                     ('WorkDaddy Node runtime', brand + ' Node runtime'), ('Close WorkBuddy', 'Close ' + client),
+                     ('Desktop\\WorkDaddy.lnk', 'Desktop\\' + brand + '.lnk')]:
+        text = text.replace(old, new)
+    file.write_bytes((b'\xef\xbb\xbf' if raw.startswith(b'\xef\xbb\xbf') else b'') + text.encode('utf-8'))
+PYCODE
 fi
 # 3.3.5) 非 ASCII 文件名守护：Windows 安装包路径必须保持 ASCII。
 #        macOS 自带 Info-ZIP 会使用 UTF-8 条目写入；安装/更新脚本本身仍全部使用 ASCII 路径。

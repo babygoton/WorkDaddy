@@ -16,6 +16,11 @@ set -uo pipefail
 PORT="${WBSWITCH_CDP_PORT:-${1:-}}"
 DIR="$(cd "$(dirname "$0")/.." && pwd)"
 PROFILE="${WBSWITCH_PROFILE:-workbuddy-cn}"
+NATIVE_ARGS=()
+case "$PROFILE" in
+  codebuddy-cn) NATIVE_ARGS=(--inspect=127.0.0.1:9244) ;;
+  codebuddy-intl) NATIVE_ARGS=(--inspect=127.0.0.1:9245) ;;
+esac
 case "$PROFILE" in
   workbuddy-ai) APP_NAME="WorkBuddy AI"; APP_BIN="/Applications/WorkBuddy AI.app/Contents/MacOS/Electron"; DEFAULT_DATA_DIR="$HOME/Library/Application Support/WorkDaddy/profiles/workbuddy-ai"; DEFAULT_UI_PORT=47833; DEFAULT_CDP_PORT=9223; AUTH_DEFAULT="$HOME/Library/Application Support/CodeBuddyExtension/Data/Public/auth/workbuddy-desktop-ai.info" ;;
   codebuddy-cn) APP_NAME="CodeBuddy CN"; APP_BIN="/Applications/CodeBuddy CN.app/Contents/MacOS/Electron"; DEFAULT_DATA_DIR="$HOME/Library/Application Support/WorkDaddy/profiles/codebuddy-cn"; DEFAULT_UI_PORT=47834; DEFAULT_CDP_PORT=9224; AUTH_DEFAULT="" ;;
@@ -106,7 +111,21 @@ valid_port() { [ "${1:-0}" -ge 1024 ] 2>/dev/null && [ "${1:-0}" -le 65535 ] 2>/
 port_in_use() {
   if command -v nc >/dev/null 2>&1; then nc -z -w 1 127.0.0.1 "$1" >/dev/null 2>&1; else curl -s --max-time 1 "http://127.0.0.1:$1/" >/dev/null 2>&1; fi
 }
-is_workbuddy_cdp() { curl -fsS --max-time 1 "http://127.0.0.1:$1/json/version" 2>/dev/null | grep -qiE 'WorkBuddy|CodeBuddy'; }
+is_workbuddy_cdp() {
+  case "$PROFILE" in
+    codebuddy-cn|codebuddy-intl)
+      local native_port=9244 expected body
+      [ "$PROFILE" = codebuddy-intl ] && native_port=9245
+      curl -fsS --max-time 1 "http://127.0.0.1:$native_port/json/list" >/dev/null 2>&1 || return 1
+      body="$(curl -fsS --max-time 1 "http://127.0.0.1:$1/json/list" 2>/dev/null)" || return 1
+      expected="${APP_BIN%/Contents/MacOS/*}/"
+      [ "$expected" != / ] && [ "$expected" != "$APP_BIN/" ] || return 1
+      printf '%s' "$body" | grep -Fq "$expected" ||
+        printf '%s' "$body" | grep -Fq "${expected// /%20}"
+      ;;
+    *) curl -fsS --max-time 1 "http://127.0.0.1:$1/json/version" 2>/dev/null | grep -qiE 'WorkBuddy|CodeBuddy' ;;
+  esac
+}
 resolve_cdp_port() {
   local saved="" p
   if [ -f "$CDP_PORT_FILE" ]; then saved="$(sed -n 's/.*"port"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$CDP_PORT_FILE" | head -1)"; fi
@@ -177,16 +196,18 @@ APPLESCRIPT
 fi
 
 # 清理旧版常驻服务和旧 profile 自启项，但保留账号数据；daemon 仅由本次手动执行启动。
-for old_profile in workbuddy-cn workbuddy-ai codebuddy-cn codebuddy-intl; do
+for old_profile in "$PROFILE"; do
   old_label="com.workbuddy.workdaddy.${old_profile}"
   old_plist="$HOME/Library/LaunchAgents/${old_label}.plist"
   launchctl bootout "gui/$(id -u)" "$old_plist" 2>/dev/null || true
   launchctl remove "$old_label" 2>/dev/null || true
   rm -f "$old_plist"
 done
+if [ "$PROFILE" = workbuddy-cn ]; then
 launchctl bootout "gui/$(id -u)" "$LEGACY_PLIST" 2>/dev/null || true
 launchctl remove "$LEGACY_LABEL" 2>/dev/null || true
 rm -f "$LEGACY_PLIST"
+fi
 "$NODE_BIN" -e "const lib = require(process.argv[1]); const r = lib.migrateLegacyDataDir(process.argv[2]); if (r.migrated) console.log('已迁移 ' + r.migrated + ' 个旧版账号备份');" "$DIR/scripts/lib.js" "$DATA_DIR" 2>/dev/null || true
 
 # ---------- 功能函数（必须先于调用定义） ----------
@@ -300,7 +321,7 @@ launch_plugin() {
     echo "   错误：未找到 $APP_BIN"
     exit 1
   fi
-  nohup "$APP_BIN" --remote-debugging-port="$PORT" >/dev/null 2>&1 &
+  nohup "$APP_BIN" --remote-debugging-port="$PORT" "${NATIVE_ARGS[@]}" >/dev/null 2>&1 &
   disown 2>/dev/null || true
 
   # ---------- 4. 验证 ----------
@@ -308,7 +329,7 @@ launch_plugin() {
   OK=0
   for i in $(seq 1 60); do
     sleep 1
-    if curl -s -m 2 "http://127.0.0.1:${PORT}/json/version" | grep -qiE 'WorkBuddy|CodeBuddy'; then
+    if is_workbuddy_cdp "$PORT"; then
       OK=1
       break
     fi

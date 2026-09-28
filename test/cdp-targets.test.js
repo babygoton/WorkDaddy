@@ -143,3 +143,17 @@ test('looksLikeWbFamilyTarget 把四客户端页面都视为同族（不清理�
   // 任意其他 Chromium 应用不算同族（允许清理历史误注入）
   assert.equal(looksLikeWbFamilyTarget({ type: 'page', url: 'file:///Applications/Antigravity.app/Contents/index.html', title: 'Antigravity' }), false);
 });
+
+test('CodeBuddy selects only its Agents window regardless of target order', () => {
+  for (const id of ['codebuddy-cn', 'codebuddy-intl']) {
+    const app = id === 'codebuddy-cn' ? 'CodeBuddy%20CN' : 'CodeBuddy';
+    const base = 'vscode-file://vscode-app/Applications/' + app + '.app/Contents/Resources/app/out/vs/code/electron-browser/workbench/';
+    const ide = {type: 'page', url: base + 'workbench.html'};
+    const agents = {type: 'page', url: base + 'agentManager.html'};
+    assert.equal(selectPageTarget([ide], PROFILES[id]), null);
+    assert.equal(selectPageTarget([ide, agents], PROFILES[id]), agents);
+    assert.equal(selectPageTarget([agents, ide], PROFILES[id]), agents);
+    const other = id === 'codebuddy-cn' ? 'codebuddy-intl' : 'codebuddy-cn';
+    assert.equal(selectPageTarget([agents], PROFILES[other]), null);
+  }
+});

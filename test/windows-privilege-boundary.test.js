@@ -204,7 +204,7 @@ test('Windows installer stops the verified profile lifecycle before replacing or
   assert.ok(stopIndex >= 0, 'installer must stop an existing verified lifecycle');
   assert.ok(stopIndex < copyIndex, 'lifecycle must stop before files are replaced');
   assert.ok(stopIndex < launchIndex, 'lifecycle must stop before the new launcher starts');
-  assert.match(installerSource, /\$uiPort\s*=\s*if \(\$Profile -eq 'workbuddy-ai'\) \{ 47833 \} else \{ 47832 \}/);
+  assert.match(installerSource, /'workbuddy-cn'=47832; 'workbuddy-ai'=47833; 'codebuddy-cn'=47834; 'codebuddy-intl'=47835/);
   assert.match(installerSource, /-ExpectedWatchdogScript \(Join-Path \$AppDir 'scripts\\watchdog\.js'\)/);
   assert.match(installerSource, /-ExpectedDaemonScript \(Join-Path \$AppDir 'scripts\\daemon\.js'\)/);
   assert.match(installerSource, /\$preserveExistingLifecycle/);
@@ -251,7 +251,7 @@ test('PowerShell lifecycle scopes daemon discovery to a verified watchdog parent
 });
 
 test('watchdog uses an OS-managed profile lock and no process scanner', () => {
-  assert.match(watchdogSource, /const LOCK_PORT = PROFILE\.id === 'workbuddy-ai' \? 47933 : 47932/);
+  assert.match(watchdogSource, /'workbuddy-cn':47932,'workbuddy-ai':47933,'codebuddy-cn':47934,'codebuddy-intl':47935/);
   assert.match(watchdogSource, /const lockServer = net\.createServer\(\)/);
   assert.match(watchdogSource, /lockServer\.listen\(\{ host: '127\.0\.0\.1', port: LOCK_PORT, exclusive: true \}/);
   assert.match(watchdogSource, /error\.code === 'EADDRINUSE'/);

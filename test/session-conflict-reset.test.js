@@ -17,6 +17,7 @@ function harness(t) {
   lib.setAutoCopyMapping(dataDir, lineage, 'other', { targetId: 'session-other' });
   const jobs = [];
   const ctx = {
+    PROFILE: { kind: 'workbuddy' },
     ...lib, URL, HOST: '127.0.0.1', DATA_DIR: dataDir,
     isApiRequestAuthorized: () => true,
     readBody: async req => req.body,

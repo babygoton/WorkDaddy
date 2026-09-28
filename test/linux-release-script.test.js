@@ -33,8 +33,8 @@ test('Linux release builds a versioned, self-contained Debian package without ro
   assert.match(source, /WorkDaddy-AI_\$\{VERSION\}_\$\{DEB_ARCH\}\.deb/);
   assert.match(source, /Architecture: \$DEB_ARCH/);
   assert.match(source, /Exec=\$install_root\/scripts\/launch-gui-linux\.sh \$profile/);
-  assert.match(source, /workdaddy-\$profile\.png/);
-  assert.match(source, /Icon=workdaddy-\$profile/);
+  assert.match(source, /\$package_name\.png/);
+  assert.match(source, /Icon=\$package_name/);
   assert.match(source, /const DAEMON_VERSION =/);
   assert.match(source, /\['DAEMON_BUILD_ID', `release-\$\{version\}-linux-deb`\]/);
   assert.doesNotMatch(source, /DEBIAN\/(?:preinst|postinst|prerm|postrm)/);
@@ -60,10 +60,12 @@ test('Linux file-manager action does not invoke the macOS open command', () => {
 
 test('built Linux packages have matching metadata and isolated payloads', { skip: process.platform !== 'linux' || !process.env.WORKDADDY_LINUX_DEBS }, () => {
   const debs = process.env.WORKDADDY_LINUX_DEBS.split(path.delimiter).filter(Boolean);
-  assert.equal(debs.length, 2);
+  assert.ok(debs.length > 0);
   const expected = new Map([
-    ['WorkDaddy_', { packageName: 'workdaddy', root: 'opt/workdaddy', desktop: 'workdaddy-cn.desktop', filePattern: /^WorkDaddy_\d+\.\d+\.\d+_(?:amd64|arm64)\.deb$/ }],
+    ['WorkDaddy_', { packageName: 'workdaddy', root: 'opt/workdaddy', desktop: 'workdaddy.desktop', filePattern: /^WorkDaddy_\d+\.\d+\.\d+_(?:amd64|arm64)\.deb$/ }],
     ['WorkDaddy-AI_', { packageName: 'workdaddy-ai', root: 'opt/workdaddy-ai', desktop: 'workdaddy-ai.desktop', filePattern: /^WorkDaddy-AI_\d+\.\d+\.\d+_(?:amd64|arm64)\.deb$/ }],
+    ['CodeDaddy-CN_', { packageName: 'codedaddy-cn', root: 'opt/codedaddy-cn', desktop: 'codedaddy-cn.desktop', filePattern: /^CodeDaddy-CN_\d+\.\d+\.\d+_(?:amd64|arm64)\.deb$/ }],
+    ['CodeDaddy_', { packageName: 'codedaddy', root: 'opt/codedaddy', desktop: 'codedaddy.desktop', filePattern: /^CodeDaddy_\d+\.\d+\.\d+_(?:amd64|arm64)\.deb$/ }],
   ]);
   for (const deb of debs) {
     const fileName = path.basename(deb);
@@ -108,7 +110,7 @@ test('cross-built Debian archives expose standard member names and control metad
   assert.equal(control.status, 0, String(control.stderr));
   const metadata = spawnSync('tar', ['-xOJf', '-', './control'], { input: control.stdout, encoding: 'utf8' });
   assert.equal(metadata.status, 0, metadata.stderr);
-  const match = path.basename(deb).match(/^(?:WorkDaddy|WorkDaddy-AI)_(\d+\.\d+\.\d+)_(amd64|arm64)\.deb$/);
+  const match = path.basename(deb).match(/^(?:WorkDaddy|WorkDaddy-AI|CodeDaddy-CN|CodeDaddy)_(\d+\.\d+\.\d+)_(amd64|arm64)\.deb$/);
   assert.ok(match);
   const [, version, architecture] = match;
   assert.ok(metadata.stdout.split('\n').includes(`Version: ${version}`));

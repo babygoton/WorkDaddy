@@ -225,3 +225,36 @@ test('injected compatibility is packaged and AI theme access is no longer profil
   assert.doesNotMatch(inject, /if \(!CAPS\.theme \|\| WBS_PROFILE_IS_AI\)/);
   assert.doesNotMatch(inject, /migrateWorkBuddyAiThemeOnce/);
 });
+
+test('CodeBuddy activation uses its official guarded navigation handler with the native signature', async()=>{
+  const calls=[];
+  const navigate=async function(id,cwd,skip,preserve,title){
+    const SessionLoadCancelledError='SessionLoadCancelledError';
+    function getPendingMessageTracker(){} function getInitialMessages(){}
+    calls.push([id,cwd,skip,preserve,title]);
+  };
+  const root=visibleElement();
+  root.__reactFiber$native={memoizedState:{memoizedState:{current:navigate}},return:null};
+  const doc={querySelector:s=>s==='[data-conversation-id]'?root:null};
+  assert.equal(compat.findConversationActivationApi(doc),null);
+  const api=compat.findConversationActivationApi(doc,{profileId:'codebuddy-cn'});
+  assert.equal(api.authoritative,true);assert.equal(api.activate('native-session'),true);
+  await new Promise(r=>setImmediate(r));
+  assert.deepEqual(calls,[['native-session','',false,false,undefined]]);
+});
+
+
+test('CodeBuddy send lookup selects official submit handler and excludes plugin buttons', () => {
+  const compat = require('../scripts/workbuddy-compat');
+  const plugin={className:'wbs-explore-inline',closest:()=>({})};
+  const enhance={className:'_icon_hash',closest:()=>null,__reactProps$x:{onClick:()=>{}}};
+  const send={className:'_icon_hash _active_hash',closest:()=>null,
+    __reactProps$x:{onClick:function(){ editor.prepareBeforeSubmit?.(); editor.flushPendingContentChange(); }}};
+  const box={querySelectorAll:()=>[plugin,enhance,send]};
+  const doc={activeElement:{closest:()=>box},querySelectorAll:()=>[box]};
+  assert.equal(compat.findCodeBuddySendButton(doc),send);
+  box.querySelectorAll=()=>[plugin,enhance];
+  assert.equal(compat.findCodeBuddySendButton(doc),null);
+  doc.activeElement=null;doc.querySelectorAll=()=>[box,box];
+  assert.equal(compat.findCodeBuddySendButton(doc),null);
+});

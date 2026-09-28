@@ -6,7 +6,7 @@ const test = require('node:test');
 const source = fs.readFileSync(path.join(__dirname, '../scripts/daemon.js'), 'utf8');
 const begin = source.indexOf("  if (req.method === 'POST' && p === '/api/logout')");
 const end = source.indexOf('  // /api/batch-claim', begin);
-const route = new Function('req', 'p', 'res', 'resolveLogoutAuth', 'quitWorkBuddy', 'relaunchWorkBuddy', 'fs', 'log', 'json', source.slice(begin, end));
+const route = new Function('req', 'p', 'res', 'resolveLogoutAuth', 'quitWorkBuddy', 'relaunchWorkBuddy', 'fs', 'log', 'json', 'const codeBuddyNative = null;\n' + source.slice(begin, end));
 async function run(resolution, exists, quitError) {
   const actions = [];
   const result = await route({ method: 'POST' }, '/api/logout', {}, () => resolution,

@@ -19,7 +19,7 @@ function harness(rules, owner = 'source') {
     currentAccount: () => ({ uid: 'source' }),
     preserveAccountSwitchTheme: async uid => { assert.equal(uid, 'target'); events.push('preserve-theme'); },
     sqliteQuery: async () => owner ? [{ user_id: owner, cwd: '/current-workspace' }] : [],
-    switchTo: (_, uid) => { events.push('switch'); return { uid }; },
+    switchAccountForProfile: (uid) => { events.push('switch'); return { uid }; },
     reloadWorkBuddyPage: async () => { events.push('reload'); },
     mainFrameNavigationSerial: 1, setTimeout() {},
     getAutoCopyRules: () => rules,
@@ -35,7 +35,7 @@ function harness(rules, owner = 'source') {
   const routeStart = source.indexOf("  if (req.method === 'POST' && p === '/api/switch')");
   const routeEnd = source.indexOf('\n  return json(res, 404', routeStart);
   vm.runInContext('async function switchRoute(req, res) { const p = "/api/switch";\n' + source.slice(routeStart, routeEnd) + '\n}', ctx);
-  return { jobs, events, run: () => ctx.switchRoute({ method: 'POST', body: { uid: 'target', reload: true, currentConversationId: 'open' } }, {}) };
+  return { jobs, events, run: (currentConversationId = 'open') => ctx.switchRoute({ method: 'POST', body: { uid: 'target', reload: true, currentConversationId } }, {}) };
 }
 
 test('switch route reloads without syncing when no rule is enabled', async () => {
@@ -79,5 +79,58 @@ for (const owner of ['', 'other-account']) {
     const h = harness({ allSessions: true, sessionIds: [], workspaces: [] }, owner);
     assert.equal((await h.run()).status, 200);
     assert.equal(h.jobs[0].openSessionId, '');
+  });
+}
+
+const inject = fs.readFileSync(path.join(__dirname, '../scripts/inject.js'), 'utf8');
+const captureSource = inject.slice(inject.indexOf('    function acActiveConversationId()'), inject.indexOf('    /** 会话身份签名：'));
+const compat = require('../scripts/workbuddy-compat');
+
+function rendererCapture(profileId, adapter, window = {}) {
+  const node = { __reactFiber$test: { memoizedProps: { adapter }, return: null } };
+  const context = vm.createContext({
+    PROFILE_ID: profileId, CAPS: { enhance: false }, window,
+    WBS_COMPAT: compat, URL, location: { href: 'https://client.invalid/agentManager.html' },
+    document: { querySelector: selector => selector === '.chat-container' ? node : null, querySelectorAll: () => [] },
+  });
+  vm.runInContext(captureSource, context);
+  return context;
+}
+
+for (const profile of ['codebuddy-cn', 'codebuddy-intl']) {
+  test(profile + ': switch captures the live conversation without composer enhancement initialization', async () => {
+    let queueCalls = 0;
+    const adapter = { currentActiveSessionId: 'open',
+      enqueueConversationMessageQueueItem() { queueCalls++; }, pauseConversationMessageQueue() { queueCalls++; } };
+    const renderer = rendererCapture(profile, adapter);
+    const h = harness({ allSessions: true, sessionIds: [], workspaces: [] });
+    const result = await h.run(renderer.acSwitchConversationId());
+    assert.equal(result.status, 200);
+    assert.equal(h.jobs[0].openSessionId, 'open', 'the actual switch request must carry the source conversation');
+    adapter.currentActiveSessionId = 'copied-target';
+    assert.equal(renderer.acActiveConversationId(), 'copied-target', 'activation confirmation reads the live destination');
+    adapter.currentActiveSessionId = '';
+    renderer.window.__wbsAdapter = { currentActiveSessionId: 'stale-source' };
+    assert.equal(renderer.acSwitchConversationId(), '', 'welcome page must not reuse a stale enhancement cache');
+    assert.equal(queueCalls, 0, 'session capture must not mutate the composer or queue');
+  });
+}
+
+for (const profile of ['workbuddy-cn', 'workbuddy-ai']) {
+  test(profile + ': SDK, hydration fallback and legacy cache keep their switch behavior', async () => {
+    const renderer = rendererCapture(profile, null, { wb: { conversations: { currentId: 'open' } }, __wbsAdapter: { currentActiveSessionId: 'stale' } });
+    let nativeLookups = 0;
+    renderer.WBS_COMPAT = { findQueueAdapter() { nativeLookups++; }, getSelectedConversationId() { nativeLookups++; } };
+    assert.equal(renderer.acActiveConversationId(), 'open');
+    const h = harness({ allSessions: true, sessionIds: [], workspaces: [] });
+    await h.run(renderer.acSwitchConversationId());
+    assert.equal(h.jobs[0].openSessionId, 'open');
+    renderer.window.wb.conversations.currentId = '';
+    renderer.document.querySelector = selector => selector === '.cr-document[data-root-id]' ? { getAttribute: () => 'mounted-session' } : null;
+    assert.equal(renderer.acActiveConversationId(), '', 'SDK hydration remains authoritative for monitors');
+    assert.equal(renderer.acSwitchConversationId(), 'mounted-session', 'switch keeps its mounted-document fallback');
+    delete renderer.window.wb;
+    assert.equal(renderer.acActiveConversationId(), 'stale', 'legacy WorkBuddy cache path is unchanged');
+    assert.equal(nativeLookups, 0, 'CodeBuddy discovery must never run for WorkBuddy');
   });
 }

@@ -223,7 +223,7 @@ const AUTH_FILE = process.env.WBSWITCH_AUTH_FILE !== undefined
 
 const LOGOUT_MARKER = `${AUTH_FILE}.logged-out`;
 const EXPLICIT_AUTH_FILE = process.env.WBSWITCH_AUTH_FILE !== undefined;
-const DYNAMIC_AUTH_DISCOVERY = !EXPLICIT_AUTH_FILE && !!ACTIVE_PROFILE.authFile && !!ACTIVE_PROFILE.capabilities.accounts;
+const DYNAMIC_AUTH_DISCOVERY = ACTIVE_PROFILE.kind !== 'codebuddy' && !EXPLICIT_AUTH_FILE && !!ACTIVE_PROFILE.authFile && !!ACTIVE_PROFILE.capabilities.accounts;
 
 function authDir(file = AUTH_FILE) {
   return file ? path.dirname(path.resolve(file)) : null;

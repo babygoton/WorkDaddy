@@ -22,9 +22,7 @@ test('Windows updater launches the installed scripts launcher', () => {
 test('Windows updater prefers profile Setup.exe and keeps ZIP compatibility', () => {
   const daemon = read('daemon.js');
   const update = read('apply-update.ps1');
-  assert.match(daemon, /profileSetup/);
-  assert.match(daemon, /profileZip/);
-  assert.ok(daemon.indexOf('profileSetup.test') < daemon.indexOf('profileZip.test'), 'Setup.exe must win when both assets exist');
+  assert.ok(daemon.indexOf("matches(a, 'Setup-") < daemon.indexOf('-win64'), 'Setup.exe must win when both assets exist');
   assert.match(daemon, /assetName.*\.exe/);
   assert.match(daemon, /packageExt/);
   assert.match(update, /Alias\('SrcZip'\)/);
@@ -161,7 +159,7 @@ test('account switching refreshes WorkBuddy after replacing auth without restart
   const routeStart = script.indexOf("if (req.method === 'POST' && p === '/api/switch')");
   assert.notEqual(routeStart, -1);
   const route = script.slice(routeStart, routeStart + 5200);
-  const copy = route.indexOf('switchTo(DATA_DIR, uid, log)');
+  const copy = route.indexOf('await switchAccountForProfile(uid)');
   assert.notEqual(copy, -1);
   assert.match(route, /await reloadWorkBuddyPage\(\{ waitForInjection: false \}\)/);
   assert.doesNotMatch(route, /await quitWorkBuddy\(\)/);
@@ -188,7 +186,7 @@ test('account switching carries the active conversation and opens its copied tar
   assert.match(inject, /currentConversationId: acSwitchConversationId\(\)/);
   assert.match(inject, /function acSwitchConversationId()/);
   assert.match(inject, /openCopiedSession/);
-  assert.match(compat, /function findConversationActivationApi\(doc\)/);
+  assert.match(compat, /function findConversationActivationApi\(doc, options\)/);
   assert.match(compat, /setCurrentConversation/);
   assert.match(compat, /sdkNavigateKind/);
   assert.match(compat, /adapter\.emit\('jump-to-conversation'/);
@@ -239,6 +237,7 @@ test('copied-session activation trusts the official handler even when projection
     console: { log: (...args) => logs.push(args.join(' ')) },
     setBuildTimeout: setTimeout,
     acActiveConversationId: () => activeId,
+    PROFILE_ID: 'workbuddy-cn',
     WBS_COMPAT: {
       findConversationActivationApi() {
         return {
@@ -279,6 +278,7 @@ test('copied-session activation retries an unverified official dispatch', async 
     console: { log: (...args) => logs.push(args.join(' ')) },
     setBuildTimeout: setTimeout,
     acActiveConversationId: () => activeId,
+    PROFILE_ID: 'workbuddy-cn',
     WBS_COMPAT: {
       findConversationActivationApi() {
         return {
@@ -339,7 +339,7 @@ test('WorkDaddy-triggered reload injects on the new main execution context befor
 
   const switchStart = script.indexOf("if (req.method === 'POST' && p === '/api/switch')");
   const switchRoute = script.slice(switchStart, switchStart + 9000);
-  const switchWrite = switchRoute.indexOf('switchTo(DATA_DIR, uid, log)');
+  const switchWrite = switchRoute.indexOf('await switchAccountForProfile(uid)');
   assert.notEqual(switchWrite, -1);
   assert.doesNotMatch(switchRoute.slice(0, switchWrite), /buildAutoCopyPlan\(/, 'session planning must not delay auth replacement and renderer reload');
   assert.ok(switchRoute.indexOf('await reloadWorkBuddyPage({ waitForInjection: false })') < switchRoute.indexOf('startAutoCopyJob('), 'renderer reload must precede the background auto-copy queue');
@@ -543,7 +543,7 @@ test('session module read remains usable when first-run seed persistence fails',
   assert.match(reader, /try\s*\{[\s\S]*writeWorkbuddySettings\(s\)/);
   assert.match(reader, /catch \(error\)/);
   assert.match(reader, /session-seed-persist/);
-  assert.match(reader, /return sessBuild\(st, phrases\)/);
+  assert.match(reader, /const result = sessBuild\(st, phrases\)/);
 });
 
 test('macOS updater validates a cached/downloaded DMG before mounting it', () => {
@@ -566,13 +566,16 @@ test('Windows launcher scopes process discovery to the active profile and record
   assert.match(launcher, /processDiagnostics/);
 });
 
-test('release scripts package only WorkDaddy and WorkDaddy AI', () => {
+test('release scripts package all four independently branded profiles', () => {
   const win = fs.readFileSync(path.join(repoRoot, 'scripts', 'build-win-zip.sh'), 'utf8');
   const mac = fs.readFileSync(path.join(repoRoot, 'scripts', 'build-mac-dmg.sh'), 'utf8');
   const installer = read('install-win.ps1');
   for (const script of [win, mac]) {
     assert.match(script, /for profile in workbuddy-cn workbuddy-ai/);
-    assert.doesNotMatch(script, /codebuddy-cn|codebuddy-intl/);
+    assert.match(script, /codebuddy-cn/);
+    assert.match(script, /codebuddy-intl/);
+    assert.match(script, /CodeDaddy-CN/);
+    assert.match(script, /CodeDaddy/);
   }
   assert.match(win, /WorkDaddy AI\.lnk|PACKAGE_NAME="WorkDaddy AI"/);
   assert.match(win, /OUT="release\/windows\/WorkDaddy/);
@@ -1030,7 +1033,7 @@ test('quick-phrase layering does not reposition WorkBuddy native chat toolbar', 
   const script = read('inject.js');
   assert.match(script, /\.wbs-explore-inline\.wbs-stash-inline-inline\{position:relative;z-index:99999\}/);
   assert.match(script, /\.wbs-explore-pop\{position:fixed;[^}]*z-index:22/);
-  assert.match(script, /document\.body\.appendChild\(popup\)/);
+  assert.match(script, /mountPersistentOverlay\(popup\)/);
   assert.match(script, /html\[data-wbs-theme-id="nebula"\] \.wbs-explore-card\{[^}]*background:color-mix\(in srgb,var\(--wb-bg-popover/);
   assert.match(script, /html\[data-wbs-theme-id="nebula"\] \.wbs-explore-tip\{[^}]*background:color-mix\(in srgb,var\(--wb-bg-popover/);
   assert.doesNotMatch(script, /_chatMessageBottomToolbarWrapper_\}\{position:relative;z-index:68/);

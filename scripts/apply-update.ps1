@@ -26,14 +26,14 @@ try { . (Join-Path $PSScriptRoot 'windows-process-boundary.ps1') } catch {
   exit 5
 }
 if ([string]::IsNullOrWhiteSpace($Profile) -or $Profile -eq '__WBS_DEFAULT_PROFILE__') { $Profile = 'workbuddy-cn' }
-if ($Profile -ne 'workbuddy-ai') { $Profile = 'workbuddy-cn' }
-$productName = if ($Profile -eq 'workbuddy-ai') { 'WorkDaddy AI' } else { 'WorkDaddy' }
+if ($Profile -notin @('workbuddy-cn', 'workbuddy-ai', 'codebuddy-cn', 'codebuddy-intl')) { throw 'Unknown client profile' }
+$productName = (@{'workbuddy-cn'='WorkDaddy'; 'workbuddy-ai'='WorkDaddy AI'; 'codebuddy-cn'='CodeDaddy CN'; 'codebuddy-intl'='CodeDaddy'})[$Profile]
 if ([string]::IsNullOrWhiteSpace($AppDir)) { $AppDir = Join-Path $env:LOCALAPPDATA (Join-Path 'Programs' $productName) }
 if (-not (Test-SameWindowsPath -Left $PSScriptRoot -Right (Join-Path $AppDir 'scripts'))) {
   throw '更新脚本位置与目标安装目录不一致，拒绝替换'
 }
 $dataRoot = Join-Path $env:APPDATA 'WorkDaddy'
-$DataDir = if ($Profile -eq 'workbuddy-ai') { Join-Path $dataRoot 'profiles\workbuddy-ai' } else { $dataRoot }
+$DataDir = if ($Profile -eq 'workbuddy-cn') { $dataRoot } else { Join-Path $dataRoot ('profiles\' + $Profile) }
 $LogDir = Join-Path $DataDir 'update'
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 if ([string]::IsNullOrWhiteSpace($LogPath)) { $LogPath = Join-Path $LogDir 'apply.log' }
@@ -66,7 +66,7 @@ function Stop-WatchdogAndPort {
 }
 
 function Stop-WorkBuddyForUpdate {
-  $processName = if ($Profile -eq 'workbuddy-ai') { 'WorkBuddyAI.exe' } else { 'WorkBuddy.exe' }
+  $processName = (@{'workbuddy-cn'='WorkBuddy.exe'; 'workbuddy-ai'='WorkBuddyAI.exe'; 'codebuddy-cn'='CodeBuddy.exe'; 'codebuddy-intl'='CodeBuddy.exe'})[$Profile]
   $stopped = Stop-VerifiedWorkBuddyProcesses -ProcessName $processName
   if ($stopped -gt 0) { Write-ApplyLog "已停止 $processName 进程数=$stopped，释放安装目录文件锁" }
 }
