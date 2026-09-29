@@ -29,7 +29,7 @@ test('theme pane keeps avatar controls visible and gates wallpaper controls to f
   assert.match(inject, /<div class="wbs-pcard wbs-wallpaper-card wbs-theme-managed" id="wbs-wallpaper-card" style="display:none">/);
   assert.match(inject, /function syncWallpaperCardVisibility\(themeId\)/);
   assert.match(inject, /var visible = sessState\.themeTakeover/);
-  assert.match(inject, /syncWallpaperCardVisibility\('nebula'\)/);
+  assert.match(inject, /syncWallpaperCardVisibility\(currentThemeId\)/);
 });
 
 test('wallpaper loading leaves the loading state on daemon timeout and can retry', () => {
@@ -40,8 +40,8 @@ test('wallpaper loading leaves the loading state on daemon timeout and can retry
   assert.match(load, /壁纸加载失败（daemon 不可达）/);
 });
 
-test('theme pane uses the requested blur labels and frosted glass switch', () => {
-  assert.match(inject, /<div class="wbs-pcard-title">毛玻璃主题<\/div>/);
+test('theme pane uses the requested blur labels and theme takeover switch', () => {
+  assert.match(inject, /<div class="wbs-pcard-title">接管主题<\/div>/);
   assert.doesNotMatch(inject, /data-wbs-theme-option=/);
   assert.match(inject, /'毛玻璃': 'Frosted glass'/);
   assert.doesNotMatch(inject, /背景毛玻璃<span class="wbs-blur-hint">0% 不调节背景图<\/span>/);

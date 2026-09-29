@@ -7,20 +7,24 @@ const path = require('node:path');
 const vm = require('node:vm');
 const source = fs.readFileSync(path.join(__dirname, '../scripts/daemon.js'), 'utf8');
 
-test('theme takeover always restores the frosted theme after navigation', async () => {
-  const start = source.indexOf('async function restoreSavedTheme()');
-  const end = source.indexOf('\n/**', start);
-  const applied = [];
-  const context = {
-    PROFILE: { capabilities: { theme: true } }, cdp: { connected: true },
-    readSessionState: () => ({ themeTakeoverEnabled: true }),
-    DATA_DIR: '/test', path, fs: { existsSync: () => true, readFileSync: () => '{"id":"default"}' },
-    applyThemeByCdp: async id => applied.push(id),
-  };
-  vm.runInNewContext(source.slice(start, end), context);
-  await context.restoreSavedTheme();
-  assert.deepEqual(applied, ['nebula']);
-});
+for (const saved of ['default', 'dark', 'eye-care', 'cyber-purple', 'nebula', 'missing', null]) {
+  test('theme takeover restores the saved choice after navigation: ' + saved, async () => {
+    const start = source.indexOf('function readSavedThemeId()');
+    const restore = source.indexOf('async function restoreSavedTheme()');
+    const end = source.indexOf('\n/**', restore);
+    const applied = [];
+    const context = {
+      PROFILE: { capabilities: { theme: true } }, cdp: { connected: true },
+      readSessionState: () => ({ themeTakeoverEnabled: true }),
+      DATA_DIR: '/test', path, fs: { readFileSync: () => saved === null ? '{invalid' : JSON.stringify({id:saved}) },
+      getTheme: id => ['default','dark','eye-care','cyber-purple','nebula'].includes(id),
+      applyThemeByCdp: async id => applied.push(id),
+    };
+    vm.runInNewContext(source.slice(start, end), context);
+    await context.restoreSavedTheme();
+    assert.deepEqual(applied, [saved === null || saved === 'missing' ? 'default' : saved]);
+  });
+}
 
 async function themeExpression(id, takeover = true, accountUid = null, options = {}) {
   const start = source.indexOf('async function applyThemeByCdp(id, options = {})');

@@ -3564,7 +3564,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       if (themeSwitch) themeSwitch.checked = sessState.themeTakeover;
       syncThemeTakeoverVisibility(sessState.themeTakeover);
       // 开关确认和异步设置回填也要启动图库加载，不能只在切换主题页时加载。
-      syncWallpaperCardVisibility('nebula');
+      syncWallpaperCardVisibility(currentThemeId);
       if (area) area.style.display = sessState.phrase ? '' : 'none';
       renderQpList();
       renderExploreOptions();
@@ -7602,7 +7602,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       for (var j = 0; j < panes.length; j++) panes[j].classList.toggle('active', panes[j].getAttribute('data-pane') === name);
       if (name === 'theme') {
         if (themePane && !themePane.dataset.built) buildThemePane();
-        syncWallpaperCardVisibility('nebula');
+        syncWallpaperCardVisibility(currentThemeId);
       }
       if (name === 'sessions' && sessionsPane && !sessionsPane.dataset.built) buildSessionsPane();
       if (name === 'models' && modelsPane && !modelsPane.dataset.built) buildModelsPane();
@@ -9724,8 +9724,17 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         '</div></div>' +
         (codeBuddyTheme ? '' : '<div class="wbs-pcard">' +
         '<div class="wbs-theme-takeover-row">' +
-        '<div class="wbs-pcard-title">毛玻璃主题</div>' +
-        '<label class="wbs-switch"><input type="checkbox" id="wbs-theme-takeover" checked><span class="wbs-switch-slider"></span></label></div>' +
+        '<div class="wbs-pcard-title">接管主题</div>' +
+        '<label class="wbs-switch"><input type="checkbox" id="wbs-theme-takeover" checked aria-label="接管主题"><span class="wbs-switch-slider"></span></label></div>' +
+        '<div class="wbs-theme-managed" id="wbs-theme-appearance-options">' +
+        '<div class="wbs-pcard-title">主题外观</div>' +
+        '<div class="wbs-theme-seg" id="wbs-theme-seg" role="radiogroup" aria-label="主题外观">' +
+        '<label class="wbs-theme-opt wbs-theme-option"><input type="radio" name="wbs-theme" value="default"><span>浅色</span></label>' +
+        '<label class="wbs-theme-opt wbs-theme-option"><input type="radio" name="wbs-theme" value="dark"><span>深色</span></label>' +
+        '<label class="wbs-theme-opt wbs-theme-option"><input type="radio" name="wbs-theme" value="eye-care"><span>护眼绿</span></label>' +
+        '<label class="wbs-theme-opt wbs-theme-option"><input type="radio" name="wbs-theme" value="cyber-purple"><span>赛博紫</span></label>' +
+        '<label class="wbs-theme-opt wbs-theme-option"><input type="radio" name="wbs-theme" value="nebula"><span>毛玻璃</span></label>' +
+        '</div></div>' +
         '</div>') +
         (codeBuddyTheme ? '' : '<div class="wbs-pcard wbs-wallpaper-card wbs-theme-managed" id="wbs-wallpaper-card" style="display:none">' +
         '<div class="wbs-pcard-title">壁纸</div>' +
@@ -10377,8 +10386,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       if (!themePane) return;
       var card = themePane.querySelector('#wbs-wallpaper-card');
       if (!card) return;
-      // 主题页固定使用毛玻璃；开关只控制这组玻璃主题设置是否可见。
-      var visible = sessState.themeTakeover;
+      var visible = sessState.themeTakeover && themeId === 'nebula';
       card.style.display = visible ? '' : 'none';
       var textCard = themePane.querySelector('#wbs-text-shadow-card');
       if (textCard) textCard.style.display = visible ? '' : 'none';
@@ -10439,7 +10447,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         dockSwitch.checked = fabQuietMode.isEnabled();
         dockSwitch.addEventListener('change', function () { fabQuietMode.setEnabled(this.checked); });
       }
-      // 主题页只提供毛玻璃主题开关；壁纸仍通过下方来源按钮管理。
+      // 壁纸通过下方来源按钮管理，主题单选项使用 change 事件。
       themePane.addEventListener('click', function (e) {
         var t = e.target;
         var srcBtn = t.closest ? t.closest('.wbs-bg-src') : null;
@@ -10463,6 +10471,10 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       });
       themePane.addEventListener('change', function (e) {
         var t = e.target;
+        if (t && t.name === 'wbs-theme' && t.checked) {
+          selectTheme(t.value);
+          return;
+        }
         if (t && t.name === 'wbs-avatar-preset') {
           try { avatarLibrary.select(t.value); }
           catch (_) { toast('头像保存失败，请清理存储空间后重试', true, root); }
@@ -11056,15 +11068,41 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
 
     // ===== 主题系统（WorkDaddy 换肤）：segmented 切换 =====
     // 主题 = CSS 变量覆盖（--wb-* / --dc-*），daemon 通过 CDP 注入 <style>。
-    // 只提供四个入口：官方主题(default) 与 WorkDaddy 官方主题(nebula)、官方内置深色主题(eye-care/cyber-purple)
-    // 默认选中「WorkBuddy 默认主题」(default)：未设置/异常时回退到 default 而非 nebula（用户要求）
+    // 五种外观共用主题接管；只有毛玻璃使用壁纸、蒙版和背景模糊。
     var ALLOWED_THEMES = ['default', 'dark', 'nebula', 'eye-care', 'cyber-purple'];
+    var currentThemeId = 'default';
+    var themeSelectionSerial = 0;
+    function syncThemeSelection(id) {
+      currentThemeId = ALLOWED_THEMES.indexOf(id) >= 0 ? id : 'default';
+      if (themePane) themePane.querySelectorAll('#wbs-theme-seg input[name="wbs-theme"]').forEach(function (input) {
+        input.checked = input.value === currentThemeId;
+        input.closest('.wbs-theme-opt').classList.toggle('active', input.checked);
+      });
+      syncWallpaperCardVisibility(currentThemeId);
+    }
     function loadThemes() {
-      api('/api/themes')
+      var serial = themeSelectionSerial;
+      return api('/api/themes')
         .then(function (d) {
-          syncWallpaperCardVisibility('nebula');
+          if (serial === themeSelectionSerial) syncThemeSelection(d.current);
         })
         .catch(function () {});
+    }
+    function selectTheme(id) {
+      if (!sessState.themeTakeover || CAPS.themeTakeover === false || ALLOWED_THEMES.indexOf(id) < 0) return;
+      var previous = currentThemeId;
+      var serial = ++themeSelectionSerial;
+      syncThemeSelection(id);
+      return applyTheme(id).then(function () {
+        if (serial !== themeSelectionSerial) return;
+        var names = { 'default': '浅色', 'dark': '深色', 'eye-care': '护眼绿', 'cyber-purple': '赛博紫', 'nebula': '毛玻璃' };
+        toast('已应用主题「' + names[id] + '」', false, root);
+      }).catch(function (error) {
+        if (serial !== themeSelectionSerial) return;
+        syncThemeSelection(previous);
+        toast('应用主题失败: ' + (error.message || error), true, root);
+        loadThemes();
+      });
     }
     function applyTheme(id) {
       return api('/api/theme-apply', {
@@ -11073,12 +11111,9 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         body: JSON.stringify({ id: id }),
       });
     }
-    // 当前主题 id（壁纸切换目标）：segmented 激活项；无则 nebula
+    // 壁纸控件仅在毛玻璃下显示；保留默认主题下上传壁纸的兼容目标。
     function themeSelectValue() {
-      var seg = root.querySelector('#wbs-theme-seg');
-      var act = seg ? seg.querySelector('.wbs-theme-opt.active') : null;
-      var id = act ? act.getAttribute('data-wbs-theme-option') : null;
-      return id && id !== 'default' && id !== 'dark' ? id : 'nebula';
+      return currentThemeId !== 'default' && currentThemeId !== 'dark' ? currentThemeId : 'nebula';
     }
     // 页面主题由 daemon 在早期注入/加载时恢复；不要延迟 POST 旧主题，
     // 否则旧页面的异步请求可能覆盖用户刚选择的主题。
@@ -17040,6 +17075,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '.wbs-wp-custom .wbs-wp-badge{background:rgba(0,0,0,.35)}',
     /* 主题切换 segmented（默认 / WorkDaddy / 官方内置深色主题）：样式与下方壁纸来源切换按钮统一 */
     '.wbs-theme-seg{display:flex;background:var(--wb-bg-tertiary,#f0f0f0);border-radius:10px;padding:3px;gap:3px;margin-bottom:8px}',
+    '.wbs-theme-option{position:relative;text-align:center;line-height:normal}.wbs-theme-option input{position:absolute;opacity:0;width:1px;height:1px}.wbs-theme-option:has(input:focus-visible){outline:2px solid var(--wb-icon-secondary);outline-offset:1px}',
     '.wbs-theme-opt{flex:1;min-width:0;padding:6px 4px;border:none;border-radius:8px;background:transparent;color:var(--wb-icon-secondary,#666);font-size:12px;font-weight:600;cursor:pointer;transition:all .15s;font-family:inherit;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
     '.wbs-theme-opt:hover{color:var(--wb-color-text-primary,#1f1f1f)}',
     '.wbs-theme-opt.active{background:var(--wb-button-primary-bg,#1f1f1f);color:var(--wb-button-primary-fg,#fff);box-shadow:0 1px 4px rgba(0,0,0,.2)}',

@@ -432,8 +432,8 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 // 1.2.188：关闭主题接管时跟随 WorkBuddy AI 的原生 agent-ui-theme，避免旧快照覆盖官方浅色/深色选择。
 // 1.2.189：毛玻璃底色等待移至 daemon，避免后台页面定时器节流拖延开关和壁纸加载。
 // 1.2.191：CodeDaddy 共用完整面板，通过本机 CDP 适配通信、原生登录态和会话缓存。
-const DAEMON_VERSION = '1.2.203';
-const DAEMON_BUILD_ID = 'release-1.2.203-20260928-session-list-refresh';
+const DAEMON_VERSION = '1.2.204';
+const DAEMON_BUILD_ID = 'release-1.2.204-20260929-restore-theme-options';
 const usageReporter = createUsageReporter({ profile: PROFILE.id, version: DAEMON_VERSION });
 configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const automationDiscovery = createAutomationDiscovery({
@@ -7246,6 +7246,14 @@ async function restoreNativeAppearanceByCdp() {
   } catch (_) {}
 }
 
+function readSavedThemeId() {
+  try {
+    const id = JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'current-theme.json'), 'utf8')).id;
+    if (typeof id === 'string' && (id === 'default' || getTheme(id))) return id;
+  } catch (_) {}
+  return 'default';
+}
+
 /** 恢复已保存的主题（CDP 连接/页面刷新后调用）：读取 current-theme.json 重新应用，保证深浅色在重启/刷新后仍生效 */
 async function restoreSavedTheme() {
   if (!PROFILE.capabilities.theme || PROFILE.capabilities.themeTakeover === false) return;
@@ -7255,9 +7263,7 @@ async function restoreSavedTheme() {
     await startNativeAppearanceSyncByCdp();
     return;
   }
-  // WorkDaddy 主题接管固定为毛玻璃；官方浅色/深色由关闭接管后的 WorkBuddy 自己管理。
-  let id = 'nebula';
-  await applyThemeByCdp(id, { automatic: true });
+  await applyThemeByCdp(readSavedThemeId(), { automatic: true });
 }
 
 /** 应用主题：通过 CDP 注入主题样式。
@@ -9027,7 +9033,7 @@ function handleApi(req, res) {
         const state = setSessionSwitch(body.name, body.enabled);
         if (body.name === 'themeTakeoverEnabled') {
           themeApplyGeneration++;
-          if (state.themeTakeoverEnabled) await applyThemeByCdp('nebula');
+          if (state.themeTakeoverEnabled) await applyThemeByCdp(readSavedThemeId());
           else await releaseThemeByCdp();
         }
         return json(res, 200, { ok: true, ...state });
@@ -9830,9 +9836,7 @@ function handleApi(req, res) {
   // 主题列表（内置 + 用户自定义）
   if (req.method === 'GET' && p === '/api/themes') {
     try {
-      const current = fs.existsSync(path.join(DATA_DIR, 'current-theme.json'))
-        ? JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'current-theme.json'), 'utf8')).id
-        : 'default';
+      const current = readSavedThemeId();
       return json(res, 200, { ok: true, themes: listThemes(), current });
     } catch (e) {
       return json(res, 500, { ok: false, error: e.message });
