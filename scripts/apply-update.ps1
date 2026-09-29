@@ -66,7 +66,7 @@ function Stop-WatchdogAndPort {
 }
 
 function Stop-WorkBuddyForUpdate {
-  $processName = (@{'workbuddy-cn'='WorkBuddy.exe'; 'workbuddy-ai'='WorkBuddyAI.exe'; 'codebuddy-cn'='CodeBuddy.exe'; 'codebuddy-intl'='CodeBuddy.exe'})[$Profile]
+  $processName = (@{'workbuddy-cn'='WorkBuddy.exe'; 'workbuddy-ai'='WorkBuddyAI.exe'; 'codebuddy-cn'='CodeBuddy CN.exe'; 'codebuddy-intl'='CodeBuddy.exe'})[$Profile]
   $stopped = Stop-VerifiedWorkBuddyProcesses -ProcessName $processName
   if ($stopped -gt 0) { Write-ApplyLog "已停止 $processName 进程数=$stopped，释放安装目录文件锁" }
 }

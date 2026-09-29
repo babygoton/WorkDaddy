@@ -138,7 +138,8 @@ test('CodeDaddy installer page targets CodeBuddy instead of WorkBuddy', () => {
   assert.match(installer, /function ExpectedClientDisplayName\(\)/);
   assert.match(installer, /if '\{#ProfileId\}' = 'codebuddy-cn' then[\s\S]*Result := 'CodeBuddy CN'/);
   assert.match(installer, /function ExpectedClientExecutableName\(\)/);
-  assert.match(installer, /if '\{#ProfileId\}' = 'codebuddy-cn' then[\s\S]*Result := 'CodeBuddy\.exe'/);
+  assert.match(installer, /if '\{#ProfileId\}' = 'codebuddy-cn' then[\s\S]*Result := 'CodeBuddy CN\.exe'/);
+  assert.match(installer, /else if '\{#ProfileId\}' = 'codebuddy-intl' then[\s\S]*Result := 'CodeBuddy\.exe'/);
   assert.match(installer, /ClientPage := CreateInputFilePage\([\s\S]*ExpectedClientDisplayName\(\)/);
   assert.match(installer, /ClientPage\.Add\(ExpectedClientDisplayName\(\) \+ ' 主程序：'/);
   assert.match(installer, /Programs\\CodeBuddy CN/);
@@ -148,6 +149,37 @@ test('CodeDaddy installer page targets CodeBuddy instead of WorkBuddy', () => {
   assert.doesNotMatch(installer, /Dialog\.Caption := '请先退出 WorkBuddy'/);
   assert.doesNotMatch(installer, /MessageLabel\.Caption := '安装前需要完全退出当前的 WorkBuddy'/);
   assert.doesNotMatch(installer, /function ExpectedWorkBuddyName\(\)/);
+});
+
+test('the current CodeBuddy CN installer path uses exact-path checks without requiring product metadata', () => {
+  const native = read('scripts/windows-native/main.go');
+  const targetStart = native.indexOf('func targetForBinary(');
+  const targetEnd = native.indexOf('\nfunc enumerateProcesses(', targetStart);
+  const targetSource = native.slice(targetStart, targetEnd);
+  assert.match(targetSource, /profile == profileCodeCN \|\| profile == profileCodeIntl/);
+  assert.match(targetSource, /codeBuddyExplicitBinaryMatches\(profile, binary\)/);
+  assert.doesNotMatch(targetSource, /codeBuddyBinaryMatches/);
+
+  const explicitStart = native.indexOf('func codeBuddyExplicitBinaryMatches(');
+  const explicitEnd = native.indexOf('\nfunc workBuddyImage(', explicitStart);
+  const explicitSource = native.slice(explicitStart, explicitEnd);
+  assert.match(explicitSource, /profile == profileCodeCN[\s\S]*"CodeBuddy CN\.exe"/);
+  assert.match(explicitSource, /return codeBuddyBinaryMatches\(profile, binary\)/);
+
+  const matchStart = native.indexOf('func matchingWorkBuddyProcessesForTarget(');
+  const matchEnd = native.indexOf('\nfunc matchingWorkBuddyProcesses(', matchStart);
+  const matchSource = native.slice(matchStart, matchEnd);
+  assert.match(matchSource, /target\.Binary != "" \|\| codeBuddyBinaryMatches\(profile, record\.Path\)/);
+});
+
+test('CodeDaddy installer rejects a wrong executable before native process inspection', () => {
+  const installer = read('scripts/win/workdaddy.iss');
+  assert.match(installer, /function SelectedClientFile\(const Candidate: String\): Boolean/);
+  assert.match(installer, /Pos\('codebuddy', Lowercase\('\{#ProfileId\}'\)\) = 1/);
+  assert.match(installer, /function ClientExecutableNameMatches\(const Candidate: String\): Boolean/);
+  assert.match(installer, /ClientExecutableNameMatches\(Candidate\)/);
+  assert.match(installer, /Result := SelectedClientFile\(SelectedWorkBuddyPath\)/);
+  assert.match(installer, /if ResultCode = 20 then[\s\S]*所选路径不适用于当前安装包/);
 });
 
 test('Windows update opens the verified Setup visibly and keeps daemon alive', () => {

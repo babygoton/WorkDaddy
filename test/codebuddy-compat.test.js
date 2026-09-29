@@ -68,17 +68,21 @@ test('updates select only the matching brand and prefer Setup over historical ZI
   }
 });
 
-test('CodeBuddy Windows binaries are separated by official product metadata, not shared executable name',t=>{
+test('CodeBuddy Windows binaries support the current CN name and separate editions by product metadata',t=>{
   const {isCodeBuddyBinary}=require('../scripts/profiles');
   const os=require('node:os');
   const root=fs.mkdtempSync(path.join(os.tmpdir(),'codedaddy-product-'));
   t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
   fs.mkdirSync(path.join(root,'resources','app'),{recursive:true});
-  const exe=path.join(root,'CodeBuddy.exe');fs.writeFileSync(exe,'fixture');
-  assert.equal(isCodeBuddyBinary(exe,'codebuddy-cn'),false);
+  const cnExe=path.join(root,'CodeBuddy CN.exe');fs.writeFileSync(cnExe,'fixture');
+  const legacyExe=path.join(root,'CodeBuddy.exe');fs.writeFileSync(legacyExe,'fixture');
+  assert.equal(isCodeBuddyBinary(cnExe,'codebuddy-cn'),false);
   fs.writeFileSync(path.join(root,'resources','app','product.json'),JSON.stringify({applicationName:'buddycn'}));
-  assert.equal(isCodeBuddyBinary(exe,'codebuddy-cn'),true);
-  assert.equal(isCodeBuddyBinary(exe,'codebuddy-intl'),false);
+  assert.equal(isCodeBuddyBinary(cnExe,'codebuddy-cn'),true);
+  assert.equal(isCodeBuddyBinary(legacyExe,'codebuddy-cn'),true);
+  assert.equal(isCodeBuddyBinary(cnExe,'codebuddy-intl'),false);
+  assert.equal(isCodeBuddyBinary(legacyExe,'codebuddy-intl'),false);
+  assert.equal(path.basename(PROFILES['codebuddy-cn'].appPath),'CodeBuddy CN.exe');
 });
 
 test('CodeBuddy waits for page load rather than mounting into the disposable bootstrap body',async()=>{

@@ -579,11 +579,22 @@ func configuredTarget(profile string) workBuddyTarget {
 	return target
 }
 
+func codeBuddyFileNameMatches(profile, binary string) bool {
+	name := filepath.Base(binary)
+	if profile == profileCodeCN {
+		return strings.EqualFold(name, "CodeBuddy CN.exe") || strings.EqualFold(name, "CodeBuddy.exe")
+	}
+	if profile == profileCodeIntl {
+		return strings.EqualFold(name, "CodeBuddy.exe")
+	}
+	return false
+}
+
 func codeBuddyBinaryMatches(profile, binary string) bool {
 	if profile != profileCodeCN && profile != profileCodeIntl {
 		return true
 	}
-	if !strings.EqualFold(filepath.Base(binary), "CodeBuddy.exe") {
+	if !codeBuddyFileNameMatches(profile, binary) {
 		return false
 	}
 	data, err := os.ReadFile(filepath.Join(filepath.Dir(binary), "resources", "app", "product.json"))
@@ -603,8 +614,18 @@ func codeBuddyBinaryMatches(profile, binary string) bool {
 	return product.ApplicationName == expected
 }
 
+func codeBuddyExplicitBinaryMatches(profile, binary string) bool {
+	if profile == profileCodeCN && strings.EqualFold(filepath.Base(binary), "CodeBuddy CN.exe") {
+		return true
+	}
+	return codeBuddyBinaryMatches(profile, binary)
+}
+
 func workBuddyImage(profile string) string {
-	if profile == profileCodeCN || profile == profileCodeIntl {
+	if profile == profileCodeCN {
+		return "CodeBuddy CN.exe"
+	}
+	if profile == profileCodeIntl {
 		return "CodeBuddy.exe"
 	}
 	if target := configuredTarget(profile); len(target.ProcessNames) > 0 {
@@ -648,7 +669,11 @@ func targetForBinary(profile, binary string) workBuddyTarget {
 		return workBuddyTarget{}
 	}
 	info, err := os.Stat(binary)
-	if err != nil || info.IsDir() || !codeBuddyBinaryMatches(profile, binary) {
+	if err != nil || info.IsDir() {
+		return workBuddyTarget{}
+	}
+	if (profile == profileCodeCN || profile == profileCodeIntl) &&
+		!codeBuddyExplicitBinaryMatches(profile, binary) {
 		return workBuddyTarget{}
 	}
 	return workBuddyTarget{ProfileID: profile, Binary: filepath.Clean(binary), ProcessNames: processNamesForBinary(binary)}
@@ -727,7 +752,8 @@ func matchingWorkBuddyProcessesForTarget(profile string, target workBuddyTarget)
 		pathMatches := target.Binary == "" || (record.Path != "" &&
 			samePath(filepath.Dir(record.Path), filepath.Dir(target.Binary)) &&
 			strings.EqualFold(filepath.Base(record.Path), record.Name))
-		if nameMatches && pathMatches && codeBuddyBinaryMatches(profile, record.Path) {
+		identityMatches := target.Binary != "" || codeBuddyBinaryMatches(profile, record.Path)
+		if nameMatches && pathMatches && identityMatches {
 			matched = append(matched, record)
 		}
 	}

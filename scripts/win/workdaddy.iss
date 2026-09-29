@@ -163,7 +163,7 @@ end;
 function ExpectedClientExecutableName(): String;
 begin
   if '{#ProfileId}' = 'codebuddy-cn' then
-    Result := 'CodeBuddy.exe'
+    Result := 'CodeBuddy CN.exe'
   else if '{#ProfileId}' = 'codebuddy-intl' then
     Result := 'CodeBuddy.exe'
   else if '{#ProfileId}' = 'workbuddy-ai' then
@@ -172,16 +172,33 @@ begin
     Result := 'WorkBuddy.exe';
 end;
 
+function ClientExecutableNameMatches(const Candidate: String): Boolean;
+var
+  Name: String;
+begin
+  Name := ExtractFileName(Candidate);
+  Result := CompareText(Name, ExpectedClientExecutableName()) = 0;
+  if (not Result) and ('{#ProfileId}' = 'codebuddy-cn') then
+    Result := CompareText(Name, 'CodeBuddy.exe') = 0;
+end;
+
 function UsableClientFile(const Candidate: String): Boolean;
 begin
   Result := (Candidate <> '') and FileExists(Candidate) and
     (CompareText(ExtractFileExt(Candidate), '.exe') = 0);
 end;
 
+function SelectedClientFile(const Candidate: String): Boolean;
+begin
+  Result := UsableClientFile(Candidate);
+  if Result and (Pos('codebuddy', Lowercase('{#ProfileId}')) = 1) then
+    Result := ClientExecutableNameMatches(Candidate);
+end;
+
 function OfficialClientFile(const Candidate: String): Boolean;
 begin
   Result := UsableClientFile(Candidate) and
-    (CompareText(ExtractFileName(Candidate), ExpectedClientExecutableName()) = 0);
+    ClientExecutableNameMatches(Candidate);
 end;
 
 function NextVersionComponent(const Version: String; var Offset: Integer): Integer;
@@ -479,7 +496,7 @@ end;
 function ValidateClientSelection(const ShowError: Boolean): Boolean;
 begin
   SelectedWorkBuddyPath := Trim(ClientPage.Values[0]);
-  Result := UsableClientFile(SelectedWorkBuddyPath);
+  Result := SelectedClientFile(SelectedWorkBuddyPath);
   if (not Result) and ShowError then
     MsgBox('请选择要连接的 ' + ExpectedClientDisplayName() + ' .exe 主程序。', mbError, MB_OK);
   if Result then
@@ -785,7 +802,9 @@ begin
     end;
     if ResultCode <> 10 then
     begin
-      if ResultCode = 12 then
+      if ResultCode = 20 then
+        MsgBox('所选路径不适用于当前安装包。请重新选择 ' + ClientName + ' 的 ' + ExpectedClientExecutableName() + ' 主程序。', mbError, MB_OK)
+      else if ResultCode = 12 then
       else
         MsgBox('无法确认 ' + ClientName + ' 是否已退出（错误码 ' + IntToStr(ResultCode) + '）。系统没有返回可靠的进程信息，安装已停止。请重启 Windows，暂时退出安全软件的拦截功能后，再直接双击安装包重试。', mbError, MB_OK);
       exit;

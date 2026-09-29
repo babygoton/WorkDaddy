@@ -432,8 +432,8 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 // 1.2.188：关闭主题接管时跟随 WorkBuddy AI 的原生 agent-ui-theme，避免旧快照覆盖官方浅色/深色选择。
 // 1.2.189：毛玻璃底色等待移至 daemon，避免后台页面定时器节流拖延开关和壁纸加载。
 // 1.2.191：CodeDaddy 共用完整面板，通过本机 CDP 适配通信、原生登录态和会话缓存。
-const DAEMON_VERSION = '1.2.204';
-const DAEMON_BUILD_ID = 'release-1.2.204-20260929-restore-theme-options';
+const DAEMON_VERSION = '1.2.205';
+const DAEMON_BUILD_ID = 'release-1.2.205-20260929-codebuddy-cn-executable';
 const usageReporter = createUsageReporter({ profile: PROFILE.id, version: DAEMON_VERSION });
 configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const automationDiscovery = createAutomationDiscovery({

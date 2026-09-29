@@ -37,12 +37,17 @@ const appPath = (name, winExec, winDir) =>
       ? plat.linuxAppBinary(LINUX_APP_KIND[name] || 'workbuddy')
       : `/Applications/${name}.app`;
 
-// Both Windows editions use CodeBuddy.exe. Read the official product identity
-// before selecting or stopping a process; folder names are not reliable.
+// Current CN builds use "CodeBuddy CN.exe" while international builds use
+// "CodeBuddy.exe". Older CN builds used the international filename, so product
+// metadata remains the final identity check before selecting or stopping one.
 function isCodeBuddyBinary(binary, profileId) {
   if (!['codebuddy-cn','codebuddy-intl'].includes(profileId)) return false;
   try {
-    if (path.basename(binary).toLowerCase() !== 'codebuddy.exe') return false;
+    const name = path.basename(binary).toLowerCase();
+    const validName = profileId === 'codebuddy-cn'
+      ? name === 'codebuddy cn.exe' || name === 'codebuddy.exe'
+      : name === 'codebuddy.exe';
+    if (!validName) return false;
     const product = JSON.parse(fs.readFileSync(path.join(path.dirname(binary),'resources','app','product.json'),'utf8'));
     return product.applicationName === (profileId === 'codebuddy-cn' ? 'buddycn' : 'buddy');
   } catch (_) { return false; }
@@ -81,7 +86,8 @@ const PROFILES = {
   },
   'codebuddy-cn': {
     id: 'codebuddy-cn', name: 'CodeBuddy CN', appName: 'CodeDaddy CN', packageName: 'CodeDaddy-CN', nativeDebugPort: 9244, oauthPlatform:'ide', authApiHost:'https://copilot.tencent.com', region: 'cn', kind: 'codebuddy', mode: 'auto',
-    appPath: appPath('CodeBuddy CN', 'CodeBuddy.exe'),
+    appPath: appPath('CodeBuddy CN', 'CodeBuddy CN.exe'),
+    binaryNames: ['CodeBuddy CN.exe', 'CodeBuddy.exe'],
     historyRoot: path.dirname(path.dirname(extensionAuth)),
     userDataRoot: path.join(appSupport, 'CodeBuddy CN'),
     dataRoot: path.join(home, '.codebuddy'),
@@ -97,6 +103,7 @@ const PROFILES = {
   'codebuddy-intl': {
     id: 'codebuddy-intl', name: 'CodeBuddy', appName: 'CodeDaddy', packageName: 'CodeDaddy', nativeDebugPort: 9245, oauthPlatform:'ide', authApiHost:'https://www.codebuddy.ai', region: 'intl', kind: 'codebuddy', mode: 'auto',
     appPath: appPath('CodeBuddy'),
+    binaryNames: ['CodeBuddy.exe'],
     historyRoot: path.dirname(path.dirname(extensionAuth)),
     userDataRoot: path.join(appSupport, 'CodeBuddy'),
     dataRoot: path.join(home, '.codebuddy'),
