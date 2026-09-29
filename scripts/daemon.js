@@ -432,8 +432,8 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 // 1.2.188：关闭主题接管时跟随 WorkBuddy AI 的原生 agent-ui-theme，避免旧快照覆盖官方浅色/深色选择。
 // 1.2.189：毛玻璃底色等待移至 daemon，避免后台页面定时器节流拖延开关和壁纸加载。
 // 1.2.191：CodeDaddy 共用完整面板，通过本机 CDP 适配通信、原生登录态和会话缓存。
-const DAEMON_VERSION = '1.2.205';
-const DAEMON_BUILD_ID = 'release-1.2.205-20260929-codebuddy-cn-executable';
+const DAEMON_VERSION = '1.2.206';
+const DAEMON_BUILD_ID = 'release-1.2.206-20260929-session-runtime-identity';
 const usageReporter = createUsageReporter({ profile: PROFILE.id, version: DAEMON_VERSION });
 configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const automationDiscovery = createAutomationDiscovery({
@@ -4866,7 +4866,7 @@ async function copySessionRecord(src, targetUid, options = {}) {
     // Fast path is opt-in by fingerprintVersion so mappings written before
     // revision persistence are revalidated once through the normal snapshot
     // comparison path.
-    if (options.auto && existingMappingTarget && mapping.fingerprintVersion === 2 &&
+    if (options.auto && existingMappingTarget && mapping.fingerprintVersion === 3 &&
         mappingSourceRevisionMatches(mapping, sourceUid, sourceRow) &&
         mappingTargetRevisionMatches(mapping, existingMappingTarget)) {
       const sourceBytes = Number(mapping.sourceBytes);
@@ -4882,10 +4882,31 @@ async function copySessionRecord(src, targetUid, options = {}) {
         copiedBytes: 0,
       };
     }
-    let left = await sessionSync.readSnapshotAsync(PROFILE.dataRoot, sourceRow.id, aliases, syncCache);
+    // Version 3 proves transcript runtime IDs were rebound, not merely that
+    // two accounts have equal messages. Revalidate legacy mappings once.
+    let runtimeRepairBytes = 0;
+    const readAndRepairSnapshot = async id => {
+      let snapshot = await sessionSync.readSnapshotAsync(PROFILE.dataRoot, id, aliases, syncCache);
+      if (PROFILE.kind !== 'workbuddy') return snapshot;
+      const row = id === sourceRow.id ? sourceRow : candidates.find(candidate => candidate.id === id);
+      const guard = async () => {
+        await assertSessionSyncIdle([id]);
+        if (row && JSON.stringify(await readRow(id, row.user_id)) !== JSON.stringify(row)) {
+          throw new Error('会话记录正在变化，请稍后重试');
+        }
+      };
+      const repaired = await sessionSync.repairRuntimeIdentity(snapshot, {
+        backupRoot: path.join(DATA_DIR, 'session-sync-backups'), guard,
+        commit: async verify => { await guard(); await verify(); },
+      });
+      runtimeRepairBytes += repaired.copiedBytes;
+      if (repaired.copied) snapshot = await sessionSync.readSnapshotAsync(PROFILE.dataRoot, id, aliases, syncCache);
+      return snapshot;
+    };
+    let left = await readAndRepairSnapshot(sourceRow.id);
     const selection = await sessionSync.selectTargetSnapshot(left, targetIds, async id => {
       await yieldAutoCopyToRenderer();
-      return sessionSync.readSnapshotAsync(PROFILE.dataRoot, id, aliases, syncCache);
+      return readAndRepairSnapshot(id);
     }, mapping && mapping.targetId);
     // A divergent source still needs to reach the destination. Publish it as
     // a new physical session in the same lineage, so later scans find it by
@@ -4904,7 +4925,7 @@ async function copySessionRecord(src, targetUid, options = {}) {
       await withAutoCopyMetaWrite(() => {
         if (!getAutoCopySessionMembers(DATA_DIR, lineageId, targetUid).includes(targetId)) addAutoCopySessionMember(DATA_DIR, lineageId, targetUid, targetId);
         setAutoCopyMapping(DATA_DIR, lineageId, targetUid, {
-          targetId, status: 'copied', failedFiles: 0, fingerprintVersion: 2,
+          targetId, status: 'copied', failedFiles: 0, fingerprintVersion: 3,
           ...mappingWithSourceRevision(mapping, sourceUid, sourceRow),
           targetRevision: sessionCopyRowRevision(existing || { ...sourceRow, id: targetId, user_id: targetUid }),
           targetStateRevision: sessionCopyStableStateRevision(existing || { ...sourceRow, id: targetId, user_id: targetUid }),
@@ -4913,7 +4934,7 @@ async function copySessionRecord(src, targetUid, options = {}) {
       });
       const warning = left.totalBytes > 100 * 1024 * 1024 ? '会话超过 100 MB，同步可能较慢' : '';
       clearAutoDirty();
-      return { status: 'skipped', sourceId: src.id, targetId, branched: false, failedFiles: 0, warning, sourceBytes: left.totalBytes, totalBytes: left.totalBytes, copiedBytes: 0 };
+      return { status: runtimeRepairBytes ? 'copied' : 'skipped', sourceId: src.id, targetId, branched: false, failedFiles: 0, warning, sourceBytes: left.totalBytes, totalBytes: left.totalBytes, copiedBytes: runtimeRepairBytes };
     }
     let right = await sessionSync.readSnapshotAsync(PROFILE.dataRoot, targetId, aliases, syncCache);
     // Size is advisory only; both manual and automatic sync keep all files.
@@ -4926,9 +4947,9 @@ async function copySessionRecord(src, targetUid, options = {}) {
     }
     const comparison = sessionSync.compareSnapshots(left, right);
     if (comparison.kind === 'conflict') throw new Error('会话记录正在变化，请稍后重试');
-    let changed = false;
+    let changed = runtimeRepairBytes > 0;
     let totalBytes = left.totalBytes;
-    let copiedBytes = 0;
+    let copiedBytes = runtimeRepairBytes;
     let persistedTargetRow = existing || null;
     const update = async (from, to, fromRow, toRow, missingOnly = false) => {
       await yieldAutoCopyToRenderer();
@@ -4988,7 +5009,7 @@ async function copySessionRecord(src, targetUid, options = {}) {
     await withAutoCopyMetaWrite(() => {
       if (!getAutoCopySessionMembers(DATA_DIR, lineageId, targetUid).includes(targetId)) addAutoCopySessionMember(DATA_DIR, lineageId, targetUid, targetId);
       return setAutoCopyMapping(DATA_DIR, lineageId, targetUid, {
-        targetId, status: 'copied', failedFiles: 0, fingerprintVersion: 2,
+        targetId, status: 'copied', failedFiles: 0, fingerprintVersion: 3,
         ...mappingWithSourceRevision(mapping, sourceUid, sourceRow),
         targetRevision: sessionCopyRowRevision(mappingTarget),
         targetStateRevision: sessionCopyStableStateRevision(mappingTarget),
@@ -5042,7 +5063,7 @@ async function buildAutoCopyPlan(sourceUid, targetUid, requestedSessionIds = [])
     ? getSessionDirtyIndex()
     : { shouldSync: () => true };
   const clearStableDirtyMarker = (row, mapping, provenEqual = false) => {
-    if (!mapping || mapping.fingerprintVersion !== 2 || !mapping.targetId ||
+    if (!mapping || mapping.fingerprintVersion !== 3 || !mapping.targetId ||
         (!provenEqual && !mappingSourceRevisionMatches(mapping, source, row))) return false;
     if (typeof dirtyIndex.get !== 'function' || typeof clearSessionDirty !== 'function') return false;
     const marker = dirtyIndex.get(source, row.id);
@@ -5111,7 +5132,7 @@ async function buildAutoCopyPlan(sourceUid, targetUid, requestedSessionIds = [])
       if (!initializedClean(row)) return false;
       const lineageId = rules.allLineages && rules.allLineages[String(row.id)];
       const mapping = lineageId ? mappings.get(String(lineageId)) : null;
-      return mapping && mapping.fingerprintVersion === 2 && mapping.targetId &&
+      return mapping && mapping.fingerprintVersion === 3 && mapping.targetId &&
         !mappingSourceRevisionMatches(mapping, source, row);
     });
     if (hasRevisionDrift) await loadTargetRows();
@@ -5143,7 +5164,7 @@ async function buildAutoCopyPlan(sourceUid, targetUid, requestedSessionIds = [])
       // The target mapping is enough to restore the active view. Only enter
       // the worker when it is missing, its row disappeared, or the renderer
       // explicitly marked the source session dirty.
-      if (!mapping || mapping.fingerprintVersion !== 2 || !mapping.targetId ||
+      if (!mapping || mapping.fingerprintVersion !== 3 || !mapping.targetId ||
           !targetById || !targetById.has(String(mapping.targetId))) {
         dirtyRows.push(row);
         continue;
@@ -5171,6 +5192,7 @@ async function buildAutoCopyPlan(sourceUid, targetUid, requestedSessionIds = [])
     }
     const lineageId = rules.allLineages && rules.allLineages[String(row.id)];
     const mapping = lineageId ? mappings.get(String(lineageId)) : null;
+    if (mapping && mapping.fingerprintVersion !== 3) { dirtyRows.push(row); continue; }
     if (dirtyIndex.shouldSync(source, row.id)) {
       if (clearStableDirtyMarker(row, mapping)) continue;
       if (mappingSourceLifecycleRevisionMatches(mapping, row) && targetById && stableTargetExists(mapping)) {
@@ -5180,7 +5202,7 @@ async function buildAutoCopyPlan(sourceUid, targetUid, requestedSessionIds = [])
       dirtyRows.push(row);
       continue;
     }
-    if (!mapping || mapping.fingerprintVersion !== 2 || !mapping.targetId) { dirtyRows.push(row); continue; }
+    if (!mapping || mapping.fingerprintVersion !== 3 || !mapping.targetId) { dirtyRows.push(row); continue; }
     if (mappingSourceRevisionMatches(mapping, source, row)) continue;
     // Once the renderer has supplied a baseline, a persisted revision drift
     // without a dirty event is historical lineage churn, not a content edit.
@@ -5217,7 +5239,7 @@ async function buildAutoCopyPlan(sourceUid, targetUid, requestedSessionIds = [])
   // unchanged sessions do not need to enter the worker pool at all.
   return lineageRows.filter((row) => {
     const mapping = row.lineageId ? mappings.get(String(row.lineageId)) : null;
-    if (!mapping || mapping.fingerprintVersion !== 2 || !mapping.targetId) return true;
+    if (!mapping || mapping.fingerprintVersion !== 3 || !mapping.targetId) return true;
     const targetRow = targetById.get(String(mapping.targetId));
     return !targetRow || !mappingSourceRevisionMatches(mapping, source, row) ||
       (!mappingTargetRevisionMatches(mapping, targetRow) &&

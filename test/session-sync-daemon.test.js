@@ -65,6 +65,25 @@ test('account two continuation updates account one and never account three', asy
   assert.equal((await h.copy()).copiedBytes, 0);
 });
 
+test('legacy equal mappings repair runtime IDs once instead of taking the revision fast path', async t => {
+  const h = harness(t);
+  const records = base.map(row => ({ ...row, sessionId: 'a' }));
+  h.write('a', records); h.write('b', records);
+  lib.setAutoCopyMapping(h.root, h.lineage, 'two', {
+    targetId: 'b', fingerprintVersion: 2,
+    sourceRevision: h.ctx.sessionCopyRowRevision(h.rows.get('a')),
+    targetRevision: h.ctx.sessionCopyRowRevision(h.rows.get('b')),
+  });
+  const original = fs.readFileSync(h.file('a'));
+  const result = await h.copy();
+  assert.equal(result.status, 'copied');
+  assert.deepEqual(fs.readFileSync(h.file('a')), original);
+  assert.deepEqual(fs.readFileSync(h.file('b'), 'utf8').trim().split('\n').map(JSON.parse),
+    records.map(row => ({ ...row, sessionId: 'b' })));
+  assert.equal(lib.getAutoCopyMapping(h.root, h.lineage, 'two').fingerprintVersion, 3);
+  assert.equal((await h.copy()).copiedBytes, 0);
+});
+
 test('automatic first copy to an account with no physical target streams snapshots and file copies', async t => {
   const h = harness(t);
   lib.removeAutoCopySessionMember(h.root, h.lineage, 'two', 'b');
@@ -112,7 +131,7 @@ test('stale active-session lifecycle markers are cleared after an equal payload 
     String(row.status || ''), String(row.title || ''), String(row.custom_title || ''),
   ]);
   lib.setAutoCopyMapping(root, lineage, 'two', {
-    targetId: 'b', fingerprintVersion: 2,
+    targetId: 'b', fingerprintVersion: 3,
     sourceRevision: revision({ ...sourceRow, updated_at: 7, last_activity_at: 7 }),
     targetRevision: revision(targetRow),
   });
@@ -208,7 +227,7 @@ test('automatic copy planning drops revision-stable mappings before workers', as
     String(row.status || ''), String(row.title || ''), String(row.custom_title || ''),
   ]);
   lib.setAutoCopyMapping(root, lineage, 'two', {
-    targetId: 'b', fingerprintVersion: 2, sourceRevision: revision(sourceRow), targetRevision: revision(target),
+    targetId: 'b', fingerprintVersion: 3, sourceRevision: revision(sourceRow), targetRevision: revision(target),
   });
   let targetQueries = 0;
   const makeContext = () => ({ ...lib, fs, path, DATA_DIR: root, createDirtyIndex, setTimeout, clearTimeout, SESSION_COPY_COLUMNS: ['id', 'user_id', 'cwd', 'title', 'custom_title', 'status', 'updated_at', 'last_activity_at'], sessionCopyRowRevision: revision,
@@ -227,6 +246,16 @@ test('automatic copy planning drops revision-stable mappings before workers', as
   vm.runInNewContext(source.slice(start, source.indexOf('const autoCopyJobs', start)), ctx);
   assert.equal((await ctx.buildAutoCopyPlan('one', 'two')).length, 1, 'a changed source revision should be planned');
   assert.equal(targetQueries, 1, 'dirty plans should query the target account once');
+  fs.writeFileSync(path.join(root, 'session-dirty.json'), JSON.stringify({
+    version: 1, accounts: { one: { initialized: true, sessions: {} } },
+  }));
+  lib.setAutoCopyMapping(root, lineage, 'two', {
+    targetId: 'b', fingerprintVersion: 2, sourceRevision: revision(sourceRow), targetRevision: revision(target),
+  });
+  ctx = makeContext();
+  vm.runInNewContext(source.slice(start, source.indexOf('const autoCopyJobs', start)), ctx);
+  assert.equal((await ctx.buildAutoCopyPlan('one', 'two')).length, 1, 'legacy clean copies need one runtime identity repair');
+  assert.equal((await ctx.buildAutoCopyPlan('one', 'two', ['a'])).length, 1, 'active legacy copies must be repaired before opening');
 });
 
 test('initialized clean mappings ignore legacy source revision drift', async t => {
@@ -245,7 +274,7 @@ test('initialized clean mappings ignore legacy source revision drift', async t =
     String(row.status || ''), String(row.title || ''), String(row.custom_title || ''),
   ]);
   lib.setAutoCopyMapping(root, lineage, 'two', {
-    targetId: 'b', fingerprintVersion: 2,
+    targetId: 'b', fingerprintVersion: 3,
     sourceRevision: revision({ ...sourceRow, updated_at: 7, last_activity_at: 7 }),
     targetRevision: revision(targetRow),
   });
@@ -274,7 +303,7 @@ test('automatic copy planning reuses a stable cross-account mapping without a wo
     String(row.status || ''), String(row.title || ''), String(row.custom_title || ''),
   ]);
   lib.setAutoCopyMapping(root, lineage, 'two', {
-    targetId: 'b', fingerprintVersion: 2, sourceRevision: revision(previousSource), targetRevision: revision(target),
+    targetId: 'b', fingerprintVersion: 3, sourceRevision: revision(previousSource), targetRevision: revision(target),
   });
   const ctx = { codeBuddyFiles: null, ...lib, DATA_DIR: root, setTimeout, clearTimeout, SESSION_COPY_COLUMNS: ['id', 'user_id', 'cwd', 'title', 'custom_title', 'status', 'updated_at', 'last_activity_at'], sessionCopyRowRevision: revision,
     sqliteQuery: async (_, params) => [String(params[0]) === 'one' ? { ...sourceRow } : { ...target }] };
@@ -302,7 +331,7 @@ test('automatic copy planning ignores target activation lifecycle drift', async 
     String(row.status || ''), String(row.title || ''), String(row.custom_title || ''),
   ]);
   lib.setAutoCopyMapping(root, lineage, 'two', {
-    targetId: 'b', fingerprintVersion: 2, sourceRevision: revision(sourceRow), targetRevision: revision({ ...sourceRow, id: 'b', user_id: 'two' }),
+    targetId: 'b', fingerprintVersion: 3, sourceRevision: revision(sourceRow), targetRevision: revision({ ...sourceRow, id: 'b', user_id: 'two' }),
   });
   const ctx = { codeBuddyFiles: null, ...lib, fs, path, DATA_DIR: root, createDirtyIndex,
     SESSION_COPY_COLUMNS: ['id', 'user_id', 'cwd', 'title', 'custom_title', 'status', 'updated_at', 'last_activity_at'],
@@ -331,7 +360,7 @@ test('source activation-only updated_at drift clears dirty state without a snaps
     String(row.status || ''), String(row.title || ''), String(row.custom_title || ''),
   ]);
   lib.setAutoCopyMapping(root, lineage, 'two', {
-    targetId: 'b', fingerprintVersion: 2, sourceRevision: revision({ ...sourceRow, updated_at: 8 }),
+    targetId: 'b', fingerprintVersion: 3, sourceRevision: revision({ ...sourceRow, updated_at: 8 }),
     targetRevision: revision(targetRow),
   });
   let snapshotReads = 0;
@@ -411,7 +440,7 @@ test('requested unchanged open session resolves its mapping without entering the
     String(row.status || ''), String(row.title || ''), String(row.custom_title || ''),
   ]);
   lib.setAutoCopyMapping(root, lineage, 'two', {
-    targetId: targetRow.id, fingerprintVersion: 2,
+    targetId: targetRow.id, fingerprintVersion: 3,
     sourceRevision: revision(sourceRow), targetRevision: revision(targetRow),
   });
   let targetQueries = 0;
@@ -440,7 +469,7 @@ test('stable mappings clear legacy lifecycle dirty markers before planning', asy
   const sourceRow = { id: 'a', user_id: 'one', cwd: '/fixture', title: 'fixture', custom_title: '', status: 'completed', updated_at: 7, last_activity_at: 7 };
   const targetRow = { ...sourceRow, id: 'b', user_id: 'two' };
   const revision = row => JSON.stringify([String(row.id), String(row.user_id), Number(row.updated_at || 0), Number(row.last_activity_at || 0), String(row.status || ''), String(row.title || ''), String(row.custom_title || '')]);
-  lib.setAutoCopyMapping(root, lineage, 'two', { targetId: 'b', fingerprintVersion: 2, sourceRevision: revision(sourceRow), targetRevision: revision(targetRow) });
+  lib.setAutoCopyMapping(root, lineage, 'two', { targetId: 'b', fingerprintVersion: 3, sourceRevision: revision(sourceRow), targetRevision: revision(targetRow) });
   const ctx = { codeBuddyFiles: null, ...lib, fs, path, DATA_DIR: root, createDirtyIndex, setTimeout, SESSION_COPY_COLUMNS: ['id', 'user_id', 'cwd', 'title', 'custom_title', 'status', 'updated_at', 'last_activity_at'], sessionCopyRowRevision: revision, sqliteQuery: async (_, params) => [String(params[0]) === 'one' ? { ...sourceRow } : { ...targetRow }] };
   const start = source.indexOf('function sessionCopyContentRevision(');
   vm.runInNewContext(source.slice(start, source.indexOf('const autoCopyJobs', start)), ctx);

@@ -6,10 +6,13 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { StringDecoder } = require('node:string_decoder');
+const { Readable } = require('node:stream');
+const { pipeline } = require('node:stream/promises');
 const identityKeys = new Set(['sessionId', 'conversationId', 'ownerConversationId', 'session_id', 'conversation_id']);
 const SKIP_LOCAL_DIR = /^workspace\/sessions\/[^/]+\/(?:modify_backup|\.modify_backup_meta)$/;
 const SYNC_BACKUP_DIR = /^sync-[A-Za-z0-9_-]+$/;
 const DEFAULT_SYNC_BACKUP_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+const RUNTIME_IDENTITY_REPAIR = Symbol('runtime-identity-repair');
 const digest = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
 
 // WorkBuddy appends session-meta lifecycle records when a conversation is
@@ -782,7 +785,56 @@ function changedTargetFiles(changes, target) {
   return entries;
 }
 
+// The CLI restores its runtime identity from transcript records, not the
+// filename. Leaving A's sessionId in B's copy routes steer and permission
+// events to A. Only rewrite the record envelope: tool arguments, results,
+// message IDs and user text can legitimately contain the same string.
+function rebindTranscriptLine(line, aliases, id) {
+  if (!line.trim()) return line;
+  let record;
+  try { record = JSON.parse(line); } catch (_) { throw Error('会话消息文件未写完或已损坏，未同步'); }
+  if (!record || typeof record !== 'object' || Array.isArray(record) || typeof record.type !== 'string') {
+    throw Error('会话消息格式不受支持，未同步');
+  }
+  if (record.sessionId === id || !aliases.includes(record.sessionId)) return line;
+  record.sessionId = id;
+  return JSON.stringify(record) + (line.endsWith('\r') ? '\r' : '');
+}
+
+async function* reboundTranscript(file, aliases, id) {
+  let pending = '';
+  // Keep the async copy path streaming even for very large conversations.
+  for await (const chunk of fs.createReadStream(file.sourcePath, { encoding: 'utf8', highWaterMark: 1024 * 1024 })) {
+    const text = pending + chunk;
+    let start = 0;
+    const output = [];
+    for (;;) {
+      const newline = text.indexOf('\n', start);
+      if (newline < 0) break;
+      output.push(rebindTranscriptLine(text.slice(start, newline), aliases, id) + '\n');
+      start = newline + 1;
+    }
+    pending = text.slice(start);
+    if (output.length) yield output.join('');
+  }
+  if (pending) yield rebindTranscriptLine(pending, aliases, id);
+}
+
+async function reboundTranscriptInfo(file, aliases, id) {
+  const hash = crypto.createHash('sha256');
+  let size = 0;
+  for await (const chunk of reboundTranscript(file, aliases, id)) {
+    hash.update(chunk);
+    size += Buffer.byteLength(chunk);
+  }
+  return { hash: hash.digest('hex'), size };
+}
+
 function targetBytes(key, file, source, target) {
+  if (/^projects\/[^/]+\/__session__\.jsonl$/.test(key)) {
+    return Buffer.from(file.bytes.toString('utf8').split('\n')
+      .map(line => rebindTranscriptLine(line, source.aliases, target.id)).join('\n'));
+  }
   if (key !== 'artifact-index/__session__.json') return file.bytes;
   const index = JSON.parse(file.bytes.toString('utf8'));
   const artifacts = Array.isArray(index) ? index : index && index.artifacts;
@@ -922,21 +974,26 @@ async function existingHashAsync(file) {
 async function applySnapshotAsync(source, target, options) {
   const { backupRoot, commit = async () => {}, guard = async () => {}, missingOnly = false,
     onProgress = () => {} } = options;
-  if (source.root !== target.root || source.id === target.id) throw Error('无效的会话同步目标');
+  const repairIdentityOnly = options[RUNTIME_IDENTITY_REPAIR] === true && source === target;
+  if (source.root !== target.root || (source.id === target.id && !repairIdentityOnly)) throw Error('无效的会话同步目标');
   const changes = [];
   for (const [key, file] of source.files) {
+    if (repairIdentityOnly && key !== source.transcriptKey) continue;
     if (missingOnly && target.files.has(key)) continue;
     const bytes = await targetBytesAsync(key, file, source, target);
-    const hash = bytes ? digest(bytes) : file.hash;
+    const rebind = !source.rewriteBytes && /^projects\/[^/]+\/__session__\.jsonl$/.test(key);
+    const rewritten = rebind ? await reboundTranscriptInfo(file, source.aliases, target.id) : null;
+    const hash = rewritten ? rewritten.hash : bytes ? digest(bytes) : file.hash;
     if (target.files.get(key)?.hash === hash) continue;
     changes.push({
       key, relative: target.resolveRelative ? target.resolveRelative(key) : targetRelative(key, target.id), bytes, sourceFile: file,
-      hash, size: bytes ? bytes.length : file.size, mode: file.mode, mtimeMs: file.mtimeMs,
+      rebind, hash, size: rewritten ? rewritten.size : bytes ? bytes.length : file.size, mode: file.mode, mtimeMs: file.mtimeMs,
     });
   }
   if (!missingOnly) for (const [key, file] of target.files) {
     if (!source.files.has(key)) changes.push({ key, relative: file.relative, bytes: null, sourceFile: null, hash: null, size: 0 });
   }
+  if (repairIdentityOnly && !changes.length) return { copied: 0, copiedBytes: 0, totalBytes: target.totalBytes };
   const backupEntries = changedTargetFiles(changes, target);
   await guard();
   if (!await unchangedAsync(source) || !await unchangedAsync(target)) throw Error('会话文件正在变化，请稍后重试');
@@ -965,7 +1022,7 @@ async function applySnapshotAsync(source, target, options) {
   }
   let totalBytes = 0;
   const verifyPublished = async () => {
-    if (!await unchangedAsync(source)) throw Error('源会话正在变化，已停止同步');
+    if (!repairIdentityOnly && !await unchangedAsync(source)) throw Error('源会话正在变化，已停止同步');
     const now = target.reread ? await target.reread() : await readSnapshotAsync(target.root, target.id, target.aliases, target.cache || null);
     if (now.files.size !== expected.size || [...expected].some(([key, hash]) => now.files.get(key)?.hash !== hash)) {
       throw Error('目标会话正在变化，已停止同步');
@@ -987,7 +1044,11 @@ async function applySnapshotAsync(source, target, options) {
         await fs.promises.mkdir(path.dirname(file), { recursive: true });
         const staged = path.join(path.dirname(file), '.wbs-sync-' + crypto.randomUUID());
         try {
-          if (change.bytes) await fs.promises.writeFile(staged, change.bytes, { mode: change.mode || 0o600, flag: 'wx' });
+          if (change.rebind) await pipeline(
+            Readable.from(reboundTranscript(change.sourceFile, source.aliases, target.id)),
+            fs.createWriteStream(staged, { mode: change.mode || 0o600, flags: 'wx' })
+          );
+          else if (change.bytes) await fs.promises.writeFile(staged, change.bytes, { mode: change.mode || 0o600, flag: 'wx' });
           else await fs.promises.copyFile(change.sourceFile.sourcePath, staged, fs.constants.COPYFILE_EXCL);
           if ((await hashFileAsync(staged)).hash !== change.hash) throw Error('会话文件校验失败');
           await fs.promises.chmod(staged, change.mode || 0o600);
@@ -1032,7 +1093,13 @@ async function applySnapshotAsync(source, target, options) {
   }
 }
 
+// Repair the destination's own records, never overwrite a newer continuation
+// with its source. Reuse the guarded, backed-up, atomic publication/rollback.
+async function repairRuntimeIdentity(snapshot, options) {
+  return applySnapshotAsync(snapshot, snapshot, { ...options, [RUNTIME_IDENTITY_REPAIR]: true });
+}
+
 module.exports = {
   readSessionSizes, readSnapshot, readSnapshotAsync, readSessionFingerprintAsync, readSessionQuickFingerprintAsync, compareSnapshots, selectTargetSnapshot,
-  applySnapshot, applySnapshotAsync, pruneSyncBackups, inspectSyncBackups,
+  applySnapshot, applySnapshotAsync, repairRuntimeIdentity, pruneSyncBackups, inspectSyncBackups,
 };

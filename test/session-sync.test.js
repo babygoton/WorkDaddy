@@ -91,6 +91,52 @@ test('only identity fields normalize; literal session IDs inside messages remain
   assert.equal(compareSnapshots(f.read('a'), f.read('b')).kind, 'conflict');
 });
 
+for (const asynchronous of [false, true]) {
+  test(`${asynchronous ? 'async' : 'sync'} copies bind transcript runtime identity to the destination`, async t => {
+    const f = fixture(t);
+    const records = [
+      { type: 'session-meta', sessionId: 'a', id: 'activation' },
+      { ...message('user', 'literal a'), sessionId: 'a', id: 'message-a' },
+      { type: 'function_call', sessionId: 'c', id: 'tool-a', name: 'AskUserQuestion',
+        arguments: { sessionId: 'a', question: 'literal a' } },
+      { type: 'function_call_result', sessionId: 'a', call_id: 'tool-a', output: { sessionId: 'a' } },
+      { ...message('assistant', 'child result'), sessionId: 'unrelated-child' },
+    ];
+    f.write('a', records);
+    const read = asynchronous ? id => readSnapshotAsync(f.root, id, ['a', 'b', 'c']) : f.read;
+    const apply = asynchronous ? applySnapshotAsync : applySnapshot;
+    await apply(await read('a'), await read('b'), { backupRoot: path.join(f.root, 'backups') });
+    const copied = fs.readFileSync(f.file('b'), 'utf8').trim().split('\n').map(JSON.parse);
+    assert.deepEqual(copied, records.map(record => ({
+      ...record, sessionId: ['a', 'c'].includes(record.sessionId) ? 'b' : record.sessionId,
+    })), 'resume must use B for steer/permission routing without rewriting message IDs or tool payloads');
+    assert.equal(compareSnapshots(await read('a'), await read('b')).kind, 'equal');
+    assert.deepEqual(fs.readFileSync(f.file('a'), 'utf8').trim().split('\n').map(JSON.parse), records);
+  });
+}
+
+test('legacy runtime identity repair keeps the target continuation and rolls back on failure', async t => {
+  const f = fixture(t);
+  const records = [...base, message('user', 'B-only continuation')].map(row => ({ ...row, sessionId: 'a' }));
+  f.write('b', records);
+  const before = fs.readFileSync(f.file('b'));
+  const repair = require('../scripts/session-sync.js').repairRuntimeIdentity;
+  const options = { backupRoot: path.join(f.root, 'backups') };
+  await assert.rejects(repair(await readSnapshotAsync(f.root, 'b', ['a', 'b']), {
+    ...options, commit: async () => { throw Error('commit rejected'); },
+  }), /commit rejected/);
+  assert.deepEqual(fs.readFileSync(f.file('b')), before);
+  await assert.rejects(repair(await readSnapshotAsync(f.root, 'b', ['a', 'b']), {
+    ...options, guard: async () => { throw Error('busy'); },
+  }), /busy/);
+  assert.deepEqual(fs.readFileSync(f.file('b')), before);
+  const result = await repair(await readSnapshotAsync(f.root, 'b', ['a', 'b']), options);
+  assert.equal(result.copied, 1);
+  assert.deepEqual(fs.readFileSync(f.file('b'), 'utf8').trim().split('\n').map(JSON.parse),
+    records.map(row => ({ ...row, sessionId: 'b' })));
+  assert.equal((await repair(await readSnapshotAsync(f.root, 'b', ['a', 'b']), options)).copied, 0);
+});
+
 test('activation-only session-meta records do not conflict across account copies', t => {
   const f = fixture(t);
   const stable = { type: 'session-meta', meta: { 'codebuddy.ai/hostKind': 'unopted' } };
