@@ -839,7 +839,7 @@ test('Windows Setup waits for WorkBuddy and stops only a native-verified profile
   assert.match(installer, /ResultCode <> 10/);
   assert.match(installer, /ResultCode = 11/);
   assert.match(installer, /runtime\\node\\\*/);
-  assert.match(installer, /无法安全停止 WorkDaddy 后台进程/);
+  assert.match(installer, /无法安全停止 ' \+ ProductName \+ ' 后台进程/);
   assert.match(installer, /function ConfirmElevatedInstall/);
   assert.match(installer, /if IsAdmin and not ConfirmElevatedInstall/);
   assert.match(installer, /MB_YESNO/);
@@ -852,8 +852,8 @@ test('Windows Setup waits for WorkBuddy and stops only a native-verified profile
   assert.match(installer, /function ShouldAutoLaunch[\s\S]*Result := not IsAdmin/);
   assert.match(installer, /普通安装器不会跨权限强行结束/);
   assert.match(installer, /按 Ctrl\+Shift\+Esc 打开任务管理器/);
-  assert.match(installer, /旧版 WorkDaddy 的状态文件与实际程序不一致/);
-  assert.match(installer, /不要手动删除 WorkDaddy 数据目录/);
+  assert.match(installer, /旧版 ' \+ ProductName \+ ' 的状态文件与实际程序不一致/);
+  assert.match(installer, /不要手动删除 ' \+ ProductName \+ ' 数据目录/);
   assert.doesNotMatch(installer, /旧版 WorkDaddy 正以管理员权限运行/);
   assert.doesNotMatch(installer, /prepare-win-install|windows-process-boundary|PowerShell/i);
 });

@@ -133,6 +133,23 @@ test('installer prefers the newest registered official client without replacing 
   assert.match(native, /target\.Binary\+"\\r\\n"\+version\+"\\r\\n"\+clientType/);
 });
 
+test('CodeDaddy installer page targets CodeBuddy instead of WorkBuddy', () => {
+  const installer = read('scripts/win/workdaddy.iss');
+  assert.match(installer, /function ExpectedClientDisplayName\(\)/);
+  assert.match(installer, /if '\{#ProfileId\}' = 'codebuddy-cn' then[\s\S]*Result := 'CodeBuddy CN'/);
+  assert.match(installer, /function ExpectedClientExecutableName\(\)/);
+  assert.match(installer, /if '\{#ProfileId\}' = 'codebuddy-cn' then[\s\S]*Result := 'CodeBuddy\.exe'/);
+  assert.match(installer, /ClientPage := CreateInputFilePage\([\s\S]*ExpectedClientDisplayName\(\)/);
+  assert.match(installer, /ClientPage\.Add\(ExpectedClientDisplayName\(\) \+ ' 主程序：'/);
+  assert.match(installer, /Programs\\CodeBuddy CN/);
+  assert.match(installer, /Programs\\CodeBuddy/);
+  assert.match(installer, /Dialog\.Caption := '请先退出 ' \+ ExpectedClientDisplayName\(\)/);
+  assert.match(installer, /MessageLabel\.Caption := '安装前需要完全退出当前的 ' \+ ExpectedClientDisplayName\(\)/);
+  assert.doesNotMatch(installer, /Dialog\.Caption := '请先退出 WorkBuddy'/);
+  assert.doesNotMatch(installer, /MessageLabel\.Caption := '安装前需要完全退出当前的 WorkBuddy'/);
+  assert.doesNotMatch(installer, /function ExpectedWorkBuddyName\(\)/);
+});
+
 test('Windows update opens the verified Setup visibly and keeps daemon alive', () => {
   const daemon = read('scripts/daemon.js');
   const inject = read('scripts/inject.js');

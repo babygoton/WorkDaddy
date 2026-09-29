@@ -148,9 +148,25 @@ begin
   );
 end;
 
-function ExpectedWorkBuddyName(): String;
+function ExpectedClientDisplayName(): String;
 begin
-  if '{#ProfileId}' = 'workbuddy-ai' then
+  if '{#ProfileId}' = 'codebuddy-cn' then
+    Result := 'CodeBuddy CN'
+  else if '{#ProfileId}' = 'codebuddy-intl' then
+    Result := 'CodeBuddy'
+  else if '{#ProfileId}' = 'workbuddy-ai' then
+    Result := 'WorkBuddy AI'
+  else
+    Result := 'WorkBuddy';
+end;
+
+function ExpectedClientExecutableName(): String;
+begin
+  if '{#ProfileId}' = 'codebuddy-cn' then
+    Result := 'CodeBuddy.exe'
+  else if '{#ProfileId}' = 'codebuddy-intl' then
+    Result := 'CodeBuddy.exe'
+  else if '{#ProfileId}' = 'workbuddy-ai' then
     Result := 'WorkBuddyAI.exe'
   else
     Result := 'WorkBuddy.exe';
@@ -165,7 +181,7 @@ end;
 function OfficialClientFile(const Candidate: String): Boolean;
 begin
   Result := UsableClientFile(Candidate) and
-    (CompareText(ExtractFileName(Candidate), ExpectedWorkBuddyName()) = 0);
+    (CompareText(ExtractFileName(Candidate), ExpectedClientExecutableName()) = 0);
 end;
 
 function NextVersionComponent(const Version: String; var Offset: Integer): Integer;
@@ -299,7 +315,7 @@ begin
     if RegQueryStringValue(RootKey, Key, 'DisplayIcon', Value) then
     begin
       Candidate := ExecutableFromDisplayIcon(Value);
-      if Pos(Lowercase(ExpectedWorkBuddyName()), Lowercase(Value)) > 0 then
+      if Pos(Lowercase(ExpectedClientExecutableName()), Lowercase(Value)) > 0 then
       begin
         if FileExists(Candidate) then
           Log('WorkDaddy installer parsed uninstall DisplayIcon: ' + Candidate)
@@ -310,7 +326,7 @@ begin
     if not OfficialClientFile(Candidate) then
     begin
       if RegQueryStringValue(RootKey, Key, 'InstallLocation', Value) then
-        Candidate := AddBackslash(Trim(Value)) + ExpectedWorkBuddyName()
+        Candidate := AddBackslash(Trim(Value)) + ExpectedClientExecutableName()
       else
         Candidate := '';
     end;
@@ -358,7 +374,7 @@ var
   Index: Integer;
 begin
   Result := False;
-  Name := ExpectedWorkBuddyName();
+  Name := ExpectedClientExecutableName();
   Candidate := '';
 
   ConsiderUninstallClients(HKCU,
@@ -378,7 +394,23 @@ begin
     ConsiderClientCandidate(Value, Candidate);
 
   SetArrayLength(Candidates, 5);
-  if '{#ProfileId}' = 'workbuddy-ai' then
+  if '{#ProfileId}' = 'codebuddy-cn' then
+  begin
+    Candidates[0] := ExpandConstant('{localappdata}\Programs\CodeBuddy CN\' + Name);
+    Candidates[1] := ExpandConstant('{localappdata}\CodeBuddy CN\' + Name);
+    Candidates[2] := ExpandConstant('{pf}\CodeBuddy CN\' + Name);
+    Candidates[3] := ExpandConstant('{pf32}\CodeBuddy CN\' + Name);
+    Candidates[4] := ExpandConstant('{userappdata}\CodeBuddy CN\' + Name);
+  end
+  else if '{#ProfileId}' = 'codebuddy-intl' then
+  begin
+    Candidates[0] := ExpandConstant('{localappdata}\Programs\CodeBuddy\' + Name);
+    Candidates[1] := ExpandConstant('{localappdata}\CodeBuddy\' + Name);
+    Candidates[2] := ExpandConstant('{pf}\CodeBuddy\' + Name);
+    Candidates[3] := ExpandConstant('{pf32}\CodeBuddy\' + Name);
+    Candidates[4] := ExpandConstant('{userappdata}\CodeBuddy\' + Name);
+  end
+  else if '{#ProfileId}' = 'workbuddy-ai' then
   begin
     Candidates[0] := ExpandConstant('{localappdata}\Programs\WorkBuddyAI\' + Name);
     Candidates[1] := ExpandConstant('{localappdata}\Programs\WorkBuddy AI\' + Name);
@@ -449,7 +481,7 @@ begin
   SelectedWorkBuddyPath := Trim(ClientPage.Values[0]);
   Result := UsableClientFile(SelectedWorkBuddyPath);
   if (not Result) and ShowError then
-    MsgBox('请选择要连接的 WorkBuddy .exe 主程序。', mbError, MB_OK);
+    MsgBox('请选择要连接的 ' + ExpectedClientDisplayName() + ' .exe 主程序。', mbError, MB_OK);
   if Result then
     UpdateClientDetails();
 end;
@@ -464,11 +496,11 @@ var
 begin
   ClientPage := CreateInputFilePage(
     wpSelectDir,
-    'WorkBuddy 客户端',
-    '确认 WorkDaddy 要连接的客户端',
+    ExpectedClientDisplayName() + ' 客户端',
+    '确认 {#ProductName} 要连接的客户端',
     '安装程序会自动识别客户端。企业专享版或其他安装位置可以点击“浏览”修改。'
   );
-  ClientPage.Add('客户端主程序：', '可执行文件 (*.exe)|*.exe|所有文件 (*.*)|*.*', '.exe');
+  ClientPage.Add(ExpectedClientDisplayName() + ' 主程序：', '可执行文件 (*.exe)|*.exe|所有文件 (*.*)|*.*', '.exe');
 
   ClientSourceLabel := TNewStaticText.Create(ClientPage);
   ClientSourceLabel.Parent := ClientPage.Surface;
@@ -548,6 +580,14 @@ var
   ResultCode: Integer;
 begin
   Result := False;
+  { CodeBuddy has a fixed native profile path and does not use the
+    WorkBuddy enterprise-target configuration file. The selected executable
+    is still used for lifecycle checks during this install. }
+  if Pos('codebuddy', Lowercase('{#ProfileId}')) = 1 then
+  begin
+    Result := True;
+    exit;
+  end;
   NodePath := ExpandConstant('{app}\scripts\runtime\node\node.exe');
   ScriptPath := ExpandConstant('{app}\scripts\workbuddy-target.js');
   DataDir := ExpandConstant('{userappdata}\WorkDaddy');
@@ -632,7 +672,7 @@ begin
   if CurStep = ssPostInstall then
   begin
     if not SaveSelectedClient() then
-      RaiseException('无法保存 WorkBuddy 客户端选择，安装已停止。');
+      RaiseException('无法保存 ' + ExpectedClientDisplayName() + ' 客户端选择，安装已停止。');
     RenameUninstallerAndFixEntries();
   end;
 end;
@@ -662,7 +702,7 @@ var
 begin
   Dialog := CreateCustomForm(ScaleX(480), ScaleY(196), False, False);
   try
-    Dialog.Caption := '请先退出 WorkBuddy';
+    Dialog.Caption := '请先退出 ' + ExpectedClientDisplayName();
     Dialog.ClientWidth := ScaleX(480);
     Dialog.ClientHeight := ScaleY(196);
     Dialog.Position := poScreenCenter;
@@ -676,7 +716,7 @@ begin
     MessageLabel.AutoSize := False;
     MessageLabel.WordWrap := True;
     MessageLabel.Font.Style := [fsBold];
-    MessageLabel.Caption := '安装前需要完全退出当前的 WorkBuddy。';
+    MessageLabel.Caption := '安装前需要完全退出当前的 ' + ExpectedClientDisplayName() + '。';
 
     DetailLabel := TNewStaticText.Create(Dialog);
     DetailLabel.Parent := Dialog;
@@ -727,13 +767,15 @@ function EnsureWorkBuddyClosed(): Boolean;
 var
   ResultCode: Integer;
   Choice: Integer;
+  ClientName: String;
 begin
   Result := False;
+  ClientName := ExpectedClientDisplayName();
   while True do
   begin
     if not RunNativeHelper('--check-workbuddy --binary "' + SelectedWorkBuddyPath + '"', ResultCode) then
     begin
-      MsgBox('无法启动 WorkBuddy 进程检测。请检查安全软件是否拦截安装程序。', mbError, MB_OK);
+      MsgBox('无法启动 ' + ClientName + ' 进程检测。请检查安全软件是否拦截安装程序。', mbError, MB_OK);
       exit;
     end;
     if ResultCode = 0 then
@@ -744,9 +786,8 @@ begin
     if ResultCode <> 10 then
     begin
       if ResultCode = 12 then
-        MsgBox('无法确认 WorkBuddy 是否已退出（错误码 12）。检测到多个同名进程，或进程路径与刚才选择的客户端不一致。为避免误关其他客户端，安装已停止。请重启 Windows 后重新打开安装包，并在客户端选择页面确认 .exe 路径。', mbError, MB_OK)
       else
-        MsgBox('无法确认 WorkBuddy 是否已退出（错误码 ' + IntToStr(ResultCode) + '）。系统没有返回可靠的进程信息，安装已停止。请重启 Windows，暂时退出安全软件的拦截功能后，再直接双击安装包重试。', mbError, MB_OK);
+        MsgBox('无法确认 ' + ClientName + ' 是否已退出（错误码 ' + IntToStr(ResultCode) + '）。系统没有返回可靠的进程信息，安装已停止。请重启 Windows，暂时退出安全软件的拦截功能后，再直接双击安装包重试。', mbError, MB_OK);
       exit;
     end;
     Choice := ShowWorkBuddyCloseDialog();
@@ -756,17 +797,17 @@ begin
     begin
       if not RunNativeHelper('--terminate-workbuddy --binary "' + SelectedWorkBuddyPath + '" --app-dir "' + ExpandConstant('{app}') + '"', ResultCode) then
       begin
-        MsgBox('无法启动 WorkBuddy 结束进程操作。请检查安全软件是否拦截安装程序。', mbError, MB_OK);
+        MsgBox('无法启动 ' + ClientName + ' 结束进程操作。请检查安全软件是否拦截安装程序。', mbError, MB_OK);
         exit;
       end;
       if ResultCode <> 0 then
       begin
         if ResultCode = 11 then
-          MsgBox('无法安全结束当前 WorkBuddy 进程（错误码 11）。普通安装器不会跨权限强行结束进程。请点击“取消”，打开任务管理器（Ctrl+Shift+Esc），结束你刚才选择的 WorkBuddy；如果它是用“以管理员身份运行”启动的，请先用相同方式退出。然后直接双击安装包，再点击“重新检测”。', mbError, MB_OK)
+          MsgBox('无法安全结束当前 ' + ClientName + ' 进程（错误码 11）。普通安装器不会跨权限强行结束进程。请点击“取消”，打开任务管理器（Ctrl+Shift+Esc），结束你刚才选择的 ' + ClientName + '；如果它是用“以管理员身份运行”启动的，请先用相同方式退出。然后直接双击安装包，再点击“重新检测”。', mbError, MB_OK)
         else if ResultCode = 12 then
-          MsgBox('无法安全结束当前 WorkBuddy 进程（错误码 12）。检测到多个同名进程或安装路径不一致，为避免误关其他客户端，安装已停止。请重启 Windows 后重新选择正确的 WorkBuddy .exe，再次安装。', mbError, MB_OK)
+          MsgBox('无法安全结束当前 ' + ClientName + ' 进程（错误码 12）。检测到多个同名进程或安装路径不一致，为避免误关其他客户端，安装已停止。请重启 Windows 后重新选择正确的 ' + ClientName + ' .exe，再次安装。', mbError, MB_OK)
         else
-          MsgBox('无法安全结束当前 WorkBuddy 进程（错误码 ' + IntToStr(ResultCode) + '）。请重启 Windows，确认没有 WorkBuddy 窗口或后台进程后，再直接双击安装包重试。', mbError, MB_OK);
+          MsgBox('无法安全结束当前 ' + ClientName + ' 进程（错误码 ' + IntToStr(ResultCode) + '）。请重启 Windows，确认没有 ' + ClientName + ' 窗口或后台进程后，再直接双击安装包重试。', mbError, MB_OK);
       end;
     end;
   end;
@@ -777,9 +818,13 @@ var
   Dialog: TSetupForm;
   Description: TNewStaticText;
   ContinueButton, CancelButton: TNewButton;
+  ClientName: String;
+  ProductName: String;
 begin
   Dialog := CreateCustomForm(ScaleX(500), ScaleY(265), False, False);
   try
+    ClientName := ExpectedClientDisplayName();
+    ProductName := '{#ProductName}';
     Dialog.Caption := '管理员会话兼容安装';
     Dialog.ClientWidth := ScaleX(500);
     Dialog.ClientHeight := ScaleY(265);
@@ -794,7 +839,7 @@ begin
     Description.WordWrap := True;
     Description.Caption :=
       '这台电脑的 Windows 桌面本身使用管理员权限，无法通过桌面切换到普通权限。常见于内建 Administrator 账户或关闭 UAC 的电脑。' + #13#10 + #13#10 +
-      '继续后，WorkDaddy 和由它启动的 WorkBuddy 将以管理员权限运行。WorkBuddy 中的命令、插件和自动操作也会拥有更高权限，误操作可能影响系统文件和设置。' + #13#10 + #13#10 +
+      '继续后，' + ProductName + ' 和由它启动的 ' + ClientName + ' 将以管理员权限运行。' + ClientName + ' 中的命令、插件和自动操作也会拥有更高权限，误操作可能影响系统文件和设置。' + #13#10 + #13#10 +
       '更稳妥的做法是使用普通权限桌面后重新安装。若仍要继续，此选择仅保存到当前用户、当前客户端和安装目录，之后双击快捷方式也会沿用。恢复普通权限桌面后会自动按普通权限启动。';
     Description.AdjustHeight();
     ContinueButton := TNewButton.Create(Dialog);
@@ -827,7 +872,11 @@ end;
 function ConfirmElevatedInstall(): Boolean;
 var
   ResultCode: Integer;
+  ProductName: String;
+  ClientName: String;
 begin
+  ProductName := '{#ProductName}';
+  ClientName := ExpectedClientDisplayName();
   if ElevatedInstallConfirmed or ElevatedSessionConfirmed then
   begin
     Result := True;
@@ -873,7 +922,7 @@ begin
     exit;
   Result := MsgBox(
     '当前安装程序是以管理员权限运行的。' + #13#10 + #13#10 +
-    '仍可继续安装，但安装器不会自动启动或结束 WorkDaddy/WorkBuddy。请先手动退出它们，安装完成后再双击桌面快捷方式。' + #13#10 + #13#10 +
+    '仍可继续安装，但安装器不会自动启动或结束 ' + ProductName + '/' + ClientName + '。请先手动退出它们，安装完成后再双击桌面快捷方式。' + #13#10 + #13#10 +
     '是否仍然继续安装？',
     mbConfirmation,
     MB_YESNO
@@ -885,11 +934,15 @@ end;
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
   ResultCode: Integer;
+  ClientName: String;
+  ProductName: String;
 begin
   Result := '';
+  ClientName := ExpectedClientDisplayName();
+  ProductName := '{#ProductName}';
   if not ValidateClientSelection(False) then
   begin
-    Result := '没有可用的 WorkBuddy 客户端路径。请返回“WorkBuddy 客户端”页面选择 .exe 主程序。';
+    Result := '没有可用的 ' + ClientName + ' 客户端路径。请返回“' + ClientName + ' 客户端”页面选择 .exe 主程序。';
     exit;
   end;
   if IsAdmin and not ConfirmElevatedInstall then
@@ -901,7 +954,7 @@ begin
     exit;
   if not EnsureWorkBuddyClosed() then
   begin
-    Result := '无法确认 WorkBuddy 已退出。可能原因是客户端仍有后台进程、进程权限高于当前用户、系统正在退出客户端，或安全软件阻止了进程检测。请手动结束当前客户端后重新运行安装程序。';
+    Result := '无法确认 ' + ClientName + ' 已退出。可能原因是客户端仍有后台进程、进程权限高于当前用户、系统正在退出客户端，或安全软件阻止了进程检测。请手动结束当前客户端后重新运行安装程序。';
     exit;
   end;
 
@@ -910,7 +963,7 @@ begin
     ResultCode
   ) then
   begin
-    Result := '无法启动 WorkDaddy 后台进程清理。可能原因是安装器原始用户权限不可用、安全软件拦截了临时 helper，或临时目录不可写。请点击“取消”，关闭安装程序后直接双击安装包重新运行；不要选择“以管理员身份运行”。UAC 无需关闭。';
+    Result := '无法启动 ' + ProductName + ' 后台进程清理。可能原因是安装器原始用户权限不可用、安全软件拦截了临时 helper，或临时目录不可写。请点击“取消”，关闭安装程序后直接双击安装包重新运行；不要选择“以管理员身份运行”。UAC 无需关闭。';
     exit;
   end;
   if ResultCode = 13 then
@@ -918,13 +971,13 @@ begin
     // API 身份凭证证明），保留它并继续安装；runtime\node 跳过本次替换。
     PreserveExistingLifecycle := True
   else if ResultCode = 11 then
-    Result := '无法安全停止 WorkDaddy 后台进程：安装无法继续。检测到 WorkDaddy 或 WorkDaddyLauncher 仍在运行，但当前安装器没有结束它的权限（错误码 11）。请按以下步骤操作：' + #13#10 +
+    Result := '无法安全停止 ' + ProductName + ' 后台进程：安装无法继续。检测到 ' + ProductName + ' 或 WorkDaddyLauncher 仍在运行，但当前安装器没有结束它的权限（错误码 11）。请按以下步骤操作：' + #13#10 +
       '1. 点击“取消”；' + #13#10 +
-      '2. 按 Ctrl+Shift+Esc 打开任务管理器，结束 WorkDaddy 和 WorkDaddyLauncher；' + #13#10 +
-      '3. 如果 WorkDaddy 是用“以管理员身份运行”启动的，请先用相同权限退出；' + #13#10 +
+      '2. 按 Ctrl+Shift+Esc 打开任务管理器，结束 ' + ProductName + ' 和 WorkDaddyLauncher；' + #13#10 +
+      '3. 如果 ' + ProductName + ' 是用“以管理员身份运行”启动的，请先用相同权限退出；' + #13#10 +
       '4. 确认 UAC 已开启并重启 Windows，然后直接双击安装包重试。不要选择“以管理员身份运行”。'
   else if ResultCode = 12 then
-    Result := '安装无法继续：旧版 WorkDaddy 的状态文件与实际程序不一致，或发现多个同名进程（错误码 12）。为避免误关其他程序，安装器没有强行处理。请重启 Windows，确认 WorkBuddy 已完全退出，并直接双击安装包重试；不要手动删除 WorkDaddy 数据目录。'
+    Result := '安装无法继续：旧版 ' + ProductName + ' 的状态文件与实际程序不一致，或发现多个同名进程（错误码 12）。为避免误关其他程序，安装器没有强行处理。请重启 Windows，确认 ' + ClientName + ' 已完全退出，并直接双击安装包重试；不要手动删除 ' + ProductName + ' 数据目录。'
   else if ResultCode <> 0 then
-    Result := '安装无法完成 WorkDaddy 后台清理（错误码 ' + IntToStr(ResultCode) + '）。系统没有返回可靠的进程信息，可能是安全软件拦截或文件仍被占用。请重启 Windows，确认 WorkBuddy 和 WorkDaddy 都已退出后，直接双击安装包重试。';
+    Result := '安装无法完成 ' + ProductName + ' 后台清理（错误码 ' + IntToStr(ResultCode) + '）。系统没有返回可靠的进程信息，可能是安全软件拦截或文件仍被占用。请重启 Windows，确认 ' + ClientName + ' 和 ' + ProductName + ' 都已退出后，直接双击安装包重试。';
 end;
