@@ -1428,7 +1428,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '开启后批量删除不再弹确认；为防误删，所有删除强制先进废纸篓/回收站': 'Bulk delete skips dialogs; to prevent mistakes, all deletes go to Trash first',
     '开启后 wsl、reg、sc、schtasks 等系统管理工具直接运行，不再确认': 'System admin tools like wsl, reg, sc, schtasks run directly without confirmation',
     '开启后仍有确认弹窗时自动替你点「允许」，所有自动批准记录在审计日志': 'Auto-clicks “Allow” on remaining dialogs; all auto-approvals are logged',
-    '在会话左侧显示消息索引': 'Show the message index on the left side of sessions', '选中会话消息中的文字后显示引用按钮': 'Show the quote button after selecting session message text',
+    '在会话左侧显示消息索引': 'Show the message index on the left side of sessions', '用户提示词列表': 'User prompt list', '选中会话消息中的文字后显示引用按钮': 'Show the quote button after selecting session message text',
     '状态机日志': 'state machine log', '监控激活会话中': 'Monitoring active sessions',
     '更换头像': 'Change avatar', '黑色半透明遮罩，压暗背景图': 'Black translucent overlay that dims the wallpaper',
     '机器人自动停靠': 'Auto-dock robot', '闲置 5 秒后收起到窗口右侧，鼠标靠近边缘展开': 'Tuck into the right edge after 5 idle seconds; move near the edge to reveal',
@@ -4107,6 +4107,10 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       var root = null;
       var rail = null;
       var tooltip = null;
+      var detail = null;
+      var previewRow = null;
+      var anchorButton = null;
+      var promptRows = Object.create(null);
       var turns = [];
       var buttons = Object.create(null);
       var activeId = null;
@@ -4114,6 +4118,8 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       var scrollElement = null;
       var syncTimer = null;
       var tooltipTimer = null;
+      var scrollbarTimers = new Map();
+      var centeredScrollTop = null;
       var activeFrame = null;
       var dragPointerId = null;
       var dragLastIndex = -1;
@@ -4167,10 +4173,17 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         tooltip = document.createElement('div');
         tooltip.className = 'wbs-message-nav-tooltip';
         tooltip.id = 'wbs-message-nav-tooltip';
-        tooltip.setAttribute('role', 'tooltip');
+        tooltip.classList.add('wbs-message-nav-list');
+        tooltip.setAttribute('role', 'navigation');
+        tooltip.setAttribute('aria-label', '用户提示词列表');
         tooltip.hidden = true;
+        detail = el('div', 'wbs-message-nav-tooltip wbs-message-nav-detail');
+        detail.id = 'wbs-message-nav-detail';
+        detail.setAttribute('role', 'tooltip');
+        detail.hidden = true;
         root.appendChild(rail);
         root.appendChild(tooltip);
+        root.appendChild(detail);
         // 挂 document.body：view 容器祖先里的 transform（_gridViewItem_* 恒等矩阵）
         // 会劫持 position:fixed 的 containing block，使视口坐标偏移。
         var mount = document.body;
@@ -4188,6 +4201,11 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         listen(root, 'pointerup', onNavPointerUp);
         listen(root, 'pointercancel', onNavPointerCancel);
         listen(root, 'lostpointercapture', onNavPointerCancel);
+        listen(tooltip, 'scroll', onFlyoutScroll, { passive: true });
+        listen(detail, 'scroll', onFlyoutScroll, { passive: true });
+        ['pointerdown', 'pointerup', 'click', 'keydown', 'wheel'].forEach(function (type) {
+          listen(root, type, function (event) { event.stopPropagation(); });
+        });
       }
 
       function position() {
@@ -4199,16 +4217,17 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         }
         root.style.display = 'block';
         var railChrome = 14;
-        var desiredRailHeight = Math.max(36, turns.length * 12 + railChrome);
+        var markerCount = Math.min(20, turns.length);
+        var desiredRailHeight = Math.max(36, markerCount * 12 + railChrome);
         var railHeight = Math.min(desiredRailHeight, rect.height);
         var markerHeight = Math.max(1, Math.min(12,
-          (railHeight - Math.min(railChrome, railHeight)) / Math.max(1, turns.length)));
+          (railHeight - Math.min(railChrome, railHeight)) / Math.max(1, markerCount)));
         root.style.height = railHeight + 'px';
         root.style.top = (rect.top + (rect.height - railHeight) / 2) + 'px';
         var left = rect.left + 12;
         root.style.left = Math.max(8, Math.min(window.innerWidth - 28, left)) + 'px';
         root.style.setProperty('--wbs-message-nav-marker-height', markerHeight + 'px');
-        root.style.setProperty('--wbs-message-nav-tooltip-max', Math.max(160, Math.min(320, window.innerWidth * 0.32)) + 'px');
+        positionFlyouts();
       }
 
       function setActive(id) {
@@ -4216,9 +4235,13 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         Object.keys(buttons).forEach(function (key) {
           var button = buttons[key];
           if (!button) return;
-          if (key === activeId) button.setAttribute('aria-current', 'true');
+          var selected = button === buttons[activeId];
+          if (selected) button.setAttribute('aria-current', 'true');
           else button.removeAttribute('aria-current');
-          button.classList.toggle('is-active', key === activeId);
+          button.classList.toggle('is-active', selected);
+          var row = promptRows[key];
+          if (row && key === activeId) row.setAttribute('aria-current', 'true');
+          else if (row) row.removeAttribute('aria-current');
         });
       }
 
@@ -4228,50 +4251,139 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
           if (!tooltip) return;
           tooltip.hidden = true;
           tooltip.classList.remove('is-visible');
+          if (anchorButton) anchorButton.setAttribute('aria-expanded', 'false');
+          anchorButton = null;
+          hideDetail();
+          clearScrolling(tooltip);
+          centeredScrollTop = null;
         };
         if (immediate) close();
-        else tooltipTimer = setBuildTimeout(close, 90);
+        else tooltipTimer = setBuildTimeout(close, 220);
       }
 
       function showTooltip(turn, button) {
         if (!tooltip || !turn || !button) return;
         if (tooltipTimer) { clearTimeout(tooltipTimer); tooltipTimer = null; }
-        tooltip.textContent = '';
-        var prompt = el('div', 'wbs-message-nav-prompt', messageText(turn.userMessage, 240) || '用户消息');
-        tooltip.appendChild(prompt);
-        var response = messageText(turn.assistantMessage, 320);
-        if (response) tooltip.appendChild(el('div', 'wbs-message-nav-response', response));
+        if (!tooltip.hidden && anchorButton === button) return;
+        if (anchorButton) anchorButton.setAttribute('aria-expanded', 'false');
+        anchorButton = button;
+        button.setAttribute('aria-expanded', 'true');
+        hideDetail();
         tooltip.hidden = false;
         tooltip.classList.add('is-visible');
-        var buttonRect = button.getBoundingClientRect();
+        positionFlyouts();
+        var row = promptRows[turn.id];
+        if (row) {
+          var previousTop = tooltip.scrollTop;
+          tooltip.scrollTop = row.offsetTop - tooltip.clientHeight / 2 + row.offsetHeight / 2;
+          centeredScrollTop = tooltip.scrollTop !== previousTop ? tooltip.scrollTop : null;
+        }
+      }
+
+      function clearScrolling(flyout) {
+        if (!flyout) return;
+        if (scrollbarTimers.has(flyout)) clearTimeout(scrollbarTimers.get(flyout));
+        scrollbarTimers.delete(flyout);
+        flyout.classList.remove('is-scrolling');
+      }
+
+      function onFlyoutScroll(event) {
+        var flyout = event.currentTarget;
+        if (!flyout || flyout.hidden) return;
+        // 打开列表时自动居中不算用户滚动，避免刚悬停就闪现滚动条。
+        if (flyout === tooltip && centeredScrollTop !== null) {
+          var centered = flyout.scrollTop === centeredScrollTop;
+          centeredScrollTop = null;
+          if (centered) return;
+        }
+        clearScrolling(flyout);
+        flyout.classList.add('is-scrolling');
+        scrollbarTimers.set(flyout, setBuildTimeout(function () { clearScrolling(flyout); }, 700));
+      }
+
+      function hideDetail() {
+        if (previewRow) previewRow.classList.remove('is-preview');
+        previewRow = null;
+        if (detail) { detail.hidden = true; detail.classList.remove('is-visible'); }
+        clearScrolling(detail);
+      }
+
+      function showDetail(turn, row) {
+        if (!detail || !turn || !row) return;
+        hideDetail();
+        previewRow = row;
+        row.classList.add('is-preview');
+        detail.textContent = '';
+        var prompt = el('div', 'wbs-message-nav-prompt', messageText(turn.userMessage, 240) || '用户消息');
+        detail.appendChild(prompt);
+        var response = messageText(turn.assistantMessage, 1600);
+        if (response) detail.appendChild(el('div', 'wbs-message-nav-response', response));
+        detail.hidden = false;
+        detail.classList.add('is-visible');
+        positionFlyouts();
+      }
+
+      function positionFlyouts() {
+        if (!tooltip || tooltip.hidden || !anchorButton) return;
+        var margin = 8, gap = 8;
+        // 为右侧详情预留空间；窄窗口同时缩小两列，避免详情覆盖列表或超出视口。
         var rootRect = root.getBoundingClientRect();
-        var leftSpace = Math.max(0, rootRect.left - 12);
-        var rightSpace = Math.max(0, window.innerWidth - rootRect.right - 12);
-        var side = rightSpace >= leftSpace ? 'right' : 'left';
-        var available = side === 'right' ? rightSpace : leftSpace;
-        var preferred = Math.max(160, Math.min(320, window.innerWidth * 0.32));
-        tooltip.style.width = Math.max(120, Math.min(preferred, available)) + 'px';
-        var top = buttonRect.top - rootRect.top + buttonRect.height / 2;
-        var tooltipHeight = tooltip.getBoundingClientRect().height || 80;
-        tooltip.style.top = Math.max(tooltipHeight / 2, Math.min(rootRect.height - tooltipHeight / 2, top)) + 'px';
-        tooltip.classList.toggle('is-left', side === 'left');
-        tooltip.classList.toggle('is-right', side === 'right');
+        var left = Math.max(margin, Math.min(rootRect.right + gap, window.innerWidth - margin - 160));
+        var available = Math.max(0, window.innerWidth - left - margin - gap);
+        var listWidth = Math.min(380, available * 0.46);
+        var detailWidth = Math.min(440, available - listWidth);
+        tooltip.style.width = listWidth + 'px';
+        tooltip.style.left = left + 'px';
+        var buttonRect = anchorButton.getBoundingClientRect();
+        var height = tooltip.getBoundingClientRect().height;
+        tooltip.style.top = Math.max(margin, Math.min(window.innerHeight - height - margin,
+          buttonRect.top + buttonRect.height / 2 - height / 2)) + 'px';
+        if (!detail || detail.hidden || !previewRow) return;
+        var rowRect = previewRow.getBoundingClientRect();
+        var listRect = tooltip.getBoundingClientRect();
+        if (rowRect.bottom <= listRect.top || rowRect.top >= listRect.bottom) { hideDetail(); return; }
+        detail.style.width = detailWidth + 'px';
+        detail.style.left = (left + listWidth + gap) + 'px';
+        detail.style.top = Math.max(margin, Math.min(window.innerHeight - detail.getBoundingClientRect().height - margin,
+          rowRect.top)) + 'px';
+      }
+
+      function markerTurnIndices(count) {
+        var size = Math.min(20, count), indices = [];
+        for (var i = 0; i < size; i++) indices.push(size === 1 ? 0 : Math.round(i * (count - 1) / (size - 1)));
+        return indices;
       }
 
       function render() {
         if (!rail) return;
+        hideTooltip(true);
         rail.textContent = '';
+        tooltip.textContent = '';
         buttons = Object.create(null);
-        for (var i = 0; i < turns.length; i++) {
-          var turn = turns[i];
+        promptRows = Object.create(null);
+        var indices = markerTurnIndices(turns.length);
+        for (var i = 0; i < indices.length; i++) {
+          var turn = turns[indices[i]];
           var button = el('button', 'wbs-message-nav-marker');
           button.type = 'button';
           button.setAttribute('data-wbs-message-nav-id', turn.id);
-          button.setAttribute('aria-label', '定位到第 ' + (i + 1) + ' 条用户消息');
-          button.setAttribute('aria-describedby', tooltip.id);
+          button.setAttribute('aria-label', '定位到第 ' + (indices[i] + 1) + ' 条用户消息');
+          button.setAttribute('aria-controls', tooltip.id);
+          button.setAttribute('aria-expanded', 'false');
           button.appendChild(el('span', 'wbs-message-nav-dot'));
           rail.appendChild(button);
           buttons[turn.id] = button;
+        }
+        for (var ti = 0, nearest = 0; ti < turns.length; ti++) {
+          if (nearest + 1 < indices.length && ti - indices[nearest] > indices[nearest + 1] - ti) nearest++;
+          buttons[turns[ti].id] = rail.children[nearest];
+          // 长提示词可达数万字；CSS ellipsis 仍会排版全文，必须先限制单行预览的 DOM 文本量。
+          var row = el('button', 'wbs-message-nav-row', messageText(turns[ti].userMessage, 240) || '用户消息');
+          row.type = 'button';
+          row.setAttribute('data-wbs-message-nav-id', turns[ti].id);
+          row.setAttribute('aria-describedby', detail.id);
+          tooltip.appendChild(row);
+          promptRows[turns[ti].id] = row;
         }
         setActive(activeId || (turns[0] && turns[0].id));
       }
@@ -4334,11 +4446,13 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
           renderedSignature = signature;
           render();
         }
+        if (previewRow) showDetail(turnForButton(previewRow), previewRow);
         position();
         scheduleActive();
       }
 
       function unbindStore() {
+        hideTooltip(true);
         if (unsubscribeStore) {
           try { unsubscribeStore(); } catch (_) {}
         }
@@ -4466,7 +4580,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         var turn = turnForButton(button);
         if (!button || !turn) return;
         dragPointerId = event.pointerId;
-        dragLastIndex = Array.prototype.indexOf.call(rail.children, button);
+        dragLastIndex = turns.indexOf(turn);
         root.classList.add('is-dragging');
         try { rail.setPointerCapture(event.pointerId); } catch (_) {}
         navigateToTurn(turn, true);
@@ -4506,18 +4620,29 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       function onNavPointerCancel(event) { finishNavDrag(event, true); }
       function onPointerOver(event) {
         if (dragPointerId != null) return;
+        if (tooltipTimer) { clearTimeout(tooltipTimer); tooltipTimer = null; }
+        var row = event.target && event.target.closest ? event.target.closest('.wbs-message-nav-row') : null;
+        if (row) { showDetail(turnForButton(row), row); return; }
         var button = event.target && event.target.closest ? event.target.closest('.wbs-message-nav-marker') : null;
+        if (!button && rail && rail.contains(event.target)) {
+          var nearestTurn = turns[dragIndexAt(event.clientY)];
+          button = nearestTurn && buttons[nearestTurn.id];
+        }
         if (button) showTooltip(turnForButton(button), button);
       }
       function onPointerOut(event) {
         if (dragPointerId != null) return;
-        var from = event.target && event.target.closest ? event.target.closest('.wbs-message-nav-marker') : null;
-        var to = event.relatedTarget && event.relatedTarget.closest ? event.relatedTarget.closest('.wbs-message-nav-marker') : null;
-        if (from && from !== to) hideTooltip(false);
+        if (!event.relatedTarget || !root.contains(event.relatedTarget)) hideTooltip(false);
       }
       function onFocusIn(event) {
-        var button = event.target && event.target.closest ? event.target.closest('.wbs-message-nav-marker') : null;
-        if (button) showTooltip(turnForButton(button), button);
+        var row = event.target && event.target.closest ? event.target.closest('.wbs-message-nav-row') : null;
+        if (row && tooltip) {
+          if (row.offsetTop < tooltip.scrollTop) tooltip.scrollTop = row.offsetTop;
+          else if (row.offsetTop + row.offsetHeight > tooltip.scrollTop + tooltip.clientHeight) {
+            tooltip.scrollTop = row.offsetTop + row.offsetHeight - tooltip.clientHeight;
+          }
+        }
+        onPointerOver(event);
       }
       function onFocusOut(event) {
         if (dragPointerId != null) return;
@@ -4530,13 +4655,25 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
           event.preventDefault();
           return;
         }
-        var button = event.target && event.target.closest ? event.target.closest('.wbs-message-nav-marker') : null;
+        var button = event.target && event.target.closest ? event.target.closest('.wbs-message-nav-marker, .wbs-message-nav-row') : null;
         var turn = turnForButton(button);
         if (!button || !turn) return;
         navigateToTurn(turn, false);
       }
       function onKeyDown(event) {
         if (event.key === 'Escape') { hideTooltip(true); return; }
+        var row = event.target && event.target.closest ? event.target.closest('.wbs-message-nav-row') : null;
+        if (row && (event.key === 'ArrowDown' || event.key === 'ArrowUp')) {
+          var sibling = event.key === 'ArrowDown' ? row.nextElementSibling : row.previousElementSibling;
+          event.preventDefault();
+          if (sibling) sibling.focus();
+          return;
+        }
+        if (event.key === 'ArrowRight') {
+          var turn = turnForButton(event.target);
+          if (turn && promptRows[turn.id] && !tooltip.hidden) { event.preventDefault(); promptRows[turn.id].focus(); }
+          return;
+        }
         if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
         var current = event.target && event.target.closest ? event.target.closest('.wbs-message-nav-marker') : null;
         if (!current) return;
@@ -4544,7 +4681,10 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         var next = event.key === 'ArrowDown' ? index + 1 : index - 1;
         if (next >= 0 && next < rail.children.length) { event.preventDefault(); rail.children[next].focus(); }
       }
-      function onWindowChange() { position(); scheduleActive(); }
+      function onWindowChange(event) {
+        if (event && root && root.contains(event.target)) { positionFlyouts(); return; }
+        position(); scheduleActive();
+      }
 
       listen(window, 'resize', onWindowChange);
       listen(window, 'scroll', onWindowChange, true);
@@ -16327,12 +16467,15 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '.wbs-message-nav-dot{display:block;width:5px;height:min(2px,var(--wbs-message-nav-marker-height,12px));border-radius:2px;background:currentColor;opacity:.62;transition:width .18s ease,opacity .18s ease}',
     '.wbs-message-nav-marker:hover .wbs-message-nav-dot,.wbs-message-nav-marker:focus-visible .wbs-message-nav-dot{width:11px;opacity:.82}',
     '.wbs-message-nav-marker.is-active .wbs-message-nav-dot{width:14px;opacity:1}',
-    '.wbs-message-nav-tooltip{position:absolute;width:var(--wbs-message-nav-tooltip-max,300px);max-height:min(42vh,320px);box-sizing:border-box;overflow:hidden;padding:10px 11px;border:1px solid var(--wb-border-subtle,rgba(20,24,32,.14));border-radius:8px;background:color-mix(in srgb,var(--wb-bg-popover,#fff) 84%,transparent);color:var(--wb-color-text-primary,#1f1f1f);box-shadow:0 12px 34px rgba(20,24,32,.18),inset 0 1px 0 rgba(255,255,255,.38);backdrop-filter:blur(22px) saturate(1.24);-webkit-backdrop-filter:blur(22px) saturate(1.24);pointer-events:none;opacity:0;transform:translateY(-50%) translateX(3px);transition:opacity .18s ease,transform .18s ease}',
-    '.wbs-message-nav-tooltip.is-left{right:calc(100% + 10px)}.wbs-message-nav-tooltip.is-right{left:calc(100% + 10px)}',
-    '.wbs-message-nav-tooltip.is-visible{opacity:1;transform:translateY(-50%) translateX(0)}',
+    '.wbs-message-nav-tooltip{position:fixed;max-height:80vh;box-sizing:border-box;overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:transparent transparent;padding:10px 11px;border:1px solid var(--wb-border-subtle,rgba(20,24,32,.14));border-radius:8px;background:color-mix(in srgb,var(--wb-bg-popover,#fff) 84%,transparent);color:var(--wb-color-text-primary,#1f1f1f);box-shadow:0 12px 34px rgba(20,24,32,.18),inset 0 1px 0 rgba(255,255,255,.38);backdrop-filter:blur(22px) saturate(1.24);-webkit-backdrop-filter:blur(22px) saturate(1.24);pointer-events:auto;opacity:1}',
+    '.wbs-message-nav-tooltip.is-visible{opacity:1}.wbs-message-nav-tooltip[hidden]{display:none}',
+    '.wbs-message-nav-tooltip::-webkit-scrollbar{width:6px}.wbs-message-nav-tooltip::-webkit-scrollbar-track,.wbs-message-nav-tooltip::-webkit-scrollbar-thumb{background:transparent}.wbs-message-nav-tooltip::-webkit-scrollbar-thumb{border-radius:6px}.wbs-message-nav-tooltip.is-scrolling{scrollbar-color:var(--wb-icon-secondary,#72757d) transparent}.wbs-message-nav-tooltip.is-scrolling::-webkit-scrollbar-thumb{background:var(--wb-icon-secondary,#72757d)}',
+    '.wbs-message-nav-list{padding:4px}.wbs-message-nav-detail{user-select:text;-webkit-user-select:text}',
+    '.wbs-message-nav-row{display:block;width:100%;height:30px;box-sizing:border-box;padding:0 8px;border:1px solid transparent;border-radius:6px;background:transparent;color:inherit;font:inherit;font-size:12px;line-height:28px;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer}',
+    '.wbs-message-nav-row:hover,.wbs-message-nav-row.is-preview,.wbs-message-nav-row:focus-visible,.wbs-message-nav-row[aria-current="true"]{background:var(--wb-bg-hover,rgba(0,0,0,.06));border-color:var(--wb-border-subtle,rgba(20,24,32,.14))}.wbs-message-nav-row:focus-visible{outline:2px solid var(--wb-accent-blue,#4f86ff);outline-offset:-2px}',
     '.wbs-message-nav-prompt,.wbs-message-nav-response{display:-webkit-box;overflow:hidden;-webkit-box-orient:vertical;word-break:break-word;letter-spacing:0}',
     '.wbs-message-nav-prompt{-webkit-line-clamp:4;font-size:12px;font-weight:600;line-height:1.55;color:var(--wb-color-text-primary,#1f1f1f)}',
-    '.wbs-message-nav-response{-webkit-line-clamp:6;margin-top:7px;padding-top:7px;border-top:1px solid var(--wb-border-subtle,rgba(20,24,32,.12));font-size:11px;font-weight:400;line-height:1.55;color:var(--wb-color-text-secondary,#5f626a)}',
+    '.wbs-message-nav-response{-webkit-line-clamp:14;margin-top:7px;padding-top:7px;border-top:1px solid var(--wb-border-subtle,rgba(20,24,32,.12));font-size:11px;font-weight:400;line-height:1.55;color:var(--wb-color-text-secondary,#5f626a)}',
     '.wbs-message-nav-highlight{animation:wbs-message-nav-highlight .7s ease-out}',
     '@keyframes wbs-message-nav-highlight{0%{box-shadow:0 0 0 3px color-mix(in srgb,var(--wb-accent-blue,#4f86ff) 48%,transparent)}100%{box-shadow:0 0 0 8px transparent}}',
     /* WorkBuddy 内置引用 tooltip 复用快捷短语的气泡风格，长文本在气泡内滚动 */
