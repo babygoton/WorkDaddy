@@ -65,6 +65,19 @@ test('macOS launcher keeps official WorkBuddy targets out of enterprise mode', (
   assert.match(buildSource, /PLIST_STALE/);
 });
 
+test('macOS launcher expands the optional native args safely under bash 3.2', () => {
+  // macOS ships bash 3.2, where "${A[@]}" on an empty array is an unbound variable
+  // under `set -u` and aborts the launcher — after WorkBuddy has already been killed.
+  const SAFE = /\$\{NATIVE_ARGS\[@\]\+"\$\{NATIVE_ARGS\[@\]\}"\}/;
+  const UNSAFE = /--remote-debugging-port="\$PORT" "\$\{NATIVE_ARGS\[@\]\}"/;
+  assert.match(buildSource, SAFE);
+  assert.doesNotMatch(buildSource, UNSAFE);
+
+  const relaunch = fs.readFileSync(path.join(repoRoot, 'scripts', 'relaunch-with-cdp.sh'), 'utf8');
+  assert.match(relaunch, SAFE);
+  assert.doesNotMatch(relaunch, UNSAFE);
+});
+
 test('macOS packages include every SVG loaded by the injected UI builder', () => {
   const daemon = fs.readFileSync(path.join(repoRoot, 'scripts/daemon.js'), 'utf8');
   const builder = daemon.slice(daemon.indexOf('function buildInjectScript()'), daemon.indexOf('function buildInjectScript()') + 5000);
