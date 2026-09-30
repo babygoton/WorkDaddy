@@ -186,7 +186,7 @@ test('all navigation turns are built from the structured message store regardles
 
 test('message navigation preview hides only the assistant completion marker at the end', () => {
   const source = fs.readFileSync(path.join(__dirname, '../scripts/inject.js'), 'utf8');
-  const start = source.indexOf('      function messageText(message, limit) {');
+  const start = source.indexOf('      function messageText(message, limit, preserveMarkdown) {');
   const end = source.indexOf('\n      function ensureRoot()', start);
   assert.ok(start >= 0 && end > start);
   const context = {};
@@ -271,7 +271,8 @@ test('injected navigation rail is theme-aware, glassy, accessible, and profile a
   assert.doesNotMatch(inject, /\.wbs-message-nav-marker:hover[^']*\{/);
   assert.doesNotMatch(inject, /\.wbs-message-nav-marker:hover \.wbs-message-nav-dot/);
   assert.doesNotMatch(inject, /wbs-message-nav-highlight|@keyframes wbs-message-nav-highlight/);
-  assert.match(inject, /\.wbs-message-nav-response\{-webkit-line-clamp:10/);
+  assert.match(inject, /\.wbs-message-nav-response\{display:block/);
+  assert.doesNotMatch(inject, /\.wbs-message-nav-response\{-webkit-line-clamp/);
   assert.match(inject, /prefers-reduced-motion:reduce/);
   assert.match(inject, /querySelectorAll\('\.wbs-message-nav-root'\)/);
 
@@ -317,4 +318,30 @@ test('floating robot keeps the website shell and upright eyes', () => {
   assert.match(inject, /wbs-robot-blink 7s/);
   assert.match(inject, /\.wbs-fab \.button\{[^\n]*width:82px;height:64px/);
   assert.doesNotMatch(inject, /\.wbs-fab \.eye:before/);
+});
+
+
+test('assistant hover previews preserve Markdown line structure while prompt summaries remain compact', () => {
+  const context = {};
+  const read = navigationFunction('messageText', context);
+  const markdown = '# 标题\n\n- **重点**\n- 第二项\n\n```js\nconst a = 1;\n```';
+  const message = { messageType: 'assistant', content: [{ type: 'markdown', text: markdown + '\n[wbs-reply-done]: #' }] };
+  assert.equal(read(message, 20000, true), markdown);
+  assert.equal(read(message, 240).includes('\n'), false);
+  assert.equal(read(message, 10, true).length, 10);
+});
+
+test('detail preview mounts the local Markdown component with a safe text fallback', () => {
+  const nodes = [];
+  const context = {
+    detail: { textContent: '', appendChild: node => nodes.push(node), classList: { add() {} } },
+    hideDetail() {}, positionFlyouts() {},
+    messageText: (m, limit, preserve) => { if (m.role === 'assistant') assert.equal(preserve, true); return m.text; },
+    el: (tag, cls, text) => ({ className: cls, textContent: text, appendChild: child => nodes.push(child) }),
+    window: { __wbsMarkdownPreview: { render: text => ({ rendered: text }) } },
+  };
+  const show = navigationFunction('showDetail', context);
+  show({ userMessage: { text: '问题' }, assistantMessage: { role: 'assistant', text: '**回答**' } }, { classList: { add() {} } });
+  assert.ok(nodes.some(node => node.rendered === '**回答**'));
+  assert.ok(nodes.some(node => node.className === 'wbs-message-nav-response'));
 });

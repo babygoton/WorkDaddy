@@ -4446,7 +4446,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       var hidden = true;
       var disposed = false;
 
-      function messageText(message, limit) {
+      function messageText(message, limit, preserveMarkdown) {
         var content = message && message.content;
         var blocks = Array.isArray(content) ? content : [];
         var parts = [];
@@ -4462,7 +4462,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         if (messageType === 'assistant') {
           value = value.replace(/(?:^|\n)\s*\[wbs-reply-done\]:[^\n]*(?:\n\s*)*$/i, '');
         }
-        value = value.replace(/\s+/g, ' ').trim();
+        value = preserveMarkdown ? value.trim() : value.replace(/\s+/g, ' ').trim();
         if (limit && value.length > limit) return value.slice(0, limit - 1) + '…';
         return value;
       }
@@ -4631,8 +4631,16 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         detail.textContent = '';
         var prompt = el('div', 'wbs-message-nav-prompt', messageText(turn.userMessage, 240) || '用户消息');
         detail.appendChild(prompt);
-        var response = messageText(turn.assistantMessage, 1600);
-        if (response) detail.appendChild(el('div', 'wbs-message-nav-response', response));
+        var response = messageText(turn.assistantMessage, 20000, true);
+        if (response) {
+          var responseNode = el('div', 'wbs-message-nav-response');
+          try {
+            responseNode.appendChild(window.__wbsMarkdownPreview.render(response));
+          } catch (_) {
+            responseNode.textContent = response;
+          }
+          detail.appendChild(responseNode);
+        }
         detail.hidden = false;
         detail.classList.add('is-visible');
         positionFlyouts();
@@ -16944,9 +16952,10 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '.wbs-message-nav-list{padding:4px}.wbs-message-nav-detail{user-select:text;-webkit-user-select:text}',
     '.wbs-message-nav-row{display:block;width:100%;height:30px;box-sizing:border-box;padding:0 8px;border:1px solid transparent;border-radius:6px;background:transparent;color:inherit;font:inherit;font-size:12px;line-height:28px;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer}',
     '.wbs-message-nav-row:hover,.wbs-message-nav-row.is-preview,.wbs-message-nav-row:focus-visible,.wbs-message-nav-row[aria-current="true"]{background:var(--wb-bg-hover,rgba(0,0,0,.06));border-color:var(--wb-border-subtle,rgba(20,24,32,.14))}.wbs-message-nav-row:focus-visible{outline:2px solid var(--wb-accent-blue,#4f86ff);outline-offset:-2px}',
-    '.wbs-message-nav-prompt,.wbs-message-nav-response{display:-webkit-box;overflow:hidden;-webkit-box-orient:vertical;word-break:break-word;letter-spacing:0}',
+    '.wbs-message-nav-prompt{display:-webkit-box;overflow:hidden;-webkit-box-orient:vertical;word-break:break-word;letter-spacing:0}',
     '.wbs-message-nav-prompt{-webkit-line-clamp:4;font-size:12px;font-weight:600;line-height:1.55;color:var(--wb-color-text-primary,#1f1f1f)}',
-    '.wbs-message-nav-response{-webkit-line-clamp:10;margin-top:7px;padding-top:7px;border-top:1px solid var(--wb-border-subtle,rgba(20,24,32,.12));font-size:11px;font-weight:400;line-height:1.55;color:var(--wb-color-text-secondary,#5f626a)}',
+    '.wbs-message-nav-response{display:block;min-width:0;overflow-wrap:anywhere;margin-top:7px;padding-top:7px;border-top:1px solid var(--wb-border-subtle,rgba(20,24,32,.12));font-size:11px;font-weight:400;line-height:1.55;color:var(--wb-color-text-secondary,#5f626a)}',
+    '.wbs-message-nav-response>:first-child{margin-top:0}.wbs-message-nav-response>:last-child{margin-bottom:0}.wbs-message-nav-response p{margin:0 0 8px}.wbs-message-nav-response :is(h1,h2,h3,h4,h5,h6){margin:12px 0 6px;font-size:12px;line-height:1.45;font-weight:650;color:var(--wb-color-text-primary)}.wbs-message-nav-response h1{font-size:14px}.wbs-message-nav-response h2{font-size:13px}.wbs-message-nav-response :is(ul,ol){margin:6px 0;padding-left:20px}.wbs-message-nav-response li{margin:3px 0}.wbs-message-nav-response li>p{margin:0}.wbs-message-nav-response blockquote{margin:8px 0;padding:2px 8px;border-left:3px solid var(--wb-border-default);color:var(--wb-color-text-secondary)}.wbs-message-nav-response code{padding:1px 3px;border-radius:3px;background:var(--wb-bg-tertiary);font:10.5px/1.55 var(--wb-font-code-family,monospace)}.wbs-message-nav-response pre{max-width:100%;box-sizing:border-box;margin:8px 0;padding:8px;overflow-x:auto;border:1px solid var(--wb-border-subtle);border-radius:6px;background:var(--wb-bg-tertiary);white-space:pre;overscroll-behavior:contain}.wbs-message-nav-response pre code{padding:0;background:transparent}.wbs-message-nav-response table{display:block;max-width:100%;overflow-x:auto;border-collapse:collapse;margin:8px 0;overscroll-behavior:contain}.wbs-message-nav-response :is(th,td){padding:4px 7px;border:1px solid var(--wb-border-default);min-width:45px}.wbs-message-nav-response th{background:var(--wb-bg-tertiary);font-weight:600}.wbs-message-nav-response a{color:var(--wb-accent-blue,var(--wb-color-text-primary));text-decoration:underline}.wbs-message-nav-response hr{border:0;border-top:1px solid var(--wb-border-subtle);margin:10px 0}.wbs-message-nav-response input[type="checkbox"]{width:11px;height:11px;margin:0 4px 0 0;accent-color:var(--wb-button-primary-bg);pointer-events:none}',
     /* WorkBuddy 内置引用 tooltip 复用快捷短语的气泡风格，长文本在气泡内滚动 */
     '.sq-tooltip-wrapper{width:max-content!important;max-width:calc(100vw - 24px)!important;padding:0!important;border:1px solid color-mix(in srgb,var(--wb-border-subtle,#ececec) 65%,transparent)!important;border-radius:8px!important;background:var(--wb-bg-popover,#fff)!important;box-shadow:0 6px 20px rgba(0,0,0,.16)!important;color:var(--wb-color-text-primary,#1f1f1f)}',
     '.sq-tooltip-wrapper .sq-popover,.sq-tooltip-wrapper .sq-image-preview{width:max-content;max-width:min(240px,calc(100vw - 24px));max-height:min(48vh,240px);box-sizing:border-box;padding:5px 11px;overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain}',

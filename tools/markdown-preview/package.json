@@ -1,0 +1,17 @@
+{
+  "name": "workdaddy-markdown-preview",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "test": "node --test test.mjs"
+  },
+  "dependencies": {
+    "dompurify": "3.4.16",
+    "marked": "18.0.14"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.12",
+    "jsdom": "26.1.0"
+  }
+}

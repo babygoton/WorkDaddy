@@ -434,7 +434,7 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 // 1.2.191：CodeDaddy 共用完整面板，通过本机 CDP 适配通信、原生登录态和会话缓存。
 // 1.2.10：合并会话、用量、启动器及 CodeBuddy IDE 注入重试与积分刷新修复。
 const DAEMON_VERSION = '1.2.10';
-const DAEMON_BUILD_ID = 'release-1.2.10-20260930-ide-recovery-credits';
+const DAEMON_BUILD_ID = 'release-1.2.10-20260930-markdown-preview';
 const usageReporter = createUsageReporter({ profile: PROFILE.id, version: DAEMON_VERSION });
 configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const automationDiscovery = createAutomationDiscovery({
@@ -4079,6 +4079,7 @@ async function injectWidget(reason, executionContextId) {
 }
 
 function buildInjectScript() {
+  const markdownScript = fs.readFileSync(path.join(__dirname, 'markdown-preview.js'), 'utf8');
   const toastScript = fs.readFileSync(path.join(__dirname, 'toast-runtime.js'), 'utf8');
   const compatScript = fs.readFileSync(path.join(__dirname, 'workbuddy-compat.js'), 'utf8');
   let injectScript = fs.readFileSync(path.join(__dirname, 'inject.js'), 'utf8');
@@ -4122,7 +4123,8 @@ function buildInjectScript() {
   })();\n` : '';
   let source = (PROFILE.kind === 'codebuddy' ? rendererBridgeSource() : '') + toastScript + '\n' + compatScript + '\n' + injectScript;
   if (PROFILE.kind === 'codebuddy') source = source.replace(/\.innerHTML\b/g, '.__wbsHTML').replace(/\binnerHTML\s*:/g, '__wbsHTML:').replace(/\.outerHTML\b/g, '.__wbsOuterHTML').replace(/\.insertAdjacentHTML\b/g, '.__wbsInsertAdjacentHTML');
-  return (trustedTypesBootstrap + source)
+  // Keep the sanitizer outside the legacy innerHTML sink rewrite.
+  return (trustedTypesBootstrap + markdownScript + '\n' + source)
     .replace(/__WBS_API__/g, `http://${HOST}:${ACTUAL_PORT}`)
     .replace(/__WBS_VERSION__/g, DAEMON_VERSION)
     // 注入本地 API 能力凭证；旧版面板不会携带该 header，但新版 daemon 会在启动时重新注入新版面板。
