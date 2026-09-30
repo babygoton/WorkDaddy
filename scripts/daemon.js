@@ -432,8 +432,9 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 // 1.2.188：关闭主题接管时跟随 WorkBuddy AI 的原生 agent-ui-theme，避免旧快照覆盖官方浅色/深色选择。
 // 1.2.189：毛玻璃底色等待移至 daemon，避免后台页面定时器节流拖延开关和壁纸加载。
 // 1.2.191：CodeDaddy 共用完整面板，通过本机 CDP 适配通信、原生登录态和会话缓存。
-const DAEMON_VERSION = '1.2.205';
-const DAEMON_BUILD_ID = 'release-1.2.205-20260929-codebuddy-cn-executable';
+// 1.2.206：账号切换/迁移后刷新 WorkBuddy 官方会话集合，确保历史会话 controller 与决策弹窗完成 hydration。
+const DAEMON_VERSION = '1.2.206';
+const DAEMON_BUILD_ID = 'release-1.2.206-20260929-session-list-hydration';
 const usageReporter = createUsageReporter({ profile: PROFILE.id, version: DAEMON_VERSION });
 configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const automationDiscovery = createAutomationDiscovery({
@@ -2349,9 +2350,21 @@ async function reloadWorkBuddyPage(options = {}) {
   const pending = armPendingReloadInjection(frameId);
   try {
     await withTimeout(cdpSend('Page.reload', { ignoreCache: false }), 10000, '刷新 WorkBuddy 页面');
-    if (options.waitForInjection === false) return true;
+    // WorkBuddy's SQLite replacement and renderer reload do not publish the
+    // local collection change. Refresh after WorkDaddy has mounted so the
+    // official controller sees migrated/history rows before user interaction.
+    const refreshAfterMount = pending.ready.then((mounted) => {
+      if (!mounted) return false;
+      const uid = String((currentAccount() || {}).uid || '').trim();
+      return refreshWorkBuddySessionList(uid, 'account-reload');
+    }).catch(() => false);
+    if (options.waitForInjection === false) {
+      refreshAfterMount.catch(() => {});
+      return true;
+    }
     const mounted = await pending.ready;
     if (!mounted) log('[cdp] 页面重载后组件未在 5 秒内确认挂载，继续后台流程');
+    if (mounted) await refreshAfterMount;
     return mounted;
   } catch (error) {
     settlePendingReloadInjection(pending, false);
@@ -4634,6 +4647,110 @@ function sessionCopyContentRevision(row) {
   ]);
 }
 
+// WorkBuddy stores the context-window denominator on the session row and the
+// usage ring data in session_usage. Both are optional across client versions;
+// a missing column/table must not break account switching for older clients.
+let sessionContextWindowState = typeof PROFILE !== 'undefined' && PROFILE.kind === 'workbuddy' ? 'unknown' : 'unsupported';
+let sessionUsageState = typeof PROFILE !== 'undefined' && PROFILE.kind === 'workbuddy' ? 'unknown' : 'unsupported';
+
+function isMissingSessionStorageError(error) {
+  return /no such (table|column)/i.test(String(error && error.message || error || ''));
+}
+
+async function readSessionContextWindow(id) {
+  if (sessionContextWindowState === 'unsupported') return null;
+  try {
+    const rows = await sqliteQuery('SELECT context_window FROM sessions WHERE id = ? LIMIT 1;', [id]);
+    sessionContextWindowState = 'supported';
+    const value = rows && rows[0] && rows[0].context_window;
+    if (value === '' || value === null || value === undefined) return null;
+    const numeric = Number(value);
+    return Number.isFinite(numeric) && numeric >= 0 ? numeric : null;
+  } catch (error) {
+    if (isMissingSessionStorageError(error)) {
+      sessionContextWindowState = 'unsupported';
+      return null;
+    }
+    throw error;
+  }
+}
+
+async function writeSessionContextWindow(id, value) {
+  if (sessionContextWindowState === 'unsupported' || value === null || value === undefined) return;
+  try {
+    await sqliteRun(
+      'UPDATE sessions SET context_window = ? WHERE id = ? AND deleted_at IS NULL;',
+      [value, id]
+    );
+    sessionContextWindowState = 'supported';
+  } catch (error) {
+    if (isMissingSessionStorageError(error)) {
+      sessionContextWindowState = 'unsupported';
+      return;
+    }
+    throw error;
+  }
+}
+
+async function copySessionUsage(sourceId, targetId) {
+  if (sessionUsageState === 'unsupported') return;
+  let sourceRows;
+  try {
+    sourceRows = await sqliteQuery(
+      'SELECT used, size, updated_at, credit_json FROM session_usage WHERE session_id = ? LIMIT 1;',
+      [sourceId]
+    );
+    sessionUsageState = 'supported';
+  } catch (error) {
+    if (isMissingSessionStorageError(error)) {
+      sessionUsageState = 'unsupported';
+      return;
+    }
+    throw error;
+  }
+  if (!sourceRows || !sourceRows.length) return;
+  const source = sourceRows[0];
+  const used = source.used === '' ? null : Number(source.used);
+  const size = source.size === '' ? null : Number(source.size);
+  if (![used, size].every(value => value === null || Number.isFinite(value))) return;
+  let targetRows;
+  try {
+    targetRows = await sqliteQuery(
+      'SELECT used, size, updated_at, credit_json FROM session_usage WHERE session_id = ? LIMIT 1;',
+      [targetId]
+    );
+  } catch (error) {
+    if (isMissingSessionStorageError(error)) {
+      sessionUsageState = 'unsupported';
+      return;
+    }
+    throw error;
+  }
+  const target = targetRows && targetRows[0];
+  if (target && String(target.used || '') === String(source.used || '') &&
+      String(target.size || '') === String(source.size || '') &&
+      String(target.updated_at || '') === String(source.updated_at || '') &&
+      String(target.credit_json || '') === String(source.credit_json || '')) return;
+  try {
+    await sqliteRun(
+      'INSERT OR REPLACE INTO session_usage (session_id, used, size, updated_at, credit_json) VALUES (?, ?, ?, ?, ?);',
+      [
+        targetId,
+        used,
+        size,
+        source.updated_at === '' ? null : Number(source.updated_at),
+        source.credit_json === '' ? null : String(source.credit_json),
+      ]
+    );
+  } catch (error) {
+    if (isMissingSessionStorageError(error)) {
+      sessionUsageState = 'unsupported';
+      return;
+    }
+    throw error;
+  }
+}
+
 // This revision is the cheap fallback used when the renderer event was
 // missed. WorkBuddy advances updated_at for edits that do not necessarily
 // change the sidebar lifecycle payload, so it is part of the observable
@@ -4818,6 +4935,7 @@ async function copySessionRecord(src, targetUid, options = {}) {
     ))[0];
     const sourceRow = await readRow(src.id, sourceUid);
     if (!sourceRow) throw new Error('源会话已变化，请重试');
+    const sourceContextWindow = await readSessionContextWindow(sourceRow.id);
     const dirtyIndex = typeof getSessionDirtyIndex === 'function' ? getSessionDirtyIndex() : null;
     const dirtyMarker = options.auto && dirtyIndex ? dirtyIndex.get(sourceUid, sourceRow.id) : null;
     const clearAutoDirty = () => {
@@ -4948,6 +5066,8 @@ async function copySessionRecord(src, targetUid, options = {}) {
           // after insertion cannot create an untracked duplicate on retry.
           await withAutoCopyMetaWrite(() => addAutoCopySessionMember(DATA_DIR, lineageId, targetUid, targetId, { branchCopy: branched }));
           persistedTargetRow = await insertCopiedSession(fromRow, targetUid, targetId);
+          await writeSessionContextWindow(targetId, sourceContextWindow);
+          await copySessionUsage(fromRow.id, targetId);
         }
         else if (!missingOnly) {
           const updatedAt = Number(fromRow.updated_at || 0);
@@ -4957,6 +5077,8 @@ async function copySessionRecord(src, targetUid, options = {}) {
             [fromRow.title || '', fromRow.custom_title || '', fromRow.status || 'Pending',
               updatedAt, lastActivityAt, toRow.id, toRow.user_id]
           );
+          await writeSessionContextWindow(toRow.id, sourceContextWindow);
+          await copySessionUsage(fromRow.id, toRow.id);
           persistedTargetRow = Object.assign({}, toRow, {
             title: fromRow.title || '', custom_title: fromRow.custom_title || '', status: fromRow.status || 'Pending',
             updated_at: updatedAt, last_activity_at: lastActivityAt,
@@ -5515,14 +5637,15 @@ function startAutoCopyJob(sourceUid, targetUid, plan, labels) {
   return job;
 }
 
-async function refreshCopiedSessionList(job) {
-  // WorkBuddy copies commit SQLite directly, bypassing its list-change bus.
-  // Its first post-switch snapshot can therefore predate this batch. Use the
-  // official collection refresh (including grouped folders), never navigation
-  // or a second renderer reload. CodeBuddy already publishes native upserts;
-  // it has a different store and must not enter this SDK path.
-  if (PROFILE.kind !== 'workbuddy' || !(job.copied || job.partial || job.conflicts)) return;
-  if (!cdp.connected || String((currentAccount() || {}).uid || '') !== String(job.targetUid)) return;
+async function refreshWorkBuddySessionList(targetUid, reason = 'sessions') {
+  // WorkBuddy writes session SQLite directly, bypassing its list-change bus.
+  // Its first snapshot can therefore predate a migration, account switch, or
+  // copy batch. Use the official collection refresh (including grouped
+  // folders), never navigation or a second renderer reload. CodeBuddy already
+  // publishes native upserts; it has a different store and must not enter this
+  // SDK path.
+  if (PROFILE.kind !== 'workbuddy') return false;
+  if (!cdp.connected || String((currentAccount() || {}).uid || '') !== String(targetUid || '')) return false;
   let timer;
   try {
     const response = await Promise.race([
@@ -5541,13 +5664,21 @@ async function refreshCopiedSessionList(job) {
       // delay restoring the selected conversation indefinitely.
       new Promise(resolve => { timer = setTimeout(() => resolve(null), 2000); }),
     ]);
-    log('[sessions-auto-copy] 列表刷新' + (response && response.result && response.result.value === true ? '已完成' : '未确认；复制结果已保留'));
+    const confirmed = response && response.result && response.result.value === true;
+    log('[' + reason + '] 列表刷新' + (confirmed ? '已完成' : '未确认；已保留本地会话数据'));
+    return confirmed;
   } catch (_) {
     // A disconnected renderer cannot invalidate already committed files/rows.
-    log('[sessions-auto-copy] 列表刷新暂不可用；复制结果已保留');
+    log('[' + reason + '] 列表刷新暂不可用；已保留本地会话数据');
+    return false;
   } finally {
     clearTimeout(timer);
   }
+}
+
+async function refreshCopiedSessionList(job) {
+  if (!job || !(job.copied || job.partial || job.conflicts || job.openSessionId)) return false;
+  return refreshWorkBuddySessionList(job.targetUid, 'sessions-auto-copy');
 }
 
 function publicAutoCopyJob(job) {
@@ -10461,7 +10592,7 @@ function handleApi(req, res) {
       try {
         const rows = await sqliteQuery(
           'SELECT ' + SESSION_COPY_COLUMNS.join(',') +
-            ' FROM sessions WHERE id = ? AND user_id = ? AND deleted_at IS NULL LIMIT 1;',
+            " FROM sessions WHERE id = ? AND (user_id = ? OR user_id = '') AND deleted_at IS NULL LIMIT 1;",
           [id, uid]
         );
         if (!rows.length) return json(res, 404, { ok: false, error: '当前账号下没有该会话' });
@@ -10535,6 +10666,10 @@ function handleApi(req, res) {
             log(`[sessions-auto-copy] 迁移规则 ${row.id} 失败: ${e.message}`);
           }
         }
+        // The migration changes ownership in SQLite without going through
+        // WorkBuddy's collection store. Refresh the visible account's list so
+        // a migrated history row is hydrated by the official controller.
+        await refreshWorkBuddySessionList(String((currentAccount() || {}).uid || '').trim(), 'sessions-migrate');
         return json(res, 200, { ok: true, moved: before.length, requested: ids.length, targetUid, rulesMoved });
       } catch (e) {
         return json(res, 500, { ok: false, error: e.message });

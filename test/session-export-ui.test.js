@@ -2,10 +2,10 @@
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm'),path=require('node:path');
 const source=fs.readFileSync(path.join(__dirname,'../scripts/inject.js'),'utf8');
 function fixture(){
- const nodes=new Map(),node=key=>{if(!nodes.has(key))nodes.set(key,{hidden:false,disabled:false,textContent:'',removeAttribute(name){delete this[name];},querySelector:node});return nodes.get(key);};
+ const nodes=new Map(),node=key=>{if(!nodes.has(key))nodes.set(key,{hidden:false,disabled:false,textContent:'',focus(){},removeAttribute(name){delete this[name];},querySelector:node});return nodes.get(key);};
  const calls=[],requests=[],timers=[];
  const ctx={sessionsPane:{querySelector:node},sessionsState:{},alive:true,clearTimeout(){},setBuildTimeout(fn){timers.push(fn);return timers.length;},
-   sessionCopySizeText:bytes=>String(bytes),api:url=>{calls.push(url);return new Promise((resolve,reject)=>requests.push({resolve,reject}));}};
+   sessionCopySizeText:bytes=>String(bytes),wbsTranslateString:value=>String(value),WBS_LANGUAGE:'zh',api:url=>{calls.push(url);return new Promise((resolve,reject)=>requests.push({resolve,reject}));}};
  const start=source.indexOf('    function renderSessionExport(');
  vm.runInNewContext(source.slice(start,source.indexOf('    function sortSessionAccounts(',start)),ctx);
  return{ctx,node,calls,requests,timers};
@@ -37,4 +37,30 @@ test('a daemon restart discards the missing job id instead of polling it forever
  assert.equal(f.calls[1],'/api/sessions/export');
  f.requests[1].resolve({job:null});await poll;
  assert.equal(f.node('#wbs-sess-export-progress').hidden,true);
+});
+
+test('export dialog stays dismissed during polling and opens for completion or a new job',()=>{
+ const f=fixture(),job={id:'one',running:true,status:'writing'};
+ f.ctx.renderSessionExport(job);
+ f.ctx.dismissSessionExport();
+ f.ctx.renderSessionExport({...job,percent:80});
+ assert.equal(f.node('#wbs-sess-export-progress').hidden,true);
+ f.ctx.renderSessionExport({...job,running:false,status:'completed',file:'done.wds'});
+ assert.equal(f.node('#wbs-sess-export-progress').hidden,false);
+ f.ctx.dismissSessionExport();
+ f.ctx.renderSessionExport({...job,running:false,status:'completed',file:'done.wds'});
+ assert.equal(f.node('#wbs-sess-export-progress').hidden,true);
+ f.ctx.renderSessionExport({...job,id:'two'});
+ assert.equal(f.node('#wbs-sess-export-progress').hidden,false);
+});
+
+test('export dialog is a WorkDaddy panel overlay rather than a body overlay',()=>{
+ const markup=source.slice(source.indexOf("'<div class=\"wbs-modal-mask wbs-modal-mask-panel wbs-sess-export-progress\""),source.indexOf("'<div class=\"wbs-sess-copy-progress\""));
+ assert.match(markup,/wbs-modal-mask-panel/);
+ const wireStart=source.indexOf('    function wireSessionsPane()');
+ const wireEnd=source.indexOf('    function renderSessionExport(',wireStart);
+ const wire=source.slice(wireStart,wireEnd);
+ assert.match(wire,/var panel = root && root\.querySelector\('\.wbs-panel'\);/);
+ assert.match(wire,/panel\.appendChild\(exportCard\)/);
+ assert.doesNotMatch(wire,/mountPersistentOverlay\(exportCard\)/);
 });

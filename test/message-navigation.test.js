@@ -268,7 +268,10 @@ test('injected navigation rail is theme-aware, glassy, accessible, and profile a
   assert.match(inject, /\.wbs-message-nav-rail\{[^\n]*border:1px solid transparent[^\n]*box-shadow:none[^\n]*backdrop-filter:none/);
   assert.match(inject, /\.wbs-message-nav-rail:hover,\.wbs-message-nav-rail:focus-within\{[^\n]*backdrop-filter:blur\(/);
   assert.match(inject, /\.wbs-message-nav-marker\{[^\n]*background:color-mix\(in srgb,var\(--wb-bg-popover/);
-  assert.match(inject, /\.wbs-message-nav-marker:hover,\.wbs-message-nav-marker:focus-visible\{[^\n]*border-color:[^\n]*box-shadow:[^\n]*backdrop-filter:blur\(/);
+  assert.doesNotMatch(inject, /\.wbs-message-nav-marker:hover[^']*\{/);
+  assert.doesNotMatch(inject, /\.wbs-message-nav-marker:hover \.wbs-message-nav-dot/);
+  assert.doesNotMatch(inject, /wbs-message-nav-highlight|@keyframes wbs-message-nav-highlight/);
+  assert.match(inject, /\.wbs-message-nav-response\{-webkit-line-clamp:10/);
   assert.match(inject, /prefers-reduced-motion:reduce/);
   assert.match(inject, /querySelectorAll\('\.wbs-message-nav-root'\)/);
 
