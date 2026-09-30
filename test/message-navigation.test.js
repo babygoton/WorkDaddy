@@ -344,4 +344,8 @@ test('detail preview mounts the local Markdown component with a safe text fallba
   show({ userMessage: { text: '问题' }, assistantMessage: { role: 'assistant', text: '**回答**' } }, { classList: { add() {} } });
   assert.ok(nodes.some(node => node.rendered === '**回答**'));
   assert.ok(nodes.some(node => node.className === 'wbs-message-nav-response'));
+  const userLabel = nodes.findIndex(node => node.className === 'wbs-message-nav-role' && node.textContent === '用户');
+  const assistantLabel = nodes.findIndex(node => node.className === 'wbs-message-nav-role' && node.textContent === '助手');
+  assert.ok(userLabel >= 0 && userLabel < nodes.findIndex(node => node.className === 'wbs-message-nav-prompt'));
+  assert.ok(assistantLabel > userLabel && assistantLabel < nodes.findIndex(node => node.className === 'wbs-message-nav-response'));
 });
