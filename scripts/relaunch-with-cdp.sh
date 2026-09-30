@@ -321,7 +321,12 @@ launch_plugin() {
     echo "   错误：未找到 $APP_BIN"
     exit 1
   fi
-  nohup "$APP_BIN" --remote-debugging-port="$PORT" "${NATIVE_ARGS[@]}" >/dev/null 2>&1 &
+  LAUNCH_ARGS=(--remote-debugging-port="$PORT")
+  case "$PROFILE" in
+    codebuddy-cn) LAUNCH_ARGS+=(--inspect=127.0.0.1:9244) ;;
+    codebuddy-intl) LAUNCH_ARGS+=(--inspect=127.0.0.1:9245) ;;
+  esac
+  nohup "$APP_BIN" "${LAUNCH_ARGS[@]}" >/dev/null 2>&1 &
   disown 2>/dev/null || true
 
   # ---------- 4. 验证 ----------

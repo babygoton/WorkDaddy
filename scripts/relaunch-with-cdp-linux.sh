@@ -408,7 +408,12 @@ launch_plugin() {
     echo "   环境: HOME=${launch_home}（启动器需按真实家目录推导，不能传隔离 HOME）"
   fi
   # setsid：脱离当前会话，避免终端关闭时连带杀掉 WorkBuddy
-  setsid nohup env HOME="$launch_home" "$LAUNCH_TARGET" --remote-debugging-port="$PORT" "${NATIVE_ARGS[@]}" >/dev/null 2>&1 < /dev/null &
+  LAUNCH_ARGS=(--remote-debugging-port="$PORT")
+  case "$PROFILE" in
+    codebuddy-cn) LAUNCH_ARGS+=(--inspect=127.0.0.1:9244) ;;
+    codebuddy-intl) LAUNCH_ARGS+=(--inspect=127.0.0.1:9245) ;;
+  esac
+  setsid nohup env HOME="$launch_home" "$LAUNCH_TARGET" "${LAUNCH_ARGS[@]}" >/dev/null 2>&1 < /dev/null &
   disown 2>/dev/null || true
 
   echo "==> 等待 CDP 端口开放（并确认是本 profile 的实例）"

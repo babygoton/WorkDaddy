@@ -362,12 +362,12 @@ if [ "$TARGET_APP_BUNDLE" = "$APP_BIN" ] || [ ! -d "$TARGET_APP_BUNDLE" ]; then
   notify "WorkDaddy" "WorkBuddy 应用路径无效，启动失败"
   exit 1
 fi
-NATIVE_ARGS=()
+OPEN_ARGS=(--args "--remote-debugging-port=$PORT")
 case "$PROFILE" in
-  codebuddy-cn) NATIVE_ARGS=(--inspect=127.0.0.1:9244) ;;
-  codebuddy-intl) NATIVE_ARGS=(--inspect=127.0.0.1:9245) ;;
+  codebuddy-cn) OPEN_ARGS+=(--inspect=127.0.0.1:9244) ;;
+  codebuddy-intl) OPEN_ARGS+=(--inspect=127.0.0.1:9245) ;;
 esac
-if ! /usr/bin/open -a "$TARGET_APP_BUNDLE" --args "--remote-debugging-port=$PORT" "${NATIVE_ARGS[@]}"; then
+if ! /usr/bin/open -a "$TARGET_APP_BUNDLE" "${OPEN_ARGS[@]}"; then
   notify "WorkDaddy" "无法启动 WorkBuddy，请重试"
   exit 1
 fi'''
