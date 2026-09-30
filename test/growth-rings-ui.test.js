@@ -8,7 +8,7 @@ const path = require('node:path');
 const inject = fs.readFileSync(path.join(__dirname, '../scripts/inject.js'), 'utf8');
 const daemon = fs.readFileSync(path.join(__dirname, '../scripts/daemon.js'), 'utf8');
 
-test('account cards render task progress as a cat liquid badge before check-in status', () => {
+test('account cards render today check-in as a full or empty cat liquid badge', () => {
   assert.match(inject, /wbs-daily-rings/);
   assert.match(inject, /wbs-daily-vessel/);
   assert.match(inject, /wbs-daily-liquid/);
@@ -28,6 +28,11 @@ test('account cards render task progress as a cat liquid badge before check-in s
   assert.match(inject, /\.wbs-daily-rings\{[^}]*border:0/);
   assert.match(inject, /wbs-daily-streak-label/);
   assert.match(inject, /连续登录 /);
+  assert.match(inject, /function isCheckedInToday\(a\)/);
+  assert.match(inject, /var level = checkedToday \? '100\.00%' : '0\.00%'/);
+  assert.match(inject, /is-checked-in/);
+  assert.match(inject, /\.wbs-daily-vessel\.is-empty \.wbs-daily-liquid\{min-height:0\}/);
+  assert.doesNotMatch(inject.slice(inject.indexOf('function dailyRingsSvg('), inject.indexOf('function dailyRingsHtml(', inject.indexOf('function dailyRingsSvg('))), /growth\.ratio/);
   assert.doesNotMatch(inject, />活跃 .* 天</);
   assert.match(inject, /\.wbs-daily-vessel\{[^}]*border-radius:50%/);
   assert.match(inject, /\.wbs-daily-liquid\{[^}]*height:var\(--wbs-liquid-level/);
@@ -36,6 +41,23 @@ test('account cards render task progress as a cat liquid badge before check-in s
   const hoverRule = inject.match(/\.wbs-daily-rings:hover[^']+/);
   assert.ok(hoverRule);
   assert.doesNotMatch(hoverRule[0], /border(?:-color)?:/);
+});
+
+test('cat badge state follows the account check-in record independently of growth progress', () => {
+  const start = inject.indexOf('    function dailyRingsSvg(account)');
+  const end = inject.indexOf('\n    function dailyRingsHtml', start);
+  assert.ok(start > 0 && end > start);
+  const vm = require('node:vm');
+  const context = { WORKBUDDY_CAT_MARK: '__WBS_BUDDY_MARK__' };
+  const checkedStart = inject.indexOf('  function isCheckedInToday(');
+  vm.runInNewContext(inject.slice(checkedStart, inject.indexOf('  function activityStreakHtml(', checkedStart)), context);
+  vm.runInNewContext(inject.slice(start, end), context);
+  assert.match(context.dailyRingsSvg({ checkin: { ok: true }, dailyProgress: { growth: { ratio: 0 } } }), /--wbs-liquid-level:100\.00%/);
+  assert.match(context.dailyRingsSvg({ checkin: { ok: true } }), /is-checked-in/);
+  assert.doesNotMatch(context.dailyRingsSvg({ checkin: { ok: true, inactive: true }, dailyProgress: { growth: { ratio: 1 } } }), /--wbs-liquid-level:100\.00%/);
+  assert.match(context.dailyRingsSvg({ checkin: { ok: false }, dailyProgress: { growth: { ratio: 1 } } }), /is-empty/);
+  assert.match(context.dailyRingsSvg({}), /is-empty/);
+  assert.match(context.dailyRingsSvg(null), /is-empty/);
 });
 
 test('daily activity and credit nodes reuse one theme-aware colored popover', () => {
@@ -160,27 +182,48 @@ test('growth status colors reuse WorkBuddy primary theme constants', () => {
 });
 
 test('growth actions open the official center and never write through local growth routes', async () => {
-  assert.match(inject, /https:\/\/www\.workbuddy\.cn\/profile\/growth-center/);
+  assert.match(inject, /profile\/growth-center\?fromSource=gwzcw\.15291246/);
+  assert.match(inject, /\/console\/client-login\?code=/);
+  assert.match(inject, /request-device-auth-code-result/);
   assert.match(inject, /data-wbs-growth-official/);
   assert.match(inject, /api\('\/api\/open-url'/);
   assert.match(inject, /\/api\/growth\/daily-progress/);
-  const source = inject.match(/function openOfficialGrowthCenter\(\) \{[\s\S]*?\n    \}/);
-  assert.ok(source);
-  const calls = [];
-  const open = Function('api', 'toast', 'root', source[0] + '\nreturn openOfficialGrowthCenter;')(
+  const helperStart = inject.indexOf('    var OFFICIAL_GROWTH_TARGET');
+  const helperEnd = inject.indexOf('    function confirmCurrentGrowthAccount', helperStart);
+  assert.ok(helperStart > 0 && helperEnd > helperStart);
+  const source = inject.slice(helperStart, helperEnd);
+  const calls = [], listeners = {};
+  const adapter = {
+    on(event, handler) { listeners[event] = handler; return () => { delete listeners[event]; }; },
+    emit(event) { assert.equal(event, 'request-device-auth-code'); setImmediate(() => listeners['request-device-auth-code-result']({ success: true, deviceCode: 'device-123' })); },
+    openExternal(url) { calls.push({ route: 'openExternal', url }); return Promise.resolve(); },
+  };
+  const open = Function('api', 'toast', 'root', 'findWbsAdapter', 'window', 'PROFILE_ID', source + '\nreturn openOfficialGrowthCenter;')(
     (route, options) => { calls.push({ route, options }); return Promise.resolve(); },
     () => assert.fail('opening the official site should not toast success'),
-    {}
+    {}, () => adapter, { __wbsAdapter: adapter }, 'workbuddy-cn'
   );
-  open();
+  await open();
   assert.equal(calls.length, 1);
-  assert.equal(calls[0].route, '/api/open-url');
-  assert.deepEqual(JSON.parse(calls[0].options.body), { url: 'https://www.workbuddy.cn/profile/growth-center' });
-  await Promise.resolve();
+  assert.equal(calls[0].route, 'openExternal');
+  const opened = new URL(calls[0].url);
+  assert.equal(opened.origin, 'https://www.workbuddy.cn');
+  assert.equal(opened.pathname, '/console/client-login');
+  assert.equal(opened.searchParams.get('code'), 'device-123');
+  assert.match(opened.searchParams.get('target'), /^\/profile\/growth-center\?fromSource=gwzcw\.15291246/);
   for (const suffix of ['tasks/accept', 'tasks/accept-all', 'buddy/first', 'buddy/travel/claim', 'buddy/select', 'buddy/travel/depart', 'buddy/open', 'lottery/draw']) {
     assert.doesNotMatch(inject, new RegExp('/api/growth/' + suffix));
     assert.doesNotMatch(daemon, new RegExp("p === '/api/growth/" + suffix + "'"));
   }
+});
+
+test('modern adapter shim forwards the official login event and external-open methods', () => {
+  const start = inject.indexOf('    function findWbsAdapter()');
+  const end = inject.indexOf('    function bootstrapModernQueueBridge()', start);
+  assert.ok(start > 0 && end > start);
+  const adapterSource = inject.slice(start, end);
+  assert.match(adapterSource, /\['on', 'emit', 'openExternal'\]/);
+  assert.match(adapterSource, /target\[m\]\.apply\(target, arguments\)/);
 });
 
 test('growth window buttons use the live current account and leave other accounts untouched', async () => {

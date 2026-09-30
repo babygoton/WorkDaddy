@@ -6,7 +6,7 @@ const vm = require('node:vm');
 const crypto = require('node:crypto');
 const source = fs.readFileSync(require.resolve('../scripts/daemon.js'), 'utf8');
 
-function harness({ kind = 'workbuddy', owner = 'target', connected = true, reject = false, status = 'copied' } = {}) {
+function harness({ kind = 'workbuddy', owner = 'target', connected = true, reject = false, status = 'copied', openSessionId = '' } = {}) {
   const stored = new Set(), visible = new Set(), calls = [];
   let activeSession = 'existing-session';
   const ctx = { crypto, Date, PROFILE: { kind }, cdp: { connected },
@@ -42,7 +42,7 @@ function harness({ kind = 'workbuddy', owner = 'target', connected = true, rejec
   const start = source.indexOf('function startAutoCopyJob(');
   vm.runInNewContext(source.slice(start, source.indexOf('function activeAutoCopyJob(', start)), ctx);
   return { stored, visible, calls, active: () => activeSession, run: async () => {
-    const job = ctx.startAutoCopyJob('source', 'target', []);
+    const job = ctx.startAutoCopyJob('source', 'target', [], { openSessionId });
     await ctx.autoCopyQueue[0].run();
     return job;
   } };
@@ -64,6 +64,20 @@ for (const options of [{ kind: 'codebuddy' }, { owner: 'other-account' }, { conn
     assert.equal(h.calls.length, 0);
   });
 }
+
+test('an opened session still refreshes the official list when its copy is unchanged', async () => {
+  const h = harness({ status: 'skipped', openSessionId: 'a' });
+  const job = await h.run();
+  assert.equal(job.status, 'done');
+  assert.equal(h.calls.length, 1, 'the active session needs hydration even when its files were already present');
+});
+
+test('explicit migration wires the same official list refresh seam', () => {
+  const routeStart = source.indexOf("if (req.method === 'POST' && p === '/api/sessions/migrate')");
+  assert.notEqual(routeStart, -1);
+  const route = source.slice(routeStart, routeStart + 2200);
+  assert.match(route, /await refreshWorkBuddySessionList\(String\(\(currentAccount\(\) \|\| \{\}\)\.uid \|\| ''\)\.trim\(\), 'sessions-migrate'\)/);
+});
 
 test('an unavailable renderer never turns a committed session copy into failure', async () => {
   const h = harness({ reject: true });

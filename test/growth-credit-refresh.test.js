@@ -17,7 +17,9 @@ function section(start, end) {
 
 test('growth action links never claim rewards or refresh credits locally', () => {
   const actions = section('    function openOfficialGrowthCenter()', '    function setupDailyProgressPopover()');
-  assert.match(actions, /https:\/\/www\.workbuddy\.cn\/profile\/growth-center/);
+  assert.match(actions, /OFFICIAL_GROWTH_TARGET/);
+  assert.match(actions, /requestGrowthDeviceCode/);
+  assert.match(actions, /growthClientLoginUrl/);
   assert.doesNotMatch(actions, /refreshCreditForAccount|\/api\/growth\//);
 });
 

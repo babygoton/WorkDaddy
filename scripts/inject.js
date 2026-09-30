@@ -1149,7 +1149,8 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '正在取消导出…': 'Cancelling export…', '会话导出已取消': 'Session export cancelled',
     '正在导出会话，请等待完成或取消': 'An export is already running. Wait or cancel it.',
     '下载目录空间不足，请释放空间后重试': 'Downloads is out of space. Free up space and retry.',
-    '会话导出完成': 'Session export complete', '会话导出失败': 'Session export failed',
+    '后台运行': 'Run in background', '会话导出完成': 'Session export complete', '会话导出失败': 'Session export failed',
+    'WorkBuddy 登录桥接不可用': 'WorkBuddy login bridge unavailable',
     '导出进度暂时无法读取，正在重试…': 'Could not read export progress. Retrying…',
     '取消导出': 'Cancel export', '打开导出目录': 'Open export folder',
     '导出进度': 'Export progress', '导出任务不存在': 'Export job not found', '导出尚未完成': 'Export is not finished',
@@ -1428,7 +1429,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '开启后批量删除不再弹确认；为防误删，所有删除强制先进废纸篓/回收站': 'Bulk delete skips dialogs; to prevent mistakes, all deletes go to Trash first',
     '开启后 wsl、reg、sc、schtasks 等系统管理工具直接运行，不再确认': 'System admin tools like wsl, reg, sc, schtasks run directly without confirmation',
     '开启后仍有确认弹窗时自动替你点「允许」，所有自动批准记录在审计日志': 'Auto-clicks “Allow” on remaining dialogs; all auto-approvals are logged',
-    '在会话左侧显示消息索引': 'Show the message index on the left side of sessions', '选中会话消息中的文字后显示引用按钮': 'Show the quote button after selecting session message text',
+    '在会话左侧显示消息索引': 'Show the message index on the left side of sessions', '用户提示词列表': 'User prompt list', '选中会话消息中的文字后显示引用按钮': 'Show the quote button after selecting session message text',
     '状态机日志': 'state machine log', '监控激活会话中': 'Monitoring active sessions',
     '更换头像': 'Change avatar', '黑色半透明遮罩，压暗背景图': 'Black translucent overlay that dims the wallpaper',
     '机器人自动停靠': 'Auto-dock robot', '闲置 5 秒后收起到窗口右侧，鼠标靠近边缘展开': 'Tuck into the right edge after 5 idle seconds; move near the edge to reveal',
@@ -2087,9 +2088,13 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
 
   function checkinHtml(a) {
     if (WBS_PROFILE_IS_AI || CAPS.checkin === false) return '';
-    var c = a && a.checkin;
-    var checked = !!(c && c.ok && !c.inactive);
+    var checked = isCheckedInToday(a);
     return '<span class="wbs-ck wbs-checkin-tag ' + (checked ? 'ok' : 'pending') + '" title="' + (checked ? '今日已签到' : '今日未签到') + '">' + (checked ? '今日已签到' : '今日未签到') + '</span>';
+  }
+
+  function isCheckedInToday(a) {
+    var c = a && a.checkin;
+    return !!(c && c.ok && !c.inactive);
   }
 
   function activityStreakHtml(a) {
@@ -4107,6 +4112,10 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       var root = null;
       var rail = null;
       var tooltip = null;
+      var detail = null;
+      var previewRow = null;
+      var anchorButton = null;
+      var promptRows = Object.create(null);
       var turns = [];
       var buttons = Object.create(null);
       var activeId = null;
@@ -4114,6 +4123,8 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       var scrollElement = null;
       var syncTimer = null;
       var tooltipTimer = null;
+      var scrollbarTimers = new Map();
+      var centeredScrollTop = null;
       var activeFrame = null;
       var dragPointerId = null;
       var dragLastIndex = -1;
@@ -4167,10 +4178,17 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         tooltip = document.createElement('div');
         tooltip.className = 'wbs-message-nav-tooltip';
         tooltip.id = 'wbs-message-nav-tooltip';
-        tooltip.setAttribute('role', 'tooltip');
+        tooltip.classList.add('wbs-message-nav-list');
+        tooltip.setAttribute('role', 'navigation');
+        tooltip.setAttribute('aria-label', '用户提示词列表');
         tooltip.hidden = true;
+        detail = el('div', 'wbs-message-nav-tooltip wbs-message-nav-detail');
+        detail.id = 'wbs-message-nav-detail';
+        detail.setAttribute('role', 'tooltip');
+        detail.hidden = true;
         root.appendChild(rail);
         root.appendChild(tooltip);
+        root.appendChild(detail);
         // 挂 document.body：view 容器祖先里的 transform（_gridViewItem_* 恒等矩阵）
         // 会劫持 position:fixed 的 containing block，使视口坐标偏移。
         var mount = document.body;
@@ -4188,6 +4206,11 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         listen(root, 'pointerup', onNavPointerUp);
         listen(root, 'pointercancel', onNavPointerCancel);
         listen(root, 'lostpointercapture', onNavPointerCancel);
+        listen(tooltip, 'scroll', onFlyoutScroll, { passive: true });
+        listen(detail, 'scroll', onFlyoutScroll, { passive: true });
+        ['pointerdown', 'pointerup', 'click', 'keydown', 'wheel'].forEach(function (type) {
+          listen(root, type, function (event) { event.stopPropagation(); });
+        });
       }
 
       function position() {
@@ -4199,16 +4222,17 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         }
         root.style.display = 'block';
         var railChrome = 14;
-        var desiredRailHeight = Math.max(36, turns.length * 12 + railChrome);
+        var markerCount = Math.min(20, turns.length);
+        var desiredRailHeight = Math.max(36, markerCount * 12 + railChrome);
         var railHeight = Math.min(desiredRailHeight, rect.height);
         var markerHeight = Math.max(1, Math.min(12,
-          (railHeight - Math.min(railChrome, railHeight)) / Math.max(1, turns.length)));
+          (railHeight - Math.min(railChrome, railHeight)) / Math.max(1, markerCount)));
         root.style.height = railHeight + 'px';
         root.style.top = (rect.top + (rect.height - railHeight) / 2) + 'px';
         var left = rect.left + 12;
         root.style.left = Math.max(8, Math.min(window.innerWidth - 28, left)) + 'px';
         root.style.setProperty('--wbs-message-nav-marker-height', markerHeight + 'px');
-        root.style.setProperty('--wbs-message-nav-tooltip-max', Math.max(160, Math.min(320, window.innerWidth * 0.32)) + 'px');
+        positionFlyouts();
       }
 
       function setActive(id) {
@@ -4216,9 +4240,13 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         Object.keys(buttons).forEach(function (key) {
           var button = buttons[key];
           if (!button) return;
-          if (key === activeId) button.setAttribute('aria-current', 'true');
+          var selected = button === buttons[activeId];
+          if (selected) button.setAttribute('aria-current', 'true');
           else button.removeAttribute('aria-current');
-          button.classList.toggle('is-active', key === activeId);
+          button.classList.toggle('is-active', selected);
+          var row = promptRows[key];
+          if (row && key === activeId) row.setAttribute('aria-current', 'true');
+          else if (row) row.removeAttribute('aria-current');
         });
       }
 
@@ -4228,50 +4256,139 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
           if (!tooltip) return;
           tooltip.hidden = true;
           tooltip.classList.remove('is-visible');
+          if (anchorButton) anchorButton.setAttribute('aria-expanded', 'false');
+          anchorButton = null;
+          hideDetail();
+          clearScrolling(tooltip);
+          centeredScrollTop = null;
         };
         if (immediate) close();
-        else tooltipTimer = setBuildTimeout(close, 90);
+        else tooltipTimer = setBuildTimeout(close, 220);
       }
 
       function showTooltip(turn, button) {
         if (!tooltip || !turn || !button) return;
         if (tooltipTimer) { clearTimeout(tooltipTimer); tooltipTimer = null; }
-        tooltip.textContent = '';
-        var prompt = el('div', 'wbs-message-nav-prompt', messageText(turn.userMessage, 240) || '用户消息');
-        tooltip.appendChild(prompt);
-        var response = messageText(turn.assistantMessage, 320);
-        if (response) tooltip.appendChild(el('div', 'wbs-message-nav-response', response));
+        if (!tooltip.hidden && anchorButton === button) return;
+        if (anchorButton) anchorButton.setAttribute('aria-expanded', 'false');
+        anchorButton = button;
+        button.setAttribute('aria-expanded', 'true');
+        hideDetail();
         tooltip.hidden = false;
         tooltip.classList.add('is-visible');
-        var buttonRect = button.getBoundingClientRect();
+        positionFlyouts();
+        var row = promptRows[turn.id];
+        if (row) {
+          var previousTop = tooltip.scrollTop;
+          tooltip.scrollTop = row.offsetTop - tooltip.clientHeight / 2 + row.offsetHeight / 2;
+          centeredScrollTop = tooltip.scrollTop !== previousTop ? tooltip.scrollTop : null;
+        }
+      }
+
+      function clearScrolling(flyout) {
+        if (!flyout) return;
+        if (scrollbarTimers.has(flyout)) clearTimeout(scrollbarTimers.get(flyout));
+        scrollbarTimers.delete(flyout);
+        flyout.classList.remove('is-scrolling');
+      }
+
+      function onFlyoutScroll(event) {
+        var flyout = event.currentTarget;
+        if (!flyout || flyout.hidden) return;
+        // 打开列表时自动居中不算用户滚动，避免刚悬停就闪现滚动条。
+        if (flyout === tooltip && centeredScrollTop !== null) {
+          var centered = flyout.scrollTop === centeredScrollTop;
+          centeredScrollTop = null;
+          if (centered) return;
+        }
+        clearScrolling(flyout);
+        flyout.classList.add('is-scrolling');
+        scrollbarTimers.set(flyout, setBuildTimeout(function () { clearScrolling(flyout); }, 700));
+      }
+
+      function hideDetail() {
+        if (previewRow) previewRow.classList.remove('is-preview');
+        previewRow = null;
+        if (detail) { detail.hidden = true; detail.classList.remove('is-visible'); }
+        clearScrolling(detail);
+      }
+
+      function showDetail(turn, row) {
+        if (!detail || !turn || !row) return;
+        hideDetail();
+        previewRow = row;
+        row.classList.add('is-preview');
+        detail.textContent = '';
+        var prompt = el('div', 'wbs-message-nav-prompt', messageText(turn.userMessage, 240) || '用户消息');
+        detail.appendChild(prompt);
+        var response = messageText(turn.assistantMessage, 1600);
+        if (response) detail.appendChild(el('div', 'wbs-message-nav-response', response));
+        detail.hidden = false;
+        detail.classList.add('is-visible');
+        positionFlyouts();
+      }
+
+      function positionFlyouts() {
+        if (!tooltip || tooltip.hidden || !anchorButton) return;
+        var margin = 8, gap = 8;
+        // 为右侧详情预留空间；窄窗口同时缩小两列，避免详情覆盖列表或超出视口。
         var rootRect = root.getBoundingClientRect();
-        var leftSpace = Math.max(0, rootRect.left - 12);
-        var rightSpace = Math.max(0, window.innerWidth - rootRect.right - 12);
-        var side = rightSpace >= leftSpace ? 'right' : 'left';
-        var available = side === 'right' ? rightSpace : leftSpace;
-        var preferred = Math.max(160, Math.min(320, window.innerWidth * 0.32));
-        tooltip.style.width = Math.max(120, Math.min(preferred, available)) + 'px';
-        var top = buttonRect.top - rootRect.top + buttonRect.height / 2;
-        var tooltipHeight = tooltip.getBoundingClientRect().height || 80;
-        tooltip.style.top = Math.max(tooltipHeight / 2, Math.min(rootRect.height - tooltipHeight / 2, top)) + 'px';
-        tooltip.classList.toggle('is-left', side === 'left');
-        tooltip.classList.toggle('is-right', side === 'right');
+        var left = Math.max(margin, Math.min(rootRect.right + gap, window.innerWidth - margin - 160));
+        var available = Math.max(0, window.innerWidth - left - margin - gap);
+        var listWidth = Math.min(380, available * 0.46);
+        var detailWidth = Math.min(440, available - listWidth);
+        tooltip.style.width = listWidth + 'px';
+        tooltip.style.left = left + 'px';
+        var buttonRect = anchorButton.getBoundingClientRect();
+        var height = tooltip.getBoundingClientRect().height;
+        tooltip.style.top = Math.max(margin, Math.min(window.innerHeight - height - margin,
+          buttonRect.top + buttonRect.height / 2 - height / 2)) + 'px';
+        if (!detail || detail.hidden || !previewRow) return;
+        var rowRect = previewRow.getBoundingClientRect();
+        var listRect = tooltip.getBoundingClientRect();
+        if (rowRect.bottom <= listRect.top || rowRect.top >= listRect.bottom) { hideDetail(); return; }
+        detail.style.width = detailWidth + 'px';
+        detail.style.left = (left + listWidth + gap) + 'px';
+        detail.style.top = Math.max(margin, Math.min(window.innerHeight - detail.getBoundingClientRect().height - margin,
+          rowRect.top)) + 'px';
+      }
+
+      function markerTurnIndices(count) {
+        var size = Math.min(20, count), indices = [];
+        for (var i = 0; i < size; i++) indices.push(size === 1 ? 0 : Math.round(i * (count - 1) / (size - 1)));
+        return indices;
       }
 
       function render() {
         if (!rail) return;
+        hideTooltip(true);
         rail.textContent = '';
+        tooltip.textContent = '';
         buttons = Object.create(null);
-        for (var i = 0; i < turns.length; i++) {
-          var turn = turns[i];
+        promptRows = Object.create(null);
+        var indices = markerTurnIndices(turns.length);
+        for (var i = 0; i < indices.length; i++) {
+          var turn = turns[indices[i]];
           var button = el('button', 'wbs-message-nav-marker');
           button.type = 'button';
           button.setAttribute('data-wbs-message-nav-id', turn.id);
-          button.setAttribute('aria-label', '定位到第 ' + (i + 1) + ' 条用户消息');
-          button.setAttribute('aria-describedby', tooltip.id);
+          button.setAttribute('aria-label', '定位到第 ' + (indices[i] + 1) + ' 条用户消息');
+          button.setAttribute('aria-controls', tooltip.id);
+          button.setAttribute('aria-expanded', 'false');
           button.appendChild(el('span', 'wbs-message-nav-dot'));
           rail.appendChild(button);
           buttons[turn.id] = button;
+        }
+        for (var ti = 0, nearest = 0; ti < turns.length; ti++) {
+          if (nearest + 1 < indices.length && ti - indices[nearest] > indices[nearest + 1] - ti) nearest++;
+          buttons[turns[ti].id] = rail.children[nearest];
+          // 长提示词可达数万字；CSS ellipsis 仍会排版全文，必须先限制单行预览的 DOM 文本量。
+          var row = el('button', 'wbs-message-nav-row', messageText(turns[ti].userMessage, 240) || '用户消息');
+          row.type = 'button';
+          row.setAttribute('data-wbs-message-nav-id', turns[ti].id);
+          row.setAttribute('aria-describedby', detail.id);
+          tooltip.appendChild(row);
+          promptRows[turns[ti].id] = row;
         }
         setActive(activeId || (turns[0] && turns[0].id));
       }
@@ -4334,11 +4451,13 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
           renderedSignature = signature;
           render();
         }
+        if (previewRow) showDetail(turnForButton(previewRow), previewRow);
         position();
         scheduleActive();
       }
 
       function unbindStore() {
+        hideTooltip(true);
         if (unsubscribeStore) {
           try { unsubscribeStore(); } catch (_) {}
         }
@@ -4466,7 +4585,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         var turn = turnForButton(button);
         if (!button || !turn) return;
         dragPointerId = event.pointerId;
-        dragLastIndex = Array.prototype.indexOf.call(rail.children, button);
+        dragLastIndex = turns.indexOf(turn);
         root.classList.add('is-dragging');
         try { rail.setPointerCapture(event.pointerId); } catch (_) {}
         navigateToTurn(turn, true);
@@ -4506,18 +4625,29 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       function onNavPointerCancel(event) { finishNavDrag(event, true); }
       function onPointerOver(event) {
         if (dragPointerId != null) return;
+        if (tooltipTimer) { clearTimeout(tooltipTimer); tooltipTimer = null; }
+        var row = event.target && event.target.closest ? event.target.closest('.wbs-message-nav-row') : null;
+        if (row) { showDetail(turnForButton(row), row); return; }
         var button = event.target && event.target.closest ? event.target.closest('.wbs-message-nav-marker') : null;
+        if (!button && rail && rail.contains(event.target)) {
+          var nearestTurn = turns[dragIndexAt(event.clientY)];
+          button = nearestTurn && buttons[nearestTurn.id];
+        }
         if (button) showTooltip(turnForButton(button), button);
       }
       function onPointerOut(event) {
         if (dragPointerId != null) return;
-        var from = event.target && event.target.closest ? event.target.closest('.wbs-message-nav-marker') : null;
-        var to = event.relatedTarget && event.relatedTarget.closest ? event.relatedTarget.closest('.wbs-message-nav-marker') : null;
-        if (from && from !== to) hideTooltip(false);
+        if (!event.relatedTarget || !root.contains(event.relatedTarget)) hideTooltip(false);
       }
       function onFocusIn(event) {
-        var button = event.target && event.target.closest ? event.target.closest('.wbs-message-nav-marker') : null;
-        if (button) showTooltip(turnForButton(button), button);
+        var row = event.target && event.target.closest ? event.target.closest('.wbs-message-nav-row') : null;
+        if (row && tooltip) {
+          if (row.offsetTop < tooltip.scrollTop) tooltip.scrollTop = row.offsetTop;
+          else if (row.offsetTop + row.offsetHeight > tooltip.scrollTop + tooltip.clientHeight) {
+            tooltip.scrollTop = row.offsetTop + row.offsetHeight - tooltip.clientHeight;
+          }
+        }
+        onPointerOver(event);
       }
       function onFocusOut(event) {
         if (dragPointerId != null) return;
@@ -4530,13 +4660,25 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
           event.preventDefault();
           return;
         }
-        var button = event.target && event.target.closest ? event.target.closest('.wbs-message-nav-marker') : null;
+        var button = event.target && event.target.closest ? event.target.closest('.wbs-message-nav-marker, .wbs-message-nav-row') : null;
         var turn = turnForButton(button);
         if (!button || !turn) return;
         navigateToTurn(turn, false);
       }
       function onKeyDown(event) {
         if (event.key === 'Escape') { hideTooltip(true); return; }
+        var row = event.target && event.target.closest ? event.target.closest('.wbs-message-nav-row') : null;
+        if (row && (event.key === 'ArrowDown' || event.key === 'ArrowUp')) {
+          var sibling = event.key === 'ArrowDown' ? row.nextElementSibling : row.previousElementSibling;
+          event.preventDefault();
+          if (sibling) sibling.focus();
+          return;
+        }
+        if (event.key === 'ArrowRight') {
+          var turn = turnForButton(event.target);
+          if (turn && promptRows[turn.id] && !tooltip.hidden) { event.preventDefault(); promptRows[turn.id].focus(); }
+          return;
+        }
         if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
         var current = event.target && event.target.closest ? event.target.closest('.wbs-message-nav-marker') : null;
         if (!current) return;
@@ -4544,7 +4686,10 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         var next = event.key === 'ArrowDown' ? index + 1 : index - 1;
         if (next >= 0 && next < rail.children.length) { event.preventDefault(); rail.children[next].focus(); }
       }
-      function onWindowChange() { position(); scheduleActive(); }
+      function onWindowChange(event) {
+        if (event && root && root.contains(event.target)) { positionFlyouts(); return; }
+        position(); scheduleActive();
+      }
 
       listen(window, 'resize', onWindowChange);
       listen(window, 'scroll', onWindowChange, true);
@@ -5030,6 +5175,17 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       // Composer content-block requests are handled by WorkBuddy's Slate owner.
       // Keep the original receiver so prototype methods retain their context.
       ['requestInsertContentBlocks', 'requestSendPrompt', 'onInsertContentBlocksRequest'].forEach(function (m) {
+        if (typeof target[m] === 'function') {
+          shim[m] = function () {
+            return target[m].apply(target, arguments);
+          };
+        }
+      });
+      // The official growth-center flow uses the adapter event bus to mint a
+      // one-time device code, then opens the client-login bridge. Keep these
+      // methods on the compatibility shim so injected features can use the
+      // same authenticated navigation as WorkBuddy itself.
+      ['on', 'emit', 'openExternal'].forEach(function (m) {
         if (typeof target[m] === 'function') {
           shim[m] = function () {
             return target[m].apply(target, arguments);
@@ -6211,7 +6367,14 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       button.setAttribute('aria-controls', popup.id);
       mountPersistentOverlay(popup);
       var hideTimer;
-      function hide() { clearTimeout(hideTimer); popup.hidden = true; button.setAttribute('aria-expanded', 'false'); }
+      var scrollIdleTimer, scrollingNode;
+      function clearSummaryScrolling() {
+        clearTimeout(scrollIdleTimer);
+        scrollIdleTimer = null;
+        if (scrollingNode) scrollingNode.classList.remove('is-scrolling');
+        scrollingNode = null;
+      }
+      function hide() { clearTimeout(hideTimer); clearSummaryScrolling(); popup.hidden = true; button.setAttribute('aria-expanded', 'false'); }
       function deferHide() { clearTimeout(hideTimer); hideTimer = setBuildTimeout(hide, 160); }
       function show() {
         clearTimeout(hideTimer);
@@ -6259,7 +6422,13 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       listen(popup, 'mouseenter', function () { clearTimeout(hideTimer); });
       listen(popup, 'mouseleave', deferHide);
       listen(popup, 'wheel', function (event) { event.stopPropagation(); });
-      listen(popup, 'scroll', hideCreditTooltip, true);
+      listen(popup, 'scroll', function (event) {
+        hideCreditTooltip();
+        clearSummaryScrolling();
+        scrollingNode = event.target;
+        scrollingNode.classList.add('is-scrolling');
+        scrollIdleTimer = setBuildTimeout(clearSummaryScrolling, 700);
+      }, true);
       listen(popup, 'pointerdown', function (event) { event.stopPropagation(); });
       listen(window, 'resize', hide);
       listen(accountsPane, 'scroll', hide, true);
@@ -6268,10 +6437,92 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       registerDisposer(function () { hide(); popup.remove(); });
     }
 
-    function openOfficialGrowthCenter() {
-      api('/api/open-url', { method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ url: 'https://www.workbuddy.cn/profile/growth-center' })
+    var OFFICIAL_GROWTH_TARGET = '/profile/growth-center?fromSource=gwzcw.15291246.15291246.15291246&utm_medium=cpc&utm_id=gwzcw.15291246.15291246.15291246';
+
+    function officialWebsiteOrigin() {
+      if (PROFILE_ID === 'workbuddy-ai') return 'https://www.workbuddy.ai';
+      if (PROFILE_ID === 'codebuddy-intl') return 'https://www.codebuddy.ai';
+      if (PROFILE_ID === 'codebuddy-cn') return 'https://www.codebuddy.cn';
+      return 'https://www.workbuddy.cn';
+    }
+
+    function requestGrowthDeviceCode(adapter, timeout) {
+      return new Promise(function (resolve, reject) {
+        if (!adapter || typeof adapter.on !== 'function' || typeof adapter.emit !== 'function') {
+          reject(new Error('WorkBuddy 登录桥接不可用'));
+          return;
+        }
+        var settled = false;
+        var timer = null;
+        var unsubscribe = null;
+        function cleanup() {
+          if (timer) clearTimeout(timer);
+          timer = null;
+          if (typeof unsubscribe === 'function') {
+            try { unsubscribe(); } catch (_) {}
+          } else if (typeof adapter.off === 'function') {
+            try { adapter.off('request-device-auth-code-result', onResult); } catch (_) {}
+          }
+        }
+        function finish(error, value) {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          if (error) reject(error); else resolve(value);
+        }
+        function onResult(data) {
+          var result = data || {};
+          var code = result.deviceCode || result.code;
+          if (result.success === false || !code) {
+            finish(new Error(result.message || 'deviceCode is empty'));
+            return;
+          }
+          finish(null, String(code));
+        }
+        try {
+          unsubscribe = adapter.on('request-device-auth-code-result', onResult);
+          timer = setTimeout(function () { finish(new Error('request-device-auth-code timeout')); }, Number(timeout) > 0 ? Number(timeout) : 10000);
+          adapter.emit('request-device-auth-code');
+        } catch (error) {
+          finish(error);
+        }
+      });
+    }
+
+    function growthClientLoginUrl(origin, target, deviceCode) {
+      return origin + '/console/client-login?code=' + encodeURIComponent(deviceCode) + '&target=' + encodeURIComponent(target);
+    }
+
+    function openGrowthExternal(url, adapter) {
+      if (adapter && typeof adapter.openExternal === 'function') {
+        try {
+          return Promise.resolve(adapter.openExternal(url)).catch(function () { return openGrowthViaApi(url); });
+        } catch (_) {}
+      }
+      return openGrowthViaApi(url);
+    }
+
+    function openGrowthViaApi(url) {
+      return api('/api/open-url', { method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ url: url })
       }).catch(function (error) { toast(error.message || '无法打开官方成长中心', true, root); });
+    }
+
+    function openOfficialGrowthCenter() {
+      var origin = officialWebsiteOrigin();
+      var directUrl = origin + OFFICIAL_GROWTH_TARGET;
+      var adapter = null;
+      try { adapter = window.__wbsAdapter || findWbsAdapter(); } catch (_) {}
+      if (!adapter || typeof adapter.on !== 'function' || typeof adapter.emit !== 'function') {
+        return openGrowthViaApi(directUrl);
+      }
+      return requestGrowthDeviceCode(adapter, 10000).then(function (deviceCode) {
+        return openGrowthExternal(growthClientLoginUrl(origin, OFFICIAL_GROWTH_TARGET, deviceCode), adapter);
+      }).catch(function () {
+        // Keep the action usable on older/private builds without the official
+        // device-code bridge; the direct page may ask the browser to sign in.
+        return openGrowthViaApi(directUrl);
+      });
     }
 
     function confirmCurrentGrowthAccount(uid) {
@@ -8367,9 +8618,11 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         '<button class="wbs-sess-bbtn wbs-sess-done" type="button" id="wbs-sess-done">取消</button>' +
         '</div>' +
         '</div>' +
-        '<div class="wbs-sess-export-progress" id="wbs-sess-export-progress" role="status" aria-live="polite" hidden>' +
-        '<div class="wbs-sess-export-head"><strong data-export-title></strong><button type="button" class="wbs-sess-bbtn" data-export-cancel>取消导出</button><button type="button" class="wbs-sess-bbtn" data-export-open hidden>打开导出目录</button></div>' +
-        '<progress data-export-progress max="100" aria-label="导出进度"></progress><div data-export-detail></div></div>' +
+        '<div class="wbs-modal-mask wbs-modal-mask-panel wbs-sess-export-progress" id="wbs-sess-export-progress" hidden>' +
+        '<div class="wbs-modal wbs-sess-export-dialog" role="dialog" aria-modal="true" aria-labelledby="wbs-export-title" aria-describedby="wbs-export-detail">' +
+        '<div class="wbs-modal-title" id="wbs-export-title" data-export-title></div>' +
+        '<div class="wbs-modal-body" aria-live="polite"><progress data-export-progress max="100" aria-label="导出进度"></progress><div id="wbs-export-detail" data-export-detail></div></div>' +
+        '<div class="wbs-modal-actions"><button type="button" class="wbs-modal-btn" data-export-cancel>取消导出</button><button type="button" class="wbs-modal-btn" data-export-close>关闭</button><button type="button" class="wbs-modal-btn wbs-modal-ok" data-export-open hidden>打开导出目录</button></div></div></div>' +
         '<div class="wbs-sess-copy-progress" id="wbs-sess-copy-progress" role="status" aria-live="polite" hidden>' +
         '<div class="wbs-sess-copy-head"><span class="wbs-sess-copy-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></span><strong class="wbs-sess-copy-title">正在同步会话</strong></div>' +
         '<div class="wbs-sess-copy-detail"></div><div class="wbs-sess-copy-track" role="progressbar" aria-label="会话同步进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span class="wbs-sess-copy-fill"></span></div>' +
@@ -8397,10 +8650,11 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     }
 
     function renderSessionExport(job) {
-      var card = sessionsPane && sessionsPane.querySelector('#wbs-sess-export-progress');
+      var card = sessionsState.exportModal || (sessionsPane && sessionsPane.querySelector('#wbs-sess-export-progress'));
       if (!card) return;
       sessionsState.exportJob = job;
-      card.hidden = !job;
+      var wasHidden = card.hidden;
+      card.hidden = !job || sessionsState.exportDismissed === job.id + ':' + (job.running ? 'running' : job.status);
       var button = sessionsPane.querySelector('#wbs-sess-export');
       if (button) button.disabled = !!(job && job.running);
       if (!job) return;
@@ -8413,6 +8667,19 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       card.querySelector('[data-export-cancel]').hidden = !job.running;
       card.querySelector('[data-export-cancel]').disabled = job.status === 'cancelling';
       card.querySelector('[data-export-open]').hidden = job.status !== 'completed';
+      card.querySelector('[data-export-close]').textContent = job.running ? wbsTranslateString('后台运行', WBS_LANGUAGE) : wbsTranslateString('关闭', WBS_LANGUAGE);
+      if (wasHidden && !card.hidden) setBuildTimeout(function () {
+        if (alive && !card.hidden) card.querySelector('[data-export-close]').focus();
+      }, 0);
+    }
+
+    function dismissSessionExport() {
+      var job = sessionsState.exportJob;
+      if (!job) return;
+      sessionsState.exportDismissed = job.id + ':' + (job.running ? 'running' : job.status);
+      renderSessionExport(job);
+      var button = sessionsPane && sessionsPane.querySelector('#wbs-sess-export');
+      if (button && !button.disabled) button.focus();
     }
 
     function pollSessionExport(id) {
@@ -8426,7 +8693,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       }).catch(function (error) {
         if (!alive || serial !== sessionsState.exportReadSerial) return;
         if (error.payload && error.payload.code === 'EXPORT_JOB_NOT_FOUND') return pollSessionExport();
-        var detail = sessionsPane && sessionsPane.querySelector('[data-export-detail]');
+        var detail = sessionsState.exportModal && sessionsState.exportModal.querySelector('[data-export-detail]');
         if (detail && sessionsState.exportJob) detail.textContent = '导出进度暂时无法读取，正在重试…';
         sessionsState.exportPollTimer = setBuildTimeout(function () { pollSessionExport(id); }, 2500);
       });
@@ -8837,6 +9104,32 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     function wireSessionsPane() {
       var exportCard = sessionsPane.querySelector('#wbs-sess-export-progress');
       if (exportCard) {
+        sessionsState.exportModal = exportCard;
+        // This dialog belongs to the WorkDaddy panel. Appending it to body
+        // puts it in a lower stacking context than .wbs-root, so the panel
+        // can cover the dialog. Keep it inside .wbs-panel and reuse the
+        // panel-scoped modal mask used by the other WorkDaddy dialogs.
+        var panel = root && root.querySelector('.wbs-panel');
+        if (panel) panel.appendChild(exportCard);
+        registerDisposer(function () { exportCard.remove(); });
+        exportCard.querySelector('[data-export-close]').addEventListener('click', dismissSessionExport);
+        exportCard.addEventListener('click', function (event) {
+          event.stopPropagation();
+          if (event.target === exportCard) dismissSessionExport();
+        });
+        ['pointerdown', 'mousedown', 'keyup', 'wheel'].forEach(function (name) {
+          exportCard.addEventListener(name, function (event) { event.stopPropagation(); });
+        });
+        exportCard.addEventListener('keydown', function (event) {
+          event.stopPropagation();
+          if (event.key === 'Escape') { event.preventDefault(); dismissSessionExport(); }
+          if (event.key === 'Tab') {
+            var controls = exportCard.querySelectorAll('button:not([hidden]):not(:disabled)');
+            var first = controls[0], last = controls[controls.length - 1];
+            if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+            else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+          }
+        });
         exportCard.querySelector('[data-export-cancel]').addEventListener('click', function () {
           var job = sessionsState.exportJob;
           if (!job || !job.running) return;
@@ -14578,11 +14871,6 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       return merged;
     }
 
-    function clampDailyRatio(value) {
-      var ratio = Number(value);
-      return isFinite(ratio) ? Math.max(0, Math.min(1, ratio)) : 0;
-    }
-
     var WORKBUDDY_CAT_MARK = '__WBS_BUDDY_MARK__';
 
     function dailyProgressLabel(progress) {
@@ -14603,22 +14891,23 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         '，开启盲盒 ' + (Number(gacha.count) || 0) + ' 次，待抽奖 ' + (Number(lottery.count) || 0) + ' 次，' + catText;
     }
 
-    function dailyRingsSvg(progress) {
-      var ready = progress && progress.status === 'ready';
-      var growthRatio = ready ? progress.growth && progress.growth.ratio : 0;
-      var level = (clampDailyRatio(growthRatio) * 100).toFixed(2) + '%';
-      var empty = clampDailyRatio(growthRatio) <= 0;
-      return '<span class="wbs-daily-vessel' + (empty ? ' is-empty' : '') + '" aria-hidden="true" style="--wbs-liquid-level:' + level + ';--wbs-workbuddy-cat:url(' + WORKBUDDY_CAT_MARK + ')">' +
+    function dailyRingsSvg(account) {
+      // The cat badge answers one question: has this account checked in today?
+      // Growth-plan progress remains available in the popover, but must not
+      // make an unchecked account look partially complete.
+      var checkedToday = isCheckedInToday(account);
+      var level = checkedToday ? '100.00%' : '0.00%';
+      var empty = !checkedToday;
+      return '<span class="wbs-daily-vessel' + (checkedToday ? ' is-checked-in' : ' is-empty') + '" aria-hidden="true" style="--wbs-liquid-level:' + level + ';--wbs-workbuddy-cat:url(' + WORKBUDDY_CAT_MARK + ')">' +
         '<span class="wbs-daily-liquid"></span><span class="wbs-daily-cat-mark"></span></span>';
     }
 
     function dailyRingsHtml(account) {
       if (!CAPS.growthDaily || WBS_PROFILE_IS_AI) return '';
       var progress = account && account.dailyProgress;
-      var ready = progress && progress.status === 'ready';
       var label = dailyProgressLabel(progress);
-      return '<button type="button" class="wbs-daily-rings' + (ready ? '' : ' is-loading') + '" tabindex="0" aria-label="' + escAttr(label) + '" aria-controls="wbs-status-popover" aria-expanded="false" data-uid="' + escAttr(account.uid) + '">' +
-        dailyRingsSvg(progress) + activityStreakHtml(account) + '</button>';
+      return '<button type="button" class="wbs-daily-rings" tabindex="0" aria-label="' + escAttr(label) + '" aria-controls="wbs-status-popover" aria-expanded="false" data-uid="' + escAttr(account.uid) + '">' +
+        dailyRingsSvg(account) + activityStreakHtml(account) + '</button>';
     }
 
     function formatDailyTravelCountdown(arriveAt, now) {
@@ -14798,10 +15087,8 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         if (!account) continue;
         var existing = cards[i].querySelector('.wbs-daily-rings');
         if (existing) {
-          var ready = account.dailyProgress && account.dailyProgress.status === 'ready';
-          existing.classList.toggle('is-loading', !ready);
           existing.setAttribute('aria-label', dailyProgressLabel(account.dailyProgress));
-          existing.innerHTML = dailyRingsSvg(account.dailyProgress) + activityStreakHtml(account);
+          existing.innerHTML = dailyRingsSvg(account) + activityStreakHtml(account);
         }
         else {
           var nameGroup = cards[i].querySelector('.wbs-name-group');
@@ -15880,7 +16167,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
               var slot = card.querySelector('.wbs-checkin-slot');
               if (slot) slot.outerHTML = checkinBadgeHtml(current);
               var growthControl = card.querySelector('.wbs-daily-rings');
-              if (growthControl) growthControl.innerHTML = dailyRingsSvg(current.dailyProgress) + activityStreakHtml(current);
+              if (growthControl) growthControl.innerHTML = dailyRingsSvg(current) + activityStreakHtml(current);
             });
           }).then(worker);
       }
@@ -16321,20 +16608,19 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '.wbs-message-nav-rail{display:flex;width:24px;height:100%;box-sizing:border-box;flex-direction:column;align-items:center;justify-content:flex-start;gap:0;overflow:hidden;padding:6px 0;border:1px solid transparent;border-radius:8px;background:color-mix(in srgb,var(--wb-bg-popover,#fff) 16%,transparent);box-shadow:none;backdrop-filter:none;-webkit-backdrop-filter:none;pointer-events:auto;touch-action:none;cursor:pointer;scrollbar-width:none;transition:background-color .18s ease,border-color .18s ease,box-shadow .18s ease,backdrop-filter .18s ease}',
     '.wbs-message-nav-rail:hover,.wbs-message-nav-rail:focus-within{border-color:color-mix(in srgb,var(--wb-border-subtle,#d9dadd) 72%,transparent);background:color-mix(in srgb,var(--wb-bg-popover,#fff) 48%,transparent);box-shadow:0 5px 18px rgba(24,28,36,.10);backdrop-filter:blur(14px) saturate(1.12);-webkit-backdrop-filter:blur(14px) saturate(1.12)}',
     '.wbs-message-nav-rail::-webkit-scrollbar{display:none}',
-    '.wbs-message-nav-marker{display:flex;width:22px;height:var(--wbs-message-nav-marker-height,12px);min-height:var(--wbs-message-nav-marker-height,12px);box-sizing:border-box;flex:0 0 var(--wbs-message-nav-marker-height,12px);align-items:center;justify-content:center;padding:0;border:1px solid transparent;border-radius:4px;background:color-mix(in srgb,var(--wb-bg-popover,#fff) 10%,transparent);color:var(--wb-icon-secondary,#72757d);cursor:pointer;outline:none;transition:background-color .18s ease,color .18s ease,border-color .18s ease,box-shadow .18s ease,backdrop-filter .18s ease}',
-    '.wbs-message-nav-marker:hover,.wbs-message-nav-marker:focus-visible{border-color:var(--wb-border-subtle,rgba(20,24,32,.14));background:color-mix(in srgb,var(--wb-bg-hover,rgba(0,0,0,.06)) 82%,var(--wb-bg-popover,#fff));color:var(--wb-color-text-primary,#1f1f1f);box-shadow:0 3px 10px rgba(24,28,36,.10);backdrop-filter:blur(10px) saturate(1.1);-webkit-backdrop-filter:blur(10px) saturate(1.1)}',
-    '.wbs-message-nav-marker:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb,var(--wb-accent-blue,#4f86ff) 62%,transparent),0 3px 10px rgba(24,28,36,.10)}',
-    '.wbs-message-nav-dot{display:block;width:5px;height:min(2px,var(--wbs-message-nav-marker-height,12px));border-radius:2px;background:currentColor;opacity:.62;transition:width .18s ease,opacity .18s ease}',
-    '.wbs-message-nav-marker:hover .wbs-message-nav-dot,.wbs-message-nav-marker:focus-visible .wbs-message-nav-dot{width:11px;opacity:.82}',
+    '.wbs-message-nav-marker{display:flex;width:22px;height:var(--wbs-message-nav-marker-height,12px);min-height:var(--wbs-message-nav-marker-height,12px);box-sizing:border-box;flex:0 0 var(--wbs-message-nav-marker-height,12px);align-items:center;justify-content:center;padding:0;border:1px solid transparent;border-radius:4px;background:color-mix(in srgb,var(--wb-bg-popover,#fff) 10%,transparent);color:var(--wb-icon-secondary,#72757d);cursor:pointer;outline:none;transition:none}',
+    '.wbs-message-nav-marker:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb,var(--wb-accent-blue,#4f86ff) 62%,transparent)}',
+    '.wbs-message-nav-dot{display:block;width:5px;height:min(2px,var(--wbs-message-nav-marker-height,12px));border-radius:2px;background:currentColor;opacity:.62;transition:none}',
     '.wbs-message-nav-marker.is-active .wbs-message-nav-dot{width:14px;opacity:1}',
-    '.wbs-message-nav-tooltip{position:absolute;width:var(--wbs-message-nav-tooltip-max,300px);max-height:min(42vh,320px);box-sizing:border-box;overflow:hidden;padding:10px 11px;border:1px solid var(--wb-border-subtle,rgba(20,24,32,.14));border-radius:8px;background:color-mix(in srgb,var(--wb-bg-popover,#fff) 84%,transparent);color:var(--wb-color-text-primary,#1f1f1f);box-shadow:0 12px 34px rgba(20,24,32,.18),inset 0 1px 0 rgba(255,255,255,.38);backdrop-filter:blur(22px) saturate(1.24);-webkit-backdrop-filter:blur(22px) saturate(1.24);pointer-events:none;opacity:0;transform:translateY(-50%) translateX(3px);transition:opacity .18s ease,transform .18s ease}',
-    '.wbs-message-nav-tooltip.is-left{right:calc(100% + 10px)}.wbs-message-nav-tooltip.is-right{left:calc(100% + 10px)}',
-    '.wbs-message-nav-tooltip.is-visible{opacity:1;transform:translateY(-50%) translateX(0)}',
+    '.wbs-message-nav-tooltip{position:fixed;max-height:80vh;box-sizing:border-box;overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:transparent transparent;padding:10px 11px;border:1px solid var(--wb-border-subtle,rgba(20,24,32,.14));border-radius:8px;background:color-mix(in srgb,var(--wb-bg-popover,#fff) 84%,transparent);color:var(--wb-color-text-primary,#1f1f1f);box-shadow:0 12px 34px rgba(20,24,32,.18),inset 0 1px 0 rgba(255,255,255,.38);backdrop-filter:blur(22px) saturate(1.24);-webkit-backdrop-filter:blur(22px) saturate(1.24);pointer-events:auto;opacity:1}',
+    '.wbs-message-nav-tooltip.is-visible{opacity:1}.wbs-message-nav-tooltip[hidden]{display:none}',
+    '.wbs-message-nav-tooltip::-webkit-scrollbar{width:6px}.wbs-message-nav-tooltip::-webkit-scrollbar-track,.wbs-message-nav-tooltip::-webkit-scrollbar-thumb{background:transparent}.wbs-message-nav-tooltip::-webkit-scrollbar-thumb{border-radius:6px}.wbs-message-nav-tooltip.is-scrolling{scrollbar-color:var(--wb-icon-secondary,#72757d) transparent}.wbs-message-nav-tooltip.is-scrolling::-webkit-scrollbar-thumb{background:var(--wb-icon-secondary,#72757d)}',
+    '.wbs-message-nav-list{padding:4px}.wbs-message-nav-detail{user-select:text;-webkit-user-select:text}',
+    '.wbs-message-nav-row{display:block;width:100%;height:30px;box-sizing:border-box;padding:0 8px;border:1px solid transparent;border-radius:6px;background:transparent;color:inherit;font:inherit;font-size:12px;line-height:28px;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer}',
+    '.wbs-message-nav-row:hover,.wbs-message-nav-row.is-preview,.wbs-message-nav-row:focus-visible,.wbs-message-nav-row[aria-current="true"]{background:var(--wb-bg-hover,rgba(0,0,0,.06));border-color:var(--wb-border-subtle,rgba(20,24,32,.14))}.wbs-message-nav-row:focus-visible{outline:2px solid var(--wb-accent-blue,#4f86ff);outline-offset:-2px}',
     '.wbs-message-nav-prompt,.wbs-message-nav-response{display:-webkit-box;overflow:hidden;-webkit-box-orient:vertical;word-break:break-word;letter-spacing:0}',
     '.wbs-message-nav-prompt{-webkit-line-clamp:4;font-size:12px;font-weight:600;line-height:1.55;color:var(--wb-color-text-primary,#1f1f1f)}',
-    '.wbs-message-nav-response{-webkit-line-clamp:6;margin-top:7px;padding-top:7px;border-top:1px solid var(--wb-border-subtle,rgba(20,24,32,.12));font-size:11px;font-weight:400;line-height:1.55;color:var(--wb-color-text-secondary,#5f626a)}',
-    '.wbs-message-nav-highlight{animation:wbs-message-nav-highlight .7s ease-out}',
-    '@keyframes wbs-message-nav-highlight{0%{box-shadow:0 0 0 3px color-mix(in srgb,var(--wb-accent-blue,#4f86ff) 48%,transparent)}100%{box-shadow:0 0 0 8px transparent}}',
+    '.wbs-message-nav-response{-webkit-line-clamp:10;margin-top:7px;padding-top:7px;border-top:1px solid var(--wb-border-subtle,rgba(20,24,32,.12));font-size:11px;font-weight:400;line-height:1.55;color:var(--wb-color-text-secondary,#5f626a)}',
     /* WorkBuddy 内置引用 tooltip 复用快捷短语的气泡风格，长文本在气泡内滚动 */
     '.sq-tooltip-wrapper{width:max-content!important;max-width:calc(100vw - 24px)!important;padding:0!important;border:1px solid color-mix(in srgb,var(--wb-border-subtle,#ececec) 65%,transparent)!important;border-radius:8px!important;background:var(--wb-bg-popover,#fff)!important;box-shadow:0 6px 20px rgba(0,0,0,.16)!important;color:var(--wb-color-text-primary,#1f1f1f)}',
     '.sq-tooltip-wrapper .sq-popover,.sq-tooltip-wrapper .sq-image-preview{width:max-content;max-width:min(240px,calc(100vw - 24px));max-height:min(48vh,240px);box-sizing:border-box;padding:5px 11px;overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain}',
@@ -16350,9 +16636,8 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     'html.cb-dark .wbs-message-nav-tooltip,html[data-theme="dark"] .wbs-message-nav-tooltip,body[data-vscode-theme-name*="dark" i] .wbs-message-nav-tooltip{background:color-mix(in srgb,var(--wb-bg-popover,#202126) 70%,transparent);border-color:var(--wb-border-subtle,rgba(255,255,255,.14));color:var(--wb-color-text-primary,#f2f3f5);box-shadow:0 14px 38px rgba(0,0,0,.42),inset 0 1px 0 rgba(255,255,255,.08)}',
     // 毛玻璃主题下移出即隐藏底色与模糊，鼠标点击留下的焦点不会让背景常驻。
     'html[data-wbs-theme-id="nebula"] .wbs-message-nav-rail:not(:hover){background:transparent;border-color:transparent;box-shadow:none;backdrop-filter:none;-webkit-backdrop-filter:none}',
-    'html[data-wbs-theme-id="nebula"] .wbs-message-nav-marker:not(:hover){background:transparent;border-color:transparent;backdrop-filter:none;-webkit-backdrop-filter:none}',
-    'html[data-wbs-theme-id="nebula"] .wbs-message-nav-marker:not(:hover):not(:focus-visible){box-shadow:none}',
-    '@media (prefers-reduced-motion:reduce){.wbs-message-nav-marker,.wbs-message-nav-dot,.wbs-message-nav-tooltip{transition:none!important}.wbs-message-nav-highlight{animation:none!important}}',
+    'html[data-wbs-theme-id="nebula"] .wbs-message-nav-marker{background:transparent;border-color:transparent;backdrop-filter:none;-webkit-backdrop-filter:none}',
+    '@media (prefers-reduced-motion:reduce){.wbs-message-nav-marker,.wbs-message-nav-dot,.wbs-message-nav-tooltip{transition:none!important}}',
     /* 官网演示机器人：尺寸按 2 倍绘制，保留现有 0.5 缩放与停靠/拖动坐标。 */
     // CodeBuddy Agents 不提供 --wb-*；优先沿用客户端按钮色，最终回退到现有黑白机器人。
     '.wbs-fab[data-wbs-robot-style="theme"],.wbs-root[data-wbs-robot-style="theme"] .wbs-automation-stop{--wbs-robot-shell:var(--wb-button-primary-bg,var(--vscode-button-background,#111));--wbs-robot-eye:var(--wb-button-primary-fg,var(--vscode-button-foreground,#fff));--wbs-robot-rim:var(--wb-border-subtle,rgba(255,255,255,.55))}',
@@ -16467,7 +16752,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '.wbs-daily-vessel{position:relative;display:block;width:20px;height:20px;flex:0 0 20px;overflow:hidden;border-radius:50%;background:var(--wbs-liquid-bg);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--wbs-liquid-fill) 20%,transparent),0 1px 3px rgba(20,32,29,.12);isolation:isolate}',
     '.wbs-daily-liquid{position:absolute;inset:auto 0 0;height:var(--wbs-liquid-level,0%);min-height:2px;background:var(--wbs-liquid-fill);box-shadow:inset 0 1px 0 rgba(255,255,255,.38);transition:height .35s ease}.wbs-daily-vessel.is-empty .wbs-daily-liquid{min-height:0}',
     '.wbs-daily-cat-mark{position:absolute;z-index:1;inset:2px;background:var(--wbs-liquid-ink);-webkit-mask-image:var(--wbs-workbuddy-cat);mask-image:var(--wbs-workbuddy-cat);-webkit-mask-repeat:no-repeat;mask-repeat:no-repeat;-webkit-mask-position:center;mask-position:center;-webkit-mask-size:contain;mask-size:contain;transform:rotate(30deg) scale(.82);transform-origin:center}',
-    '.wbs-daily-streak-label{font-size:10.5px;line-height:1;font-weight:600;white-space:nowrap;font-variant-numeric:tabular-nums;color:inherit}.wbs-daily-streak-label.is-pending{color:var(--wb-icon-tertiary,#7c818b);font-weight:500}.wbs-daily-rings.is-loading .wbs-daily-vessel{opacity:.58}.wbs-daily-rings.is-loading .wbs-daily-cat-mark{animation:wbs-daily-cat-pulse 1.2s ease-in-out infinite}@keyframes wbs-daily-cat-pulse{50%{opacity:.45}}',
+    '.wbs-daily-streak-label{font-size:10.5px;line-height:1;font-weight:600;white-space:nowrap;font-variant-numeric:tabular-nums;color:inherit}.wbs-daily-streak-label.is-pending{color:var(--wb-icon-tertiary,#7c818b);font-weight:500}',
     '.wbs-status-popover{position:fixed;z-index:2147483647;width:306px;box-sizing:border-box;padding:12px;border:1px solid var(--wb-border-subtle,rgba(20,24,32,.14));border-radius:11px;background:color-mix(in srgb,var(--wb-bg-popover,#fff) 96%,transparent);color:var(--wb-color-text-primary,#1f1f1f);box-shadow:0 16px 42px rgba(20,24,32,.16),inset 0 1px 0 rgba(255,255,255,.5);backdrop-filter:blur(20px) saturate(1.08);-webkit-backdrop-filter:blur(20px) saturate(1.08);font:12px/1.45 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;pointer-events:auto}.wbs-status-popover.is-daily{width:620px;max-width:calc(100vw - 16px);max-height:calc(100vh - 16px);overflow-y:auto;overscroll-behavior:contain;scrollbar-width:none}',
     '.wbs-status-popover.is-daily::-webkit-scrollbar,.wbs-growth-task-list::-webkit-scrollbar{display:none}',
     '.wbs-status-popover.is-passive{pointer-events:none}.wbs-status-popover.is-credit{height:auto;min-height:0;max-height:calc(100vh - 16px);overflow:auto;overflow-wrap:anywhere}.wbs-status-popover[hidden]{display:none!important}.wbs-daily-popover-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:9px}.wbs-daily-popover-head strong{font-size:13px;font-weight:700;white-space:nowrap}.wbs-daily-popover-head span{color:var(--wb-icon-tertiary,#7c818b);font-size:10px;font-variant-numeric:tabular-nums}.wbs-daily-refresh-time{display:inline-flex;align-items:center;gap:5px;white-space:nowrap}',
@@ -16769,7 +17054,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '.wbs-sess-seg-btn:hover{color:var(--wb-color-text-primary,#1f1f1f)}',
     '.wbs-sess-seg-btn.active{background:var(--wb-button-primary-bg,#1f1f1f);color:var(--wb-button-primary-fg,#fff);box-shadow:0 1px 4px rgba(0,0,0,.2)}',
     '.wbs-sess-toolbar{display:flex;align-items:center;flex-wrap:wrap;gap:6px;margin-bottom:8px}',
-    '.wbs-sess-export-progress{flex:0 0 auto;min-width:0;margin:0 0 8px;padding:9px 10px;border:1px solid var(--wb-border-subtle);border-radius:9px;background:var(--wb-bg-secondary);color:var(--wb-color-text-primary);font-size:11px;line-height:1.5}.wbs-sess-export-progress[hidden],.wbs-sess-export-progress [hidden]{display:none}.wbs-sess-export-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.wbs-sess-export-head strong{flex:1;font-size:12px}.wbs-sess-export-progress progress{display:block;width:100%;height:5px;margin:7px 0;accent-color:var(--wbs-primary)}.wbs-sess-export-progress progress[hidden]{display:none}.wbs-sess-export-progress [data-export-detail]{overflow-wrap:anywhere;color:var(--wb-color-text-secondary)}',
+    '.wbs-sess-export-progress{padding:16px;box-sizing:border-box;pointer-events:auto;font:12px/1.5 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif}.wbs-sess-export-progress[hidden],.wbs-sess-export-progress [hidden]{display:none!important}.wbs-modal.wbs-sess-export-dialog{box-sizing:border-box;width:380px;max-width:100%;max-height:100%;overflow:auto}.wbs-sess-export-dialog progress{display:block;width:100%;height:5px;margin:7px 0;accent-color:var(--wb-button-primary-bg)}.wbs-sess-export-dialog [data-export-detail]{overflow-wrap:anywhere;white-space:pre-wrap;color:var(--wb-color-text-secondary)}.wbs-sess-export-dialog .wbs-modal-actions{flex-wrap:wrap}',
     '.wbs-sess-copy-progress{box-sizing:border-box;margin:0 0 8px;padding:9px 10px;border:1px solid var(--wb-border-default,#e5e5e5);border-radius:9px;background:color-mix(in srgb,var(--wb-bg-secondary,#fff) 82%,transparent);box-shadow:0 2px 8px rgba(0,0,0,.04)}',
     '.wbs-sess-copy-progress[hidden]{display:none!important}.wbs-sess-copy-head{display:flex;align-items:center;gap:6px;min-width:0}.wbs-sess-copy-icon{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;flex:0 0 20px;border-radius:6px;background:color-mix(in srgb,var(--wb-button-primary-bg,#1f1f1f) 9%,transparent);color:var(--wb-button-primary-bg,#1f1f1f)}.wbs-sess-copy-title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11.5px;font-weight:650;color:var(--wb-color-text-primary,#1f1f1f)}',
     '.wbs-sess-copy-detail{margin:4px 0 6px 26px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10.5px;line-height:1.35;color:var(--wb-icon-tertiary,#8a8f98)}.wbs-sess-copy-track{height:4px;margin-left:26px;overflow:hidden;border-radius:999px;background:var(--wb-bg-tertiary,#e9eaed)}.wbs-sess-copy-fill{display:block;height:100%;width:0;border-radius:inherit;background:var(--wb-accent-blue,var(--wb-button-primary-bg,#1f1f1f));transition:width .2s ease}.wbs-sess-copy-progress.is-done .wbs-sess-copy-fill{background:#2f9e63}.wbs-sess-copy-progress.is-partial .wbs-sess-copy-fill{background:#d48a19}.wbs-sess-copy-progress.is-error .wbs-sess-copy-fill{background:#d84a4a}',
@@ -17112,9 +17397,10 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '.wbs-account-order-row{display:flex;align-items:center;gap:8px;min-height:34px;padding:3px 8px;border:1px solid var(--wb-border-subtle);border-radius:8px;background:var(--wb-bg-secondary);font-size:12px}.wbs-account-order-row>span{flex:1;min-width:0;overflow-wrap:anywhere}.wbs-account-order-row button{cursor:grab}.wbs-account-order-row.dragging{opacity:.45}.wbs-account-order-row.drop-target{border-color:var(--wb-accent-blue);background:var(--wb-bg-hover)}',
     '.wbs-account-order-modal :is(button,input):focus-visible{outline:2px solid var(--wb-accent-blue);outline-offset:2px}.wbs-account-order-modal button:disabled{opacity:.5;cursor:default}',
     '.wbs-initial-sync-modal{box-sizing:border-box;width:380px;max-width:calc(100% - 28px)}.wbs-initial-sync-copy{margin:-2px 0 12px;color:var(--wb-color-text-secondary,#666);font-size:11.5px;line-height:1.6;overflow-wrap:anywhere}.wbs-initial-sync-toggle{margin:0 0 10px}.wbs-initial-sync-error{min-height:17px;margin:0 0 2px}.wbs-initial-sync-modal .wbs-modal-actions{justify-content:flex-end}.wbs-initial-sync-modal .wbs-modal-ok{min-width:66px}',
-    '.wbs-credit-summary-popover{position:fixed;z-index:2147483647;box-sizing:border-box;width:300px;max-width:calc(100vw - 16px);padding:12px;background:var(--wb-bg-popover,var(--wb-bg-primary));color:var(--wb-color-text-primary);border:1px solid var(--wb-border-default);border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,.18);font:12px/1.5 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;overflow:auto;overscroll-behavior:contain;pointer-events:auto}',
+    '.wbs-credit-summary-popover{position:fixed;z-index:2147483647;box-sizing:border-box;width:300px;max-width:calc(100vw - 16px);padding:12px;background:var(--wb-bg-popover,var(--wb-bg-primary));color:var(--wb-color-text-primary);border:1px solid var(--wb-border-default);border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,.18);font:12px/1.5 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;overflow:auto;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:transparent transparent;pointer-events:auto}',
     '.wbs-credit-summary-head{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:10px}.wbs-credit-summary-head strong{font-size:13px}.wbs-credit-summary-head span,.wbs-credit-summary-foot{font-size:10px;color:var(--wb-color-text-secondary)}',
-    '.wbs-credit-summary-chart{max-height:230px;overflow:auto;overscroll-behavior:contain}.wbs-credit-summary-row{display:grid;grid-template-columns:68px minmax(30px,1fr) 58px;align-items:center;gap:8px;min-height:28px}.wbs-credit-summary-row>span{font-size:11px;color:var(--wb-color-text-secondary)}.wbs-credit-summary-row>b{text-align:right;font-size:11px;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}.wbs-credit-summary-track{display:flex;align-items:stretch;gap:2px;height:8px;border-radius:4px;background:var(--wb-bg-tertiary);overflow:visible}.wbs-credit-summary-track .wbs-credit-segment{height:8px;min-width:3px}.wbs-credit-summary-track i{display:block;height:100%;border-radius:4px;}.wbs-credit-summary-foot{border-top:1px solid var(--wb-border-subtle);padding-top:8px;margin-top:8px}',
+    '.wbs-credit-summary-chart{max-height:230px;overflow:auto;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:transparent transparent}.wbs-credit-summary-row{display:grid;grid-template-columns:68px minmax(30px,1fr) 58px;align-items:center;gap:8px;min-height:28px}.wbs-credit-summary-row>span{font-size:11px;color:var(--wb-color-text-secondary)}.wbs-credit-summary-row>b{text-align:right;font-size:11px;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}.wbs-credit-summary-track{display:flex;align-items:stretch;gap:2px;height:8px;border-radius:4px;background:var(--wb-bg-tertiary);overflow:visible}.wbs-credit-summary-track .wbs-credit-segment{height:8px;min-width:3px}.wbs-credit-summary-track i{display:block;height:100%;border-radius:4px;}.wbs-credit-summary-foot{border-top:1px solid var(--wb-border-subtle);padding-top:8px;margin-top:8px}',
+    ':is(.wbs-credit-summary-popover,.wbs-credit-summary-chart)::-webkit-scrollbar{width:6px}:is(.wbs-credit-summary-popover,.wbs-credit-summary-chart)::-webkit-scrollbar-track,:is(.wbs-credit-summary-popover,.wbs-credit-summary-chart)::-webkit-scrollbar-thumb{background:transparent}:is(.wbs-credit-summary-popover,.wbs-credit-summary-chart)::-webkit-scrollbar-thumb{border-radius:6px}:is(.wbs-credit-summary-popover,.wbs-credit-summary-chart).is-scrolling{scrollbar-color:var(--wb-icon-secondary,#72757d) transparent}:is(.wbs-credit-summary-popover,.wbs-credit-summary-chart).is-scrolling::-webkit-scrollbar-thumb{background:var(--wb-icon-secondary,#72757d)}',
     'html.cb-dark .wbs-credit-summary-popover,html[data-theme="dark"] .wbs-credit-summary-popover,body[data-vscode-theme-name="IDE Night"] .wbs-credit-summary-popover{background:var(--wb-bg-popover,var(--wb-bg-primary));color:var(--wb-color-text-primary);border-color:var(--wb-border-default)}',
     '@media(max-width:600px){.wbs-acct-toolbar{flex-wrap:wrap;gap:8px}.wbs-acct-summary{flex-wrap:wrap}.wbs-acct-actions{margin-left:auto}}',
     '.wbs-acct-summary{display:flex;align-items:center;gap:12px;min-width:0}.wbs-acct-summary>[data-act="model-rate-limit-summary"]{margin-left:-7px}',

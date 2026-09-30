@@ -20,3 +20,35 @@ test('zero, expired, malformed and stale oversized segments cannot inflate the t
   assert.deepEqual(JSON.parse(JSON.stringify(result.rows)), [{ days: 0, credits: 5 }, { days: 1, credits: 7 }]);
   assert.equal(ctx.summarizeCreditDays([], 1).rows.length, 0);
 });
+
+test('summary scrollbars appear only while scrolling and reset on close or reinjection', () => {
+  const listeners = new Map(), timers = new Map(); let serial = 0;
+  const element = () => { const classes = new Set(); return { hidden: true, classes,
+    classList: { add: x => classes.add(x), remove: x => classes.delete(x) },
+    setAttribute() {}, contains: () => false, remove() {} }; };
+  const button = element(), popup = element(), chart = element(); let dispose;
+  const context = { accountsPane: { querySelector: () => button }, el: () => popup,
+    mountPersistentOverlay() {}, clearTimeout: id => timers.delete(id),
+    setBuildTimeout(fn) { timers.set(++serial, fn); return serial; },
+    listen(node, type, fn) { listeners.set((node === popup ? 'popup:' : node === button ? 'button:' : 'other:') + type, fn); },
+    window: {}, document: {}, root: {}, hideCreditTooltip() {}, registerDisposer: fn => { dispose = fn; } };
+  const start = source.indexOf('    function setupCreditSummary()');
+  vm.runInNewContext(source.slice(start, source.indexOf('    function openOfficialGrowthCenter()', start)), context);
+  context.setupCreditSummary();
+  assert.equal(chart.classes.has('is-scrolling'), false);
+  listeners.get('popup:scroll')({ target: chart });
+  assert.equal(chart.classes.has('is-scrolling'), true);
+  listeners.get('popup:scroll')({ target: chart });
+  assert.equal(timers.size, 1);
+  timers.values().next().value();
+  assert.equal(chart.classes.has('is-scrolling'), false);
+  listeners.get('popup:scroll')({ target: chart });
+  listeners.get('button:keydown')({ key: 'Escape', stopPropagation() {} });
+  assert.equal(chart.classes.has('is-scrolling'), false);
+  assert.equal(timers.size, 0);
+  listeners.get('popup:scroll')({ target: chart });
+  dispose();
+  assert.equal(chart.classes.has('is-scrolling'), false);
+  assert.equal(timers.size, 0);
+  assert.match(source, /\.wbs-credit-summary-chart\{[^}]*scrollbar-color:transparent transparent/);
+});

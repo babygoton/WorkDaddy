@@ -8,6 +8,114 @@ const vm = require('node:vm');
 
 const compat = require('../scripts/workbuddy-compat.js');
 
+function navigationFunction(name, context) {
+  const source = fs.readFileSync(path.join(__dirname, '../scripts/inject.js'), 'utf8');
+  const start = source.indexOf('      function ' + name + '(');
+  assert.ok(start >= 0, name + ' exists');
+  const end = source.indexOf('\n      function ', start + 1);
+  vm.runInNewContext(source.slice(start, end), context);
+  return context[name];
+}
+
+test('navigation displays at most 20 evenly spaced markers while retaining both conversation ends', () => {
+  const context = {};
+  const indices = navigationFunction('markerTurnIndices', context);
+  for (const count of [0, 1, 2, 19, 20, 21, 100, 1001]) {
+    const result = Array.from(indices(count));
+    assert.equal(result.length, Math.min(20, count));
+    assert.equal(new Set(result).size, result.length);
+    if (!count) continue;
+    assert.equal(result[0], 0);
+    assert.equal(result.at(-1), count - 1);
+    if (count <= 20) assert.deepEqual(result, Array.from({ length: count }, (_, i) => i));
+    const gaps = result.slice(1).map((value, i) => value - result[i]);
+    if (gaps.length) assert.ok(Math.max(...gaps) - Math.min(...gaps) <= 1);
+  }
+});
+
+test('moving between a marker, prompt list and detail keeps the hover surface open', () => {
+  const list = {}, detail = {}, outside = {};
+  let closes = 0;
+  const context = { dragPointerId: null, root: { contains: node => node === list || node === detail },
+    hideTooltip: () => { closes++; } };
+  const pointerOut = navigationFunction('onPointerOut', context);
+  pointerOut({ relatedTarget: list });
+  pointerOut({ relatedTarget: detail });
+  assert.equal(closes, 0);
+  pointerOut({ relatedTarget: outside });
+  assert.equal(closes, 1);
+  pointerOut({ relatedTarget: null });
+  assert.equal(closes, 2);
+});
+
+test('every prompt remains reachable when the rail is capped, including unsampled turns', () => {
+  const element = (tag, className, textContent = '') => ({
+    tag, className, textContent, children: [], attributes: {},
+    appendChild(child) { this.children.push(child); },
+    setAttribute(key, value) { this.attributes[key] = value; },
+  });
+  const turns = Array.from({ length: 101 }, (_, i) => ({ id: 'turn-' + i, userMessage: 'prompt-' + i }));
+  turns[53].userMessage = '<img src=x onerror=alert(1)>';
+  turns[54].userMessage = { content: [{ type: 'text', text: '长提示词'.repeat(25000) }] };
+  turns.forEach(turn => {
+    if (typeof turn.userMessage === 'string') turn.userMessage = { content: [{ type: 'text', text: turn.userMessage }] };
+  });
+  const context = { turns, rail: element('div'), tooltip: element('div'), detail: { id: 'detail' },
+    buttons: {}, promptRows: {}, activeId: null, hideTooltip() {}, setActive() {},
+    el: element };
+  navigationFunction('messageText', context);
+  navigationFunction('markerTurnIndices', context);
+  navigationFunction('render', context)();
+  assert.equal(context.rail.children.length, 20);
+  assert.equal(context.tooltip.children.length, 101);
+  assert.equal(context.promptRows['turn-53'].textContent, '<img src=x onerror=alert(1)>');
+  assert.ok(context.promptRows['turn-54'].textContent.length <= 240, 'single-line previews must not lay out entire giant prompts');
+  assert.ok(context.promptRows['turn-54'].textContent.endsWith('…'));
+  assert.equal(turns[54].userMessage.content[0].text.length, 100000, 'the original prompt stays intact');
+  for (let i = 0; i < turns.length; i++) {
+    assert.equal(context.promptRows[turns[i].id].attributes['data-wbs-message-nav-id'], turns[i].id);
+    assert.ok(context.rail.children.includes(context.buttons[turns[i].id]));
+  }
+  assert.equal(context.buttons['turn-100'], context.rail.children.at(-1));
+});
+
+test('hovering rail padding opens the nearest prompt immediately', () => {
+  const button = {}, turn = { id: 'first' }, target = { closest: () => null };
+  let shown;
+  const context = { dragPointerId: null, tooltipTimer: null, turns: [turn], buttons: { first: button },
+    rail: { contains: node => node === target }, dragIndexAt: () => 0,
+    turnForButton: value => value === button ? turn : null,
+    showTooltip: (value, anchor) => { shown = { value, anchor }; } };
+  navigationFunction('onPointerOver', context)({ target, clientY: 12 });
+  assert.deepEqual(shown, { value: turn, anchor: button });
+});
+
+test('flyout scrollbars stay hidden on centering and hide again after user scrolling stops', () => {
+  const classes = new Set();
+  const tooltip = { hidden: false, scrollTop: 90, classList: { add: value => classes.add(value), remove: value => classes.delete(value) } };
+  const timers = new Map();
+  let serial = 0;
+  const context = { tooltip, centeredScrollTop: 90, scrollbarTimers: new Map(),
+    clearTimeout: id => timers.delete(id),
+    setBuildTimeout(fn) { timers.set(++serial, fn); return serial; } };
+  navigationFunction('clearScrolling', context);
+  const scroll = navigationFunction('onFlyoutScroll', context);
+  scroll({ currentTarget: tooltip });
+  assert.equal(classes.has('is-scrolling'), false, 'automatic centering must not flash a scrollbar');
+  tooltip.scrollTop += 30;
+  scroll({ currentTarget: tooltip });
+  assert.equal(classes.has('is-scrolling'), true);
+  scroll({ currentTarget: tooltip });
+  assert.equal(timers.size, 1, 'continued scrolling replaces the idle timer');
+  timers.values().next().value();
+  assert.equal(classes.has('is-scrolling'), false);
+  assert.equal(context.scrollbarTimers.size, 0);
+  assert.equal(timers.size, 0);
+  scroll({ currentTarget: tooltip });
+  context.clearScrolling(tooltip);
+  assert.equal(timers.size, 0, 'closing a flyout cancels its timer');
+});
+
 test('scroll events keep the last node selected when the last turn cannot align with the viewport top', () => {
   const source = fs.readFileSync(path.join(__dirname, '../scripts/inject.js'), 'utf8');
   const frames = [{ index: 1, top: 28, bottom: 350 }, { index: 2, top: 350, bottom: 410 }, { index: 3, top: 410, bottom: 600 }];
@@ -160,7 +268,10 @@ test('injected navigation rail is theme-aware, glassy, accessible, and profile a
   assert.match(inject, /\.wbs-message-nav-rail\{[^\n]*border:1px solid transparent[^\n]*box-shadow:none[^\n]*backdrop-filter:none/);
   assert.match(inject, /\.wbs-message-nav-rail:hover,\.wbs-message-nav-rail:focus-within\{[^\n]*backdrop-filter:blur\(/);
   assert.match(inject, /\.wbs-message-nav-marker\{[^\n]*background:color-mix\(in srgb,var\(--wb-bg-popover/);
-  assert.match(inject, /\.wbs-message-nav-marker:hover,\.wbs-message-nav-marker:focus-visible\{[^\n]*border-color:[^\n]*box-shadow:[^\n]*backdrop-filter:blur\(/);
+  assert.doesNotMatch(inject, /\.wbs-message-nav-marker:hover[^']*\{/);
+  assert.doesNotMatch(inject, /\.wbs-message-nav-marker:hover \.wbs-message-nav-dot/);
+  assert.doesNotMatch(inject, /wbs-message-nav-highlight|@keyframes wbs-message-nav-highlight/);
+  assert.match(inject, /\.wbs-message-nav-response\{-webkit-line-clamp:10/);
   assert.match(inject, /prefers-reduced-motion:reduce/);
   assert.match(inject, /querySelectorAll\('\.wbs-message-nav-root'\)/);
 
