@@ -326,10 +326,14 @@ test('cat water follows the credit or button palette for the selected theme', ()
     assert.match(rule, /--wbs-liquid-fill:(?:color-mix\(in srgb,var\(--wb-button-primary-bg|oklch\(from var\(--wb-button-primary-bg|var\(--wbs-credit-theme-color,var\(--wbs-primary\)\))/);
   }
   assert.match(inject, /\.wbs-daily-vessel\.is-checked-in\{--wbs-liquid-ink:var\(--wb-button-primary-fg/);
-  const rim = inject.match(/\.wbs-daily-vessel\.is-checked-in \.wbs-daily-liquid\{([^}]+)\}/);
-  assert.ok(rim);
-  assert.match(rim[1], /var\(--wbs-liquid-fill\)/);
-  assert.doesNotMatch(rim[1], /var\(--wbs-primary\)/);
+  const fullVessel = inject.match(/\.wbs-daily-vessel\.is-checked-in\{([^}]+)\}/);
+  const fullLiquid = inject.match(/\.wbs-daily-vessel\.is-checked-in \.wbs-daily-liquid\{([^}]+)\}/);
+  assert.ok(fullVessel);
+  assert.ok(fullLiquid);
+  assert.match(fullVessel[1], /background:var\(--wbs-liquid-fill\)/);
+  assert.match(fullVessel[1], /box-shadow:none/);
+  assert.match(fullLiquid[1], /box-shadow:none/);
+  assert.match(fullLiquid[1], /border-radius:inherit/);
 });
 
 test('travel selection links to the official center', () => {
