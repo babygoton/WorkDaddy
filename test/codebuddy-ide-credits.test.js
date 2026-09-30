@@ -82,3 +82,12 @@ test('reopening ignores the previous batch and enables refresh only after the cu
   h.pending[1].resolve({ credits: 12, segments: [] }); await tick();
   assert.match(h.credits()[0], /积分 12/); assert.equal(refresh.disabled, false);
 });
+
+test('IDE mode uses the shared WorkDaddy panel and blocks non-account tabs', () => {
+  assert.match(source, /var WBS_CODEBUDDY_IDE_MODE = \(PROFILE_ID === 'codebuddy-cn'/);
+  assert.match(source, /if \(WBS_CODEBUDDY_IDE_MODE && name !== 'account'\)/);
+  assert.match(source, /toast\('请切换到 CodeBuddy Agents 模式'/);
+  assert.match(source, /'<div class="wbs-fab"/);
+  assert.match(source, /'<div class="wbs-panel"/);
+  assert.doesNotMatch(source.slice(source.indexOf('if \(\(PROFILE_ID === \'codebuddy-cn\''), source.indexOf('if \(\(PROFILE_ID === \'codebuddy-cn\'') + 300), /injectCodeBuddyIdeMode\(\);\s*return/);
+});
