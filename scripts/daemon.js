@@ -434,8 +434,8 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 // 1.2.191：CodeDaddy 共用完整面板，通过本机 CDP 适配通信、原生登录态和会话缓存。
 // 1.2.206：CodeBuddy IDE 主窗口注入轻量账号切换浮层（[cdp-ide] 双路管理器，主连接仍绑 agents）；
 //          积分段到期改为取最早时间字段，修正月度套餐基础包误判长期扣费有效期的问题。
-const DAEMON_VERSION = '1.2.206';
-const DAEMON_BUILD_ID = 'release-1.2.206-20260930-codebuddy-ide-statusbar';
+const DAEMON_VERSION = '1.2.207';
+const DAEMON_BUILD_ID = 'release-1.2.207-20260930-ide-recovery-credits';
 const usageReporter = createUsageReporter({ profile: PROFILE.id, version: DAEMON_VERSION });
 configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const automationDiscovery = createAutomationDiscovery({
@@ -2313,54 +2313,78 @@ function onCdpEvent(method, params) {
 // 只注入轻量 FAB（inject.js 运行时通过 location.href 自判 IDE 分支）。
 // 主连接单 target 且不重选：若让 workbench 走主连接，先出现的 workbench 会被
 // 绑定，后打开的 agents 窗口将永远等不到注入（实测回归），故必须双路。
-const idePages = new Map(); // targetId -> { ws, url, msgId, pending, reloadTimer }
+const idePages = new Map(); // Per-target connection, navigation and injection retry state.
+const IDE_INJECT_MAX_ATTEMPTS = 3;
+const IDE_COMMAND_TIMEOUT_MS = 10000;
 
 function ideSend(entry, method, params = {}) {
   return new Promise((resolve, reject) => {
     if (!entry.ws || entry.ws.readyState !== 1) return reject(new Error('IDE ws 未连接'));
     const id = ++entry.msgId;
-    entry.pending.set(id, { resolve, reject });
+    const timer = setTimeout(() => {
+      entry.pending.delete(id);
+      reject(new Error('IDE CDP request timed out'));
+    }, IDE_COMMAND_TIMEOUT_MS);
+    entry.pending.set(id, { resolve, reject, timer });
     try {
       entry.ws.send(JSON.stringify({ id, method, params }));
     } catch (e) {
       entry.pending.delete(id);
+      clearTimeout(timer);
       reject(e);
     }
   });
 }
 
-async function ideInjectPage(entry, reason) {
-  try {
-    const script = buildInjectScript();
-    // 与主连接注入管线一致：先注册 binding（rendererBridgeSource 的 __wbsApiFetch 依赖它）
-    await ideSend(entry, 'Runtime.addBinding', { name: BINDING }).catch(() => {});
-    // 脚本顶部 cleanup IIFE 已移除 #wbs-ide-statusbar-root，这里不重复清理
-    const result = await ideSend(entry, 'Runtime.evaluate', { expression: script, returnByValue: false });
-    if (result && result.exceptionDetails) {
-      const ex = result.exceptionDetails.exception;
-      log(`[cdp-ide] IDE 浮层注入抛错(${reason}): ${redactDiagnosticText((ex && (ex.description || ex.value)) || result.exceptionDetails.text || '', 300)}`);
-      return;
+function ideInjectPage(entry, reason) {
+  if (entry.injecting) return entry.injecting;
+  if (entry.closed || entry.mounted || entry.attempts >= IDE_INJECT_MAX_ATTEMPTS || Date.now() < entry.retryAt) return Promise.resolve();
+  const navigation = entry.navigation;
+  entry.attempts++;
+  entry.injecting = (async () => {
+    try {
+      const script = buildInjectScript();
+      // 与主连接注入管线一致：先注册 binding（rendererBridgeSource 的 __wbsApiFetch 依赖它）
+      await ideSend(entry, 'Runtime.addBinding', { name: BINDING });
+      if (entry.closed || entry.navigation !== navigation) return;
+      // 脚本顶部 cleanup IIFE 已移除 #wbs-ide-statusbar-root，这里不重复清理
+      const result = await ideSend(entry, 'Runtime.evaluate', { expression: script, returnByValue: false });
+      if (result && result.exceptionDetails) {
+        const ex = result.exceptionDetails.exception;
+        log(`[cdp-ide] IDE 浮层注入抛错(${reason}): ${redactDiagnosticText((ex && (ex.description || ex.value)) || result.exceptionDetails.text || '', 300)}`);
+        return;
+      }
+      // IDE 分支不挂 .wbs-root/__wbsWidget，只认 FAB 根节点
+      let mounted = false;
+      for (let attempt = 0; attempt < 3 && !mounted && !entry.closed && entry.navigation === navigation; attempt++) {
+        await new Promise((resolve) => setTimeout(resolve, attempt === 0 ? 200 : 600));
+        if (entry.closed || entry.navigation !== navigation) return;
+        const check = await ideSend(entry, 'Runtime.evaluate', {
+          expression: 'JSON.stringify({ fab: !!document.getElementById("wbs-ide-statusbar-root"), ready: document.readyState })',
+          returnByValue: true,
+        }).catch(() => null);
+        const state = check && check.result && check.result.value ? JSON.parse(check.result.value) : {};
+        mounted = !!state.fab;
+        if (attempt === 2) log(`[cdp-ide] IDE 浮层注入${mounted ? '确认' : '未确认'}(${reason}): ${JSON.stringify(state)}`);
+      }
+      if (entry.closed || entry.navigation !== navigation) return;
+      entry.mounted = mounted;
+      if (mounted) log(`[cdp-ide] IDE 浮层已注入(${reason}) target=${String(entry.url || '').slice(-64)}`);
+    } catch (e) {
+      log(`[cdp-ide] IDE 浮层注入失败(${reason}): ${e.message}`);
     }
-    // IDE 分支不挂 .wbs-root/__wbsWidget，只认 FAB 根节点
-    let mounted = false;
-    for (let attempt = 0; attempt < 3 && !mounted; attempt++) {
-      await new Promise((resolve) => setTimeout(resolve, attempt === 0 ? 200 : 600));
-      const check = await ideSend(entry, 'Runtime.evaluate', {
-        expression: 'JSON.stringify({ fab: !!document.getElementById("wbs-ide-statusbar-root"), ready: document.readyState })',
-        returnByValue: true,
-      }).catch(() => null);
-      const state = check && check.result && check.result.value ? JSON.parse(check.result.value) : {};
-      mounted = !!state.fab;
-      if (attempt === 2) log(`[cdp-ide] IDE 浮层注入${mounted ? '确认' : '未确认'}(${reason}): ${JSON.stringify(state)}`);
+  })().finally(() => {
+    entry.injecting = null;
+    if (!entry.closed && entry.navigation === navigation && !entry.mounted) {
+      entry.retryAt = Date.now() + 1000 * (2 ** (entry.attempts - 1));
     }
-    if (mounted) log(`[cdp-ide] IDE 浮层已注入(${reason}) target=${String(entry.url || '').slice(-64)}`);
-  } catch (e) {
-    log(`[cdp-ide] IDE 浮层注入失败(${reason}): ${e.message}`);
-  }
+  });
+  return entry.injecting;
 }
 
 function ideConnectPage(target) {
-  const entry = { ws: null, url: target.url, msgId: 0, pending: new Map(), reloadTimer: null };
+  const entry = { ws: null, url: target.url, msgId: 0, pending: new Map(), reloadTimer: null,
+    injecting: null, mounted: false, attempts: 0, retryAt: 0, navigation: 0, closed: false };
   idePages.set(target.id, entry);
   // [CodeBuddy IDE 状态栏] workbench 页面 CSP 禁止直接 fetch http://，api() 走
   // __wbsApiFetch（Runtime.bindingCalled 通道）。主连接的 bridge 把 send 绑死在
@@ -2379,6 +2403,7 @@ function ideConnectPage(target) {
       const p = entry.pending.get(msg.id);
       if (p) {
         entry.pending.delete(msg.id);
+        clearTimeout(p.timer);
         msg.error ? p.reject(new Error(msg.error.message)) : p.resolve(msg.result);
       }
       return;
@@ -2390,6 +2415,10 @@ function ideConnectPage(target) {
     }
     // workbench 刷新会重建 DOM，加载完成后补一次注入（脚本幂等）
     if (msg.method === 'Page.loadEventFired') {
+      entry.navigation++;
+      entry.mounted = false;
+      entry.attempts = 0;
+      entry.retryAt = Date.now() + 400;
       if (entry.reloadTimer) clearTimeout(entry.reloadTimer);
       entry.reloadTimer = setTimeout(() => {
         entry.reloadTimer = null;
@@ -2398,6 +2427,12 @@ function ideConnectPage(target) {
     }
   };
   ws.onclose = () => {
+    entry.closed = true;
+    for (const pending of entry.pending.values()) {
+      clearTimeout(pending.timer);
+      pending.reject(new Error('IDE CDP connection closed'));
+    }
+    entry.pending.clear();
     if (entry.reloadTimer) clearTimeout(entry.reloadTimer);
     if (idePages.get(target.id) === entry) idePages.delete(target.id);
     log(`[cdp-ide] IDE 页面连接关闭 target=${String(target.url || '').slice(-64)}`);
@@ -2419,8 +2454,10 @@ async function ideSyncScan() {
   }
   const targets = selectIdeTargets(list, PROFILE);
   for (const target of targets) {
-    if (!target.webSocketDebuggerUrl || idePages.has(target.id)) continue;
-    ideConnectPage(target);
+    if (!target.webSocketDebuggerUrl) continue;
+    const entry = idePages.get(target.id);
+    if (!entry) ideConnectPage(target);
+    else if (entry.ws && entry.ws.readyState === 1) ideInjectPage(entry, 'retry');
   }
   // 兜底清理：target 已消失但 ws 尚未触发 close 的陈旧条目
   const alive = new Set(targets.map((t) => t.id));

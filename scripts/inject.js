@@ -1144,6 +1144,8 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     var panelAppearance = CAPS.panelAppearance || 'light';
     var robotStyle = CAPS.robotStyle || 'black';
     var brand = WBS_BRAND || 'WorkDaddy';
+    var accountLoadSerial = 0;
+    var modalOpen = false;
     // 复用主面板翻译管线（i18n-coverage.test.js 要求全部 UI 文案可翻译）
     function t(s) { return wbsTranslateString(s, WBS_LANGUAGE); }
 
@@ -1178,24 +1180,62 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     else document.addEventListener('DOMContentLoaded', appendRoot);
 
     function openModal() {
+      modalOpen = true;
       var modal = root.querySelector('.wbs-ide-modal');
       if (modal) modal.style.display = 'flex';
       loadAccounts();
     }
     function closeModal() {
+      modalOpen = false;
+      accountLoadSerial++;
       var modal = root.querySelector('.wbs-ide-modal');
       if (modal) modal.style.display = 'none';
+    }
+
+    function isCurrentAccountLoad(serial) {
+      return modalOpen && root.isConnected && serial === accountLoadSerial;
     }
 
     function loadAccounts() {
       var body = root.querySelector('.wbs-ide-modal-body');
       if (!body) return;
+      var serial = ++accountLoadSerial;
+      var refresh = root.querySelector('.wbs-ide-credit-refresh');
+      refresh.disabled = true;
       body.innerHTML = '<div class="wbs-ide-hint">' + t('读取账号中…') + '</div>';
       api('/api/accounts').then(function (data) {
-        // current 标记当前登录账号：徽章展示 + 不提供切换按钮，避免误切到自己
-        renderAccounts(body, (data && data.accounts) || [], data && data.current && data.current.uid);
+        if (!isCurrentAccountLoad(serial)) return;
+        var accounts = (data && data.accounts) || [];
+        accounts.forEach(function (account) { account.ideCreditState = 'loading'; });
+        renderAccounts(body, accounts, data && data.current && data.current.uid);
+        // Only two queries at a time; closing/reopening the modal invalidates the
+        // remaining queue and late responses from the previous account list.
+        var next = 0;
+        function worker() {
+          if (!isCurrentAccountLoad(serial) || next >= accounts.length) return Promise.resolve();
+          var account = accounts[next++];
+          return api('/api/credits', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ uid: account.uid })
+          }).then(function (result) {
+            if (!isCurrentAccountLoad(serial)) return;
+            account.credits = typeof result.credits === 'number' && isFinite(result.credits) ? result.credits : null;
+            account.creditUnlimited = !!result.unlimited;
+            account.creditSegments = Array.isArray(result.segments) ? result.segments : [];
+            account.ideCreditState = 'fresh';
+          }).catch(function () {
+            if (isCurrentAccountLoad(serial)) account.ideCreditState = 'failed';
+          }).then(function () {
+            if (!isCurrentAccountLoad(serial)) return;
+            account.ideCreditNode.textContent = formatIdeCredits(account);
+            return worker();
+          });
+        }
+        return Promise.all([worker(), worker()]);
       }).catch(function (err) {
-        body.innerHTML = '<div class="wbs-ide-error">' + t('读取失败：') + escapeText(err && err.message || err) + '</div>';
+        if (isCurrentAccountLoad(serial)) body.innerHTML = '<div class="wbs-ide-error">' + t('读取失败：') + escapeText(err && err.message || err) + '</div>';
+      }).finally(function () {
+        if (isCurrentAccountLoad(serial)) refresh.disabled = false;
       });
     }
 
@@ -1226,6 +1266,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       var credits = document.createElement('div');
       credits.className = 'wbs-ide-account-credits';
       credits.textContent = formatIdeCredits(account);
+      account.ideCreditNode = credits;
       text.appendChild(label);
       text.appendChild(credits);
       row.appendChild(text);
@@ -1250,26 +1291,35 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     // 「24小时过期」= now+24h 内到期的段合计；「近7天过期」= now+7d 内到期的段合计（含 24h 桶）。
     // creditSegments 明细留给智能体窗口的完整面板（浮层保持轻量）。
     function formatIdeCredits(account) {
-      var segs = Array.isArray(account.creditSegments)
-        ? account.creditSegments.filter(function (s) { return s && s.remaining > 0; }) : [];
-      if (account.creditUnlimited) return t('积分：无限');
-      var total = typeof account.credits === 'number' ? account.credits
-        : segs.reduce(function (sum, s) { return sum + (s.remaining || 0); }, 0);
-      var now = Date.now();
-      var day = 0, week = 0;
-      for (var i = 0; i < segs.length; i++) {
-        var left = Number(segs[i].expiresAt || 0) - now;
-        if (left < 0) continue;
-        if (left <= 86400000) day += segs[i].remaining || 0;
-        if (left <= 604800000) week += segs[i].remaining || 0;
+      var known = account.creditUnlimited || (typeof account.credits === 'number' && isFinite(account.credits));
+      var summary = t('积分未查询');
+      if (account.creditUnlimited) summary = t('积分：无限');
+      else if (known) {
+        var segs = Array.isArray(account.creditSegments) ? account.creditSegments : [];
+        var now = Date.now();
+        var day = 0, week = 0;
+        for (var i = 0; i < segs.length; i++) {
+          if (!segs[i] || !(segs[i].remaining > 0) || typeof segs[i].expiresAt !== 'number') continue;
+          var left = segs[i].expiresAt - now;
+          if (left < 0) continue;
+          if (left <= 86400000) day += Number(segs[i].remaining);
+          if (left <= 604800000) week += Number(segs[i].remaining);
+        }
+        summary = t('积分') + ' ' + ideRound2(account.credits) + ' · ' + t('24小时过期：') + ideRound2(day)
+          + ' · ' + t('近7天过期：') + ideRound2(week);
       }
-      return t('积分') + ' ' + ideRound2(total) + ' · ' + t('24小时过期：') + ideRound2(day)
-        + ' · ' + t('近7天过期：') + ideRound2(week);
+      if (known && account.ideCreditState !== 'fresh') summary = t('上次查询：') + summary;
+      if (account.ideCreditState === 'loading') summary += ' · ' + t('刷新中…');
+      if (account.ideCreditState === 'failed') summary += ' · ' + t('刷新失败');
+      return summary;
     }
 
     function ideRound2(v) { return Math.round((Number(v) || 0) * 100) / 100; }
 
     function switchAccount(account) {
+      accountLoadSerial++;
+      var refresh = root.querySelector('.wbs-ide-credit-refresh');
+      refresh.disabled = true;
       var body = root.querySelector('.wbs-ide-modal-body');
       if (body) body.innerHTML = '<div class="wbs-ide-hint">' + t('正在切换到') + ' ' + escapeText(account.nickname || account.uid) + '…</div>';
       api('/api/switch', {
@@ -1281,6 +1331,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         closeModal();
       }).catch(function (err) {
         if (body) body.innerHTML = '<div class="wbs-ide-error">' + t('切换失败：') + escapeText(err && err.message || err) + '</div>';
+        refresh.disabled = false;
       });
     }
 
@@ -1295,16 +1346,20 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         '#' + rootId + ' .wbs-ide-fab:hover{transform:translateY(-1px);box-shadow:0 6px 16px rgba(0,0,0,.2);}',
         '#' + rootId + ' .wbs-ide-fab svg{width:20px;height:20px;display:block;}',
         '#' + rootId + ' .wbs-ide-modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.35);align-items:center;justify-content:center;z-index:1;}',
-        '#' + rootId + ' .wbs-ide-modal-card{width:400px;max-height:60vh;display:flex;flex-direction:column;background:var(--wb-bg-elevated,#fff);border:1px solid var(--wb-border,#d0d4da);border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,.2);overflow:hidden;}',
-        '#' + rootId + ' .wbs-ide-modal-head{padding:10px 14px;border-bottom:1px solid var(--wb-border,#e6e8eb);font-size:13px;color:var(--wb-color-text,#1f2329);background:var(--wb-bg-elevated,#fff);}',
+        '#' + rootId + ' .wbs-ide-modal-card{width:400px;max-width:calc(100vw - 24px);max-height:60vh;display:flex;flex-direction:column;background:var(--wb-bg-elevated,#fff);border:1px solid var(--wb-border,#d0d4da);border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,.2);overflow:hidden;}',
+        '#' + rootId + ' .wbs-ide-modal-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 14px;border-bottom:1px solid var(--wb-border,#e6e8eb);font-size:13px;color:var(--wb-color-text,#1f2329);background:var(--wb-bg-elevated,#fff);}',
         '#' + rootId + ' .wbs-ide-modal-body{flex:1;overflow:auto;padding:6px;}',
+        '#' + rootId + ' .wbs-ide-credit-refresh{flex:0 0 24px;width:24px;height:24px;padding:0;border:1px solid var(--wb-border,#d0d4da);border-radius:6px;background:var(--wb-button-bg,#fff);color:var(--wb-color-text,#1f2329);font-size:16px;cursor:pointer;}',
+        '#' + rootId + ' .wbs-ide-credit-refresh:hover{background:var(--wb-button-hover,#f0f1f2);}',
+        '#' + rootId + ' .wbs-ide-credit-refresh:disabled{opacity:.5;cursor:default;}',
+        '#' + rootId + ' .wbs-ide-credit-refresh:focus-visible{outline:2px solid currentColor;outline-offset:2px;}',
         '#' + rootId + ' .wbs-ide-account-row{display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;}',
         '#' + rootId + ' .wbs-ide-account-row:hover{background:var(--wb-bg-hover,#f5f6f7);}',
         '#' + rootId + ' .wbs-ide-account-text{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px;}',
         '#' + rootId + ' .wbs-ide-account-label{min-width:0;font-size:12px;color:var(--wb-color-text,#1f2329);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}',
         '#' + rootId + ' .wbs-ide-account-nick{font-weight:500;}',
         '#' + rootId + ' .wbs-ide-account-meta{color:var(--wb-color-text-secondary,#8a8f99);font-size:11px;margin-left:6px;}',
-        '#' + rootId + ' .wbs-ide-account-credits{font-size:11px;color:var(--wb-color-text-secondary,#8a8f99);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}',
+        '#' + rootId + ' .wbs-ide-account-credits{font-size:11px;color:var(--wb-color-text-secondary,#8a8f99);white-space:normal;overflow-wrap:anywhere;}',
         '#' + rootId + ' .wbs-ide-account-switch{flex:0 0 auto;border:1px solid var(--wb-border,#d0d4da);background:var(--wb-button-bg,#fff);color:var(--wb-color-text,#1f2329);border-radius:6px;padding:4px 10px;font-size:12px;cursor:pointer;}',
         '#' + rootId + ' .wbs-ide-account-switch:hover{background:var(--wb-button-hover,#f0f1f2);}',
         '#' + rootId + ' .wbs-ide-current-badge{flex:0 0 auto;font-size:11px;line-height:1;color:var(--wb-color-text-secondary,#8a8f99);border:1px solid var(--wb-border,#d0d4da);border-radius:999px;padding:3px 9px;background:var(--wb-bg-hover,#f5f6f7);}',
@@ -1337,7 +1392,17 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       card.className = 'wbs-ide-modal-card';
       var head = document.createElement('div');
       head.className = 'wbs-ide-modal-head';
-      head.textContent = brand + ' · ' + t('切换账号');
+      var title = document.createElement('span');
+      title.textContent = brand + ' · ' + t('切换账号');
+      head.appendChild(title);
+      var refresh = document.createElement('button');
+      refresh.type = 'button';
+      refresh.className = 'wbs-ide-credit-refresh';
+      refresh.title = t('刷新积分');
+      refresh.setAttribute('aria-label', t('刷新积分'));
+      refresh.textContent = '↻';
+      refresh.addEventListener('click', loadAccounts);
+      head.appendChild(refresh);
       var body = document.createElement('div');
       body.className = 'wbs-ide-modal-body';
       body.innerHTML = '<div class="wbs-ide-hint">' + t('读取账号中…') + '</div>';
@@ -1607,6 +1672,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '元素检查': 'Inspect element', '元素检查不可用：内部模块未加载': 'Element inspector unavailable: internal module not loaded', '元素拾取器尚未加载': 'Element picker is not loaded',
     'DOM 元素检查器': 'DOM element inspector', '复制元素': 'Copy element', '关闭元素检查器': 'Close element inspector', '已复制元素': 'Element copied', '未找到可检查元素': 'No inspectable element found', '检查失败：': 'Inspection failed: ', '拾取模式：移动鼠标高亮元素，点击选中（Esc 退出）': 'Pick mode: move to highlight an element, click to select (Esc to exit)',
     '到期时间': 'Expiry', '剩余': 'Remaining', '剩余时间计算中': 'Calculating remaining time', '积分': 'Credits', '积分节点': 'Credit node', '积分查询超时': 'Credit query timed out', '个人版': 'Personal', '企业': 'Enterprise', '基础用量': 'Base usage', '赠送与加量包': 'Gift & bonus packs', '其他积分': 'Other credits', '即将过期': 'Expiring soon', '已过期': 'Expired',
+    '积分未查询': 'Credits not queried', '上次查询：': 'Last checked: ', '刷新积分': 'Refresh credits', '刷新失败': 'Refresh failed',
     '账号切换': 'Account switch', '切换账号': 'Switch account', '读取账号中…': 'Loading accounts…', '暂无已备份账号': 'No backed-up accounts yet',
     '正在切换到': 'Switching to', '切换失败：': 'Switch failed: ', '读取失败：': 'Load failed: ', '24小时过期：': 'Expires in 24h: ', '近7天过期：': 'Expires in 7 days: ', '积分：无限': 'Credits: unlimited',
     '昨天': 'Yesterday', '分钟': ' min', '小时': ' h', '定位到第': 'Jump to message ', '条用户消息': ' user message', '发送中': 'Sending', '附件': 'Attachment', '疑似未完成': 'Possibly incomplete',
