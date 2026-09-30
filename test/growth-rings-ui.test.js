@@ -323,7 +323,7 @@ test('full cat water and icon follow the live theme button palette instead of fi
     .map(match => match[1]).filter(rule => rule.includes('--wbs-liquid-fill:'));
   assert.ok(badgeRules.length);
   for (const rule of badgeRules) {
-    assert.match(rule, /--wbs-liquid-fill:color-mix\(in srgb,var\(--wb-button-primary-bg/);
+    assert.match(rule, /--wbs-liquid-fill:(?:color-mix\(in srgb,var\(--wb-button-primary-bg|oklch\(from var\(--wb-button-primary-bg)/);
     assert.doesNotMatch(rule, /var\(--wbs-primary\)/);
   }
   assert.match(inject, /\.wbs-daily-vessel\.is-checked-in\{--wbs-liquid-ink:var\(--wb-button-primary-fg/);
@@ -366,4 +366,10 @@ test('growth plan primary actions use WorkBuddy button theme tokens', () => {
   const hover = inject.match(/\.wbs-growth-task-action:hover[^']+/);
   assert.ok(hover);
   assert.match(hover[0], /var\(--wb-button-primary-bg-hover/);
+});
+
+
+test('full water remains visibly brighter than the empty vessel in monochrome themes', () => {
+  assert.match(inject, /--wbs-liquid-fill:color-mix\(in srgb,var\(--wb-button-primary-bg\) 55%,var\(--wb-button-primary-fg\)\)/);
+  assert.match(inject, /@supports \(color:oklch\(from black l c h\)\)\{\.wbs-daily-rings\{--wbs-liquid-fill:oklch\(from var\(--wb-button-primary-bg\) max\(l,\.62\) c h \/ 1\)/);
 });
