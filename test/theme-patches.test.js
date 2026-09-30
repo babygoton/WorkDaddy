@@ -89,3 +89,15 @@ test('nebula file links and code copy controls use transparent backgrounds in al
   assert.match(patch.css, /background:transparent !important/);
   assert.doesNotMatch(patch.css, /:hover|:focus|:active/, 'unconditional important override covers native hover and active fills');
 });
+
+test('generic dark popup text repair excludes the WorkDaddy status popover', () => {
+  const patch = patches.find(item => item.id === 'patch-44');
+  const selectors = patch.css.slice(0, patch.css.indexOf('{')).split(',');
+  assert.equal(selectors.length, 3);
+  for (const selector of selectors) {
+    assert.match(selector, /\*:not\(:where\(\.wbs-status-popover \*\)\)$/,
+      'official popup text repair must not override themed WorkDaddy buttons and reward labels');
+  }
+  assert.match(patch.css, /color:var\(--wb-color-text-primary\) !important/,
+    'official tooltip/dropdown text still needs the dark-theme repair');
+});

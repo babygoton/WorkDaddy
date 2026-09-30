@@ -2097,6 +2097,13 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     return !!(c && c.ok && !c.inactive);
   }
 
+  function isGrowthActiveToday(a) {
+    var today = a && a.growthTodayActive;
+    // The CN growth calendar uses Beijing time, independently of the OS timezone.
+    var date = new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10);
+    return !!(today && today.ok === true && today.is_active === true && today.date === date);
+  }
+
   function activityStreakHtml(a) {
     if (WBS_PROFILE_IS_AI) return '';
     var value = a && a.activityStreak;
@@ -14858,7 +14865,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       previous.forEach(function (cached) {
         var account = byUid.get(cached.uid);
         if (!account) return; // 删除的账号不能被缓存复活。
-        ['credits', 'creditSegments', 'creditUnlimited', 'creditExpired', 'dailyProgress'].forEach(function (key) {
+        ['credits', 'creditSegments', 'creditUnlimited', 'creditExpired', 'dailyProgress', 'growthTodayActive'].forEach(function (key) {
           if (account[key] === undefined && cached[key] !== undefined) account[key] = cached[key];
         });
         if (!isKnownActivityStreak(account.activityStreak) && isKnownActivityStreak(cached.activityStreak)) {
@@ -14892,12 +14899,10 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     }
 
     function dailyRingsSvg(account) {
-      // The cat badge answers one question: has this account checked in today?
-      // Growth-plan progress remains available in the popover, but must not
-      // make an unchecked account look partially complete.
-      var checkedToday = isCheckedInToday(account);
+      // Credit check-in and login alone do not complete growth activity.
+      // Only the official heatmap's record for today may fill the cat vessel.
+      var checkedToday = isGrowthActiveToday(account);
       var level = checkedToday ? '100.00%' : '0.00%';
-      var empty = !checkedToday;
       return '<span class="wbs-daily-vessel' + (checkedToday ? ' is-checked-in' : ' is-empty') + '" aria-hidden="true" style="--wbs-liquid-level:' + level + ';--wbs-workbuddy-cat:url(' + WORKBUDDY_CAT_MARK + ')">' +
         '<span class="wbs-daily-liquid"></span><span class="wbs-daily-cat-mark"></span></span>';
     }
@@ -16155,8 +16160,19 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
           .catch(function () { return { days: null, status: 'unavailable' }; })
           .then(function (value) {
             if (!alive || !state.open || runId !== state.activityRunId) return;
+            // Keep two workers, each with one request at a time. This endpoint
+            // only reads the backend record; it never sends a prompt or checks in.
+            return api('/api/growth/today-active', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ uid: account.uid }) })
+              .catch(function () { return null; })
+              .then(function (today) { return { streak: value, today: today }; });
+          })
+          .then(function (result) {
+            if (!alive || !state.open || runId !== state.activityRunId) return;
             var current = state.accounts.filter(function (a) { return a.uid === account.uid; })[0];
             if (!current) return;
+            var value = result.streak;
+            current.growthTodayActive = result.today;
+            if (!result.today || result.today.ok !== true) retryAt = Math.max(retryAt, Date.now() + 30100);
             if (!isKnownActivityStreak(value)) {
               // daemon 对失败退避 30 秒：到期后再重试，避免重开面板时反复命中失败缓存。
               retryAt = Math.max(retryAt, (Number(value && value.fetchedAt) || Date.now()) + 30100);
@@ -16185,6 +16201,13 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         }, Math.max(0, retryAt - Date.now()));
       });
     }
+
+    setBuildInterval(function () {
+      if (!alive || !state.open || WBS_PROFILE_IS_AI || !CAPS.accounts) return;
+      // Clear yesterday's fill even if the next backend request is still pending.
+      updateDailyProgressCells();
+      if (!activityBatchPromise) fetchActivityForAccounts();
+    }, 60000);
 
     function requestCredit(uid) {
       return new Promise(function (resolve, reject) {
@@ -16750,7 +16773,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '.wbs-daily-rings:hover,.wbs-daily-rings[aria-expanded="true"]{background:var(--wbs-primary-soft-hover);box-shadow:0 2px 8px rgba(var(--wbs-primary-rgb),.13),inset 0 1px 0 rgba(255,255,255,.28)}',
     '.wbs-daily-rings:focus-visible{background:color-mix(in srgb,var(--wb-bg-hover,#eef0f3) 86%,transparent);box-shadow:0 0 0 2px color-mix(in srgb,var(--wbs-liquid-fill) 45%,transparent)}',
     '.wbs-daily-vessel{position:relative;display:block;width:20px;height:20px;flex:0 0 20px;overflow:hidden;border-radius:50%;background:var(--wbs-liquid-bg);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--wbs-liquid-fill) 20%,transparent),0 1px 3px rgba(20,32,29,.12);isolation:isolate}',
-    '.wbs-daily-liquid{position:absolute;inset:auto 0 0;height:var(--wbs-liquid-level,0%);min-height:2px;background:var(--wbs-liquid-fill);box-shadow:inset 0 1px 0 rgba(255,255,255,.38);transition:height .35s ease}.wbs-daily-vessel.is-empty .wbs-daily-liquid{min-height:0}',
+    '.wbs-daily-liquid{position:absolute;inset:auto 0 0;height:var(--wbs-liquid-level,0%);min-height:2px;background:var(--wbs-liquid-fill);box-shadow:inset 0 1px 0 rgba(255,255,255,.38);transition:height .35s ease}.wbs-daily-vessel.is-empty .wbs-daily-liquid{min-height:0}.wbs-daily-vessel.is-checked-in{--wbs-liquid-ink:var(--wb-button-primary-fg)}.wbs-daily-vessel.is-checked-in .wbs-daily-liquid{box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--wbs-liquid-fill) 62%,var(--wb-button-primary-fg)),inset 0 1px 2px rgba(255,255,255,.18)}',
     '.wbs-daily-cat-mark{position:absolute;z-index:1;inset:2px;background:var(--wbs-liquid-ink);-webkit-mask-image:var(--wbs-workbuddy-cat);mask-image:var(--wbs-workbuddy-cat);-webkit-mask-repeat:no-repeat;mask-repeat:no-repeat;-webkit-mask-position:center;mask-position:center;-webkit-mask-size:contain;mask-size:contain;transform:rotate(30deg) scale(.82);transform-origin:center}',
     '.wbs-daily-streak-label{font-size:10.5px;line-height:1;font-weight:600;white-space:nowrap;font-variant-numeric:tabular-nums;color:inherit}.wbs-daily-streak-label.is-pending{color:var(--wb-icon-tertiary,#7c818b);font-weight:500}',
     '.wbs-status-popover{position:fixed;z-index:2147483647;width:306px;box-sizing:border-box;padding:12px;border:1px solid var(--wb-border-subtle,rgba(20,24,32,.14));border-radius:11px;background:color-mix(in srgb,var(--wb-bg-popover,#fff) 96%,transparent);color:var(--wb-color-text-primary,#1f1f1f);box-shadow:0 16px 42px rgba(20,24,32,.16),inset 0 1px 0 rgba(255,255,255,.5);backdrop-filter:blur(20px) saturate(1.08);-webkit-backdrop-filter:blur(20px) saturate(1.08);font:12px/1.45 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;pointer-events:auto}.wbs-status-popover.is-daily{width:620px;max-width:calc(100vw - 16px);max-height:calc(100vh - 16px);overflow-y:auto;overscroll-behavior:contain;scrollbar-width:none}',
@@ -16816,8 +16839,8 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '.wbs-ck{font-size:11px;font-weight:600}',
     '.wbs-checkin-tag{display:inline-flex;align-items:center;height:22px;min-height:22px;box-sizing:border-box;padding:1px 7px;border:1px solid transparent;border-radius:999px;white-space:nowrap}',
     '.wbs-checkin-tag.pending{background:var(--wb-bg-tertiary,#f0f0f0);color:var(--wb-icon-tertiary,#999)}',
-    '.wbs-daily-rings,.wbs-checkin-tag.ok{--wbs-badge-bg:var(--wb-color-text-primary,#1f1f1f);--wbs-badge-fg:var(--wb-bg-popover,#fff);background:var(--wbs-badge-bg);border-color:transparent;color:var(--wbs-badge-fg);box-shadow:none}.wbs-daily-rings{--wbs-liquid-fill:rgba(255,255,255,.46);--wbs-liquid-bg:rgba(255,255,255,.14);--wbs-liquid-ink:#fff}.wbs-daily-rings .wbs-daily-streak-label.is-pending{color:inherit;opacity:.75}.wbs-daily-rings:hover,.wbs-daily-rings[aria-expanded="true"]{background:color-mix(in srgb,var(--wbs-badge-bg) 84%,white);box-shadow:0 2px 8px rgba(0,0,0,.14)}',
-    ':is(html.cb-dark,html[data-theme="dark"],html[data-wbs-theme-id="dark"],html[data-wbs-theme-id="cyber-purple"],html[data-wbs-theme-id="nebula"],body[data-vscode-theme-name*="dark" i]) .wbs-daily-rings,:is(html.cb-dark,html[data-theme="dark"],html[data-wbs-theme-id="dark"],html[data-wbs-theme-id="cyber-purple"],html[data-wbs-theme-id="nebula"],body[data-vscode-theme-name*="dark" i]) .wbs-checkin-tag.ok{--wbs-badge-bg:rgba(255,255,255,.085);--wbs-badge-fg:var(--wb-color-text-primary,#f6f5ff);background:var(--wbs-badge-bg);border:1px solid rgba(255,255,255,.12);color:var(--wbs-badge-fg);box-shadow:inset 0 1px 0 rgba(255,255,255,.08);backdrop-filter:blur(12px) saturate(1.08);-webkit-backdrop-filter:blur(12px) saturate(1.08)}:is(html.cb-dark,html[data-theme="dark"],html[data-wbs-theme-id="dark"],html[data-wbs-theme-id="cyber-purple"],html[data-wbs-theme-id="nebula"],body[data-vscode-theme-name*="dark" i]) .wbs-daily-rings{--wbs-liquid-fill:rgba(170,160,235,.62);--wbs-liquid-bg:rgba(255,255,255,.12);--wbs-liquid-ink:#f6f5ff}:is(html.cb-dark,html[data-theme="dark"],html[data-wbs-theme-id="dark"],html[data-wbs-theme-id="cyber-purple"],html[data-wbs-theme-id="nebula"],body[data-vscode-theme-name*="dark" i]) .wbs-daily-rings:hover,:is(html.cb-dark,html[data-theme="dark"],html[data-wbs-theme-id="dark"],html[data-wbs-theme-id="cyber-purple"],html[data-wbs-theme-id="nebula"],body[data-vscode-theme-name*="dark" i]) .wbs-daily-rings[aria-expanded="true"]{background:rgba(255,255,255,.14);box-shadow:inset 0 1px 0 rgba(255,255,255,.1),0 3px 10px rgba(0,0,0,.12)}',
+    '.wbs-daily-rings,.wbs-checkin-tag.ok{--wbs-badge-bg:var(--wb-color-text-primary,#1f1f1f);--wbs-badge-fg:var(--wb-bg-popover,#fff);background:var(--wbs-badge-bg);border-color:transparent;color:var(--wbs-badge-fg);box-shadow:none}.wbs-daily-rings{--wbs-liquid-fill:color-mix(in srgb,var(--wb-button-primary-bg) 88%,var(--wb-button-primary-fg));--wbs-liquid-bg:rgba(255,255,255,.14);--wbs-liquid-ink:#fff}.wbs-daily-rings .wbs-daily-streak-label.is-pending{color:inherit;opacity:.75}.wbs-daily-rings:hover,.wbs-daily-rings[aria-expanded="true"]{background:color-mix(in srgb,var(--wbs-badge-bg) 84%,white);box-shadow:0 2px 8px rgba(0,0,0,.14)}',
+    ':is(html.cb-dark,html[data-theme="dark"],html[data-wbs-theme-id="dark"],html[data-wbs-theme-id="cyber-purple"],html[data-wbs-theme-id="nebula"],body[data-vscode-theme-name*="dark" i]) .wbs-daily-rings,:is(html.cb-dark,html[data-theme="dark"],html[data-wbs-theme-id="dark"],html[data-wbs-theme-id="cyber-purple"],html[data-wbs-theme-id="nebula"],body[data-vscode-theme-name*="dark" i]) .wbs-checkin-tag.ok{--wbs-badge-bg:rgba(255,255,255,.085);--wbs-badge-fg:var(--wb-color-text-primary,#f6f5ff);background:var(--wbs-badge-bg);border:1px solid rgba(255,255,255,.12);color:var(--wbs-badge-fg);box-shadow:inset 0 1px 0 rgba(255,255,255,.08);backdrop-filter:blur(12px) saturate(1.08);-webkit-backdrop-filter:blur(12px) saturate(1.08)}:is(html.cb-dark,html[data-theme="dark"],html[data-wbs-theme-id="dark"],html[data-wbs-theme-id="cyber-purple"],html[data-wbs-theme-id="nebula"],body[data-vscode-theme-name*="dark" i]) .wbs-daily-rings{--wbs-liquid-bg:rgba(255,255,255,.12);--wbs-liquid-ink:#f6f5ff}:is(html.cb-dark,html[data-theme="dark"],html[data-wbs-theme-id="dark"],html[data-wbs-theme-id="cyber-purple"],html[data-wbs-theme-id="nebula"],body[data-vscode-theme-name*="dark" i]) .wbs-daily-rings:hover,:is(html.cb-dark,html[data-theme="dark"],html[data-wbs-theme-id="dark"],html[data-wbs-theme-id="cyber-purple"],html[data-wbs-theme-id="nebula"],body[data-vscode-theme-name*="dark" i]) .wbs-daily-rings[aria-expanded="true"]{background:rgba(255,255,255,.14);box-shadow:inset 0 1px 0 rgba(255,255,255,.1),0 3px 10px rgba(0,0,0,.12)}',
     '.wbs-checkin-tag.fail{background:rgba(239,68,68,.1);color:#dc2626}',
     '.wbs-model-rate-limit-slot{display:inline-flex;align-items:center;min-width:0}.wbs-model-rate-limit{appearance:none;-webkit-appearance:none;font:inherit;cursor:pointer;transition:background-color .15s,box-shadow .15s,color .15s}.wbs-model-rate-limit:hover,.wbs-model-rate-limit[aria-expanded="true"]{background:color-mix(in srgb,var(--wbs-badge-bg) 84%,white);box-shadow:0 2px 8px rgba(0,0,0,.14)}.wbs-model-rate-limit:focus-visible{outline:2px solid color-mix(in srgb,var(--wbs-badge-bg) 45%,transparent);outline-offset:2px}',
     '.wbs-status-popover.is-rate-limit{width:500px;max-width:calc(100vw - 16px);overflow-x:auto}.wbs-status-popover.is-rate-limit-summary{width:360px;max-width:calc(100vw - 16px);overflow-x:auto}.wbs-model-rate-limit-detail{grid-template-columns:8px auto minmax(0,1fr) auto auto;gap:7px}.wbs-model-rate-limit-detail b{white-space:nowrap;overflow-wrap:normal}.wbs-model-rate-limit-detail .wbs-model-rate-limit-model{text-align:left}.wbs-model-rate-limit-detail i.rate-limit{color:var(--wb-color-text-primary,#1f1f1f)}.wbs-model-rate-limit-account-group{padding:7px 0 2px;border-top:1px solid var(--wb-border-subtle,rgba(20,24,32,.1))}.wbs-model-rate-limit-account-group:first-of-type{padding-top:0;border-top:0}.wbs-model-rate-limit-account-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:0 2px 2px}.wbs-model-rate-limit-account-head strong{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px}.wbs-model-rate-limit-account-head span{flex:0 0 auto;color:var(--wb-icon-tertiary,#7c818b);font-size:10px;white-space:nowrap}.wbs-model-rate-limit-summary-row{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,auto);align-items:center;gap:7px;min-height:28px;margin-top:4px;padding:0 8px;border:1px solid var(--wb-border-subtle,rgba(20,24,32,.1));border-radius:8px;background:color-mix(in srgb,var(--wb-bg-secondary,#f6f7f8) 72%,transparent)}.wbs-model-rate-limit-summary-row>span{color:var(--wb-color-text-secondary,#5f6368);white-space:nowrap}.wbs-model-rate-limit-summary-row>b{min-width:0;font-size:11px;font-weight:650;white-space:nowrap;overflow-wrap:normal}.wbs-model-rate-limit-summary-row .wbs-model-rate-limit-model{text-align:left}.wbs-model-rate-limit-summary-row .wbs-model-rate-limit-reset{text-align:right}',

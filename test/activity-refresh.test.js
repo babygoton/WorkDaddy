@@ -5,22 +5,31 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const source = fs.readFileSync(require('node:path').join(__dirname, '../scripts/inject.js'), 'utf8');
 const tick = () => new Promise(resolve => setImmediate(resolve));
-function harness() {
-  const requests = [], timers = [];
+function harness(options = {}) {
+  const requests = [], todayRequests = [], timers = [], intervals = [];
   const start = source.includes('    var activityBatchPromise') ? source.indexOf('    var activityBatchPromise') : source.indexOf('    function fetchActivityForAccounts()');
   const end = source.indexOf('    // 积分查询按', start);
   const badgeStart = source.indexOf('  function activityStreakHtml(');
+  const harnessToday = options.manualToday === true;
   const ctx = vm.createContext({
     alive: true, WBS_PROFILE_IS_AI: false, CAPS: { accounts: true },
     state: { open: true, activityRunId: 0, accounts: [{ uid: 'a' }, { uid: 'b' }, { uid: 'c' }] },
-    api() { return new Promise((resolve, reject) => requests.push({ resolve, reject })); },
+    api(route, options) {
+      if (route === '/api/growth/today-active') {
+        if (!harnessToday) return Promise.resolve({ ok: true, date: '1970-01-01', is_active: false });
+        return new Promise((resolve, reject) => todayRequests.push({ resolve, reject, uid: JSON.parse(options.body).uid }));
+      }
+      return new Promise((resolve, reject) => requests.push({ resolve, reject }));
+    },
     accountsPane: { querySelectorAll: () => [] },
     setBuildTimeout(fn, delay) { const timer = { fn, delay }; timers.push(timer); return timer; },
+    setBuildInterval(fn, delay) { intervals.push({ fn, delay }); },
+    updateDailyProgressCells() {},
     clearTimeout(timer) { if (timer) timer.cancelled = true; },
     Date: class extends Date { static now() { return 100000; } },
   });
   vm.runInContext(source.slice(badgeStart, source.indexOf('  function el(tag', badgeStart)) + source.slice(start, end), ctx);
-  return { ctx, requests, timers };
+  return { ctx, requests, todayRequests, timers, intervals };
 }
 
 test('an activity failure retains the last valid count and schedules one delayed retry', async () => {
@@ -64,4 +73,51 @@ test('reinjection stops the old activity queue after its in-flight requests fini
   assert.equal(h.requests.length, 2);
   assert.equal(h.ctx.state.accounts[0].activityStreak, undefined);
   assert.equal(h.timers.length, 0);
+});
+
+
+test('activity refresh reads the official today record independently of the streak and clears failed reads', async () => {
+  const h = harness({ manualToday: true });
+  h.ctx.state.accounts = [{ uid: 'a', checkin: { ok: true } }];
+  h.ctx.fetchActivityForAccounts();
+  h.requests[0].resolve({ activityStreak: { days: 5, status: 'ready' } }); await tick();
+  assert.equal(h.todayRequests.length, 1);
+  h.todayRequests[0].resolve({ ok: true, date: '1970-01-01', is_active: false }); await tick();
+  assert.equal(h.ctx.state.accounts[0].growthTodayActive.is_active, false);
+  h.ctx.fetchActivityForAccounts();
+  h.requests[1].reject(new Error('streak unavailable')); await tick();
+  h.todayRequests[1].resolve({ ok: true, date: '1970-01-01', is_active: true }); await tick();
+  assert.equal(h.ctx.state.accounts[0].growthTodayActive.is_active, true);
+  h.ctx.fetchActivityForAccounts();
+  h.requests[2].resolve({ activityStreak: { days: 5, status: 'ready' } }); await tick();
+  h.todayRequests[2].reject(new Error('today unavailable')); await tick();
+  assert.equal(h.ctx.state.accounts[0].growthTodayActive, null);
+});
+
+test('closing during the today query discards the late result and stops the queue', async () => {
+  const h = harness({ manualToday: true });
+  h.ctx.fetchActivityForAccounts();
+  for (const request of h.requests) request.resolve({ activityStreak: { days: 5, status: 'ready' } });
+  await tick();
+  assert.equal(h.todayRequests.length, 2);
+  h.ctx.state.open = false; h.ctx.state.activityRunId++;
+  for (const request of h.todayRequests) request.resolve({ ok: true, date: '1970-01-01', is_active: true });
+  await tick();
+  assert.equal(h.ctx.state.accounts[0].growthTodayActive, undefined);
+  assert.equal(h.requests.length, 2);
+});
+
+test('an open panel rechecks backend activity periodically without overlapping a pending batch', async () => {
+  const h = harness();
+  const poll = h.intervals.find(timer => timer.delay === 60000);
+  assert.ok(poll);
+  poll.fn();
+  assert.equal(h.requests.length, 2);
+  poll.fn();
+  assert.equal(h.requests.length, 2);
+  h.ctx.state.open = false;
+  for (const request of h.requests) request.resolve({ activityStreak: { days: 5, status: 'ready' } });
+  await tick();
+  poll.fn();
+  assert.equal(h.requests.length, 2);
 });

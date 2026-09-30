@@ -43,21 +43,32 @@ test('account cards render today check-in as a full or empty cat liquid badge', 
   assert.doesNotMatch(hoverRule[0], /border(?:-color)?:/);
 });
 
-test('cat badge state follows the account check-in record independently of growth progress', () => {
+test('cat water requires the official growth record for today, not credit check-in or streak totals', () => {
   const start = inject.indexOf('    function dailyRingsSvg(account)');
   const end = inject.indexOf('\n    function dailyRingsHtml', start);
-  assert.ok(start > 0 && end > start);
   const vm = require('node:vm');
-  const context = { WORKBUDDY_CAT_MARK: '__WBS_BUDDY_MARK__' };
+  const context = {
+    WORKBUDDY_CAT_MARK: '__WBS_BUDDY_MARK__',
+    Date: class extends Date { static now() { return Date.parse('2026-09-30T02:00:00Z'); } },
+  };
   const checkedStart = inject.indexOf('  function isCheckedInToday(');
   vm.runInNewContext(inject.slice(checkedStart, inject.indexOf('  function activityStreakHtml(', checkedStart)), context);
   vm.runInNewContext(inject.slice(start, end), context);
-  assert.match(context.dailyRingsSvg({ checkin: { ok: true }, dailyProgress: { growth: { ratio: 0 } } }), /--wbs-liquid-level:100\.00%/);
-  assert.match(context.dailyRingsSvg({ checkin: { ok: true } }), /is-checked-in/);
-  assert.doesNotMatch(context.dailyRingsSvg({ checkin: { ok: true, inactive: true }, dailyProgress: { growth: { ratio: 1 } } }), /--wbs-liquid-level:100\.00%/);
-  assert.match(context.dailyRingsSvg({ checkin: { ok: false }, dailyProgress: { growth: { ratio: 1 } } }), /is-empty/);
-  assert.match(context.dailyRingsSvg({}), /is-empty/);
-  assert.match(context.dailyRingsSvg(null), /is-empty/);
+  const record = (is_active, date = '2026-09-30') => ({ ok: true, is_active, date });
+  for (const account of [
+    { checkin: { ok: true } },
+    { checkin: { ok: true }, growthTodayActive: record(false) },
+    { checkin: { ok: true }, growthTodayActive: record(true, '2026-09-29') },
+    { activityStreak: { days: 5, status: 'ready' }, dailyProgress: { growth: { ratio: 1 } } },
+    { growthTodayActive: { ok: false, is_active: true, date: '2026-09-30' } },
+    { growthTodayActive: record('true') },
+    {}, null,
+  ]) assert.match(context.dailyRingsSvg(account), /is-empty/, JSON.stringify(account));
+  const completed = { checkin: { ok: false }, growthTodayActive: record(true) };
+  assert.match(context.dailyRingsSvg(completed), /is-checked-in/);
+  assert.match(context.dailyRingsSvg(completed), /--wbs-liquid-level:100\.00%/);
+  context.Date = class extends Date { static now() { return Date.parse('2026-09-30T16:00:00Z'); } };
+  assert.match(context.dailyRingsSvg(completed), /is-empty/, 'yesterday must become empty at Beijing midnight');
 });
 
 test('daily activity and credit nodes reuse one theme-aware colored popover', () => {
@@ -305,6 +316,21 @@ test('daily labels share a black light treatment and one glass dark treatment', 
   assert.match(inject, /\.wbs-daily-rings,\.wbs-checkin-tag\.ok\{--wbs-badge-bg:var\(--wb-color-text-primary/);
   assert.match(inject, /:is\(html\.cb-dark,html\[data-theme="dark"\],html\[data-wbs-theme-id="dark"\],html\[data-wbs-theme-id="cyber-purple"\],html\[data-wbs-theme-id="nebula"\],body\[data-vscode-theme-name\*="dark" i\]\) \.wbs-daily-rings/);
   assert.match(inject, /backdrop-filter:blur\(12px\)/);
+});
+
+test('full cat water and icon follow the live theme button palette instead of fixed panel accents', () => {
+  const badgeRules = [...inject.matchAll(/\.wbs-daily-rings\{([^}]+)\}/g)]
+    .map(match => match[1]).filter(rule => rule.includes('--wbs-liquid-fill:'));
+  assert.ok(badgeRules.length);
+  for (const rule of badgeRules) {
+    assert.match(rule, /--wbs-liquid-fill:color-mix\(in srgb,var\(--wb-button-primary-bg/);
+    assert.doesNotMatch(rule, /var\(--wbs-primary\)/);
+  }
+  assert.match(inject, /\.wbs-daily-vessel\.is-checked-in\{--wbs-liquid-ink:var\(--wb-button-primary-fg/);
+  const rim = inject.match(/\.wbs-daily-vessel\.is-checked-in \.wbs-daily-liquid\{([^}]+)\}/);
+  assert.ok(rim);
+  assert.match(rim[1], /var\(--wbs-liquid-fill\)/);
+  assert.doesNotMatch(rim[1], /var\(--wbs-primary\)/);
 });
 
 test('travel selection links to the official center', () => {

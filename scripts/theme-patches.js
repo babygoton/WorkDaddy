@@ -204,8 +204,8 @@ module.exports = [
   },
   {
     id: 'patch-44',
-    desc: 'tooltip/悬浮提示组件文字硬编码深色（与深色弹窗同色看不见）：强制浅色 + hover 高亮态文字浅色（排除官方新组件体系 cr-theme——其自带深色文字适配）',
-    css: 'html[data-theme="dark"] body[data-vscode-theme-name] [class*="tooltip"]:not([class*="chat"]):not([class*="message"]) *,html[data-theme="dark"] body[data-vscode-theme-name] [class*="popover"]:not([class*="cr-theme"]) *,html[data-theme="dark"] body[data-vscode-theme-name] [class*="dropdown"]:not([class*="cr-theme"]) *{color:var(--wb-color-text-primary) !important;}html[data-theme="dark"] body[data-vscode-theme-name] [class*="dropdown"]:not([class*="cr-theme"]) [class*="item"]:hover,html[data-theme="dark"] body[data-vscode-theme-name] [class*="dropdown"]:not([class*="cr-theme"]) [class*="item"]:hover *{color:var(--wb-color-text-primary) !important;background:var(--wb-bg-hover) !important;}',
+    desc: 'tooltip/悬浮提示组件文字硬编码深色（与深色弹窗同色看不见）：强制浅色 + hover 高亮态文字浅色（排除官方新组件体系 cr-theme——其自带深色文字适配；WorkDaddy 状态弹层保留组件自己的文字配色）',
+    css: 'html[data-theme="dark"] body[data-vscode-theme-name] [class*="tooltip"]:not([class*="chat"]):not([class*="message"]) *:not(:where(.wbs-status-popover *)),html[data-theme="dark"] body[data-vscode-theme-name] [class*="popover"]:not([class*="cr-theme"]) *:not(:where(.wbs-status-popover *)),html[data-theme="dark"] body[data-vscode-theme-name] [class*="dropdown"]:not([class*="cr-theme"]) *:not(:where(.wbs-status-popover *)){color:var(--wb-color-text-primary) !important;}html[data-theme="dark"] body[data-vscode-theme-name] [class*="dropdown"]:not([class*="cr-theme"]) [class*="item"]:hover,html[data-theme="dark"] body[data-vscode-theme-name] [class*="dropdown"]:not([class*="cr-theme"]) [class*="item"]:hover *{color:var(--wb-color-text-primary) !important;background:var(--wb-bg-hover) !important;}',
   },
   {
     id: 'patch-45',
