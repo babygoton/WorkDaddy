@@ -83,11 +83,21 @@ test('reopening ignores the previous batch and enables refresh only after the cu
   assert.match(h.credits()[0], /积分 12/); assert.equal(refresh.disabled, false);
 });
 
-test('IDE mode uses the shared WorkDaddy panel and blocks non-account tabs', () => {
-  assert.match(source, /var WBS_CODEBUDDY_IDE_MODE = \(PROFILE_ID === 'codebuddy-cn'/);
-  assert.match(source, /if \(WBS_CODEBUDDY_IDE_MODE && name !== 'account'\)/);
-  assert.match(source, /toast\('请切换到 CodeBuddy Agents 模式'/);
+test('IDE shares the WorkDaddy panel without restricting tab navigation', () => {
   assert.match(source, /'<div class="wbs-fab"/);
   assert.match(source, /'<div class="wbs-panel"/);
-  assert.doesNotMatch(source.slice(source.indexOf('if \(\(PROFILE_ID === \'codebuddy-cn\''), source.indexOf('if \(\(PROFILE_ID === \'codebuddy-cn\'') + 300), /injectCodeBuddyIdeMode\(\);\s*return/);
+  assert.doesNotMatch(source, /injectCodeBuddyIdeMode\(\);/);
+  const tabSource = source.slice(source.indexOf('    function switchTab(name)'), source.indexOf('    var tabBtns'));
+  const panes = ['account', 'sessions', 'models', 'about'];
+  const tabs = panes.map(name => ({ getAttribute: () => name, classList: { toggle(_cls, active) { this.active = active; } } }));
+  for (const name of panes) {
+    const context = { WBS_CODEBUDDY_IDE_MODE: true,
+      root: { querySelectorAll: () => tabs },
+      themePane: null, sessionsPane: null, modelsPane: null, enhancePane: null,
+      automationPane: null, pcPane: null, aboutPane: null, settingsPane: null,
+      toast: () => assert.fail('IDE tab navigation must not be blocked'),
+    };
+    vm.runInNewContext(tabSource + '\nswitchTab(' + JSON.stringify(name) + ');', context);
+    assert.equal(tabs.find(tab => tab.classList.active).getAttribute(), name);
+  }
 });

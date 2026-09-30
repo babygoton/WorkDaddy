@@ -1131,14 +1131,10 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
   var AC_SUPPORTED = true;
   // 客户端身份只控制真实的 profile 差异；DOM 与队列能力由 WBS_COMPAT 独立判断。
   var WBS_PROFILE_IS_AI = PROFILE_ID === 'workbuddy-ai';
-  var WBS_CODEBUDDY_IDE_MODE = (PROFILE_ID === 'codebuddy-cn' || PROFILE_ID === 'codebuddy-intl')
-    && /\/workbench\.html(?:[?#]|$)/i.test(location.href);
   var WBS_BRAND = CAPS.appName || (WBS_PROFILE_IS_AI ? 'WorkDaddy AI' : 'WorkDaddy');
   var WBS_PANEL_TITLE = CAPS.apiTransport === 'cdp' ? 'WorkDaddy' : WBS_BRAND;
 
-  // CodeBuddy IDE workbench 复用完整 WorkDaddy 面板；账号页可用，其余功能需要
-  // 切换到 CodeBuddy Agents 窗口。旧的独立账号浮层函数保留在源码中仅供历史兼容，
-  // 不再从 IDE 分支调用。
+  // IDE 与 Agents 共用下方的 WorkDaddy 面板；旧浮层不再调用。
   function injectCodeBuddyIdeMode() {
     var rootId = 'wbs-ide-statusbar-root';
     var panelAppearance = CAPS.panelAppearance || 'light';
@@ -1426,7 +1422,6 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
   var WBS_ACCOUNT_MASK_KEY = 'workdaddy.account.mask.' + PROFILE_ID;
   var WBS_INITIAL_AUTO_COPY_ALL_KEY = 'workdaddy.initial.autoCopyAllSessions.' + PROFILE_ID;
   var WBS_I18N_EN = {
-    '请切换到 CodeBuddy Agents 模式': 'Please switch to CodeBuddy Agents mode',
     '账号备注': 'Account note',
     '查看或编辑账号备注': 'View or edit account note',
     '暂无备注，点击添加…': 'No note yet. Click to add…',
@@ -2151,14 +2146,6 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     } catch (_) {}
     return wbsSystemLanguage();
   })();
-
-  // [CodeBuddy IDE 状态栏] 守卫：仅 codebuddy profile + IDE workbench.html 页面才走轻量分支。
-  // 必须放在 i18n 机制（WBS_I18N_EN 字典 + wbsTranslateString + WBS_LANGUAGE）初始化之后：
-  // 浮层文案用同一套翻译管线，英文环境（codebuddy-intl）下输出英文（i18n-coverage.test.js 强制）。
-  if ((PROFILE_ID === 'codebuddy-cn' || PROFILE_ID === 'codebuddy-intl')
-      && /\/workbench\.html(?:[?#]|$)/i.test(location.href)) {
-    // Continue through the shared panel build below.
-  }
 
   // 纯图标 SVG（stroke 跟随按钮 currentColor）
   var SWITCH_SVG =
@@ -8168,10 +8155,6 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
 
     // ===== Tab 切换 =====
     function switchTab(name) {
-      if (WBS_CODEBUDDY_IDE_MODE && name !== 'account') {
-        toast('请切换到 CodeBuddy Agents 模式', false, root);
-        return;
-      }
       if (typeof closeAccountNotePopover === 'function') closeAccountNotePopover();
       var tabs = root.querySelectorAll('.wbs-tab');
       var panes = root.querySelectorAll('.wbs-pane');
