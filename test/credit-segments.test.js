@@ -30,6 +30,38 @@ test('expands slice-period usage details into separate segments', () => {
   assert.deepEqual(segments.map((segment) => segment.remaining), [100, 100]);
 });
 
+// [积分段到期修正] 月度套餐基础包：DeductionEndTime 是长期扣费有效期（2034），
+// 本周期额度在 CycleEndTime（月底 23:59:59）清零重发。到期必须取最早值，
+// 否则「即将过期」统计会漏掉月底清零的 500 额度（实测数据：CodeBuddy个人体验版）。
+test('monthly base package expires at cycle end, not long-term deduction window', () => {
+  const segments = extractCreditSegments([
+    {
+      PackageName: 'CodeBuddy个人体验版',
+      CycleCapacityRemainPrecise: '500', CycleCapacitySizePrecise: '500',
+      DeductionEndTime: 2036728390000, // 2034-07-17
+      CycleStartTime: '2026-09-01 00:00:00',
+      CycleEndTime: '2026-09-30 23:59:59',
+    },
+  ], '套餐基础');
+  assert.equal(segments.length, 1);
+  assert.equal(segments[0].remaining, 500);
+  assert.equal(segments[0].expiresAt, new Date('2026-09-30T23:59:59').getTime());
+});
+
+// 裂变包两类时间相等：取最早不改变既有解析结果（防回归）
+test('fission pack keeps its own expiry when both time fields agree', () => {
+  const segments = extractCreditSegments([
+    {
+      PackageName: 'CodeBuddy个人版国内运营裂变包',
+      CycleCapacityRemainPrecise: '100', CycleCapacitySizePrecise: '100',
+      DeductionEndTime: '2026-10-01 00:30:43',
+      CycleEndTime: '2026-10-01 00:30:43',
+    },
+  ], '裂变包');
+  assert.equal(segments.length, 1);
+  assert.equal(segments[0].expiresAt, new Date('2026-10-01T00:30:43').getTime());
+});
+
 test('prefers cycle remaining over total capacity when a cycle is exhausted', () => {
   const segments = extractCreditSegments([
     { CycleCapacityRemainPrecise: '0', CapacityRemainPrecise: '500', EndTime: 1790000000 },

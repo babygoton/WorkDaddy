@@ -81,6 +81,23 @@ function firstTimestamp(value, fields) {
   return null;
 }
 
+// [积分段到期修正] 月度套餐基础包（如套餐基础500）同时携带两类时间：
+//   DeductionEndTime = 长期扣费有效期（如 2034，真正的权益期）
+//   CycleEndTime     = 本计费周期结束（月底 23:59:59，额度每月重发）
+// firstTimestamp 按字段优先级取值会把这类包判成 2034 年才过期，导致
+// 「即将过期」统计漏掉月底清零的额度。积分只在「扣费窗口 ∩ 计费周期」内可用，
+// 因此到期点应取候选字段中最早的非空值：月度包取到本周期 CycleEndTime，
+// 裂变包/一次性包两类字段相等（取最早无影响）。
+function earliestTimestamp(value, fields) {
+  let earliest = null;
+  for (const field of fields) {
+    const parsed = parseTimestamp(value && value[field]);
+    if (parsed === null) continue;
+    if (earliest === null || parsed < earliest) earliest = parsed;
+  }
+  return earliest;
+}
+
 function firstText(value, fields) {
   for (const field of fields) {
     const text = value && value[field];
@@ -102,7 +119,7 @@ function extractCreditSegments(accounts, source) {
         return {
           remaining: Number(remaining.toFixed(2)),
           total: Number((total === null ? remaining : Math.max(total, remaining)).toFixed(2)),
-          expiresAt: firstTimestamp(item, EXPIRY_FIELDS),
+          expiresAt: earliestTimestamp(item, EXPIRY_FIELDS),
           source: firstText(item, LABEL_FIELDS) || source || '积分',
           packageCode: item && item.PackageCode ? String(item.PackageCode) : '',
         };

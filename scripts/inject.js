@@ -1092,6 +1092,11 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     for (var j = 0; j < ss.length; j++) ss[j].remove();
     var dbg = document.querySelectorAll('#wbs-diag-badge, #wbs-debug-panel');
     for (var k = 0; k < dbg.length; k++) dbg[k].remove();
+    // [CodeBuddy IDE 状态栏] 清理 IDE 模式注入的浮层 root 与原生菜单去重样式，确保 reinjection 幂等
+    var ideRoot = document.getElementById('wbs-ide-statusbar-root');
+    if (ideRoot) ideRoot.remove();
+    var ideDedupe = document.getElementById('wbs-ide-menu-dedupe-style');
+    if (ideDedupe) ideDedupe.remove();
     var usageSummaryNodes = document.querySelectorAll('#wbs-session-usage-summary, #wbs-session-usage-popover');
     for (var us = 0; us < usageSummaryNodes.length; us++) usageSummaryNodes[us].remove();
     // 销毁所有历史 build：置 alive=false、断开全部 observer/事件监听。
@@ -1128,6 +1133,292 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
   var WBS_PROFILE_IS_AI = PROFILE_ID === 'workbuddy-ai';
   var WBS_BRAND = CAPS.appName || (WBS_PROFILE_IS_AI ? 'WorkDaddy AI' : 'WorkDaddy');
   var WBS_PANEL_TITLE = CAPS.apiTransport === 'cdp' ? 'WorkDaddy' : WBS_BRAND;
+
+  // [CodeBuddy IDE 状态栏] codebuddy profile 在 IDE workbench.html 中只注入轻量浮层，
+  // 不依赖 WBS_COMPAT（兼容层是为智能体窗口的 DOM 设计的），跳过完整面板逻辑后立即
+  // 返回，避免破坏现有 codebuddy 智能体窗口注入路径。注入来源是 daemon 的 IDE 浮层
+  // 管理器（主连接仍绑定 agentManager.html）；浏览器侧用 location.href 判定 IDE 模式。
+  // api() 是 IIFE 内的函数声明（hoist），闭包到 API/CAPS/WBS_API_TOKEN 已在上方赋值。
+  function injectCodeBuddyIdeMode() {
+    var rootId = 'wbs-ide-statusbar-root';
+    var panelAppearance = CAPS.panelAppearance || 'light';
+    var robotStyle = CAPS.robotStyle || 'black';
+    var brand = WBS_BRAND || 'WorkDaddy';
+    var accountLoadSerial = 0;
+    var modalOpen = false;
+    // 复用主面板翻译管线（i18n-coverage.test.js 要求全部 UI 文案可翻译）
+    function t(s) { return wbsTranslateString(s, WBS_LANGUAGE); }
+
+    // 幂等：reinjection 时移除旧 root 与旧去重样式（cleanup 已移除一次，双保险）
+    var existing = document.getElementById(rootId);
+    if (existing) existing.remove();
+    var existingDedupe = document.getElementById('wbs-ide-menu-dedupe-style');
+    if (existingDedupe) existingDedupe.remove();
+
+    var root = document.createElement('div');
+    root.id = rootId;
+    root.setAttribute('data-wbs-profile', PROFILE_ID);
+    root.className = 'wbs-ide-root wbs-ide-' + panelAppearance + ' wbs-ide-robot-' + robotStyle;
+    root.appendChild(buildIdeStyleNode());
+    root.appendChild(buildIdeFabNode());
+    root.appendChild(buildIdeModalNode());
+
+    // [CodeBuddy IDE 状态栏] CodeBuddy 官方帐户菜单的账号行按"认证会话"累积渲染：genie 扩展
+    // 替换会话时只发 added 不发 removed（官方 logout 才清理），而菜单把每行都显示成当前
+    // 账号昵称 → WorkDaddy 原生切换后残留的旧账号条目看起来就是多个一模一样的"当前账号"。
+    // 缓解：隐藏第一个之外的所有账号行（被隐藏行点击行为本就为空，无功能损失）。
+    // ⚠️ 若官方将来支持真正的多账号展示（各行显示各自昵称），删除本规则即可。
+    var dedupeStyle = document.createElement('style');
+    dedupeStyle.id = 'wbs-ide-menu-dedupe-style';
+    dedupeStyle.textContent = 'li.genie-account-menu-item ~ li.genie-account-menu-item{display:none !important;}';
+
+    function appendRoot() {
+      document.body.appendChild(root);
+      document.head.appendChild(dedupeStyle);
+    }
+    if (document.body) appendRoot();
+    else document.addEventListener('DOMContentLoaded', appendRoot);
+
+    function openModal() {
+      modalOpen = true;
+      var modal = root.querySelector('.wbs-ide-modal');
+      if (modal) modal.style.display = 'flex';
+      loadAccounts();
+    }
+    function closeModal() {
+      modalOpen = false;
+      accountLoadSerial++;
+      var modal = root.querySelector('.wbs-ide-modal');
+      if (modal) modal.style.display = 'none';
+    }
+
+    function isCurrentAccountLoad(serial) {
+      return modalOpen && root.isConnected && serial === accountLoadSerial;
+    }
+
+    function loadAccounts() {
+      var body = root.querySelector('.wbs-ide-modal-body');
+      if (!body) return;
+      var serial = ++accountLoadSerial;
+      var refresh = root.querySelector('.wbs-ide-credit-refresh');
+      refresh.disabled = true;
+      body.innerHTML = '<div class="wbs-ide-hint">' + t('读取账号中…') + '</div>';
+      api('/api/accounts').then(function (data) {
+        if (!isCurrentAccountLoad(serial)) return;
+        var accounts = (data && data.accounts) || [];
+        accounts.forEach(function (account) { account.ideCreditState = 'loading'; });
+        renderAccounts(body, accounts, data && data.current && data.current.uid);
+        // Only two queries at a time; closing/reopening the modal invalidates the
+        // remaining queue and late responses from the previous account list.
+        var next = 0;
+        function worker() {
+          if (!isCurrentAccountLoad(serial) || next >= accounts.length) return Promise.resolve();
+          var account = accounts[next++];
+          return api('/api/credits', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ uid: account.uid })
+          }).then(function (result) {
+            if (!isCurrentAccountLoad(serial)) return;
+            account.credits = typeof result.credits === 'number' && isFinite(result.credits) ? result.credits : null;
+            account.creditUnlimited = !!result.unlimited;
+            account.creditSegments = Array.isArray(result.segments) ? result.segments : [];
+            account.ideCreditState = 'fresh';
+          }).catch(function () {
+            if (isCurrentAccountLoad(serial)) account.ideCreditState = 'failed';
+          }).then(function () {
+            if (!isCurrentAccountLoad(serial)) return;
+            account.ideCreditNode.textContent = formatIdeCredits(account);
+            return worker();
+          });
+        }
+        return Promise.all([worker(), worker()]);
+      }).catch(function (err) {
+        if (isCurrentAccountLoad(serial)) body.innerHTML = '<div class="wbs-ide-error">' + t('读取失败：') + escapeText(err && err.message || err) + '</div>';
+      }).finally(function () {
+        if (isCurrentAccountLoad(serial)) refresh.disabled = false;
+      });
+    }
+
+    function renderAccounts(container, accounts, currentUid) {
+      if (!accounts.length) {
+        container.innerHTML = '<div class="wbs-ide-hint">' + t('暂无已备份账号') + '</div>';
+        return;
+      }
+      container.innerHTML = '';
+      var list = document.createElement('div');
+      list.className = 'wbs-ide-account-list';
+      for (var i = 0; i < accounts.length; i++) list.appendChild(renderAccountRow(accounts[i], currentUid));
+      container.appendChild(list);
+    }
+
+    function renderAccountRow(account, currentUid) {
+      var row = document.createElement('div');
+      row.className = 'wbs-ide-account-row';
+      // [CodeBuddy IDE 状态栏] 两行结构：昵称/手机号 + 积分摘要（来自 daemon /api/accounts
+      // 的 credits/creditUnlimited/creditSegments 缓存，与智能体面板同源数据）
+      var text = document.createElement('div');
+      text.className = 'wbs-ide-account-text';
+      var label = document.createElement('div');
+      label.className = 'wbs-ide-account-label';
+      var nick = escapeText(account.nickname || account.uid || t('未命名账号'));
+      var meta = account.phone ? ' · ' + escapeText(account.phone) : '';
+      label.innerHTML = '<span class="wbs-ide-account-nick">' + nick + '</span><span class="wbs-ide-account-meta">' + meta + '</span>';
+      var credits = document.createElement('div');
+      credits.className = 'wbs-ide-account-credits';
+      credits.textContent = formatIdeCredits(account);
+      account.ideCreditNode = credits;
+      text.appendChild(label);
+      text.appendChild(credits);
+      row.appendChild(text);
+      if (currentUid && account.uid === currentUid) {
+        // [CodeBuddy IDE 状态栏] 当前登录账号：显示「当前」徽章，不提供切换按钮
+        var badge = document.createElement('span');
+        badge.className = 'wbs-ide-current-badge';
+        badge.textContent = t('当前');
+        row.appendChild(badge);
+      } else {
+        var btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'wbs-ide-account-switch';
+        btn.textContent = t('切换');
+        btn.addEventListener('click', function () { switchAccount(account); });
+        row.appendChild(btn);
+      }
+      return row;
+    }
+
+    // 积分摘要：总额 + 即将过期提醒。过期统计按段到期时间分桶：
+    // 「24小时过期」= now+24h 内到期的段合计；「近7天过期」= now+7d 内到期的段合计（含 24h 桶）。
+    // creditSegments 明细留给智能体窗口的完整面板（浮层保持轻量）。
+    function formatIdeCredits(account) {
+      var known = account.creditUnlimited || (typeof account.credits === 'number' && isFinite(account.credits));
+      var summary = t('积分未查询');
+      if (account.creditUnlimited) summary = t('积分：无限');
+      else if (known) {
+        var segs = Array.isArray(account.creditSegments) ? account.creditSegments : [];
+        var now = Date.now();
+        var day = 0, week = 0;
+        for (var i = 0; i < segs.length; i++) {
+          if (!segs[i] || !(segs[i].remaining > 0) || typeof segs[i].expiresAt !== 'number') continue;
+          var left = segs[i].expiresAt - now;
+          if (left < 0) continue;
+          if (left <= 86400000) day += Number(segs[i].remaining);
+          if (left <= 604800000) week += Number(segs[i].remaining);
+        }
+        summary = t('积分') + ' ' + ideRound2(account.credits) + ' · ' + t('24小时过期：') + ideRound2(day)
+          + ' · ' + t('近7天过期：') + ideRound2(week);
+      }
+      if (known && account.ideCreditState !== 'fresh') summary = t('上次查询：') + summary;
+      if (account.ideCreditState === 'loading') summary += ' · ' + t('刷新中…');
+      if (account.ideCreditState === 'failed') summary += ' · ' + t('刷新失败');
+      return summary;
+    }
+
+    function ideRound2(v) { return Math.round((Number(v) || 0) * 100) / 100; }
+
+    function switchAccount(account) {
+      accountLoadSerial++;
+      var refresh = root.querySelector('.wbs-ide-credit-refresh');
+      refresh.disabled = true;
+      var body = root.querySelector('.wbs-ide-modal-body');
+      if (body) body.innerHTML = '<div class="wbs-ide-hint">' + t('正在切换到') + ' ' + escapeText(account.nickname || account.uid) + '…</div>';
+      api('/api/switch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ uid: account.uid, reload: true })
+      }).then(function () {
+        // daemon 通过 CDP 触发 CodeBuddy 自动 reload，浮层会被 cleanup 重建
+        closeModal();
+      }).catch(function (err) {
+        if (body) body.innerHTML = '<div class="wbs-ide-error">' + t('切换失败：') + escapeText(err && err.message || err) + '</div>';
+        refresh.disabled = false;
+      });
+    }
+
+    function buildIdeStyleNode() {
+      var style = document.createElement('style');
+      style.id = 'wbs-ide-style';
+      // 仅使用 --wb-* CSS 变量 + panelAppearance/robotStyle 衍生色；不引入新字面色
+      style.textContent = [
+        '#' + rootId + ' *{box-sizing:border-box;}',
+        '#' + rootId + '{position:fixed;bottom:16px;right:16px;z-index:2147483647;font-family:-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;}',
+        '#' + rootId + ' .wbs-ide-fab{width:36px;height:36px;border-radius:50%;border:1px solid var(--wb-border,#d0d4da);background:var(--wb-bg-elevated,#fff);box-shadow:0 4px 12px rgba(0,0,0,.15);cursor:pointer;display:flex;align-items:center;justify-content:center;transition:transform .15s,box-shadow .15s;padding:0;}',
+        '#' + rootId + ' .wbs-ide-fab:hover{transform:translateY(-1px);box-shadow:0 6px 16px rgba(0,0,0,.2);}',
+        '#' + rootId + ' .wbs-ide-fab svg{width:20px;height:20px;display:block;}',
+        '#' + rootId + ' .wbs-ide-modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.35);align-items:center;justify-content:center;z-index:1;}',
+        '#' + rootId + ' .wbs-ide-modal-card{width:400px;max-width:calc(100vw - 24px);max-height:60vh;display:flex;flex-direction:column;background:var(--wb-bg-elevated,#fff);border:1px solid var(--wb-border,#d0d4da);border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,.2);overflow:hidden;}',
+        '#' + rootId + ' .wbs-ide-modal-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 14px;border-bottom:1px solid var(--wb-border,#e6e8eb);font-size:13px;color:var(--wb-color-text,#1f2329);background:var(--wb-bg-elevated,#fff);}',
+        '#' + rootId + ' .wbs-ide-modal-body{flex:1;overflow:auto;padding:6px;}',
+        '#' + rootId + ' .wbs-ide-credit-refresh{flex:0 0 24px;width:24px;height:24px;padding:0;border:1px solid var(--wb-border,#d0d4da);border-radius:6px;background:var(--wb-button-bg,#fff);color:var(--wb-color-text,#1f2329);font-size:16px;cursor:pointer;}',
+        '#' + rootId + ' .wbs-ide-credit-refresh:hover{background:var(--wb-button-hover,#f0f1f2);}',
+        '#' + rootId + ' .wbs-ide-credit-refresh:disabled{opacity:.5;cursor:default;}',
+        '#' + rootId + ' .wbs-ide-credit-refresh:focus-visible{outline:2px solid currentColor;outline-offset:2px;}',
+        '#' + rootId + ' .wbs-ide-account-row{display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;}',
+        '#' + rootId + ' .wbs-ide-account-row:hover{background:var(--wb-bg-hover,#f5f6f7);}',
+        '#' + rootId + ' .wbs-ide-account-text{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px;}',
+        '#' + rootId + ' .wbs-ide-account-label{min-width:0;font-size:12px;color:var(--wb-color-text,#1f2329);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}',
+        '#' + rootId + ' .wbs-ide-account-nick{font-weight:500;}',
+        '#' + rootId + ' .wbs-ide-account-meta{color:var(--wb-color-text-secondary,#8a8f99);font-size:11px;margin-left:6px;}',
+        '#' + rootId + ' .wbs-ide-account-credits{font-size:11px;color:var(--wb-color-text-secondary,#8a8f99);white-space:normal;overflow-wrap:anywhere;}',
+        '#' + rootId + ' .wbs-ide-account-switch{flex:0 0 auto;border:1px solid var(--wb-border,#d0d4da);background:var(--wb-button-bg,#fff);color:var(--wb-color-text,#1f2329);border-radius:6px;padding:4px 10px;font-size:12px;cursor:pointer;}',
+        '#' + rootId + ' .wbs-ide-account-switch:hover{background:var(--wb-button-hover,#f0f1f2);}',
+        '#' + rootId + ' .wbs-ide-current-badge{flex:0 0 auto;font-size:11px;line-height:1;color:var(--wb-color-text-secondary,#8a8f99);border:1px solid var(--wb-border,#d0d4da);border-radius:999px;padding:3px 9px;background:var(--wb-bg-hover,#f5f6f7);}',
+        '#' + rootId + ' .wbs-ide-hint{padding:12px;text-align:center;font-size:12px;color:var(--wb-color-text-secondary,#8a8f99);}',
+        '#' + rootId + ' .wbs-ide-error{padding:12px;text-align:center;font-size:12px;color:var(--wb-color-danger,#d4380d);}',
+      ].join('\n');
+      return style;
+    }
+
+    function buildIdeFabNode() {
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'wbs-ide-fab';
+      btn.title = brand + ' ' + t('账号切换');
+      btn.setAttribute('aria-label', brand + ' ' + t('账号切换'));
+      // robotStyle=black → 黑色机器人；其他走 currentColor（继承 --wb-color-text）
+      var fillColor = robotStyle === 'black' ? '#1f1f1f' : 'currentColor';
+      btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">'
+        + '<path d="M12 2a3 3 0 0 1 3 3v.5a4 4 0 0 1 4 4v.5a2 2 0 0 1 0 4v.5a4 4 0 0 1-4 4H9a4 4 0 0 1-4-4V14a2 2 0 0 1 0-4V9.5a4 4 0 0 1 4-4V5a3 3 0 0 1 3-3Z" fill="' + fillColor + '"/>'
+        + '<circle cx="9" cy="11" r="1" fill="#fff"/><circle cx="15" cy="11" r="1" fill="#fff"/>'
+        + '</svg>';
+      btn.addEventListener('click', function (e) { e.preventDefault(); openModal(); });
+      return btn;
+    }
+
+    function buildIdeModalNode() {
+      var modal = document.createElement('div');
+      modal.className = 'wbs-ide-modal';
+      var card = document.createElement('div');
+      card.className = 'wbs-ide-modal-card';
+      var head = document.createElement('div');
+      head.className = 'wbs-ide-modal-head';
+      var title = document.createElement('span');
+      title.textContent = brand + ' · ' + t('切换账号');
+      head.appendChild(title);
+      var refresh = document.createElement('button');
+      refresh.type = 'button';
+      refresh.className = 'wbs-ide-credit-refresh';
+      refresh.title = t('刷新积分');
+      refresh.setAttribute('aria-label', t('刷新积分'));
+      refresh.textContent = '↻';
+      refresh.addEventListener('click', loadAccounts);
+      head.appendChild(refresh);
+      var body = document.createElement('div');
+      body.className = 'wbs-ide-modal-body';
+      body.innerHTML = '<div class="wbs-ide-hint">' + t('读取账号中…') + '</div>';
+      card.appendChild(head);
+      card.appendChild(body);
+      modal.appendChild(card);
+      modal.addEventListener('click', function (e) { if (e.target === modal) closeModal(); });
+      return modal;
+    }
+
+    function escapeText(text) {
+      var div = document.createElement('div');
+      div.textContent = String(text == null ? '' : text);
+      return div.innerHTML;
+    }
+  }
 
   // User-facing strings are translated at the injected root so dynamically-built
   // panes and toasts follow the same language without touching WorkBuddy's DOM.
@@ -1382,6 +1673,9 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '元素检查': 'Inspect element', '元素检查不可用：内部模块未加载': 'Element inspector unavailable: internal module not loaded', '元素拾取器尚未加载': 'Element picker is not loaded',
     'DOM 元素检查器': 'DOM element inspector', '复制元素': 'Copy element', '关闭元素检查器': 'Close element inspector', '已复制元素': 'Element copied', '未找到可检查元素': 'No inspectable element found', '检查失败：': 'Inspection failed: ', '拾取模式：移动鼠标高亮元素，点击选中（Esc 退出）': 'Pick mode: move to highlight an element, click to select (Esc to exit)',
     '到期时间': 'Expiry', '剩余': 'Remaining', '剩余时间计算中': 'Calculating remaining time', '积分': 'Credits', '积分节点': 'Credit node', '积分查询超时': 'Credit query timed out', '个人版': 'Personal', '企业': 'Enterprise', '基础用量': 'Base usage', '赠送与加量包': 'Gift & bonus packs', '其他积分': 'Other credits', '即将过期': 'Expiring soon', '已过期': 'Expired',
+    '积分未查询': 'Credits not queried', '上次查询：': 'Last checked: ', '刷新积分': 'Refresh credits', '刷新失败': 'Refresh failed',
+    '账号切换': 'Account switch', '切换账号': 'Switch account', '读取账号中…': 'Loading accounts…', '暂无已备份账号': 'No backed-up accounts yet',
+    '正在切换到': 'Switching to', '切换失败：': 'Switch failed: ', '读取失败：': 'Load failed: ', '24小时过期：': 'Expires in 24h: ', '近7天过期：': 'Expires in 7 days: ', '积分：无限': 'Credits: unlimited',
     '昨天': 'Yesterday', '分钟': ' min', '小时': ' h', '定位到第': 'Jump to message ', '条用户消息': ' user message', '发送中': 'Sending', '附件': 'Attachment', '疑似未完成': 'Possibly incomplete',
     '已开启': 'Enabled', '已关闭': 'Disabled', '已领取': 'Claimed', '立即领取,今日可领': 'Claim now, available today', '继续执行': 'Continue',
     '下载': 'Download', '安装': 'Install', '校验': 'Verify', '检查': 'Check', '重启': 'Restart', '即将打开安装包…': 'Opening installer…', '安装包已打开': 'Installer opened', '安装失败': 'Install failed', '更新出错': 'Update error', '更新失败': 'Update failed', '检查更新失败': 'Update check failed', '已是最新版本': 'Already up to date',
@@ -1856,6 +2150,15 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     } catch (_) {}
     return wbsSystemLanguage();
   })();
+
+  // [CodeBuddy IDE 状态栏] 守卫：仅 codebuddy profile + IDE workbench.html 页面才走轻量分支。
+  // 必须放在 i18n 机制（WBS_I18N_EN 字典 + wbsTranslateString + WBS_LANGUAGE）初始化之后：
+  // 浮层文案用同一套翻译管线，英文环境（codebuddy-intl）下输出英文（i18n-coverage.test.js 强制）。
+  if ((PROFILE_ID === 'codebuddy-cn' || PROFILE_ID === 'codebuddy-intl')
+      && /\/workbench\.html(?:[?#]|$)/i.test(location.href)) {
+    injectCodeBuddyIdeMode();
+    return;
+  }
 
   // 纯图标 SVG（stroke 跟随按钮 currentColor）
   var SWITCH_SVG =
