@@ -131,7 +131,12 @@ function selectPageTarget(targets, profile) {
     if (!isTargetForProfile(target, profile)) return false;
     // CodeBuddy's standalone Agents window is distinct from the IDE and its
     // extension webviews. Wait for that window instead of attaching to the IDE.
-    return profile.kind !== 'codebuddy' || /\/agentManager\.html(?:[?#]|$)/i.test(String(target.url || ''));
+    // [CodeBuddy IDE 状态栏] 主连接保持 1.2.9 原行为：只认 agentManager.html。
+    // IDE 主窗口（workbench.html）不走主连接——daemon 会先选到先出现的 workbench
+    // 且不再重选，导致后打开的 agents 窗口永远等不到完整面板注入；因此 workbench
+    // 由 selectIdeTargets 交给 daemon 内独立的 IDE 浮层管理器并行注入。
+    if (profile.kind !== 'codebuddy') return true;
+    return /\/agentManager\.html(?:[?#]|$)/i.test(String(target.url || ''));
   });
   const score = (target) => {
     const url = String(target && target.url || '');
@@ -142,4 +147,17 @@ function selectPageTarget(targets, profile) {
   return candidates.sort((a, b) => score(a) - score(b))[0] || null;
 }
 
-module.exports = { normalizeTargetUrl, classifyTarget, looksLikeWbFamilyTarget, isTargetForProfile, selectPageTarget };
+/**
+ * [CodeBuddy IDE 状态栏] 选出需要注入轻量浮层的 IDE 工作台页面。
+ * codebuddy profile 专属：返回全部 workbench.html 页面（每个 IDE 窗口一条独立连接，
+ * 由 daemon 的 IDE 浮层管理器维护）；非 codebuddy profile 返回空数组。
+ * inject.js 运行时通过 location.href 自判 IDE 模式，无需 target 侧附加标记。
+ */
+function selectIdeTargets(targets, profile) {
+  if (!profile || profile.kind !== 'codebuddy') return [];
+  return (Array.isArray(targets) ? targets : []).filter((target) =>
+    isTargetForProfile(target, profile)
+    && /\/workbench\.html(?:[?#]|$)/i.test(String(target.url || '')));
+}
+
+module.exports = { normalizeTargetUrl, classifyTarget, looksLikeWbFamilyTarget, isTargetForProfile, selectPageTarget, selectIdeTargets };

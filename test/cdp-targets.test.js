@@ -3,7 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { PROFILES } = require('../scripts/profiles.js');
-const { normalizeTargetUrl, classifyTarget, looksLikeWbFamilyTarget, isTargetForProfile, selectPageTarget } = require('../scripts/cdp-targets.js');
+const { normalizeTargetUrl, classifyTarget, looksLikeWbFamilyTarget, isTargetForProfile, selectPageTarget, selectIdeTargets } = require('../scripts/cdp-targets.js');
 
 const AI_URL = 'file:///Applications/WorkBuddy%20AI.app/Contents/Resources/app.asar/renderer/index.html';
 const CN_URL = 'file:///Applications/WorkBuddy.app/Contents/Resources/app.asar/renderer/index.html';
@@ -144,16 +144,27 @@ test('looksLikeWbFamilyTarget 把四客户端页面都视为同族（不清理�
   assert.equal(looksLikeWbFamilyTarget({ type: 'page', url: 'file:///Applications/Antigravity.app/Contents/index.html', title: 'Antigravity' }), false);
 });
 
-test('CodeBuddy selects only its Agents window regardless of target order', () => {
+test('CodeBuddy selects only its Agents window; IDE workbench goes to the IDE overlay manager', () => {
   for (const id of ['codebuddy-cn', 'codebuddy-intl']) {
     const app = id === 'codebuddy-cn' ? 'CodeBuddy%20CN' : 'CodeBuddy';
     const base = 'vscode-file://vscode-app/Applications/' + app + '.app/Contents/Resources/app/out/vs/code/electron-browser/workbench/';
-    const ide = {type: 'page', url: base + 'workbench.html'};
-    const agents = {type: 'page', url: base + 'agentManager.html'};
+    const ide = {type: 'page', id: 'ide-1', url: base + 'workbench.html'};
+    const agents = {type: 'page', id: 'agents-1', url: base + 'agentManager.html'};
+    // [CodeBuddy IDE 状态栏] 主连接保持 1.2.9 原行为：只认 agentManager.html。
+    // workbench 走主连接会抢占先出现的窗口且不再重选，导致 agents 窗口
+    // （后打开）永远等不到完整面板注入——这是实测过的回归，不许复发。
     assert.equal(selectPageTarget([ide], PROFILES[id]), null);
-    assert.equal(selectPageTarget([ide, agents], PROFILES[id]), agents);
-    assert.equal(selectPageTarget([agents, ide], PROFILES[id]), agents);
+    assert.equal(selectPageTarget([ide, agents], PROFILES[id]).url, agents.url);
+    assert.equal(selectPageTarget([agents, ide], PROFILES[id]).url, agents.url);
+    assert.equal(selectPageTarget([agents], PROFILES[id]).__wbsIdeMode, undefined);
     const other = id === 'codebuddy-cn' ? 'codebuddy-intl' : 'codebuddy-cn';
     assert.equal(selectPageTarget([agents], PROFILES[other]), null);
+    // IDE 浮层目标：codebuddy profile 的全部 workbench 页面（每个 IDE 窗口一条独立连接）
+    const ide2 = {type: 'page', id: 'ide-2', url: base + 'workbench.html?windowId=2'};
+    const ides = selectIdeTargets([ide, ide2, agents], PROFILES[id]);
+    assert.equal(ides.length, 2);
+    assert.ok(ides.every((t) => /workbench\.html/.test(t.url)));
+    // 非 codebuddy profile 不启用 IDE 浮层
+    assert.equal(selectIdeTargets([ide], PROFILES['workbuddy-cn']).length, 0);
   }
 });
