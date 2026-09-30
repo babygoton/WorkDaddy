@@ -318,13 +318,12 @@ test('daily labels share a black light treatment and one glass dark treatment', 
   assert.match(inject, /backdrop-filter:blur\(12px\)/);
 });
 
-test('full cat water and icon follow the live theme button palette instead of fixed panel accents', () => {
+test('cat water follows the credit or button palette for the selected theme', () => {
   const badgeRules = [...inject.matchAll(/\.wbs-daily-rings\{([^}]+)\}/g)]
     .map(match => match[1]).filter(rule => rule.includes('--wbs-liquid-fill:'));
   assert.ok(badgeRules.length);
   for (const rule of badgeRules) {
-    assert.match(rule, /--wbs-liquid-fill:(?:color-mix\(in srgb,var\(--wb-button-primary-bg|oklch\(from var\(--wb-button-primary-bg)/);
-    assert.doesNotMatch(rule, /var\(--wbs-primary\)/);
+    assert.match(rule, /--wbs-liquid-fill:(?:color-mix\(in srgb,var\(--wb-button-primary-bg|oklch\(from var\(--wb-button-primary-bg|var\(--wbs-credit-theme-color,var\(--wbs-primary\)\))/);
   }
   assert.match(inject, /\.wbs-daily-vessel\.is-checked-in\{--wbs-liquid-ink:var\(--wb-button-primary-fg/);
   const rim = inject.match(/\.wbs-daily-vessel\.is-checked-in \.wbs-daily-liquid\{([^}]+)\}/);
@@ -372,4 +371,9 @@ test('growth plan primary actions use WorkBuddy button theme tokens', () => {
 test('full water remains visibly brighter than the empty vessel in monochrome themes', () => {
   assert.match(inject, /--wbs-liquid-fill:color-mix\(in srgb,var\(--wb-button-primary-bg\) 55%,var\(--wb-button-primary-fg\)\)/);
   assert.match(inject, /@supports \(color:oklch\(from black l c h\)\)\{\.wbs-daily-rings\{--wbs-liquid-fill:oklch\(from var\(--wb-button-primary-bg\) max\(l,\.62\) c h \/ 1\)/);
+});
+
+
+test('default light cat highlight shares the credit progress color and excludes dark themes', () => {
+  assert.ok(inject.includes('html:not(.cb-dark):not([data-theme="dark"]):is([data-wbs-theme-id="default"],:not([data-wbs-theme-id])) body:not([data-vscode-theme-name*="dark" i]) .wbs-daily-rings{--wbs-liquid-fill:var(--wbs-credit-theme-color,var(--wbs-primary))}'));
 });
