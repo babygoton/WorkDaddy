@@ -434,7 +434,7 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 // 1.2.191：CodeDaddy 共用完整面板，通过本机 CDP 适配通信、原生登录态和会话缓存。
 // 1.2.10：合并会话身份、列表刷新、用量复制及启动器修复。
 const DAEMON_VERSION = '1.2.10';
-const DAEMON_BUILD_ID = 'release-1.2.10-20260930-integrated-launcher-session-fixes';
+const DAEMON_BUILD_ID = 'release-1.2.10-20260930-token-stats-compat';
 const usageReporter = createUsageReporter({ profile: PROFILE.id, version: DAEMON_VERSION });
 configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const automationDiscovery = createAutomationDiscovery({

@@ -16,10 +16,34 @@ test('scans usage metadata without reading message semantics into the result', (
     '{broken',
   ].join('\n'));
   const result = scanTokenStats(root, { now: Date.parse('2026-09-11T10:00:00Z'), days: 7 });
-  assert.deepEqual(result.totals, { input: 10, output: 4, cacheRead: 2, cacheWrite: 0, calls: 1 });
+  assert.deepEqual(result.totals, { input: 10, output: 4, cacheRead: 2, cacheWrite: 0, total: 14, calls: 1 });
   assert.equal(result.models[0].model, 'model-x');
   assert.equal(result.parseErrors, 1);
   assert.equal('message' in result, false);
+});
+
+test('parses nested cache reads and raw usage cache writes without double-counting reads', t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wbs-token-cache-fields-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const now = Date.parse('2026-09-11T10:00:00Z');
+  fs.writeFileSync(path.join(root, 'session.jsonl'), [
+    {
+      timestamp: now,
+      providerData: {
+        model: 'm',
+        usage: { inputTokens: 100, outputTokens: 5, inputTokensDetails: [{ cached_tokens: 7 }] },
+        rawUsage: { prompt_cache_write_tokens: 2 },
+      },
+    },
+    { timestamp: now, model: 'm2', usage: { input_tokens: 10, output_tokens: 1, cache_write_input_tokens: 3 } },
+    { timestamp: now, model: 'm3', usage: { inputTokens: 4, outputTokens: 1, cacheWriteInputTokens: 2 } },
+  ].map(JSON.stringify).join('\n') + '\n');
+  for (const scan of [scanTokenStats, scanTokenStatsCached]) {
+    const result = scan(root, { now, days: 1 });
+    assert.deepEqual(result.totals, { input: 114, output: 7, cacheRead: 7, cacheWrite: 7, total: 128, calls: 3 });
+    assert.equal(result.daily[0].total, 128);
+    assert.equal(result.models[0].total, 107);
+  }
 });
 
 test('cached scan reuses history and merges today without duplicate calls', () => {
@@ -132,6 +156,10 @@ test('token statistics UI keeps results under an overlay and exposes presets thr
   assert.match(source, /data-trend-series/);
   assert.match(source, /stats\.dailyBreakdown/);
   assert.match(source, /renderUsageBreakdown\(creditBody/);
+  assert.match(source, /dayRow\.total == null/);
+  assert.match(source, /item\.total == null/);
+  assert.match(source, /row\.total == null/);
+  assert.match(source, /Token（总量）/);
 });
 
 test('usage statistics modal uses a larger responsive dashboard layout in both themes', () => {
@@ -264,7 +292,7 @@ test('native request indexes count usage once across copies and cache no message
   for(const file of files)fs.writeFileSync(file,JSON.stringify({requests:[request]},null,2));
   const options={now,files,readRecords:text=>JSON.parse(text).requests,sourceSession:()=> 'source',sessionAccounts:{source:'account'}};
   const result=scanTokenStatsCached(root,options);
-  assert.deepEqual(result.totals,{input:9,output:4,cacheRead:2,cacheWrite:1,calls:1});
+  assert.deepEqual(result.totals,{input:9,output:4,cacheRead:2,cacheWrite:1,total:14,calls:1});
   assert.equal(result.accounts[0].account,'account');
   assert.equal(scanTokenStatsCached(root,options).totals.calls,1);
   assert.ok(!fs.readFileSync(path.join(root,'.workdaddy-token-stats-cache.json'),'utf8').includes('private-content'));

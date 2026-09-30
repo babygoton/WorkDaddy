@@ -8,7 +8,7 @@ const TOKEN_FIELDS = {
   input: ['input_tokens', 'prompt_tokens', 'inputTokens', 'promptTokens'],
   output: ['output_tokens', 'completion_tokens', 'outputTokens', 'completionTokens'],
   cacheRead: ['cache_read_input_tokens', 'cache_read_tokens', 'cacheReadTokens', 'cached_tokens', 'cacheTokens'],
-  cacheWrite: ['cache_creation_input_tokens', 'cache_write_tokens', 'cacheWriteTokens', 'cachedWriteTokens'],
+  cacheWrite: ['cache_write_input_tokens', 'cacheWriteInputTokens', 'cache_creation_input_tokens', 'cache_write_tokens', 'prompt_cache_write_tokens', 'cacheWriteTokens', 'cachedWriteTokens'],
 };
 
 function numberField(value, fields) {
@@ -17,6 +17,55 @@ function numberField(value, fields) {
     if (Number.isFinite(number) && number >= 0) return number;
   }
   return 0;
+}
+
+function positiveNumberField(value, fields) {
+  for (const field of fields) {
+    const number = Number(value && value[field]);
+    if (Number.isFinite(number) && number > 0) return number;
+  }
+  return 0;
+}
+
+function cacheReadField(value) {
+  const flat = positiveNumberField(value, TOKEN_FIELDS.cacheRead);
+  if (flat) return flat;
+  const promptDetails = value && value.prompt_tokens_details;
+  const promptCached = promptDetails && typeof promptDetails === 'object'
+    ? positiveNumberField(promptDetails, ['cached_tokens']) : 0;
+  if (promptCached) return promptCached;
+  const inputDetails = value && value.inputTokensDetails;
+  if (Array.isArray(inputDetails)) {
+    for (const detail of inputDetails) {
+      const cached = positiveNumberField(detail, ['cached_tokens']);
+      if (cached) return cached;
+    }
+  }
+  return 0;
+}
+
+function cacheWriteField(value) {
+  return positiveNumberField(value, TOKEN_FIELDS.cacheWrite);
+}
+
+function cacheWriteForRecord(record, selectedUsage) {
+  const selected = cacheWriteField(selectedUsage);
+  if (selected) return selected;
+  const candidates = [
+    record && record.message && record.message.usage,
+    record && record.providerData && record.providerData.usage,
+    record && record.usage,
+    record && record.providerData && record.providerData.rawUsage,
+  ];
+  for (const candidate of candidates) {
+    const value = cacheWriteField(candidate);
+    if (value) return value;
+  }
+  return 0;
+}
+
+function tokenTotal(input, output, cacheWrite) {
+  return (Number(input) || 0) + (Number(output) || 0) + (Number(cacheWrite) || 0);
 }
 
 function findUsage(value, depth = 0) {
@@ -87,7 +136,7 @@ function timestampValue(value, fallback) {
   return fallback;
 }
 
-const CACHE_VERSION = 8;
+const CACHE_VERSION = 9;
 const MAX_CACHE_DAYS = 90;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -151,8 +200,8 @@ function parseRecords(root, options = {}) {
       if (!Number.isFinite(timestamp) || timestamp < lowerBound || timestamp > upperBound) continue;
       const input = numberField(usage, TOKEN_FIELDS.input);
       const output = numberField(usage, TOKEN_FIELDS.output);
-      const cacheRead = numberField(usage, TOKEN_FIELDS.cacheRead);
-      const cacheWrite = numberField(usage, TOKEN_FIELDS.cacheWrite);
+      const cacheRead = cacheReadField(usage);
+      const cacheWrite = cacheWriteForRecord(record, usage);
       if (!(input || output || cacheRead || cacheWrite)) continue;
       const model = findText(record, ['model', 'modelName', 'model_id', 'modelId']) || findText(usage, ['model', 'modelName', 'model_id', 'modelId']);
       const account = findText(record, ['accountUid', 'accountId', 'uid', 'userId']) || findText(usage, ['accountUid', 'accountId', 'uid', 'userId']);
@@ -259,7 +308,7 @@ function aggregateRecords(records, options = {}) {
   const bounds = dateBounds(now, options);
   const accountFilter = String(options.account || '').trim();
   const modelFilter = String(options.model || '').trim();
-  const totals = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, calls: 0 };
+  const totals = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0, calls: 0 };
   const byDay = new Map();
   const byModel = new Map();
   const byAccount = new Map();
@@ -267,21 +316,21 @@ function aggregateRecords(records, options = {}) {
     if (!record || record.timestamp < bounds.from || record.timestamp > bounds.until) continue;
     if (accountFilter && record.account !== accountFilter) continue;
     if (modelFilter && record.model !== modelFilter) continue;
-    const values = { input: Number(record.input) || 0, output: Number(record.output) || 0, cacheRead: Number(record.cacheRead) || 0, cacheWrite: Number(record.cacheWrite) || 0, calls: Number(record.calls) || 1 };
+    const values = { input: Number(record.input) || 0, output: Number(record.output) || 0, cacheRead: Number(record.cacheRead) || 0, cacheWrite: Number(record.cacheWrite) || 0, total: tokenTotal(record.input, record.output, record.cacheWrite), calls: Number(record.calls) || 1 };
     for (const key of Object.keys(totals)) totals[key] += values[key];
     const day = localDayString(record.timestamp);
     if (day) {
-      const row = byDay.get(day) || { day, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, calls: 0 };
+      const row = byDay.get(day) || { day, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0, calls: 0 };
       for (const key of Object.keys(values)) row[key] += values[key];
       byDay.set(day, row);
     }
     if (record.model) {
-      const row = byModel.get(record.model) || { model: record.model, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, calls: 0 };
+      const row = byModel.get(record.model) || { model: record.model, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0, calls: 0 };
       for (const key of Object.keys(values)) row[key] += values[key];
       byModel.set(record.model, row);
     }
     if (record.account) {
-      const row = byAccount.get(record.account) || { account: record.account, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, calls: 0 };
+      const row = byAccount.get(record.account) || { account: record.account, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0, calls: 0 };
       for (const key of Object.keys(values)) row[key] += values[key];
       byAccount.set(record.account, row);
     }
@@ -290,7 +339,7 @@ function aggregateRecords(records, options = {}) {
   for (const account of accountOptions) {
     const uid = String(account && (account.uid || account.account) || '').trim();
     if (!uid) continue;
-    if (!byAccount.has(uid)) byAccount.set(uid, { account: uid, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, calls: 0, nickname: account.nickname || '' });
+    if (!byAccount.has(uid)) byAccount.set(uid, { account: uid, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0, calls: 0, nickname: account.nickname || '' });
     else if (account.nickname) byAccount.get(uid).nickname = account.nickname;
   }
   return {
@@ -299,8 +348,8 @@ function aggregateRecords(records, options = {}) {
     until: bounds.until,
     totals,
     daily: Array.from(byDay.values()).sort((a, b) => a.day.localeCompare(b.day)),
-    models: Array.from(byModel.values()).sort((a, b) => (b.input + b.output) - (a.input + a.output)),
-    accounts: Array.from(byAccount.values()).sort((a, b) => (b.input + b.output) - (a.input + a.output)),
+    models: Array.from(byModel.values()).sort((a, b) => b.total - a.total),
+    accounts: Array.from(byAccount.values()).sort((a, b) => b.total - a.total),
   };
 }
 
@@ -330,7 +379,7 @@ function aggregateCachedBuckets(buckets, options = {}) {
   const modelFilter = String(options.model || '').trim();
   const firstDay = localDayString(bounds.from);
   const lastDay = localDayString(bounds.until);
-  const totals = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, calls: 0 };
+  const totals = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0, calls: 0 };
   const byDay = new Map();
   const byModel = new Map();
   const byAccount = new Map();
@@ -345,21 +394,22 @@ function aggregateCachedBuckets(buckets, options = {}) {
       output: Number(bucket.output) || 0,
       cacheRead: Number(bucket.cacheRead) || 0,
       cacheWrite: Number(bucket.cacheWrite) || 0,
+      total: tokenTotal(bucket.input, bucket.output, bucket.cacheWrite),
       calls: Number(bucket.calls) || 0,
     };
     for (const key of Object.keys(totals)) totals[key] += values[key];
     const day = String(bucket.day);
     dailyBreakdown.push({ day, account: String(bucket.account || ''), model: String(bucket.model || ''), ...values });
-    const dayRow = byDay.get(day) || { day, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, calls: 0 };
+    const dayRow = byDay.get(day) || { day, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0, calls: 0 };
     for (const key of Object.keys(values)) dayRow[key] += values[key];
     byDay.set(day, dayRow);
     if (bucket.model) {
-      const modelRow = byModel.get(bucket.model) || { model: bucket.model, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, calls: 0 };
+      const modelRow = byModel.get(bucket.model) || { model: bucket.model, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0, calls: 0 };
       for (const key of Object.keys(values)) modelRow[key] += values[key];
       byModel.set(bucket.model, modelRow);
     }
     if (bucket.account) {
-      const accountRow = byAccount.get(bucket.account) || { account: bucket.account, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, calls: 0 };
+      const accountRow = byAccount.get(bucket.account) || { account: bucket.account, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0, calls: 0 };
       for (const key of Object.keys(values)) accountRow[key] += values[key];
       byAccount.set(bucket.account, accountRow);
     }
@@ -368,15 +418,15 @@ function aggregateCachedBuckets(buckets, options = {}) {
   for (const account of accountOptions) {
     const uid = String(account && (account.uid || account.account) || '').trim();
     if (!uid) continue;
-    if (!byAccount.has(uid)) byAccount.set(uid, { account: uid, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, calls: 0, nickname: account.nickname || '' });
+    if (!byAccount.has(uid)) byAccount.set(uid, { account: uid, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0, calls: 0, nickname: account.nickname || '' });
     else if (account.nickname) byAccount.get(uid).nickname = account.nickname;
   }
   return {
     source: options.source || 'local-workbuddy-jsonl', since: bounds.from, until: bounds.until, totals,
     daily: Array.from(byDay.values()).sort((a, b) => a.day.localeCompare(b.day)),
     dailyBreakdown: dailyBreakdown.sort((a, b) => a.day.localeCompare(b.day) || a.account.localeCompare(b.account) || a.model.localeCompare(b.model)),
-    models: Array.from(byModel.values()).sort((a, b) => (b.input + b.output) - (a.input + a.output)),
-    accounts: Array.from(byAccount.values()).sort((a, b) => (b.input + b.output) - (a.input + a.output)),
+    models: Array.from(byModel.values()).sort((a, b) => b.total - a.total),
+    accounts: Array.from(byAccount.values()).sort((a, b) => b.total - a.total),
   };
 }
 

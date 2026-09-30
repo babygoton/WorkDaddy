@@ -1218,7 +1218,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '查询已中断，请重新选择时间重试': 'Query interrupted. Select a time range to retry.',
     '无法读取查询进度，请重新选择时间重试': 'Could not read progress. Select a time range to retry.',
     '趋势分组': 'Trend grouping', '筛选折线': 'Filter lines', '统计时间': 'Statistics period',
-    '总览': 'Overview', '按账号': 'By account', '按模型': 'By model', '总量': 'Total', '模型用量': 'Model usage', '其他': 'Other', 'Token（输入 + 输出）': 'Tokens (input + output)', '输入 + 输出': 'Input + output',
+    '总览': 'Overview', '按账号': 'By account', '按模型': 'By model', '总量': 'Total', '模型用量': 'Model usage', '其他': 'Other', 'Token（输入 + 输出）': 'Tokens (input + output)', 'Token（总量）': 'Total tokens', '输入 + 输出': 'Input + output',
     '未识别模型': 'Unknown model', '未关联账号': 'Unassigned account', '暂无分组数据': 'No breakdown data',
     '解锁后未读取到最新状态': 'Could not load the latest status after unlocking',
     'Buddy 已解锁': 'Buddy unlocked', 'Buddy 解锁成功': 'Buddy unlocked', '解锁 Buddy 失败': 'Could not unlock Buddy',
@@ -7824,10 +7824,10 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
           for (var dayIndex = 0; dayIndex < usageDays('token'); dayIndex++) {
             var dayKey = tokenDate.getFullYear() + '-' + String(tokenDate.getMonth() + 1).padStart(2, '0') + '-' + String(tokenDate.getDate()).padStart(2, '0');
             var dayRow = dailyByDate[dayKey] || { input: 0, output: 0 };
-            tokenDays.push({ title: dayKey, label: dayKey.slice(5), value: (dayRow.input || 0) + (dayRow.output || 0) });
+            tokenDays.push({ title: dayKey, label: dayKey.slice(5), value: dayRow.total == null ? (dayRow.input || 0) + (dayRow.output || 0) + (dayRow.cacheWrite || 0) : dayRow.total });
             tokenDate.setDate(tokenDate.getDate() + 1);
           }
-          var accountRows = (stats.accounts || []).filter(function (item) { return (item.input || 0) + (item.output || 0) + (item.cacheRead || 0) + (item.cacheWrite || 0) > 0; });
+          var accountRows = (stats.accounts || []).filter(function (item) { return (item.total == null ? (item.input || 0) + (item.output || 0) + (item.cacheWrite || 0) : item.total) > 0; });
           body.innerHTML = '<div class="wbs-token-stats-grid">' +
             '<div><span>调用</span><strong>' + esc(formatTokenCount(totals.calls)) + '</strong></div>' +
             '<div><span>输入</span><strong>' + esc(formatTokenCount(totals.input)) + '</strong></div>' +
@@ -7836,13 +7836,13 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
             '<div><span>缓存写入</span><strong>' + esc(formatTokenCount(totals.cacheWrite)) + '</strong></div>' +
             '</div><div class="wbs-token-stats-section"><div class="wbs-token-stats-section-title">每日趋势</div>' + usageTrendChartHtml('每日 Token 趋势', true) + '</div>' +
             '<div class="wbs-usage-columns">' +
-            usagePieHtml((stats.models || []).map(function (item) { return { label: item.model, value: (item.input || 0) + (item.output || 0), calls: item.calls }; }), '模型用量', 'Token（输入 + 输出）', formatTokenCount, '暂无模型数据') +
-            usagePieHtml(accountRows.map(function (item) { return { label: item.nickname || item.account, value: (item.input || 0) + (item.output || 0), calls: item.calls }; }), '账号用量', 'Token（输入 + 输出）', formatTokenCount, '暂无账号数据') + '</div>';
+            usagePieHtml((stats.models || []).map(function (item) { return { label: item.model, value: item.total == null ? (item.input || 0) + (item.output || 0) + (item.cacheWrite || 0) : item.total, calls: item.calls }; }), '模型用量', 'Token（总量）', formatTokenCount, '暂无模型数据') +
+            usagePieHtml(accountRows.map(function (item) { return { label: item.nickname || item.account, value: item.total == null ? (item.input || 0) + (item.output || 0) + (item.cacheWrite || 0) : item.total, calls: item.calls }; }), '账号用量', 'Token（总量）', formatTokenCount, '暂无账号数据') + '</div>';
           wireUsagePies(body);
           var tokenNames = Object.create(null);
           ((result && result.accounts) || []).forEach(function (item) { tokenNames[item.uid] = item.nickname || item.uid; });
           renderUsageBreakdown(body.querySelector('.wbs-trend-panel'), tokenDays, (stats.dailyBreakdown || []).map(function (row) {
-            return { day: row.day, account: row.account, model: row.model, value: (row.input || 0) + (row.output || 0) };
+            return { day: row.day, account: row.account, model: row.model, value: row.total == null ? (row.input || 0) + (row.output || 0) + (row.cacheWrite || 0) : row.total };
           }), { account: tokenNames, model: Object.create(null) }, tokenTrendState, formatTokenCount);
 
           hasStats = true;

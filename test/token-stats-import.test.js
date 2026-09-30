@@ -182,7 +182,7 @@ test('AI providerData usage copies preserve all counters and newly appended call
     providerData: { model: 'ai-model', usage: { inputTokens: 42, outputTokens: 7, cacheReadTokens: 20, cacheWriteTokens: 3 } } };
   f.write('source', [row]); f.write('copy', [row]);
   for (const scan of [scanTokenStats, scanTokenStatsCached]) {
-    assert.deepEqual(scan(f.root, f.options).totals, { input: 42, output: 7, cacheRead: 20, cacheWrite: 3, calls: 1 });
+    assert.deepEqual(scan(f.root, f.options).totals, { input: 42, output: 7, cacheRead: 20, cacheWrite: 3, total: 52, calls: 1 });
   }
   f.write('copy', [row, { ...row, id: 'ai-2', conversationId: 'copy' }]);
   for (const scan of [scanTokenStats, scanTokenStatsCached]) {
