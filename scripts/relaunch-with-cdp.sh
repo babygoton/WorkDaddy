@@ -321,7 +321,7 @@ launch_plugin() {
     echo "   错误：未找到 $APP_BIN"
     exit 1
   fi
-  nohup "$APP_BIN" --remote-debugging-port="$PORT" "${NATIVE_ARGS[@]}" >/dev/null 2>&1 &
+  nohup "$APP_BIN" --remote-debugging-port="$PORT" ${NATIVE_ARGS[@]+"${NATIVE_ARGS[@]}"} >/dev/null 2>&1 &
   disown 2>/dev/null || true
 
   # ---------- 4. 验证 ----------
