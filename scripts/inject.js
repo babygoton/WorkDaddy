@@ -2224,6 +2224,10 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
   var TOKEN_STATS_ICON =
     '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
     '<path d="M4 19V5M4 19h16"/><path d="m7 15 3-4 3 2 5-7"/></svg>';
+  // 用量统计刷新：环形箭头（线条风，currentColor 跟随主题）
+  var USAGE_REFRESH_ICON =
+    '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+    '<path d="M20.5 12a8.5 8.5 0 1 1-2.3-5.8"/><path d="M20.5 4.5V9H16"/></svg>';
   // 脱敏小眼睛：睁眼 = 明文可见（点击后隐藏）；闭眼（斜线） = 已脱敏（点击后显示明文）
   var EYE_SVG =
     '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
@@ -7899,7 +7903,8 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       mask.id = 'wbs-token-stats-modal';
       mask.className = 'wbs-modal-mask wbs-usage-modal-mask';
       mask.innerHTML = '<div class="wbs-modal wbs-token-stats-modal" role="dialog" aria-modal="true" aria-labelledby="wbs-token-stats-title">' +
-        '<div class="wbs-usage-header"><div class="wbs-token-stats-head"><div class="wbs-modal-title" id="wbs-token-stats-title">用量统计</div></div>' +
+        '<div class="wbs-usage-header"><div class="wbs-token-stats-head"><div class="wbs-modal-title" id="wbs-token-stats-title">用量统计</div>' +
+        '<button class="wbs-icon-btn wbs-usage-refresh" type="button" data-usage-refresh title="刷新统计" aria-label="刷新统计">' + USAGE_REFRESH_ICON + '</button></div>' +
         '<div class="wbs-usage-tabs"><button type="button" class="active" data-usage-tab="credit">积分</button><button type="button" data-usage-tab="token">Token</button></div></div><div class="wbs-usage-scroll wbs-usage-dashboard">' +
         '<div data-usage-pane="token" hidden>' + usageTimeSegmentHtml('token') +
         '<div class="wbs-token-source-note">Token 用量仅统计本机记录，在不同电脑上查看的数据可能不一致。</div>' +
@@ -7910,6 +7915,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         '<div class="wbs-modal-actions"><button class="wbs-modal-btn" type="button" data-token-close>关闭</button></div></div>';
       root.appendChild(mask);
       var body = mask.querySelector('.wbs-token-stats-body');
+      var refreshButton = mask.querySelector('[data-usage-refresh]');
       var creditPollTimer = null;
       var focusBefore = document.activeElement;
       function closeStats() {
@@ -7928,6 +7934,11 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       }, true);
       registerDisposer(closeStats);
       mask.querySelector('[data-token-close]').addEventListener('click', closeStats);
+      // 刷新重跑当前页签的查询：Token 重新统计本机记录，积分重新查询官方用量。
+      refreshButton.addEventListener('click', function () {
+        if (mask.querySelector('[data-usage-tab].active').getAttribute('data-usage-tab') === 'credit') loadCredits();
+        else load(true);
+      });
       mask.addEventListener('click', function (event) { event.stopPropagation(); if (event.target === mask) closeStats(); });
       ['pointerdown', 'pointerup', 'keyup', 'keypress'].forEach(function (name) { mask.addEventListener(name, function (event) { event.stopPropagation(); }); });
       mask.addEventListener('keydown', function (event) {
@@ -8013,6 +8024,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         if (!busy) creditBody.style.visibility = '';
         creditSyncOverlay.hidden = !busy || !showOverlay;
         mask.querySelectorAll('[data-credit-days]').forEach(function (button) { button.disabled = busy; });
+        refreshButton.disabled = busy;
         mask.querySelector('.wbs-credit-query-content').setAttribute('aria-busy', String(busy));
       }
       function creditQueryFailed(message) {
@@ -8102,17 +8114,18 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
           });
         });
       });
-      function load() {
+      function load(force) {
         if (tokenBusy) return;
         tokenBusy = true;
         var serial = ++tokenReadSerial;
         mask.querySelectorAll('[data-token-days]').forEach(function (button) { button.disabled = true; });
+        refreshButton.disabled = true;
         overlay.hidden = false;
         body.innerHTML = '<div class="wbs-token-stats-loading" role="status">正在读取 Token 用量…</div>';
         if (firstLoadTimer) { clearTimeout(firstLoadTimer); firstLoadTimer = null; }
         var loadingLabel = overlay.querySelector('span');
         loadingLabel.hidden = true;
-        var query = '/api/token-stats?days=' + encodeURIComponent(usageDays('token'));
+        var query = '/api/token-stats?days=' + encodeURIComponent(usageDays('token')) + (force ? '&refresh=1' : '');
         api('/api/token-stats?cacheStatus=1').then(function (metadata) {
           if (!mask.isConnected || serial !== tokenReadSerial) return null;
           if (!metadata.cacheReady) {
@@ -8153,7 +8166,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
           }), { account: tokenNames, model: Object.create(null) }, tokenTrendState, formatTokenCount);
 
           hasStats = true;
-        }).catch(function (error) { if (!mask.isConnected || serial !== tokenReadSerial) return; if (hasStats) toast('读取失败：' + (error.message || error), true, root); else body.innerHTML = '<div class="wbs-token-stats-empty">读取失败：' + esc(error.message || error) + '</div>'; }).finally(function () { if (!mask.isConnected || serial !== tokenReadSerial) return; tokenBusy = false; if (firstLoadTimer) { clearTimeout(firstLoadTimer); firstLoadTimer = null; } mask.querySelectorAll('[data-token-days]').forEach(function (button) { button.disabled = false; }); overlay.hidden = true; });
+        }).catch(function (error) { if (!mask.isConnected || serial !== tokenReadSerial) return; if (hasStats) toast('读取失败：' + (error.message || error), true, root); else body.innerHTML = '<div class="wbs-token-stats-empty">读取失败：' + esc(error.message || error) + '</div>'; }).finally(function () { if (!mask.isConnected || serial !== tokenReadSerial) return; tokenBusy = false; if (firstLoadTimer) { clearTimeout(firstLoadTimer); firstLoadTimer = null; } mask.querySelectorAll('[data-token-days]').forEach(function (button) { button.disabled = false; }); refreshButton.disabled = false; overlay.hidden = true; });
       }
       if (mask.querySelector('[data-usage-tab].active').getAttribute('data-usage-tab') === 'credit') loadCredits(); else load();
     }
@@ -16912,8 +16925,8 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
   css.id = 'wbs-style';
   css.textContent = [
     '.wbs-root{position:fixed;right:22px;bottom:22px;z-index:2147483647;font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;font-size:13px;color:#1f1f1f;-webkit-font-smoothing:antialiased}',
-    '.wbs-root,.wbs-status-popover,.wbs-credit-summary-popover,#wbs-token-stats-modal{--wbs-primary:#22c55e;--wbs-primary-rgb:34,197,94;--wbs-primary-ink:#22c55e;--wbs-primary-soft:rgba(34,197,94,.09);--wbs-primary-soft-hover:rgba(34,197,94,.14)}',
-    'html[data-wbs-theme-id="dark"] .wbs-root,html[data-wbs-theme-id="dark"] .wbs-status-popover,html[data-wbs-theme-id="dark"] .wbs-credit-summary-popover,html[data-wbs-theme-id="dark"] #wbs-token-stats-modal,html[data-wbs-theme-id="cyber-purple"] .wbs-root,html[data-wbs-theme-id="cyber-purple"] .wbs-status-popover,html[data-wbs-theme-id="cyber-purple"] .wbs-credit-summary-popover,html[data-wbs-theme-id="cyber-purple"] #wbs-token-stats-modal,html[data-wbs-theme-id="nebula"] .wbs-root,html[data-wbs-theme-id="nebula"] .wbs-status-popover,html[data-wbs-theme-id="nebula"] .wbs-credit-summary-popover,html[data-wbs-theme-id="nebula"] #wbs-token-stats-modal,:is(html[data-theme="dark"],html.cb-dark,body[data-vscode-theme-name*="dark" i]) .wbs-root,:is(html[data-theme="dark"],html.cb-dark,body[data-vscode-theme-name*="dark" i]) .wbs-status-popover,:is(html[data-theme="dark"],html.cb-dark,body[data-vscode-theme-name*="dark" i]) .wbs-credit-summary-popover,:is(html[data-theme="dark"],html.cb-dark,body[data-vscode-theme-name*="dark" i]) #wbs-token-stats-modal{--wbs-primary:#7f77dd;--wbs-primary-rgb:127,119,221;--wbs-primary-ink:#7f77dd;--wbs-primary-soft:rgba(127,119,221,.12);--wbs-primary-soft-hover:rgba(127,119,221,.18)}',
+    '.wbs-root,.wbs-status-popover,.wbs-credit-summary-popover,#wbs-token-stats-modal{--wbs-primary:#22c55e;--wbs-primary-rgb:34,197,94;--wbs-primary-ink:#22c55e;--wbs-primary-soft:rgba(34,197,94,.09);--wbs-primary-soft-hover:rgba(34,197,94,.14);--wbs-series-2:#2563eb;--wbs-series-3:#d2760f;--wbs-series-4:#c026d3;--wbs-series-5:#0d9488;--wbs-series-6:#dc2626;--wbs-series-7:#7c3aed;--wbs-series-8:#7a9c1e;--wbs-series-9:#0891b2;--wbs-series-10:#7c2d12;--wbs-series-11:#db2777;--wbs-series-12:#57534e}',
+    'html[data-wbs-theme-id="dark"] .wbs-root,html[data-wbs-theme-id="dark"] .wbs-status-popover,html[data-wbs-theme-id="dark"] .wbs-credit-summary-popover,html[data-wbs-theme-id="dark"] #wbs-token-stats-modal,html[data-wbs-theme-id="cyber-purple"] .wbs-root,html[data-wbs-theme-id="cyber-purple"] .wbs-status-popover,html[data-wbs-theme-id="cyber-purple"] .wbs-credit-summary-popover,html[data-wbs-theme-id="cyber-purple"] #wbs-token-stats-modal,html[data-wbs-theme-id="nebula"] .wbs-root,html[data-wbs-theme-id="nebula"] .wbs-status-popover,html[data-wbs-theme-id="nebula"] .wbs-credit-summary-popover,html[data-wbs-theme-id="nebula"] #wbs-token-stats-modal,:is(html[data-theme="dark"],html.cb-dark,body[data-vscode-theme-name*="dark" i]) .wbs-root,:is(html[data-theme="dark"],html.cb-dark,body[data-vscode-theme-name*="dark" i]) .wbs-status-popover,:is(html[data-theme="dark"],html.cb-dark,body[data-vscode-theme-name*="dark" i]) .wbs-credit-summary-popover,:is(html[data-theme="dark"],html.cb-dark,body[data-vscode-theme-name*="dark" i]) #wbs-token-stats-modal{--wbs-primary:#7f77dd;--wbs-primary-rgb:127,119,221;--wbs-primary-ink:#7f77dd;--wbs-primary-soft:rgba(127,119,221,.12);--wbs-primary-soft-hover:rgba(127,119,221,.18);--wbs-series-2:#62a8ff;--wbs-series-3:#f0a347;--wbs-series-4:#d959e8;--wbs-series-5:#3ff3e3;--wbs-series-6:#e64c4c;--wbs-series-7:#9a63f7;--wbs-series-8:#b6de5a;--wbs-series-9:#38d4fa;--wbs-series-10:#c9805c;--wbs-series-11:#f071a8;--wbs-series-12:#9f9a93}',
     '.wbs-session-usage-summary{position:fixed;z-index:20;display:flex;align-items:center;justify-content:flex-start;gap:10px;box-sizing:border-box;min-height:37px;padding:3px 0 2px;border:0;border-radius:0;background:transparent;color:var(--wb-color-text-primary,#1f1f1f);font-size:14px;font-weight:400;line-height:18px;outline:none;cursor:pointer}',
     '.wbs-session-usage-summary:hover,.wbs-session-usage-summary:focus-visible{background:transparent}',
     '.wbs-session-usage-summary.is-hidden{visibility:hidden;opacity:0;pointer-events:none}',
@@ -17853,10 +17866,15 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '.wbs-token-stats-modal{width:min(980px,calc(100vw - 48px));max-width:calc(100vw - 48px);height:min(84vh,800px);max-height:calc(100vh - 48px);display:flex;flex-direction:column;overflow:hidden;border:1px solid var(--wb-border-default,rgba(20,24,32,.14));border-radius:16px;padding:0;box-shadow:0 24px 80px rgba(15,18,24,.22)}',
     '.wbs-usage-header{position:sticky;top:0;z-index:4;flex-shrink:0;padding:20px 22px 0;border-bottom:1px solid var(--wb-border-subtle,#eee);background:color-mix(in srgb,var(--wb-bg-popover,#fff) 94%,transparent);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px)}.wbs-usage-scroll{min-height:0;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;flex:1;padding:8px 22px 22px}.wbs-usage-dashboard{scrollbar-width:none}.wbs-usage-dashboard::-webkit-scrollbar{display:none}.wbs-token-stats-modal>.wbs-modal-actions{flex-shrink:0;padding:13px 22px;border-top:1px solid var(--wb-border-subtle,#eee);background:var(--wb-bg-popover,#fff)}.wbs-token-stats-modal .wbs-token-model-scroll{overflow:visible}.wbs-token-stats-modal .wbs-token-model-scroll:after{display:none}.wbs-credit-query-content{position:relative;min-height:430px}',
     '.wbs-token-stats-head{display:flex;align-items:center;justify-content:space-between;gap:10px}',
+    '.wbs-usage-refresh{flex:0 0 auto}',
+    '.wbs-usage-refresh:hover:not(:disabled){background:var(--wb-bg-tertiary,#e6e8ec);color:var(--wb-color-text-primary,#1f1f1f)}',
+    '.wbs-usage-refresh:focus-visible{outline:2px solid currentColor;outline-offset:2px}',
     '.wbs-token-source-note{margin:0 0 12px;font-size:11px;line-height:1.6;color:var(--wb-icon-secondary,#667085);overflow-wrap:anywhere}',
     '.wbs-usage-tabs{display:flex;gap:18px;margin:13px 0 0;border-bottom:1px solid var(--wb-border-subtle,#eee)}.wbs-usage-tabs button{border:0;border-bottom:2px solid transparent;background:transparent;color:var(--wb-icon-secondary,#667085);padding:7px 2px 9px;font:inherit;font-size:12px;cursor:pointer;transition:color .15s,border-color .15s}.wbs-usage-tabs button.active{border-bottom-color:var(--wb-color-text-primary,#1f1f1f);color:var(--wb-color-text-primary,#1f1f1f);font-weight:700}.wbs-credit-stats-note{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:10px 0;color:var(--wb-icon-secondary,#667085);font-size:11px;line-height:1.5}.wbs-credit-sync{height:26px;padding:0 9px;border:1px solid var(--wb-border-default,#e2e4e8);border-radius:7px;background:var(--wb-bg-tertiary,#f5f6f8);color:var(--wb-color-text-primary,#1f1f1f);font:inherit;font-size:11px;cursor:pointer}.wbs-credit-sync:disabled{opacity:.6;cursor:wait}.wbs-credit-stats-body{min-height:240px}',
     '.wbs-usage-period{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:16px 0 12px;color:var(--wb-color-text-secondary,#667085);font-size:11px}.wbs-usage-segment{display:inline-flex;align-items:center;gap:2px;max-width:100%;padding:3px;border:1px solid var(--wb-border-subtle,#eee);border-radius:9px;background:var(--wb-bg-tertiary,#f5f6f8)}.wbs-usage-segment button{min-width:55px;height:27px;padding:0 9px;border:0;border-radius:6px;background:transparent;color:var(--wb-color-text-secondary,#667085);font:inherit;font-size:11px;cursor:pointer;white-space:nowrap}.wbs-usage-segment button.active{background:var(--wb-bg-popover,#fff);color:var(--wb-color-text-primary,#1f1f1f);font-weight:600;box-shadow:0 1px 4px rgba(0,0,0,.1)}.wbs-usage-segment button:disabled{opacity:.55;cursor:wait}.wbs-usage-segment button:focus-visible,.wbs-trend-legend button:focus-visible{outline:2px solid var(--wbs-primary);outline-offset:2px}',
-    '.wbs-trend-panel,.wbs-usage-pie-section{--wbs-chart-base:var(--wbs-credit-theme-color,var(--wbs-primary));--wbs-trend-series-1:var(--wbs-chart-base);--wbs-trend-series-2:color-mix(in srgb,var(--wbs-chart-base) 84%,var(--wb-color-text-primary));--wbs-trend-series-3:color-mix(in srgb,var(--wbs-chart-base) 68%,var(--wb-bg-primary));--wbs-trend-series-4:color-mix(in srgb,var(--wbs-chart-base) 52%,var(--wb-bg-primary));--wbs-trend-series-5:color-mix(in srgb,var(--wbs-chart-base) 36%,var(--wb-bg-primary));--wbs-trend-series-6:color-mix(in srgb,var(--wbs-chart-base) 72%,transparent);--wbs-trend-series-7:color-mix(in srgb,var(--wbs-chart-base) 58%,var(--wb-color-text-primary));--wbs-trend-series-8:color-mix(in srgb,var(--wbs-chart-base) 44%,var(--wb-color-text-primary));--wbs-trend-series-9:color-mix(in srgb,var(--wbs-chart-base) 30%,var(--wb-color-text-primary));--wbs-trend-series-10:color-mix(in srgb,var(--wbs-chart-base) 70%,var(--wb-bg-secondary));--wbs-trend-series-11:color-mix(in srgb,var(--wbs-chart-base) 52%,transparent);--wbs-trend-series-12:color-mix(in srgb,var(--wbs-chart-base) 38%,transparent);}',
+    // 分组统计（按账号/按模型）：总览沿用主题色，其余序列改用互不相同的色相，
+    // 每个色相在浅色/深色主题各有一份定义（--wbs-series-*），避免同色明度梯变难以区分。
+    '.wbs-trend-panel,.wbs-usage-pie-section{--wbs-chart-base:var(--wbs-credit-theme-color,var(--wbs-primary));--wbs-trend-series-1:var(--wbs-chart-base);--wbs-trend-series-2:var(--wbs-series-2);--wbs-trend-series-3:var(--wbs-series-3);--wbs-trend-series-4:var(--wbs-series-4);--wbs-trend-series-5:var(--wbs-series-5);--wbs-trend-series-6:var(--wbs-series-6);--wbs-trend-series-7:var(--wbs-series-7);--wbs-trend-series-8:var(--wbs-series-8);--wbs-trend-series-9:var(--wbs-series-9);--wbs-trend-series-10:var(--wbs-series-10);--wbs-trend-series-11:var(--wbs-series-11);--wbs-trend-series-12:var(--wbs-series-12)}',
     '.wbs-trend-controls{display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap;margin-bottom:9px}.wbs-trend-modes{flex-shrink:0}.wbs-trend-modes button{min-width:48px}.wbs-trend-legend{display:flex;align-items:center;gap:6px;flex:1;flex-wrap:wrap;min-width:140px;max-height:74px;overflow-y:auto;scrollbar-width:none}.wbs-trend-legend::-webkit-scrollbar{display:none}.wbs-trend-legend button{display:inline-flex;align-items:center;gap:6px;max-width:165px;height:27px;padding:0 8px;border:1px solid var(--wb-border-subtle,#eee);border-radius:6px;background:var(--wb-bg-popover,#fff);color:var(--wb-color-text-secondary,#667085);font:inherit;font-size:11px;cursor:pointer;opacity:.55}.wbs-trend-legend button.active{opacity:1;color:var(--wb-color-text-primary,#1f1f1f)}.wbs-trend-legend button i{flex:none;width:8px;height:8px;border-radius:50%;background:var(--wbs-series-color);color:var(--wbs-series-color)}.wbs-trend-legend button span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.wbs-trend-no-series{font-size:11px;color:var(--wb-color-text-secondary,#667085)}',
     '.wbs-token-stats-actions{display:flex;justify-content:flex-end;gap:7px;margin:2px 0 12px}.wbs-token-stats-actions button{height:30px;padding:0 14px;border-radius:7px;font:inherit;font-size:11px;cursor:pointer}.wbs-token-stats-search{border:1px solid var(--wb-button-primary-bg,#1f1f1f);background:var(--wb-button-primary-bg,#1f1f1f);color:var(--wb-button-primary-fg,#fff)}.wbs-token-stats-reset{border:1px solid var(--wb-border-default,#e2e4e8);background:var(--wb-bg-tertiary,#f5f6f8);color:var(--wb-color-text-secondary,#667085)}.wbs-token-stats-actions button:disabled{opacity:.55;cursor:wait}',
     '.wbs-token-stats-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px}',

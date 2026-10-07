@@ -133,6 +133,31 @@ test('cached history and live buckets do not double count calls', () => {
   assert.equal(second.totals.calls, 1);
 });
 
+test('an unchanged scan keeps the cached totals without rewriting the cache file', t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wbs-token-nowrite-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const now = Date.parse('2026-09-11T10:00:00Z');
+  const file = path.join(root, 'session.jsonl');
+  fs.writeFileSync(file, JSON.stringify({ timestamp: '2026-09-10T10:00:00Z', usage: { input_tokens: 3 } }) + '\n');
+  const cache = path.join(root, '.workdaddy-token-stats-cache.json');
+  assert.equal(scanTokenStatsCached(root, { now, days: 7 }).cacheHit, false);
+  fs.utimesSync(cache, new Date(now - 60_000), new Date(now - 60_000));
+  const stamp = fs.statSync(cache).mtimeMs;
+  const reused = scanTokenStatsCached(root, { now: now + 1000, days: 7 });
+  assert.equal(reused.totals.calls, 1);
+  assert.equal(reused.cacheHit, true);
+  assert.equal(reused.cacheReady, true);
+  assert.equal(fs.statSync(cache).mtimeMs, stamp, 'no change must not rewrite the cache');
+  fs.appendFileSync(file, JSON.stringify({ timestamp: '2026-09-11T09:00:00Z', usage: { input_tokens: 4 } }) + '\n');
+  const appended = scanTokenStatsCached(root, { now: now + 2000, days: 7 });
+  assert.equal(appended.totals.calls, 2);
+  assert.notEqual(fs.statSync(cache).mtimeMs, stamp, 'new usage must be persisted');
+  fs.unlinkSync(file);
+  const removed = scanTokenStatsCached(root, { now: now + 3000, days: 7 });
+  assert.equal(removed.totals.calls, 0);
+  assert.equal(JSON.parse(fs.readFileSync(cache, 'utf8')).todayFiles['session.jsonl'], undefined, 'deleted files must be dropped from the cache');
+});
+
 test('token statistics UI keeps results under an overlay and exposes presets through 90 days only', () => {
   const source = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'inject.js'), 'utf8');
   assert.match(source, /class="wbs-token-stats-content"/);
@@ -197,10 +222,26 @@ test('usage charts derive all series from WorkBuddy theme tokens', () => {
   const palette = source.match(/\.wbs-trend-panel,\.wbs-usage-pie-section\{([^}]+)\}/)[1];
   assert.doesNotMatch(palette, /#[0-9a-f]|rgba?\(/i);
   assert.match(palette, /--wbs-chart-base:var\(--wbs-credit-theme-color,var\(--wbs-primary\)\)/);
+  // 总览沿用主题色；按账号/按模型的分组序列必须换成互不相同的色相，
+  // 否则同一色相的明度梯变在多序列折线与饼图中难以区分。
   assert.match(palette, /--wbs-trend-series-1:var\(--wbs-chart-base\)/);
-  assert.match(palette, /--wbs-trend-series-2:color-mix\(in srgb,var\(--wbs-chart-base\)/);
-  assert.match(palette, /--wbs-trend-series-12:color-mix\(in srgb,var\(--wbs-chart-base\)/);
-  assert.doesNotMatch(palette, /--wb-palette-(blue|purple|green|cyan|red|orange)-5/);
+  assert.doesNotMatch(palette, /color-mix/, 'series colors must be distinct hues, not tints of the base color');
+  const mapped = Array.from(palette.matchAll(/--wbs-trend-series-(\d+):var\((--wbs-series-\d+)\)/g));
+  assert.deepEqual(mapped.map(match => Number(match[1])), [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+  const tokens = mapped.map(match => match[2]);
+  assert.equal(new Set(tokens).size, tokens.length, 'split series must not reuse one hue token');
+  // 每个色相都要在浅色与深色主题下各自定义，且深浅两套颜色本身互不相同。
+  const lit = (block, token) => (new RegExp(token + ':(#[0-9a-f]{6})').exec(block) || [])[1];
+  const lightBlock = source.match(/\.wbs-root,\.wbs-status-popover,\.wbs-credit-summary-popover,#wbs-token-stats-modal\{([^}]+)\}/)[1];
+  const darkBlock = source.match(/html\[data-wbs-theme-id="dark"\][\s\S]*?#wbs-token-stats-modal\{([^}]+)\}/)[1];
+  for (const token of tokens) {
+    assert.ok(lit(lightBlock, token), `${token} missing from the light palette`);
+    assert.ok(lit(darkBlock, token), `${token} missing from the dark palette`);
+  }
+  const lightValues = tokens.map(token => lit(lightBlock, token));
+  assert.equal(new Set(lightValues).size, lightValues.length, 'light palette hues must differ');
+  const darkValues = tokens.map(token => lit(darkBlock, token));
+  assert.equal(new Set(darkValues).size, darkValues.length, 'dark palette hues must differ');
   assert.match(source, /html\[data-theme="dark"\][\s\S]*--wbs-primary:#7f77dd/);
   assert.match(source, /--wbs-credit-theme-color:var\(--wb-button-primary-bg\)/);
   assert.equal((palette.match(/--wbs-trend-series-\d+:/g) || []).length, 12);

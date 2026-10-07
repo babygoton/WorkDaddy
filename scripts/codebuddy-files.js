@@ -118,16 +118,44 @@ function createCodeBuddyFiles({root, sync}) {
     for(const [,relative] of bases(id))await visit(relative);
     return {totalBytes,fingerprint:hash(JSON.stringify(markers))};
   }
-  function tokenOptions(ids) {
-    const owners=new Map();
-    for(const id of ids) {
-      if(!rows.has(id))continue;
-      const file=safe(bases(id)[0][1]+'/index.json');
-      if(fs.existsSync(file))owners.set(file,id);
+  // CodeDaddy keeps each conversation's request log inside the owning account's
+  // history tree. Statistics read that tree instead of the live session
+  // registry: a conversation deleted in the client keeps its files, and history
+  // left by an older install has no session record at all — both still hold real
+  // token usage that must not vanish from a day's totals. The owning directory
+  // names the account, so an unregistered session stays attributed.
+  // Walking a large history costs ~150ms, so the last index is reused briefly:
+  // range switches and re-opens within the window stay instant, while the
+  // panel's refresh button passes {refresh:true} to re-walk and always sees a
+  // session that just finished. File contents are still re-checked by
+  // token-stats through mtime/size, this window only caches the file list.
+  const TOKEN_INDEX_TTL_MS = 15000;
+  let tokenIndex = null;
+  function tokenOptions(options={}) {
+    if (!options.refresh && tokenIndex && Date.now() - tokenIndex.at < TOKEN_INDEX_TTL_MS) return tokenIndex.value;
+    const files=[],owners=new Map(),accounts={};
+    function directories(dir) {
+      try {return fs.readdirSync(dir,{withFileTypes:true}).filter(entry=>entry.isDirectory()&&!entry.isSymbolicLink());}
+      catch(_) {return [];}
     }
-    return {files:[...owners.keys()],source:'local-codebuddy-requests',
-      sourceSession:file=>owners.get(file),
+    for(const owner of directories(root)) {
+      if(!validId(owner.name))continue;
+      const history=path.join(root,owner.name,'CodeBuddyIDE',owner.name,'history');
+      for(const workspace of directories(history)) {
+        const base=path.join(history,workspace.name);
+        for(const session of directories(base)) {
+          if(!validId(session.name))continue;
+          const file=path.join(base,session.name,'index.json');
+          if(!fs.existsSync(file))continue;
+          files.push(file);owners.set(file,session.name);accounts[session.name]=owner.name;
+        }
+      }
+    }
+    const value = {files,source:'local-codebuddy-requests',sessionAccounts:accounts,
+      sourceSession:file=>owners.get(file) || '',
       readRecords:text=>{const index=parseIndex(text);return Array.isArray(index.requests)?index.requests:[];}};
+    tokenIndex = {at:Date.now(),value};
+    return value;
   }
   function collect(id) {
     return [...snapshot(null,id).files].map(([key,file])=>({path:key.replace('/__session__/','/'+id+'/'),source:file.sourcePath,size:file.size}));
