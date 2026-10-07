@@ -95,3 +95,40 @@ test('size and invalidation probes use metadata without reading conversation bod
     assert.match(await files.sync.readSessionQuickFingerprintAsync(null,'source'),/^[a-f0-9]{64}$/);
   }finally{fs.readFileSync=read;}
 });
+
+// 客户端删除的会话在登记表里只剩墓碑，旧安装遗留的历史甚至没有记录：用量统计
+// 必须按账号历史树读取，否则对应日期的 Token 会凭空变成 0。
+test('usage collection reads account history trees including deleted or unregistered sessions',async t=>{
+  const {root,files,base}=fixture(t);
+  const cwd='/fixture';
+  const gone=path.join(root,'user-b','CodeBuddyIDE','user-b','history',crypto.createHash('md5').update(path.normalize(cwd)).digest('hex'),'gone');
+  fs.mkdirSync(path.join(gone,'messages'),{recursive:true});
+  fs.writeFileSync(path.join(gone,'index.json'),JSON.stringify({messages:[],requests:[{
+    id:'request-1',type:'craft',state:'complete',startedAt:Date.parse('2026-09-20T10:00:00+08:00'),
+    usage:{inputTokens:10,outputTokens:2},
+  }]}));
+  const options=files.tokenOptions();
+  assert.deepEqual(options.files.map(file=>path.relative(root,file)).sort(),[
+    path.join('user-a','CodeBuddyIDE','user-a','history',path.basename(base),'source','index.json'),
+    path.join('user-b','CodeBuddyIDE','user-b','history',crypto.createHash('md5').update(path.normalize(cwd)).digest('hex'),'gone','index.json'),
+  ]);
+  assert.equal(options.sourceSession(path.join(base,'source','index.json')),'source');
+  assert.equal(options.sessionAccounts.gone,'user-b');
+  const {scanTokenStatsCached}=require('../scripts/token-stats.js');
+  const stats=scanTokenStatsCached(root,{...options,days:7,now:Date.parse('2026-09-21T12:00:00+08:00'),accountOptions:[{uid:'user-b'}]});
+  assert.deepEqual(stats.totals,{input:10,output:2,cacheRead:0,cacheWrite:0,total:12,calls:1});
+  assert.equal(stats.accounts[0].account,'user-b');
+});
+
+// 枚举整棵历史树约 150ms；窗口内复用结果，刷新（refresh）必须重新扫描，
+// 否则刚刚结束的会话在点击刷新后仍然看不到。
+test('history index is reused inside the window and re-walked on refresh',async t=>{
+  const {root,files}=fixture(t);
+  assert.equal(files.tokenOptions({refresh:true}).files.length,1);
+  const late=path.join(root,'user-b','CodeBuddyIDE','user-b','history',crypto.createHash('md5').update('/fixture').digest('hex'),'late');
+  fs.mkdirSync(path.join(late,'messages'),{recursive:true});
+  fs.writeFileSync(path.join(late,'index.json'),JSON.stringify({messages:[],requests:[]}));
+  assert.equal(files.tokenOptions().files.length,1,'the cached index must be reused inside the window');
+  assert.equal(files.tokenOptions({refresh:true}).files.length,2,'refresh must re-walk the history tree');
+  assert.equal(files.tokenOptions().files.length,2,'the refreshed index becomes the cached one');
+});

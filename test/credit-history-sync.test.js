@@ -161,6 +161,24 @@ test('after midnight only yesterday snapshot and new day are fetched, not settle
   assert.equal(requests.length,2);assert.equal(requests[1].startTime.getTime(),new Date(2026,8,12).getTime());
 });
 
+test('credit cache writes are throttled and forced once when the job ends', async t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wbs-credit-persist-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const cacheFile = path.join(dir, 'cache.json');
+  let current = now, writes = 0;
+  const original = fs.writeFileSync;
+  fs.writeFileSync = function (file, ...rest) { if (String(file).endsWith('.tmp')) writes++; return original.call(this, file, ...rest); };
+  t.after(() => { fs.writeFileSync = original; });
+  // 每个账号整体重写一次缓存文件；节流窗口内只写一次，任务结束前再强制写一次。
+  const sync = createCreditHistorySync({ cacheFile, now: () => current, persistIntervalMs: 60000,
+    getAccessToken: async uid => uid, fetchUsage: async () => { current = new Date(current.getTime() + 1000); return { records: [] }; } });
+  sync.start({ accounts: [{ uid: 'a' }, { uid: 'b' }, { uid: 'c' }], days: 1 });
+  const state = await settle(sync);
+  assert.equal(state.completed, 3);
+  assert.equal(writes, 2, 'one throttled write plus the forced final write');
+  assert.equal(JSON.parse(fs.readFileSync(cacheFile, 'utf8')).daily.length, 3, 'the forced write must persist every account');
+});
+
 test('failed gap remains missing and retry does not fetch successful accounts again', async () => {
   let failing=true;const calls=[];
   const sync=createCreditHistorySync({now:()=>now,getAccessToken:async uid=>uid,fetchUsage:async o=>{calls.push(o.accessToken);if(failing&&o.accessToken==='b')throw Error('timeout');return {records:[]};}});

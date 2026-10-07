@@ -39,8 +39,17 @@ function createCreditHistorySync(options) {
       cache.set(key(row.uid, row.date), { ...row, models });
     }
   } catch (_) { /* Absent or invalid cache: query the official API. */ }
-  function persist() {
+  const persistIntervalMs = Number.isFinite(options.persistIntervalMs) && options.persistIntervalMs >= 0
+    ? options.persistIntervalMs : 2000;
+  let lastPersistAt = 0;
+  // Rewriting the whole cache after every gap is cheap for a few accounts but
+  // repeats a multi-megabyte write for dozens of them. Throttle it and force
+  // one write at the end of the job: a crash then only loses the last seconds.
+  function persist(force) {
     if (!options.cacheFile) return;
+    const at = clock().getTime();
+    if (!force && lastPersistAt && at - lastPersistAt < persistIntervalMs) return;
+    lastPersistAt = at;
     const tmp = options.cacheFile + '.tmp';
     try {
       fs.mkdirSync(path.dirname(options.cacheFile), { recursive: true, mode: 0o700 });
@@ -150,6 +159,7 @@ function createCreditHistorySync(options) {
         active.completed++;
         active.percent = Math.floor(active.completed / active.total * 100);
       }
+      persist(true);
       active.running = false;
       active.current = '';
       active.percent = 100;

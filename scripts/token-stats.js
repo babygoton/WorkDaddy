@@ -441,6 +441,10 @@ function scanTokenStatsCached(root, options = {}) {
   const hadValidCache = usableCache(cache, now);
   const currentFiles = Array.isArray(options.files) ? options.files : walkJsonl(root, options.maxFiles || 5000);
   const todayFiles = {};
+  // A scan that reuses every cached file changes nothing on disk, so rewriting
+  // the (often multi-megabyte) cache only costs time. Skip it then: the cutoff
+  // may stay older than today's, which is still within the retained range.
+  let changed = !hadValidCache;
   let parsedLines = 0, parseErrors = 0;
   const parseErrorFiles = new Set();
   for (const currentFile of currentFiles) {
@@ -456,6 +460,7 @@ function scanTokenStatsCached(root, options = {}) {
         files: [currentFile] });
       item = { mtimeMs: stat.mtimeMs, size: stat.size, entries: parsed.records,
         parsedLines: parsed.parsedLines, parseErrors: parsed.parseErrors, parseErrorFiles: parsed.parseErrorFiles };
+      changed = true;
     }
     item.entries = item.entries.filter(entry => entry.timestamp >= cutoff);
     todayFiles[relative] = item;
@@ -463,11 +468,18 @@ function scanTokenStatsCached(root, options = {}) {
     parseErrors += item.parseErrors || 0;
     for (const errorFile of item.parseErrorFiles || []) parseErrorFiles.add(errorFile);
   }
+  if (hadValidCache) {
+    // A file may also appear or disappear while the scan runs.
+    const previousKeys = Object.keys(cache.todayFiles);
+    if (previousKeys.length !== Object.keys(todayFiles).length ||
+        previousKeys.some((key) => !todayFiles[key])) changed = true;
+  }
   const records = Object.values(todayFiles).flatMap(item => item.entries);
   const buckets = aggregateBuckets(distinctRecords(records, options));
-  const cacheReady = writeCache(file, { version: CACHE_VERSION, generatedAt: now, cutoff,
-    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-    historicalBuckets: [], todayFiles });
+  const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const cacheReady = !changed && cache.cutoff === cutoff && cache.timezone === timezone
+    ? true : writeCache(file, { version: CACHE_VERSION, generatedAt: now, cutoff,
+      timezone, historicalBuckets: [], todayFiles });
   const stats = aggregateCachedBuckets(buckets, { ...options, now });
   return { ...stats, files: currentFiles.length, parsedLines, parseErrors,
     parseErrorFiles: Array.from(parseErrorFiles), cached: hadValidCache, cacheHit: hadValidCache,
