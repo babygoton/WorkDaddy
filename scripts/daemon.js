@@ -45,6 +45,7 @@ const {
   selectRunningProfileBinary,
   selectPreferredDiscoveredBinary,
 } = require('./windows-process-boundary.js');
+const { isVerifiedDaemonLockOwner } = require('./daemon-lock-owner.js');
 const DAEMON_PRIVILEGE = process.platform === 'win32'
   ? (process.env.WBSWITCH_NATIVE_LAUNCHER === '1'
     ? detectNativeWindowsPrivilege(path.resolve(__dirname, '..'), process.env.WBSWITCH_PROFILE || 'workbuddy-cn')
@@ -439,8 +440,9 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 //         扩展宿主 indexCache（TTL 5min）不因外部写 index.json 失效，侧边栏
 //         此前要等缓存过期或重启才显示同步的会话。
 // 1.2.11：账号切换刷新只依赖页面重载与同步完成后的列表刷新，避免官方列表重复合并。
-const DAEMON_VERSION = '1.2.11';
-const DAEMON_BUILD_ID = 'release-1.2.11-20261001-account-reload-list-codebuddy-pr345';
+// 1.2.12：POSIX 单实例锁校验进程身份，避免 PID 被复用后误判「已有 daemon 运行」而永久退出（issue #128）。
+const DAEMON_VERSION = '1.2.12';
+const DAEMON_BUILD_ID = 'release-1.2.12-20261011-daemon-lock-verify-owner';
 const usageReporter = createUsageReporter({ profile: PROFILE.id, version: DAEMON_VERSION });
 configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const automationDiscovery = createAutomationDiscovery({
@@ -1692,9 +1694,10 @@ function acquireDaemonLock() {
           let alive = false;
           if (ownerPid > 0 && ownerPid !== process.pid) {
             if (IS_WIN) alive = isCurrentWindowsDaemonProcess(ownerPid);
-            else {
-              try { process.kill(ownerPid, 0); alive = true; } catch (_) {}
-            }
+            // POSIX 同样必须验证进程身份：更新后锁文件残留、PID 被系统复用给无关进程时，
+            // 只做存在性探测会误判「已有 daemon 运行」并自我退出，形成永久死循环
+            // （issue #128）。安装器早已用 linux-daemon-process.js 做同类校验，这里补齐。
+            else alive = isVerifiedDaemonLockOwner(ownerPid, { scriptPath: __filename });
           }
           if (alive) {
             process.stdout.write(`[${new Date().toISOString()}] [lock] 已有 daemon 运行 (pid=${ownerPid})，当前进程退出\n`);
