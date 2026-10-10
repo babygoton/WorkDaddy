@@ -2494,6 +2494,48 @@ function reloadIdeWorkbenchWindows(reason) {
   return scheduled > 0;
 }
 
+// [客户端调试端口丢失检测] 配套状态与判定（纯函数部分可单测，见 test/client-debug-relaunch.test.js）。
+// 背景：WorkBuddy 官方自动更新后自行重启，新进程丢失 --remote-debugging-port，
+// daemon 表现为"进程在跑但 CDP 不可达"，cdpLoop 会无限重试。连续命中阈值后
+// 标记 needsDebugRelaunch，由 /api/status 与根路径状态页向用户暴露并提供一键恢复。
+// 为 VM 切片单测，以下块只依赖 log / Date，不依赖 workBuddyRunning（由调用方注入结果）。
+// __wbsClientDebugStateBlockStart
+const CLIENT_DEBUG_MISS_THRESHOLD = 3;
+const clientDebugState = { consecutiveMiss: 0, needsDebugRelaunch: false, updatedAt: 0 };
+
+function resetClientDebugState() {
+  clientDebugState.consecutiveMiss = 0;
+  if (clientDebugState.needsDebugRelaunch) {
+    clientDebugState.needsDebugRelaunch = false;
+    clientDebugState.updatedAt = Date.now();
+  }
+  return clientDebugState;
+}
+
+// clientRunning: true=进程在跑 / false=没跑 / null=未知（探测失败时不计数，避免误报）
+function updateClientDebugState({ cdpConnected, clientRunning }) {
+  if (cdpConnected || clientRunning === false) {
+    return resetClientDebugState();
+  }
+  if (clientRunning !== true) return clientDebugState;
+  clientDebugState.consecutiveMiss += 1;
+  if (clientDebugState.consecutiveMiss >= CLIENT_DEBUG_MISS_THRESHOLD && !clientDebugState.needsDebugRelaunch) {
+    clientDebugState.needsDebugRelaunch = true;
+    clientDebugState.updatedAt = Date.now();
+    log('[cdp] 检测到 WorkBuddy 正在运行但调试端口不可达（疑似官方自动更新后重启），请在状态页一键恢复');
+  }
+  return clientDebugState;
+}
+// __wbsClientDebugStateBlockEnd
+
+function safeClientRunning() {
+  try {
+    return workBuddyRunning() ? true : false;
+  } catch (_) {
+    return null;
+  }
+}
+
 async function cdpLoop() {
   for (;;) {
     if (!cdp.connected) {
@@ -2502,6 +2544,15 @@ async function cdpLoop() {
       } catch (e) {
         log(`[cdp] 连接异常: ${e.message}`);
       }
+    }
+    // [客户端调试端口丢失检测] WorkBuddy 官方自动更新器装完更新会自行重启应用，
+    // 新进程不再带 --remote-debugging-port：此时进程在跑、CDP 永远连不上，
+    // 表现为右下角机器人按钮消失且无任何可操作的提示。这里只做检测与状态暴露，
+    // 不静默杀进程；恢复由用户在状态页一键触发（POST /api/client/relaunch）。
+    try {
+      updateClientDebugState({ cdpConnected: cdp.connected, clientRunning: safeClientRunning() });
+    } catch (e) {
+      log(`[cdp] 客户端状态探测异常: ${e.message}`);
     }
     // [CodeBuddy IDE 状态栏] IDE 主窗口浮层独立于主连接扫描注入（详见 ideSyncScan）
     ideSyncScan().catch((e) => log(`[cdp-ide] IDE 扫描异常: ${e.message}`));
@@ -6099,6 +6150,8 @@ const PUBLIC_API_PATHS = new Set([
   '/api/about/',
   '/api/update-check',
   '/api/update-status',
+  // 一键恢复重启：仅 loopback 可达，权限等同于本地 launcher；由用户在状态页确认触发，不静默执行。
+  '/api/client/relaunch',
 ]);
 
 function isAllowedApiOrigin(origin) {
@@ -9609,6 +9662,13 @@ function handleApi(req, res) {
         port: cdp.port,
         error: cdp.error,
       },
+      client: {
+        // 客户端进程是否在跑 / 调试端口是否可达 / 是否命中"更新后丢失调试端口"状态
+        running: safeClientRunning(),
+        cdpReachable: cdp.connected,
+        needsDebugRelaunch: clientDebugState.needsDebugRelaunch,
+        debugStateUpdatedAt: clientDebugState.updatedAt || null,
+      },
       batch: {
         running: batchState.running,
         total: batchState.total,
@@ -9625,6 +9685,21 @@ function handleApi(req, res) {
       status.authFile = currentAuthFile();
     }
     return json(res, 200, status);
+  }
+
+  // 一键恢复：客户端在运行但调试端口丢失时（通常是官方自动更新后重启），
+  // 用带 --remote-debugging-port 的方式重启客户端以恢复注入。
+  // 放在 PUBLIC_API_PATHS：仅 loopback 可达，与 launcher 同等权限；
+  // 不做静默自动重启，由用户在状态页确认后触发。
+  if (req.method === 'POST' && p === '/api/client/relaunch') {
+    if (!clientDebugState.needsDebugRelaunch && !safeClientRunning()) {
+      return json(res, 409, { ok: false, error: '客户端未在运行，无需重启' });
+    }
+    return relaunchWorkBuddy().then(() => {
+      resetClientDebugState();
+      log('[cdp] 用户通过一键恢复重启了客户端，等待调试端口恢复');
+      return json(res, 200, { ok: true });
+    }).catch((e) => json(res, 500, { ok: false, error: String((e && e.message) || e) }));
   }
 
   // The existing local API authorization gate requires the current profile token.
@@ -11719,6 +11794,19 @@ function startServer() {
     if (req.method === 'GET' && (req.url === '/' || req.url === '/index.html')) {
       // web/ 调试界面已移除（web 目录不再打包），根路径返回自包含的状态提示页
       const c = currentAccount();
+      const needRelaunch = clientDebugState.needsDebugRelaunch;
+      const warnBlock = needRelaunch
+        ? '<div style="max-width:420px;margin:18px auto 0;padding:14px 16px;border:1px solid #7a4a1f;border-radius:10px;background:#2a1c0e;text-align:left">' +
+          '<p style="margin:0 0 8px;color:#f0b35e;font-weight:600">⚠ 检测到客户端需要恢复</p>' +
+          '<p style="margin:0 0 12px;color:#d8c9b0;font-size:13px;line-height:1.6">WorkBuddy 正在运行，但未以调试模式启动（通常是官方自动更新后自行重启导致），WorkDaddy 无法注入面板。点击下方按钮将以调试模式重启客户端，恢复右下角机器人按钮。</p>' +
+          '<button id="wbs-relaunch" style="padding:8px 18px;border:0;border-radius:8px;background:#1f8a4c;color:#fff;font-size:14px;cursor:pointer">重新启动客户端并恢复</button>' +
+          '<p id="wbs-relaunch-msg" style="margin:8px 0 0;color:#9a9aa0;font-size:12px"></p></div>' +
+          '<script>(function(){var b=document.getElementById("wbs-relaunch"),m=document.getElementById("wbs-relaunch-msg");' +
+          'b.onclick=function(){b.disabled=true;m.textContent="正在重启客户端…";' +
+          'fetch("/api/client/relaunch",{method:"POST"}).then(function(r){return r.json();}).then(function(j){' +
+          'm.textContent=j.ok?"已发送重启指令，请等待客户端重新出现":"恢复失败："+(j.error||"未知错误");b.disabled=false;}).catch(function(e){' +
+          'm.textContent="请求失败："+e.message;b.disabled=false;});};})();</script>'
+        : '';
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
       return res.end(
         '<!doctype html><html lang="zh"><meta charset="utf-8"><title>' + WORKDADDY_INSTALL_NAME + '</title>' +
@@ -11726,7 +11814,8 @@ function startServer() {
         '<div style="text-align:center"><h1 style="margin:0 0 8px">' + WORKDADDY_INSTALL_NAME + ' v' + DAEMON_VERSION + '</h1>' +
         '<p style="color:#9a9aa0;margin:0">面板入口：' + PROFILE.name + ' 右下角机器人按钮</p>' +
         '<p style="color:#555;font-size:12px;margin-top:16px">守护进程运行中 · CDP ' + (cdp.connected ? '已连接' : '未连接') +
-        (c && c.nickname ? ' · 当前账号：' + String(c.nickname).replace(/</g, '&lt;') : '') + '</p></div></body></html>'
+        (c && c.nickname ? ' · 当前账号：' + String(c.nickname).replace(/</g, '&lt;') : '') + '</p>' + warnBlock +
+        '</div></body></html>'
       );
     }
     res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
