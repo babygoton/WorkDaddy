@@ -1956,7 +1956,15 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '切换中…': 'Switching…', 'Token 用量统计': 'Token usage statistics', ' 分钟后': ' minutes', ' 小时后': ' hours', ' 天后': ' days',
     '未设置时间': 'no expiry time', '时间': 'Time', '近 7 天': 'Last 7 days', '近 30 天': 'Last 30 days', '近 90 天': 'Last 90 days',
     '账号': 'Account', '全部账号': 'All accounts', '模型': 'Model', '全部模型': 'All models', '刷新': 'Refresh', '刷新统计': 'Refresh statistics', '开始日期': 'From', '结束日期': 'To',
-    '每日趋势': 'Daily trend', '暂无趋势数据': 'No trend data', '模型排行': 'Model ranking', ' 次': ' calls', '暂无模型数据': 'No model data', '暂无账号数据': 'No account data'
+    '每日趋势': 'Daily trend', '暂无趋势数据': 'No trend data', '模型排行': 'Model ranking', ' 次': ' calls', '暂无模型数据': 'No model data', '暂无账号数据': 'No account data',
+    // —— 第十六批：客户端调试端口丢失（官方自动更新后重启）状态页与一键恢复 ——
+    '检测到客户端需要恢复': 'Client recovery needed',
+    'WorkBuddy 正在运行，但未以调试模式启动（通常是官方自动更新后自行重启导致），WorkDaddy 无法注入面板。点击下方按钮将以调试模式重启客户端，恢复右下角机器人按钮。': 'WorkBuddy is running but was not started in debug mode (usually after an official auto-update restart), so WorkDaddy cannot inject the panel. Click the button below to relaunch the client in debug mode and restore the robot button.',
+    '重新启动客户端并恢复': 'Relaunch client and recover',
+    '正在重启客户端…': 'Relaunching client…',
+    '已发送重启指令，请等待客户端重新出现': 'Relaunch requested. Waiting for the client to come back.',
+    '恢复失败：': 'Recovery failed: ', '请求失败：': 'Request failed: ',
+    '客户端未在运行，无需重启': 'Client is not running; no relaunch needed'
   };
   function wbsSystemLanguage() {
     var value = String((navigator && (navigator.language || navigator.userLanguage)) || '').toLowerCase();
