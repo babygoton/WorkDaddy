@@ -1956,7 +1956,9 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '切换中…': 'Switching…', 'Token 用量统计': 'Token usage statistics', ' 分钟后': ' minutes', ' 小时后': ' hours', ' 天后': ' days',
     '未设置时间': 'no expiry time', '时间': 'Time', '近 7 天': 'Last 7 days', '近 30 天': 'Last 30 days', '近 90 天': 'Last 90 days',
     '账号': 'Account', '全部账号': 'All accounts', '模型': 'Model', '全部模型': 'All models', '刷新': 'Refresh', '刷新统计': 'Refresh statistics', '开始日期': 'From', '结束日期': 'To',
-    '每日趋势': 'Daily trend', '暂无趋势数据': 'No trend data', '模型排行': 'Model ranking', ' 次': ' calls', '暂无模型数据': 'No model data', '暂无账号数据': 'No account data'
+    '每日趋势': 'Daily trend', '暂无趋势数据': 'No trend data', '模型排行': 'Model ranking', ' 次': ' calls', '暂无模型数据': 'No model data', '暂无账号数据': 'No account data',
+    // —— 第十六批：自动化「新建任务」指定工作区（daemon 侧校验/报错文案） ——
+    '工作区': 'Workspace', '(无)': '(none)',
   };
   function wbsSystemLanguage() {
     var value = String((navigator && (navigator.language || navigator.userLanguage)) || '').toLowerCase();

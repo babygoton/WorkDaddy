@@ -439,8 +439,10 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 //         扩展宿主 indexCache（TTL 5min）不因外部写 index.json 失效，侧边栏
 //         此前要等缓存过期或重启才显示同步的会话。
 // 1.2.11：账号切换刷新只依赖页面重载与同步完成后的列表刷新，避免官方列表重复合并。
-const DAEMON_VERSION = '1.2.11';
-const DAEMON_BUILD_ID = 'release-1.2.11-20261001-account-reload-list-codebuddy-pr345';
+// 1.2.12：自动化 session.create 可选 cwd（绝对路径）/ workspace（侧栏工作区名）指定新会话
+//         工作目录；工作区不存在或绑定校验不通过时拒绝发送，不退回默认目录。
+const DAEMON_VERSION = '1.2.12';
+const DAEMON_BUILD_ID = 'release-1.2.12-20261010-session-workspace-cwd';
 const usageReporter = createUsageReporter({ profile: PROFILE.id, version: DAEMON_VERSION });
 configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const automationDiscovery = createAutomationDiscovery({
@@ -2067,6 +2069,12 @@ async function cdpMouseClick(source, x, y, extra = {}, options = {}) {
   await cdpSend('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', clickCount: 1 });
 }
 
+// 只移动指针、不按键。用于让 hover-only 的控件显形（例如侧栏工作区的「新建任务」按钮）。
+async function cdpMouseMove(source, x, y, extra = {}) {
+  log('[cdp-focus-diagnostics] mouse-move:dispatch ' + JSON.stringify({ source, x, y, extra, targetUrl: cdp.targetUrl }));
+  await cdpSend('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y });
+}
+
 function cdpSend(method, params = {}, _retry = 0) {
   if (!cdp.ws || cdp.ws.readyState !== 1) return Promise.reject(new Error('CDP 未连接'));
   const id = ++cdp.id;
@@ -3630,7 +3638,15 @@ function startAutomationRun(task, event = null) {
     const modelId = detail.model === undefined ? null : normalizeAutomationModelId(detail.model);
     if (op === 'session.create') await withInput(() => ensureAutomationNewTask({ guard: () => {
       if (isCancelled() || (currentAccount() || {}).uid !== accountUid) throw new Error('发送前账号或运行状态已变化');
-    } }));
+    }, cwd: detail.cwd, workspace: detail.workspace }));
+    // 指定工作目录时，落点已由 ensureAutomationNewTask 校验（不一致会在发送前抛错）；
+    // 这里把页面真实显示的绑定名写进运行日志，便于事后追溯「这个会话到底落哪了」。
+    if (op === 'session.create' && (detail.cwd || detail.workspace)) {
+      const boundSurface = await readAutomationAgentSurface(false).catch(() => null);
+      if (boundSurface && boundSurface.boundWorkspace) {
+        appendRunLog('session:workspace:bound:' + String(boundSurface.boundWorkspace).slice(0, 60));
+      }
+    }
     let before = await readSession();
     // New Task has no conversation controller until WorkBuddy accepts the first
     // send. Keep the first controller it mounts as the send baseline; after that,
@@ -6724,6 +6740,51 @@ function automationAgentSurfaceExpression(focusComposer) {
       clone.querySelectorAll('[data-slate-placeholder="true"],[data-slate-zero-width]').forEach(function(node){node.remove()});
       return String(clone.innerText||clone.textContent||'').replace(/[\\uFEFF\\u200B]/g,'').trim();
     }
+    function centerOf(el){var r=el.getBoundingClientRect();return {x:r.left+r.width/2,y:r.top+r.height/2}}
+    function hitTest(el,pt){try{var t=document.elementFromPoint(pt.x,pt.y);return !!(t&&(t===el||el.contains(t)||t.contains(el)))}catch(_){return false}}
+    // WorkBuddy 的侧栏工作区（空间）分组把 cwd 放在 React fiber 的 props 上；
+    // 只用 DOM 文本匹配会在重名/改名时出错，所以以 fiber 上的 cwd 为准。
+    function fiberProps(el){
+      try{
+        var key=Object.keys(el).find(function(k){return k.indexOf('__reactFiber$')===0||k.indexOf('__reactInternalInstance$')===0});
+        if(!key)return null;
+        var node=el[key];
+        for(var depth=0;depth<12&&node;depth++,node=node.return){
+          var props=node.memoizedProps;
+          if(props&&typeof props.cwd==='string'&&props.cwd.trim())return props;
+        }
+      }catch(_){}
+      return null;
+    }
+    var workspaces=[];
+    Array.from(document.querySelectorAll('.collapsible-section')).forEach(function(section){
+      var btn=section.querySelector('button.workspace-new-task-button');
+      if(!btn)return;
+      var props=fiberProps(section);
+      if(!props)return;
+      var header=section.querySelector('.collapsible-section-header');
+      var btnPoint=centerOf(btn);
+      workspaces.push({
+        cwd:props.cwd,
+        displayName:String(props.displayName||'').trim(),
+        groupKey:String(props.groupKey||''),
+        header:header?{x:header.getBoundingClientRect().left+Math.min(60,header.getBoundingClientRect().width/2),y:header.getBoundingClientRect().top+header.getBoundingClientRect().height/2}:null,
+        button:btnPoint,
+        // 「新建任务」按钮是 hover-only：未悬停时 visibility:hidden，点击会落空。
+        clickable:visible(btn)&&hitTest(btn,btnPoint)
+      });
+    });
+    // 新建任务页输入框底部的工作区选择器，即 WorkBuddy 当前绑定的 cwd 显示名。
+    // 显示名可能被宽度截断（加省略号），data-text 一般是未截断的原文，两者都带上。
+    var pickerEl=document.querySelector('.cr-workspace-picker');
+    var pickerLabel=pickerEl?pickerEl.querySelector('.cr-input-footer-item__label'):null;
+    var boundWorkspace=null,boundWorkspaceFull=null;
+    if(pickerEl){
+      var labelText=String((pickerLabel&&pickerLabel.textContent)||'').trim();
+      var labelData=String((pickerLabel&&pickerLabel.getAttribute('data-text'))||'').trim();
+      boundWorkspace=labelText||labelData||null;
+      boundWorkspaceFull=labelData||labelText||null;
+    }
     var activeNewTask=Array.from(document.querySelectorAll('button.conversation-list-tab-button.active,button.conversation-list-tab-button.conversation-list-tab-button-box')).some(function(el){return visible(el)&&isNewTask(el)&&(/\\bactive\\b/.test(typeof el.className==='string'?el.className:'')||el.getAttribute('aria-selected')==='true')});
     var composers=Array.from(document.querySelectorAll('[contenteditable="true"],textarea')).filter(visible);
     var composer=composers.find(function(el){return !!el.closest('.wb-home-composer')})||(activeNewTask?composers[0]:null);
@@ -6734,13 +6795,13 @@ function automationAgentSurfaceExpression(focusComposer) {
     if(!newTaskReady){
       var candidates=Array.from(document.querySelectorAll('button.workspace-new-task-button,button.conversation-list-tab-button.conversation-list-tab-button-box,button.conversation-list-tab-button,button[aria-label="新建任务"],button[aria-label="New Task"]'));
       var target=candidates.find(function(el){return visible(el)&&isNewTask(el)});
-      if(target){var b=target.getBoundingClientRect();button={x:b.left+b.width/2,y:b.top+b.height/2}}
+      if(target){button=centerOf(target)}
     }
     if(ready&&composer&&${focusComposer ? 'true' : 'false'}){
       composer.focus();
       if(composer.tagName!=='TEXTAREA'){var selection=window.getSelection();var range=document.createRange();range.selectNodeContents(composer);selection.removeAllRanges();selection.addRange(range)}
     }
-    return {ready:ready,newTaskReady:newTaskReady,activeNewTask:activeNewTask,hasComposer:!!composer,composerText:composerText(composer),button:button};
+    return {ready:ready,newTaskReady:newTaskReady,activeNewTask:activeNewTask,hasComposer:!!composer,composerText:composerText(composer),button:button,boundWorkspace:boundWorkspace,boundWorkspaceFull:boundWorkspaceFull,workspaces:workspaces};
   })()`;
 }
 
@@ -6752,12 +6813,128 @@ async function readAutomationAgentSurface(focusComposer = false) {
   return response && response.result && response.result.value;
 }
 
+// 归一化工作目录：去掉尾部分隔符，便于与 fiber 上的 cwd 精确比对。
+function normalizeAutomationWorkspaceCwd(value) {
+  const raw = String(value == null ? '' : value).trim();
+  if (!raw) return '';
+  const trimmed = raw.replace(/[\\/]+$/, '');
+  return trimmed || raw;
+}
+
+function automationWorkspaceEntryMatches(entry, cwd, name) {
+  if (!entry) return false;
+  const wantedCwd = normalizeAutomationWorkspaceCwd(cwd);
+  if (wantedCwd && normalizeAutomationWorkspaceCwd(entry.cwd) === wantedCwd) return true;
+  if (name && String(entry.displayName || '').trim() === name) return true;
+  return false;
+}
+
+// 工作区显示名可能被侧栏截断（尾随省略号），此时用前缀比对；未被截断的标签必须完全一致，
+// 否则「smartbox」和「smartbox-ui-vue3」这类互为前缀的工作区名会被误判成同一个。
+function automationWorkspaceLabelMatches(label, expected) {
+  const a = String(label || '').trim();
+  const b = String(expected || '').trim();
+  if (!a || !b) return false;
+  if (a === b) return true;
+  if (!/[\u2026]$|\.{3}$/.test(a)) return false;
+  const base = a.replace(/(?:[\u2026]|\.{3})$/, '').trim();
+  return !!base && b.startsWith(base);
+}
+
+// 新建任务页的绑定可能同时暴露「截断显示名」和「完整名」两种标签，任一匹配即算绑定成功。
+function automationWorkspaceBoundMatches(surface, expected) {
+  if (!surface) return false;
+  const labels = [surface.boundWorkspace, surface.boundWorkspaceFull];
+  return labels.some((label) => automationWorkspaceLabelMatches(label, expected));
+}
+
+// 把「新建任务」页切到指定工作区（cwd / 工作区名）。
+//
+// 为什么不能只靠下发提示词里的 `cd ...`：WorkBuddy 的「新建任务」默认工作目录是
+// `~/WorkBuddy/<时间戳>`，靠提示词事后找补既晚又不可靠。侧栏每个工作区分组自带一个
+// 「新建任务」按钮，点它会走 WorkBuddy 自己的 `initializeWorkspace(cwd)` +
+// `handleNewConversation(cwd)`，这才是把新会话真正落到目标目录的唯一入口。
+// 该按钮是 hover-only（未悬停时 visibility:hidden），所以必须先移动指针再点击。
+async function navigateAutomationWorkspace({ cwd, workspace, guard }) {
+  const wantCwd = normalizeAutomationWorkspaceCwd(cwd);
+  const wantName = String(workspace || '').trim();
+  if (!wantCwd && !wantName) return { ok: false, skipped: true };
+  const describe = wantCwd || wantName;
+  let lastNames = '';
+  const deadline = Date.now() + 20000;
+  while (Date.now() < deadline) {
+    if (guard) await guard();
+    const probe = await readAutomationAgentSurface(false).catch(() => null);
+    if (probe) {
+      const workspaces = Array.isArray(probe.workspaces) ? probe.workspaces : [];
+      lastNames = workspaces.map((item) => item.displayName).filter(Boolean).join(', ');
+      const entry = workspaces.find((item) => automationWorkspaceEntryMatches(item, wantCwd, wantName));
+      if (entry) {
+        const expectedLabel = String(entry.displayName || '').trim() || describe;
+        // 已经绑在目标工作区上：不需要再点，避免多余的导航把草稿/会话切走。
+        if (automationWorkspaceBoundMatches(probe, expectedLabel)) {
+          return { ok: true, already: true, bound: probe.boundWorkspace, label: expectedLabel, cwd: entry.cwd };
+        }
+        if (!entry.header) throw new Error('目标工作区分组缺少可悬停的标题，无法唤出「新建任务」');
+        await cdpMouseMove('automation:workspaceHover', entry.header.x, entry.header.y);
+        const clickDeadline = Date.now() + 5000;
+        let clicked = false;
+        while (Date.now() < clickDeadline) {
+          if (guard) await guard();
+          const fresh = await readAutomationAgentSurface(false).catch(() => null);
+          const freshEntry = fresh && (fresh.workspaces || []).find((item) => automationWorkspaceEntryMatches(item, wantCwd, wantName));
+          if (freshEntry && freshEntry.clickable) {
+            await cdpMouseClick('automation:workspaceNewTask', freshEntry.button.x, freshEntry.button.y);
+            clicked = true;
+            break;
+          }
+          await sleep(150);
+        }
+        if (!clicked) throw new Error('工作区 ' + expectedLabel + ' 的「新建任务」入口悬停后仍不可点击');
+        const bindDeadline = Date.now() + 15000;
+        while (Date.now() < bindDeadline) {
+          if (guard) await guard();
+          const after = await readAutomationAgentSurface(false).catch(() => null);
+          if (after && automationWorkspaceBoundMatches(after, expectedLabel)) {
+            return { ok: true, bound: after.boundWorkspace, label: expectedLabel, cwd: entry.cwd };
+          }
+          // 目标工作区可能已经跳走（例如被其它工作区的新建任务覆盖），重新找入口再点一次。
+          if (after && after.boundWorkspace) {
+            const again = (after.workspaces || []).find((item) => automationWorkspaceEntryMatches(item, wantCwd, wantName));
+            if (again && again.header) {
+              await cdpMouseMove('automation:workspaceHover', again.header.x, again.header.y);
+              if (again.clickable) await cdpMouseClick('automation:workspaceNewTask', again.button.x, again.button.y);
+            }
+          }
+          await sleep(200);
+        }
+        throw new Error('已点击工作区 ' + expectedLabel + ' 的「新建任务」，但新建任务页未绑定到该目录（绑定校验失败）');
+      }
+    }
+    await sleep(200);
+  }
+  throw new Error('未在侧栏找到工作区 ' + describe + (lastNames ? '（当前可见：' + lastNames + '）' : '（侧栏未暴露工作区分组）'));
+}
+
 async function ensureAutomationNewTask(options = {}) {
   if (!cdp.connected) throw new Error('CDP 未连接');
+  // 指定工作目录（cwd / 工作区名）时，先走侧栏工作区自己的「新建任务」入口，
+  // 让 WorkBuddy 把新会话绑定到目标目录；不指定则沿用默认（~/WorkBuddy/<时间戳>）。
+  let boundWorkspace = null;
+  let workspaceLabel = '';
+  if (options.cwd || options.workspace) {
+    const navigated = await navigateAutomationWorkspace({ cwd: options.cwd, workspace: options.workspace, guard: options.guard });
+    boundWorkspace = navigated && navigated.bound || null;
+    workspaceLabel = navigated && navigated.label || String(options.workspace || '').trim()
+      || normalizeAutomationWorkspaceCwd(options.cwd).split('/').filter(Boolean).pop() || '';
+    if (boundWorkspace) log('[automation-workspace] bound=' + String(boundWorkspace).slice(0, 60));
+  }
   let surface = null;
   let clicked = false;
   let readySince = null;
   let settled = false;
+  let workspaceError = null;
+  const wantsWorkspace = !!(options.cwd || options.workspace);
   const started = Date.now();
   // Injection can finish before WorkBuddy's account route mounts its sidebar.
   // Wait for both the entry and destination; never send into a project composer.
@@ -6775,7 +6952,19 @@ async function ensureAutomationNewTask(options = {}) {
       if (Date.now() - readySince >= 400) { settled = true; break; }
     } else {
       readySince = null;
-      if (!clicked && surface && surface.button) {
+      if (wantsWorkspace) {
+        // 指定了工作目录：绝不点「随便哪个」新建任务入口。侧栏里任何一个工作区的按钮
+        // 都能切走当前工作区，只有目标工作区自己的按钮才是对的。
+        if (!clicked) {
+          try {
+            const again = await navigateAutomationWorkspace({ cwd: options.cwd, workspace: options.workspace, guard: options.guard });
+            if (again && again.bound) boundWorkspace = again.bound;
+            clicked = true;
+          } catch (error) {
+            workspaceError = error;
+          }
+        }
+      } else if (!clicked && surface && surface.button) {
         await cdpMouseClick('automation:ensureNewTask', surface.button.x, surface.button.y);
         clicked = true;
       }
@@ -6783,8 +6972,18 @@ async function ensureAutomationNewTask(options = {}) {
     await sleep(200);
   }
   if (options.guard) await options.guard();
-  if ((!surface || !surface.newTaskReady) && !clicked) throw new Error('未找到 WorkBuddy 的新建任务入口');
-  if (!settled) throw new Error('新建任务页面未准备完成，拒绝发送到当前会话');
+  if ((!surface || !surface.newTaskReady) && !clicked) throw workspaceError || new Error('未找到 WorkBuddy 的新建任务入口');
+  if (!settled) throw workspaceError || new Error('新建任务页面未准备完成，拒绝发送到当前会话');
+  // 指定了工作目录时，落草稿之前再核一次绑定：中途任何导航（含用户手动点击）都可能把
+  // 新建任务页切到别的工作区，此时宁可失败也不能把消息发进错误的目录。
+  if (wantsWorkspace) {
+    const expected = workspaceLabel || boundWorkspace || '';
+    if (!automationWorkspaceBoundMatches(surface, expected)) {
+      const shown = surface.boundWorkspace || surface.boundWorkspaceFull || '(无)';
+      throw new Error('新建任务页当前绑定工作区为 ' + shown + '，与目标 ' + expected + ' 不一致，已停止发送');
+    }
+    boundWorkspace = surface.boundWorkspace || surface.boundWorkspaceFull || boundWorkspace;
+  }
   const originalDraftText = surface.composerText;
   // WorkBuddy retains the home draft. Preserve it through the existing local
   // stash before trusted editor commands replace it; never log the contents.
@@ -6814,18 +7013,18 @@ async function ensureAutomationNewTask(options = {}) {
   }
   if (!surface || surface.composerText) surface = await readAutomationAgentSurface(false);
   if (!surface || !surface.newTaskReady || surface.composerText) throw new Error('新建任务输入框尚未清空，原草稿已保留在暂存');
-  return surface;
+  return boundWorkspace ? Object.assign({}, surface, { boundWorkspace }) : surface;
 }
 
 let automationAgentCreating = false;
-async function openNewAutomationAgentTask(prompt) {
+async function openNewAutomationAgentTask(prompt, options = {}) {
   if (!cdp.connected) throw new Error('CDP 未连接');
   if (automationAgentCreating) throw new Error('正在创建 Agent 任务，请稍候');
   const text = String(prompt || '').trim();
   if (!text || text.length > 50000) throw new Error('Agent 提示词为空或过长');
   automationAgentCreating = true;
   try {
-    await ensureAutomationNewTask();
+    await ensureAutomationNewTask({ cwd: options.cwd, workspace: options.workspace });
     // Reuse the tested Slate multiline input and official send-button path.
     await sendStashToComposer({ content: { text, items: [] } });
     for (let attempt = 0; attempt < 25; attempt++) {
