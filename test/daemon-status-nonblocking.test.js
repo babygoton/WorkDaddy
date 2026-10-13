@@ -13,6 +13,7 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const http = require('node:http');
+const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
 const vm = require('node:vm');
@@ -52,17 +53,54 @@ test('client running probe runs in a one-shot subprocess so the daemon event loo
 
 test('one-shot probe subprocess answers without starting the daemon', () => {
   const { execFileSync } = require('node:child_process');
-  const startedAt = Date.now();
-  const stdout = execFileSync(
-    process.execPath,
-    [path.join(__dirname, '..', 'scripts', 'daemon.js'), '--probe-client-running'],
-    { encoding: 'utf8', timeout: 20000, windowsHide: true }
-  );
-  const parsed = JSON.parse(stdout);
-  assert.ok(parsed.running === true || parsed.running === false || parsed.running === null,
-    'probe must answer a boolean or null');
-  // 子进程只做一次探测后退出：不得进入单实例锁/HTTP 服务等启动路径
-  assert.ok(Date.now() - startedAt < 15000, 'probe subprocess should exit quickly without booting the daemon');
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'workdaddy-probe-test-'));
+  const preload = path.join(temp, 'audit-probe.cjs');
+  const audit = path.join(temp, 'probe-spawns.json');
+  // 执行真实入口，但拦截递归探测，避免有缺陷的版本在测试中制造进程风暴。
+  fs.writeFileSync(preload, `
+    const fs = require('node:fs');
+    const cp = require('node:child_process');
+    const originalExecFile = cp.execFile;
+    const probes = [];
+    cp.execFile = function(bin, args, options, callback) {
+      if (args && args.includes('--probe-client-running')) {
+        probes.push(args);
+        callback(new Error('recursive probe blocked by regression test'));
+        return;
+      }
+      return originalExecFile.apply(this, arguments);
+    };
+    process.on('exit', () => fs.writeFileSync(${JSON.stringify(audit)}, JSON.stringify(probes)));
+  `);
+  try {
+    for (const profile of ['workbuddy-cn', 'workbuddy-ai', 'codebuddy-cn', 'codebuddy-intl']) {
+      const dataDir = path.join(temp, profile);
+      const startedAt = Date.now();
+      const stdout = execFileSync(
+        process.execPath,
+        ['--require', preload, path.join(__dirname, '..', 'scripts', 'daemon.js'), '--probe-client-running'],
+        { encoding: 'utf8', timeout: 20000, windowsHide: true, env: {
+          ...process.env,
+          WBSWITCH_PROFILE: profile,
+          WBSWITCH_DATA_DIR: dataDir,
+          WBSWITCH_AUTH_FILE: path.join(temp, 'absent-auth.json'),
+          WORKDADDY_TELEMETRY: '0',
+        } }
+      );
+      const parsed = JSON.parse(stdout);
+      assert.ok(parsed.running === true || parsed.running === false || parsed.running === null,
+        'probe must answer a boolean or null');
+      assert.ok(Date.now() - startedAt < 15000, 'probe should exit without booting the daemon');
+      assert.deepEqual(JSON.parse(fs.readFileSync(audit, 'utf8')), [],
+        `${profile}: one-shot probe must never spawn another probe`);
+      assert.equal(fs.existsSync(path.join(dataDir, '.daemon.lock')), false,
+        'probe must not acquire the daemon lock');
+      assert.equal(fs.existsSync(path.join(dataDir, 'ui-port.json')), false,
+        'probe must not start the HTTP service');
+    }
+  } finally {
+    fs.rmSync(temp, { recursive: true, force: true });
+  }
 });
 
 test('client running cache refreshes in the background and survives probe failures', async () => {
@@ -75,6 +113,7 @@ test('client running cache refreshes in the background and survives probe failur
   let probeCalls = 0;
   let probeShouldFail = false;
   let probeResult = true;
+  let refreshTimer;
   const ctx = {
     // mock execFile：模拟一次性子进程探测，异步回调
     execFile: (bin, args, options, callback) => {
@@ -87,11 +126,19 @@ test('client running cache refreshes in the background and survives probe failur
     process: { execPath: process.execPath },
     __filename: 'daemon.js',
     Date,
-    setInterval: () => ({ unref() {} }),
+    setInterval: (callback, delay) => {
+      assert.equal(delay, 5000);
+      refreshTimer = callback;
+      return { unref() {} };
+    },
     console,
+    PROBE_CLIENT_RUNNING: false,
   };
   vm.runInNewContext(block, ctx);
 
+  assert.equal(probeCalls, 0, 'defining the cache must not spawn a probe before the startup gate');
+  assert.equal(refreshTimer, undefined, 'defining the cache must not start a timer');
+  ctx.startClientRunningMonitor();
   // 启动时立即刷新一次（fire-and-forget），缓存随后就位
   await new Promise((resolve) => setTimeout(resolve, 10));
   assert.equal(probeCalls, 1, 'cache should refresh once at startup');
@@ -107,14 +154,65 @@ test('client running cache refreshes in the background and survives probe failur
   probeShouldFail = true;
   assert.equal(await ctx.refreshClientRunning(), false, 'failed probe must preserve the last known value');
   assert.equal(probeCalls, 4);
+
+  // 定时刷新必须保留；避免修复递归时意外停掉正常 daemon 的后台状态更新。
+  probeShouldFail = false;
+  probeResult = true;
+  refreshTimer();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(probeCalls, 5);
+  assert.equal(vm.runInNewContext('clientRunningState.value', ctx), true);
+});
+
+test('probe subprocess never starts another probe', async () => {
+  const anchor = daemonSource.indexOf('const clientRunningState = {');
+  assert.ok(anchor > 0, 'client running cache block not found');
+  const end = daemonSource.indexOf('async function cdpLoop', anchor);
+  assert.ok(end > anchor, 'cache block end anchor not found');
+  const block = daemonSource.slice(anchor, end);
+  let probeCalls = 0;
+  const ctx = {
+    execFile: () => { probeCalls += 1; },
+    process: { execPath: process.execPath },
+    __filename: 'daemon.js',
+    Date,
+    setInterval: () => ({ unref() {} }),
+    console,
+    PROBE_CLIENT_RUNNING: true,
+  };
+  vm.runInNewContext(block, ctx);
+  assert.equal(await ctx.refreshClientRunning(), null);
+  assert.equal(probeCalls, 0);
+});
+
+test('only the daemon holding the instance lock starts the client monitor', () => {
+  const start = daemonSource.indexOf('\nensureDirs(DATA_DIR, log);');
+  const end = daemonSource.indexOf('\nconst sessionBackupCleanup =', start);
+  assert.ok(start > 0 && end > start, 'daemon startup gate not found');
+  const block = daemonSource.slice(start, end);
+  const exit = new Error('process exited');
+  let monitorStarts = 0;
+  let ownsLock = false;
+  const ctx = {
+    DATA_DIR: 'fixture', log() {}, ensureDirs() {},
+    acquireDaemonLock: () => ownsLock,
+    startClientRunningMonitor: () => { monitorStarts += 1; },
+    process: { exit: (code) => { assert.equal(code, 0); throw exit; } },
+  };
+  assert.throws(() => vm.runInNewContext(block, ctx), (error) => error === exit);
+  assert.equal(monitorStarts, 0, 'rejected duplicate daemon must not leave a probe chain');
+  ownsLock = true;
+  vm.runInNewContext(block, ctx);
+  assert.equal(monitorStarts, 1, 'the owning daemon must start the monitor once');
 });
 
 test('daemon behavior change ships a version and build bump so stale daemons are replaced', () => {
   const version = daemonSource.match(/const DAEMON_VERSION = '([^']+)'/);
   const buildId = daemonSource.match(/const DAEMON_BUILD_ID = '([^']+)'/);
   assert.ok(version && buildId, 'DAEMON_VERSION/DAEMON_BUILD_ID not found');
-  assert.notEqual(version[1], '1.2.28', 'DAEMON_VERSION must be incremented for a daemon behavior change');
-  assert.match(buildId[1], /^release-1\.2\.35-/, 'DAEMON_BUILD_ID must be rewritten for the new build');
+  assert.notEqual(version[1], '1.2.35', 'DAEMON_VERSION must change so launchers replace the affected daemon');
+  assert.ok(buildId[1].startsWith(`release-${version[1]}-`), 'DAEMON_BUILD_ID must match the daemon version');
+  assert.notEqual(buildId[1], 'release-1.2.35-20261012-panel-token-daily-limit');
 });
 
 test('launcher httpGet uses a budget aligned with the daemon probe cost', () => {

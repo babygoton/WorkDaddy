@@ -490,8 +490,9 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 //         页面归属与 CDP 目标等待窗口也同步修复。
 // 1.2.35：账号页合并加密备份 token 刷新后的有效期快照，并按自然日限制成功刷新一次。
 // 1.2.37：新版账号个人身份档案支持确认复制、备份及 CDP 刷新，兼容旧版全局目录。
-const DAEMON_VERSION = '1.2.37';
-const DAEMON_BUILD_ID = 'release-1.2.37-20261013-persona-repair';
+// 1.2.38：防止 --probe-client-running 探测进程再次派生探测进程；监控仅由持有单实例锁的 daemon 启动。
+const DAEMON_VERSION = '1.2.38';
+const DAEMON_BUILD_ID = 'release-1.2.38-20261013-probe-self-replication-guard';
 const usageReporter = createUsageReporter({ profile: PROFILE.id, version: DAEMON_VERSION });
 configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const automationDiscovery = createAutomationDiscovery({
@@ -2702,6 +2703,9 @@ const clientRunningState = { value: null, checkedAt: 0 };
 const CLIENT_RUNNING_REFRESH_MS = 5000;
 let clientRunningRefreshInFlight = false;
 function refreshClientRunning() {
+  // 探测子进程会从本文件顶部开始执行；即使未来有调用路径早于启动门禁，
+  // 也不能让它再次派生 --probe-client-running，避免形成进程链。
+  if (PROBE_CLIENT_RUNNING) return Promise.resolve(clientRunningState.value);
   if (clientRunningRefreshInFlight) return Promise.resolve(clientRunningState.value);
   clientRunningRefreshInFlight = true;
   return new Promise((resolve) => {
@@ -2718,9 +2722,10 @@ function refreshClientRunning() {
     });
   });
 }
-// 启动时立即刷新一次，随后按固定间隔在后台刷新（unref 避免阻止进程退出）
-refreshClientRunning().catch(() => {});
-if (typeof setInterval === 'function') {
+// 仅由取得单实例锁的正常 daemon 启动。不能在模块顶层调用刷新：
+// --probe-client-running 也会加载本文件，提前刷新会递归拉起探测子进程。
+function startClientRunningMonitor() {
+  refreshClientRunning().catch(() => {});
   const timer = setInterval(() => { refreshClientRunning().catch(() => {}); }, CLIENT_RUNNING_REFRESH_MS);
   if (timer && typeof timer.unref === 'function') timer.unref();
 }
@@ -12645,6 +12650,7 @@ if (PROBE_CLIENT_RUNNING) {
 
 ensureDirs(DATA_DIR, log);
 if (!acquireDaemonLock()) process.exit(0);
+startClientRunningMonitor();
 const sessionBackupCleanup = sessionSync.pruneSyncBackups(path.join(DATA_DIR, 'session-sync-backups'));
 if (sessionBackupCleanup.removed || sessionBackupCleanup.retainedRecovery) {
   log(`[session-sync-backups] 启动清理 ${sessionBackupCleanup.removed} 个无用备份，保留 ${sessionBackupCleanup.retainedRecovery} 个 recovery-needed 备份`);
