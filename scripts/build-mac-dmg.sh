@@ -555,7 +555,6 @@ if [ -z "$SKIP_FINDER" ]; then
     echo "错误：Finder 未能把 DMG 窗口布局写入 .DS_Store" >&2
     exit 1
   fi
-  rm -rf -- "$MOUNT_DIR/.fseventsd"
 else
   echo "==> 跳过 Finder 布局（WORKDADDY_SKIP_FINDER=1，无 GUI 会话）"
   # 无 GUI 时使用预置布局：把既有的 .DS_Store（窗口尺寸/图标位置/背景引用）放进卷根，
@@ -577,6 +576,13 @@ else
     echo "==> 已注入预置 Finder 布局: $DSSTORE_SOURCE"
   fi
 fi
+# Finder/系统可能在挂载期间创建元数据目录。它们属于卷的内部状态，不能出现在
+# 安装窗口中；统一在两个构建分支收尾清理并设置 Finder 隐藏标志。
+rm -rf -- "$MOUNT_DIR/.fseventsd"
+# macOS 可能在卸载/重新挂载时重建 .fseventsd；保留一个带隐藏标志的
+# 占位目录，避免 Finder 把系统元数据目录当作安装内容显示。
+mkdir -p "$MOUNT_DIR/.fseventsd"
+chflags hidden "$MOUNT_DIR/.background" "$MOUNT_DIR/.fseventsd" 2>/dev/null || true
 hdiutil detach "$DMG_DEVICE" >/dev/null
 DMG_DEVICE=""
 rm -f "$OUT"

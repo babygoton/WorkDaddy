@@ -29,6 +29,7 @@ test('macOS DMG layout is written to a writable image before final compression',
   assert.match(buildSource, /osascript[\s\S]*tell application "Finder"/);
   assert.match(buildSource, /test -f "\$MOUNT_DIR\/\.DS_Store"/);
   assert.match(buildSource, /rm -rf -- "\$MOUNT_DIR\/\.fseventsd"/);
+  assert.match(buildSource, /chflags hidden "\$MOUNT_DIR\/\.background" "\$MOUNT_DIR\/\.fseventsd"/);
   assert.match(buildSource, /hdiutil convert[\s\S]*-format UDZO/);
 });
 
