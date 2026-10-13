@@ -33,7 +33,7 @@ function harness() {
     WebSocketCtor: Socket, createRendererApiBridge: () => async () => {}, API_TOKEN: 'fixture', ACTUAL_PORT: 1,
     BINDING: 'fixture', buildInjectScript: () => 'fixture-inject', redactDiagnosticText: s => s, log: () => {},
     PROFILE: { kind: 'codebuddy' }, cdp: { port: 1 }, fetch: async () => ({ json: async () => state.targets }),
-    AbortSignal, selectIdeTargets: list => list, PROBE_CLIENT_RUNNING: false });
+    AbortSignal, selectIdeTargets: list => list, IS_MAC: false, PROBE_CLIENT_RUNNING: false });
   vm.runInContext(manager, context);
   return { state, sockets, context, timers,
     scan: () => vm.runInContext('ideSyncScan()', context),

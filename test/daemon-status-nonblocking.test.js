@@ -51,6 +51,13 @@ test('client running probe runs in a one-shot subprocess so the daemon event loo
   assert.match(daemonSource, /execFile\(process\.execPath, \[__filename, '--probe-client-running'\]/, 'refresh must shell out to the one-shot probe');
 });
 
+test('macOS probe uses bounded scan and parent timeouts', () => {
+  assert.match(daemonSource, /CLIENT_RUNNING_MAC_SCAN_TIMEOUT_MS = 2000/);
+  assert.match(daemonSource, /CLIENT_RUNNING_PROBE_TIMEOUT_MS = IS_MAC \? 4000 : 15000/);
+  assert.match(daemonSource, /timeout: IS_MAC \? CLIENT_RUNNING_MAC_SCAN_TIMEOUT_MS : 5000/);
+  assert.match(daemonSource, /timeout: CLIENT_RUNNING_PROBE_TIMEOUT_MS/);
+});
+
 test('one-shot probe subprocess answers without starting the daemon', () => {
   const { execFileSync } = require('node:child_process');
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'workdaddy-probe-test-'));
@@ -132,6 +139,7 @@ test('client running cache refreshes in the background and survives probe failur
       return { unref() {} };
     },
     console,
+    IS_MAC: false,
     PROBE_CLIENT_RUNNING: false,
   };
   vm.runInNewContext(block, ctx);
@@ -178,6 +186,7 @@ test('probe subprocess never starts another probe', async () => {
     Date,
     setInterval: () => ({ unref() {} }),
     console,
+    IS_MAC: false,
     PROBE_CLIENT_RUNNING: true,
   };
   vm.runInNewContext(block, ctx);

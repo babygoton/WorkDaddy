@@ -491,8 +491,9 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 // 1.2.35：账号页合并加密备份 token 刷新后的有效期快照，并按自然日限制成功刷新一次。
 // 1.2.37：新版账号个人身份档案支持确认复制、备份及 CDP 刷新，兼容旧版全局目录。
 // 1.2.38：防止 --probe-client-running 探测进程再次派生探测进程；监控仅由持有单实例锁的 daemon 启动。
-const DAEMON_VERSION = '1.2.38';
-const DAEMON_BUILD_ID = 'release-1.2.38-20261013-probe-self-replication-guard';
+// 1.2.39：限制 macOS pgrep 探针和父进程等待时间，避免系统过载时探针长期堆积。
+const DAEMON_VERSION = '1.2.39';
+const DAEMON_BUILD_ID = 'release-1.2.39-20261013-probe-timeout-cap';
 const usageReporter = createUsageReporter({ profile: PROFILE.id, version: DAEMON_VERSION });
 configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const automationDiscovery = createAutomationDiscovery({
@@ -2683,7 +2684,9 @@ function safeClientRunning() {
     if (IS_LINUX) {
       return linuxWorkBuddyPids(WORKBUDDY_BINARY).length > 0;
     }
-    const result = spawnSync('pgrep', ['-f', WORKBUDDY_APP], { stdio: 'ignore', timeout: 5000 });
+    const result = spawnSync('pgrep', ['-f', WORKBUDDY_APP], {
+      stdio: 'ignore', timeout: IS_MAC ? CLIENT_RUNNING_MAC_SCAN_TIMEOUT_MS : 5000,
+    });
     if (result.error || result.status === null) return null;
     return result.status === 0;
   } catch (_) {
@@ -2701,6 +2704,10 @@ function safeClientRunning() {
 // 事件循环数秒，放在主线程里只会把「每次请求慢」变成「周期性不可用」。
 const clientRunningState = { value: null, checkedAt: 0 };
 const CLIENT_RUNNING_REFRESH_MS = 5000;
+// macOS 的 pgrep 会扫描所有进程；系统过载时必须快速返回未知，不能让多个慢探针叠加。
+const CLIENT_RUNNING_MAC_SCAN_TIMEOUT_MS = 2000;
+// Windows 的验证包含 CIM 查询，保留较长预算；macOS 探针则在扫描超时前结束。
+const CLIENT_RUNNING_PROBE_TIMEOUT_MS = IS_MAC ? 4000 : 15000;
 let clientRunningRefreshInFlight = false;
 function refreshClientRunning() {
   // 探测子进程会从本文件顶部开始执行；即使未来有调用路径早于启动门禁，
@@ -2710,7 +2717,7 @@ function refreshClientRunning() {
   clientRunningRefreshInFlight = true;
   return new Promise((resolve) => {
     execFile(process.execPath, [__filename, '--probe-client-running'], {
-      encoding: 'utf8', timeout: 15000, windowsHide: true,
+      encoding: 'utf8', timeout: CLIENT_RUNNING_PROBE_TIMEOUT_MS, windowsHide: true,
     }, (error, stdout) => {
       // 探测失败（超时/异常/输出不可解析）时保留上一次已知值，绝不让状态接口失败
       if (!error) {
