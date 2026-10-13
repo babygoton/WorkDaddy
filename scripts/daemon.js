@@ -28,6 +28,7 @@ const path = require('path');
 const os = require('os');
 const crypto = require('crypto');
 const net = require('net');
+const { inspectPersona, copyPersona } = require('./persona.js');
 let sessionSync = require('./session-sync.js');
 const {createCodeBuddyFiles} = require('./codebuddy-files.js');
 const { createAccountCreditCache } = require('./account-credit-cache.js');
@@ -488,8 +489,9 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 //         launcher 的 httpGet 预算同步对齐到 HTTP_GET_TIMEOUT_MS；Windows app.asar
 //         页面归属与 CDP 目标等待窗口也同步修复。
 // 1.2.35：账号页合并加密备份 token 刷新后的有效期快照，并按自然日限制成功刷新一次。
-const DAEMON_VERSION = '1.2.35';
-const DAEMON_BUILD_ID = 'release-1.2.35-20261012-panel-token-daily-limit';
+// 1.2.37：新版账号个人身份档案支持确认复制、备份及 CDP 刷新，兼容旧版全局目录。
+const DAEMON_VERSION = '1.2.37';
+const DAEMON_BUILD_ID = 'release-1.2.37-20261013-persona-repair';
 const usageReporter = createUsageReporter({ profile: PROFILE.id, version: DAEMON_VERSION });
 configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const automationDiscovery = createAutomationDiscovery({
@@ -10456,6 +10458,43 @@ function handleApi(req, res) {
         log('[token-refresh] 打开账号面板时刷新全部账号失败: ' + redactDiagnosticText(error && error.message || error, 300));
         return json(res, 500, { ok: false, error: '账号 token 刷新失败' });
       });
+  }
+
+  // Persona contents stay on disk. Only status/source labels reach the panel.
+  if (req.method === 'GET' && p === '/api/persona') {
+    try {
+      if (PROFILE.kind !== 'workbuddy' || !PROFILE.capabilities.accounts) return json(res, 200, { ok: true, eligible: false, status: 'unsupported', sources: [] });
+      const current = currentAccount();
+      const uid = url.searchParams.get('uid') || String(current && current.uid || '');
+      if (!uid) return json(res, 200, { ok: true, eligible: false, status: 'no-account', sources: [] });
+      const accounts = listAccounts(DATA_DIR);
+      if (current && !accounts.some(a => String(a.uid) === String(current.uid))) accounts.push(current);
+      return json(res, 200, { ok: true, ...inspectPersona({ dataRoot: PROFILE.dataRoot, targetUid: uid, accounts }) });
+    } catch (error) { return json(res, 400, { ok: false, error: error.message }); }
+  }
+
+  if (req.method === 'POST' && p === '/api/persona-copy') {
+    return readBody(req).then(async (body) => {
+      let release = null;
+      try {
+        if (PROFILE.kind !== 'workbuddy' || !PROFILE.capabilities.accounts) throw new Error('当前客户端不支持个人身份档案修复');
+        release = await assertAccountSwitchIdle();
+        const current = currentAccount();
+        const accounts = listAccounts(DATA_DIR);
+        if (current && !accounts.some(a => String(a.uid) === String(current.uid))) accounts.push(current);
+        const result = copyPersona({ dataRoot: PROFILE.dataRoot, backupRoot: DATA_DIR, accounts,
+          targetUid: body.uid, sourceUid: body.sourceUid, confirmed: body.confirmed, revision: body.revision });
+        let reloaded = false;
+        if (current && String(current.uid) === body.uid) {
+          try { await reloadWorkBuddyPage({ waitForInjection: false, account: current }); reloaded = true; }
+          catch (_) { /* The disk repair is complete; report reload separately. */ }
+        }
+        log('[persona] 个人身份档案复制完成，已保留修复前备份');
+        return json(res, 200, { ok: true, files: result.files, backedUp: true, reloaded,
+          hint: reloaded ? '身份档案已复制并刷新窗口' : '身份档案已复制，下次刷新窗口后生效' });
+      } catch (error) { return json(res, 400, { ok: false, error: error.message }); }
+      finally { if (release) release(); }
+    });
   }
 
   if (req.method === 'GET' && p === '/api/accounts') {

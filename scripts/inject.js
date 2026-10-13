@@ -1424,6 +1424,35 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
   var WBS_ACCOUNT_NOTE_HOVER_KEY = 'workdaddy.account.noteHover.' + PROFILE_ID;
   var WBS_GROWTH_PLAN_HOVER_KEY = 'workdaddy.account.growthPlanHover.' + PROFILE_ID;
   var WBS_I18N_EN = {
+    "当前账号可能仍在首次身份引导": "This account may still be in identity onboarding",
+    "复制个人身份档案": "Copy personal identity files",
+    "请先完成身份档案确认": "Complete the identity confirmation first",
+    "该账号的个人目录为空或仍带有首次引导标记。可从下方来源复制 IDENTITY、USER、SOUL 和已有的 MEMORY；也可以保留独立身份。": "This account has an empty personal directory or an onboarding marker. Copy IDENTITY, USER, SOUL and any MEMORY from a source below, or keep its independent identity.",
+    "确认后将备份并替换目标档案、标记引导完成，移除 BOOTSTRAP。旧版全局档案保持原样。": "Confirmation backs up and replaces the target files, completes onboarding and removes BOOTSTRAP. Legacy global files are preserved.",
+    "保留独立身份并切换": "Keep independent identity and switch",
+    "复制并切换": "Copy and switch",
+    "备份并复制": "Back up and copy",
+    " 个档案文件": " identity files",
+    "已取消身份档案操作": "Identity operation canceled",
+    "身份档案已复制": "Identity files copied",
+    "账号切换已取消": "Account switch canceled",
+    "当前账号无需修复或没有可用来源": "No repair needed or no available source",
+    "旧版全局档案": "Legacy global files",
+    "个人身份档案复制完成，已保留修复前备份": "Personal identity files copied; original files backed up",
+    "当前客户端不支持个人身份档案修复": "Personal identity repair is unavailable for this client",
+    "身份档案已复制并刷新窗口": "Identity files copied and window refreshed",
+    "身份档案已复制，下次刷新窗口后生效": "Identity files copied; refresh the window to apply",
+    "请先确认复制身份档案": "Confirm copying identity files first",
+    "该账号无需修复或没有可用来源": "No repair needed or no available source",
+    "目标身份档案已变化，请重新查看并确认": "Target identity files changed; review and confirm again",
+    "身份档案来源无效": "Invalid identity source",
+    "身份档案路径不能包含符号链接": "Identity paths must not contain symbolic links",
+    "身份档案文件过大，未执行复制": "Identity file too large; copy canceled",
+    "身份档案状态文件无效，请先手动检查": "Invalid identity state; inspect it manually first",
+    "身份档案必须为普通文件": "Identity files must be regular files",
+    "复制失败且回滚未完成，请从 WorkDaddy 的 persona 备份目录恢复": "Copy and rollback failed; restore from the WorkDaddy persona backup directory",
+    "迁移状态文件过大": "Migration state file too large",
+    "账号格式无效": "Invalid account ID",
     '账号备注': 'Account note',
     '鼠标悬浮显示账号备注': 'Show account note on hover',
     '查看或编辑账号备注': 'View or edit account note',
@@ -2462,8 +2491,17 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     return s ? Array.from(s)[0].toUpperCase() : '?';
   }
 
+  var personaSwitchPreflight = null;
   function api(path, opts) {
     opts = opts || {};
+    if (path === '/api/switch' && personaSwitchPreflight && !opts._wbsPersonaChecked) {
+      var switchBody;
+      try { switchBody = JSON.parse(opts.body || '{}'); } catch (_) { switchBody = {}; }
+      return personaSwitchPreflight(switchBody.uid).then(function () {
+        var checked = Object.assign({}, opts, { _wbsPersonaChecked: true });
+        return api(path, checked);
+      });
+    }
     var request = {};
     Object.keys(opts).forEach(function (key) { request[key] = opts[key]; });
     var headers = {};
@@ -2473,6 +2511,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     headers['X-WorkDaddy-Token'] = WBS_API_TOKEN;
     request.headers = headers;
     delete request.responseType;
+    delete request._wbsPersonaChecked;
     var response = CAPS.apiTransport === 'cdp' ? window.__wbsApiFetch(path, request, WBS_API_TOKEN) : fetch(API + path, request);
     return response.then(function (r) {
       if (r.ok && opts.responseType === 'blob') return r.blob().then(function (blob) {
@@ -6583,6 +6622,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         '<button class="wbs-acct-io wbs-acct-icon" type="button" data-act="account-more" title="账号设置" aria-label="账号设置"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2.75a2 2 0 0 1 2 1.4l.4 1.1 1.15.47 1.06-.48a2 2 0 0 1 2.4.45l.8.8a2 2 0 0 1 .45 2.4l-.48 1.06.47 1.15 1.1.4a2 2 0 0 1 0 3.8l-1.1.4-.47 1.15.48 1.06a2 2 0 0 1-.45 2.4l-.8.8a2 2 0 0 1-2.4.45l-1.06-.48-1.15.47-.4 1.1a2 2 0 0 1-3.8 0l-.4-1.1-1.15-.47-1.06.48a2 2 0 0 1-2.4-.45l-.8-.8a2 2 0 0 1-.45-2.4l.48-1.06-.47-1.15-1.1-.4a2 2 0 0 1 0-3.8l1.1-.4.47-1.15-.48-1.06a2 2 0 0 1 .45-2.4l.8-.8a2 2 0 0 1 2.4-.45l1.06.48 1.15-.47.4-1.1A2 2 0 0 1 12 2.75Z"/><circle cx="12" cy="12.5" r="3"/></svg></button>' +
         '</div>' +
         '</div>' +
+        '<div class="wbs-persona-notice" hidden><span>当前账号可能仍在首次身份引导</span><button type="button" class="wbs-modal-btn" data-act="persona-repair">复制个人身份档案</button></div>' +
         '<div class="wbs-acct-list"></div>' +
         '<button class="wbs-logout-btn" type="button" data-act="logout">' + LOGOUT_SVG + '<span>登录新账号</span></button>' +
         '<input type="file" id="wbs-import-file" accept=".json,application/json" style="display:none">';
@@ -6600,6 +6640,106 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         openAccountImportChoice();
       });
       root.querySelector('#wbs-import-file').addEventListener('change', onImportFile);
+    }
+
+    var closePersonaDialog = null;
+    function openPersonaDialog(info, switching) {
+      if (closePersonaDialog) return Promise.reject(new Error('请先完成身份档案确认'));
+      return new Promise(function (resolve, reject) {
+        var previousFocus = document.activeElement;
+        var mask = el('div', 'wbs-modal-mask wbs-persona-mask');
+        mask.innerHTML = '<div class="wbs-modal wbs-persona-modal" role="dialog" aria-modal="true" aria-labelledby="wbs-persona-title">' +
+          '<div class="wbs-modal-title" id="wbs-persona-title">复制个人身份档案</div>' +
+          '<div class="wbs-modal-body">该账号的个人目录为空或仍带有首次引导标记。可从下方来源复制 IDENTITY、USER、SOUL 和已有的 MEMORY；也可以保留独立身份。<br>确认后将备份并替换目标档案、标记引导完成，移除 BOOTSTRAP。旧版全局档案保持原样。</div>' +
+          '<div class="wbs-persona-sources"></div><div class="wbs-persona-error" role="alert"></div>' +
+          '<div class="wbs-modal-actions"><button type="button" class="wbs-modal-btn" data-persona="cancel">取消</button>' +
+          (switching ? '<button type="button" class="wbs-modal-btn" data-persona="skip">保留独立身份并切换</button>' : '') +
+          '<button type="button" class="wbs-modal-btn wbs-modal-ok" data-persona="copy">' + (switching ? '复制并切换' : '备份并复制') + '</button></div></div>';
+        var list = mask.querySelector('.wbs-persona-sources');
+        info.sources.forEach(function (source, index) {
+          var label = el('label', 'wbs-persona-source');
+          var radio = document.createElement('input');
+          radio.type = 'radio'; radio.name = 'wbs-persona-source'; radio.value = source.uid; radio.checked = index === 0;
+          label.appendChild(radio);
+          var text = document.createElement('span');
+          text.textContent = (state.mask && source.uid !== 'legacy' ? maskAccountName(source.nickname) : source.nickname) + '（' + source.files.length + ' 个档案文件）';
+          label.appendChild(text); list.appendChild(label);
+        });
+        var busy = false;
+        function finish(accepted) {
+          mask.remove(); mask.removeEventListener('keydown', onKey);
+          closePersonaDialog = null;
+          if (previousFocus && previousFocus.isConnected) previousFocus.focus();
+          if (accepted) resolve(); else reject(new Error('已取消身份档案操作'));
+        }
+        function onKey(event) {
+          event.stopPropagation();
+          if (event.key === 'Escape') { event.preventDefault(); if (!busy) finish(false); }
+          if (event.key === 'Tab') {
+            var controls = Array.from(mask.querySelectorAll('input,button')).filter(function (node) { return !node.disabled; });
+            var first = controls[0], last = controls[controls.length - 1];
+            if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+            else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+          }
+        }
+        closePersonaDialog = function () { finish(false); };
+        mask.addEventListener('keydown', onKey);
+        ['pointerdown', 'mousedown', 'dblclick', 'keyup'].forEach(function (type) { mask.addEventListener(type, function (event) { event.stopPropagation(); }); });
+        mask.addEventListener('click', function (event) {
+          event.stopPropagation();
+          var button = event.target.closest('[data-persona]');
+          if (!button || busy) return;
+          var action = button.getAttribute('data-persona');
+          if (action !== 'copy') { finish(action === 'skip'); return; }
+          busy = true;
+          mask.querySelectorAll('button,input').forEach(function (node) { node.disabled = true; });
+          api('/api/persona-copy', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ uid: info.uid, sourceUid: mask.querySelector('input:checked').value, confirmed: true, revision: info.revision })
+          }).then(function (result) {
+            if (!alive) return;
+            toast(result.hint || '身份档案已复制', false, root);
+            finish(true); if (!switching) refresh();
+          }).catch(function (error) {
+            if (!alive) return;
+            busy = false; mask.querySelectorAll('button,input').forEach(function (node) { node.disabled = false; });
+            mask.querySelector('.wbs-persona-error').textContent = error.message;
+            mask.querySelector('[data-persona="cancel"]').focus();
+          });
+        });
+        mountPersistentOverlay(mask);
+        mask.querySelector('input').focus();
+      });
+    }
+    function beforePersonaSwitch(uid) {
+      if (!uid || !alive) return Promise.reject(new Error('账号切换已取消'));
+      return api('/api/persona?uid=' + encodeURIComponent(uid)).then(function (info) {
+        if (!alive) throw new Error('账号切换已取消');
+        if (info.eligible) return openPersonaDialog(info, true);
+      });
+    }
+    if (CAPS.accounts) {
+      personaSwitchPreflight = beforePersonaSwitch;
+      var personaButton = accountsPane.querySelector('[data-act="persona-repair"]');
+      if (personaButton) listen(personaButton, 'click', function () {
+        api('/api/persona').then(function (info) {
+          if (!alive) return;
+          if (!info.eligible) { refreshPersonaNotice(); throw new Error('当前账号无需修复或没有可用来源'); }
+          return openPersonaDialog(info, false);
+        }).catch(function (error) { if (alive) toast(error.message, true, root); });
+      });
+    }
+    registerDisposer(function () {
+      if (personaSwitchPreflight === beforePersonaSwitch) personaSwitchPreflight = null;
+      if (closePersonaDialog) closePersonaDialog();
+    });
+    function refreshPersonaNotice() {
+      var notice = accountsPane.querySelector('.wbs-persona-notice');
+      if (!notice) return;
+      notice.hidden = true;
+      var requestId = state.personaRefreshId = (state.personaRefreshId || 0) + 1;
+      api('/api/persona').then(function (info) {
+        if (alive && requestId === state.personaRefreshId) notice.hidden = !info.eligible;
+      }).catch(function () {});
     }
 
     function initialAutoCopyAllSeen() {
@@ -16421,6 +16561,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         .then(function (data) {
           if (!alive || requestId !== state.accountRefreshId) return;
           render(data);
+          refreshPersonaNotice();
           // WorkBuddy can complete today's check-in outside WorkDaddy. Ask the
           // idempotent official endpoint for the current account only, then
           // patch that card in place. An enabled check-in task owns the ordered
@@ -17811,6 +17952,8 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '.wbs-sess-actions{display:flex;gap:8px;justify-content:flex-end;padding-top:2px}',
     '.wbs-sess-del{flex-shrink:0;padding:7px 12px;border:1px solid #ff6b6b;border-radius:9px;background:color-mix(in srgb,#ff6b6b 10%,transparent);color:#ff6b6b;font-size:12px;cursor:pointer;line-height:1;transition:all .15s}',
     '.wbs-sess-del:hover{background:#ff6b6b;color:#fff}',
+    '.wbs-persona-notice:not([hidden]){display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px;margin-bottom:8px;border:1px solid var(--wb-border-primary,#ddd);border-radius:9px;background:var(--wb-bg-secondary,#f5f5f5);color:var(--wb-color-text-primary,#1f1f1f);font-size:12px}',
+    '.wbs-modal-mask.wbs-persona-mask{z-index:2147483647;padding:12px;box-sizing:border-box;pointer-events:auto}.wbs-modal.wbs-persona-modal{box-sizing:border-box;width:360px;max-width:100%;max-height:100%;overflow:auto}.wbs-persona-modal .wbs-modal-body{line-height:1.65;overflow-wrap:anywhere}.wbs-persona-sources{display:flex;flex-direction:column;gap:8px;margin-top:12px}.wbs-persona-source{display:flex;align-items:flex-start;gap:6px;font-size:12px;cursor:pointer;overflow-wrap:anywhere}.wbs-persona-source span{min-width:0}.wbs-persona-source input{flex-shrink:0}.wbs-persona-modal .wbs-modal-actions{flex-wrap:wrap}.wbs-persona-error{font-size:12px;color:var(--wb-color-text-primary,#1f1f1f);overflow-wrap:anywhere}.wbs-persona-error:not(:empty){margin-top:10px}.wbs-persona-source:focus-within{outline:2px solid var(--wb-accent-blue,#4f86ff);outline-offset:2px}',
     '.wbs-modal-mask{position:fixed;inset:0;z-index:2147483646;background:rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center}',
     /* 免打扰确认弹窗：挂载在面板容器内，仅覆盖面板区域（弹窗居中于面板，不盖住 WorkBuddy 窗口） */
     '.wbs-modal-mask.wbs-modal-mask-panel{position:absolute;inset:0;z-index:2147483645;border-radius:18px}',
@@ -17823,6 +17966,8 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     'html.cb-dark .wbs-modal-btn.wbs-modal-danger,html[data-theme="dark"] .wbs-modal-btn.wbs-modal-danger{color:#fff;background:#e03d3d;border-color:#e03d3d}',
     'html.cb-dark .wbs-modal-btn.wbs-modal-danger:hover,html[data-theme="dark"] .wbs-modal-btn.wbs-modal-danger:hover{background:#f04a4a}',
     'html.cb-dark .wbs-modal-mask,html[data-theme="dark"] .wbs-modal-mask{background:rgba(0,0,0,.55)}',
+    ':is(html.cb-dark,html[data-theme="dark"],body[data-vscode-theme-name*="dark" i],body[data-vscode-theme-name*="night" i]) .wbs-persona-modal{color-scheme:dark;background:var(--wb-bg-popover,#202126);color:var(--wb-color-text-primary,#e6e6e9)}:is(html.cb-dark,html[data-theme="dark"],body[data-vscode-theme-name*="dark" i],body[data-vscode-theme-name*="night" i]) .wbs-persona-modal :is(.wbs-modal-title,.wbs-modal-body,.wbs-persona-error){color:inherit}:is(html.cb-dark,html[data-theme="dark"],body[data-vscode-theme-name*="dark" i],body[data-vscode-theme-name*="night" i]) .wbs-persona-notice{background:var(--wb-bg-secondary,#292b31);border-color:var(--wb-border-default,#454750);color:var(--wb-color-text-primary,#e6e6e9)}',
+    ':is(html.cb-dark,html[data-theme="dark"],body[data-vscode-theme-name*="dark" i],body[data-vscode-theme-name*="night" i]) :is(.wbs-persona-notice,.wbs-persona-modal) .wbs-modal-btn:not(.wbs-modal-ok){background:var(--wb-bg-secondary,#292b31);border-color:var(--wb-border-default,#454750);color:var(--wb-color-text-secondary,#d5d5d9)}:is(html.cb-dark,html[data-theme="dark"],body[data-vscode-theme-name*="dark" i],body[data-vscode-theme-name*="night" i]) :is(.wbs-persona-notice,.wbs-persona-modal) .wbs-modal-btn:not(.wbs-modal-ok):hover{background:var(--wb-bg-hover,#3c3e45);color:var(--wb-color-text-primary,#e6e6e9)}.wbs-persona-modal :is(button,input):disabled{opacity:.5;cursor:wait}',
     '.wbs-checkin-risk-mask{padding:12px;box-sizing:border-box;pointer-events:auto}',
     '.wbs-modal.wbs-checkin-risk-modal{box-sizing:border-box;width:360px;max-width:100%;max-height:100%;display:flex;flex-direction:column;min-height:0}',
     '.wbs-checkin-risk-modal .wbs-modal-title,.wbs-checkin-risk-modal .wbs-modal-actions{flex-shrink:0}',
