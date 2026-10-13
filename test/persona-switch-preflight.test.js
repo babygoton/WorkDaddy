@@ -6,6 +6,15 @@ const vm = require('node:vm');
 const path = require('node:path');
 const inject = fs.readFileSync(path.join(__dirname, '../scripts/inject.js'), 'utf8');
 const apiSource = inject.slice(inject.indexOf('  function api(path, opts) {'), inject.indexOf('  // 调试：递归收集所有元素'));
+
+test('persona repair remains available in code but is disabled in the current account UI and switch flow', () => {
+  assert.match(inject, /暂停身份资料提醒入口：保留修复代码/);
+  assert.match(inject, /暂停身份资料修复入口：保留 beforePersonaSwitch\/openPersonaDialog/);
+  assert.doesNotMatch(inject, /^\s*personaSwitchPreflight = beforePersonaSwitch;/m);
+  assert.doesNotMatch(inject, /^\s*refreshPersonaNotice\(\);$/m);
+  assert.doesNotMatch(inject, /^\s*'<div class="wbs-persona-notice"/m);
+});
+
 function harness(preflight) {
   const requests = [];
   const ctx = vm.createContext({ CAPS: {}, API: 'http://127.0.0.1', WBS_API_TOKEN: 'fixture-token', personaSwitchPreflight: preflight,

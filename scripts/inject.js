@@ -6622,7 +6622,8 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         '<button class="wbs-acct-io wbs-acct-icon" type="button" data-act="account-more" title="账号设置" aria-label="账号设置"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2.75a2 2 0 0 1 2 1.4l.4 1.1 1.15.47 1.06-.48a2 2 0 0 1 2.4.45l.8.8a2 2 0 0 1 .45 2.4l-.48 1.06.47 1.15 1.1.4a2 2 0 0 1 0 3.8l-1.1.4-.47 1.15.48 1.06a2 2 0 0 1-.45 2.4l-.8.8a2 2 0 0 1-2.4.45l-1.06-.48-1.15.47-.4 1.1a2 2 0 0 1-3.8 0l-.4-1.1-1.15-.47-1.06.48a2 2 0 0 1-2.4-.45l-.8-.8a2 2 0 0 1-.45-2.4l.48-1.06-.47-1.15-1.1-.4a2 2 0 0 1 0-3.8l1.1-.4.47-1.15-.48-1.06a2 2 0 0 1 .45-2.4l.8-.8a2 2 0 0 1 2.4-.45l1.06.48 1.15-.47.4-1.1A2 2 0 0 1 12 2.75Z"/><circle cx="12" cy="12.5" r="3"/></svg></button>' +
         '</div>' +
         '</div>' +
-        '<div class="wbs-persona-notice" hidden><span>当前账号可能仍在首次身份引导</span><button type="button" class="wbs-modal-btn" data-act="persona-repair">复制个人身份档案</button></div>' +
+        // 暂停身份资料提醒入口：保留修复代码，当前版本不在账号页显示。
+        // '<div class="wbs-persona-notice" hidden><span>当前账号可能仍在首次身份引导</span><button type="button" class="wbs-modal-btn" data-act="persona-repair">复制个人身份档案</button></div>' +
         '<div class="wbs-acct-list"></div>' +
         '<button class="wbs-logout-btn" type="button" data-act="logout">' + LOGOUT_SVG + '<span>登录新账号</span></button>' +
         '<input type="file" id="wbs-import-file" accept=".json,application/json" style="display:none">';
@@ -6718,15 +6719,17 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       });
     }
     if (CAPS.accounts) {
-      personaSwitchPreflight = beforePersonaSwitch;
-      var personaButton = accountsPane.querySelector('[data-act="persona-repair"]');
-      if (personaButton) listen(personaButton, 'click', function () {
-        api('/api/persona').then(function (info) {
-          if (!alive) return;
-          if (!info.eligible) { refreshPersonaNotice(); throw new Error('当前账号无需修复或没有可用来源'); }
-          return openPersonaDialog(info, false);
-        }).catch(function (error) { if (alive) toast(error.message, true, root); });
-      });
+      // 暂停身份资料修复入口：保留 beforePersonaSwitch/openPersonaDialog，
+      // 当前版本切换账号直接执行，不再被身份资料弹窗短路。
+      // personaSwitchPreflight = beforePersonaSwitch;
+      // var personaButton = accountsPane.querySelector('[data-act="persona-repair"]');
+      // if (personaButton) listen(personaButton, 'click', function () {
+      //   api('/api/persona').then(function (info) {
+      //     if (!alive) return;
+      //     if (!info.eligible) { refreshPersonaNotice(); throw new Error('当前账号无需修复或没有可用来源'); }
+      //     return openPersonaDialog(info, false);
+      //   }).catch(function (error) { if (alive) toast(error.message, true, root); });
+      // });
     }
     registerDisposer(function () {
       if (personaSwitchPreflight === beforePersonaSwitch) personaSwitchPreflight = null;
@@ -16561,7 +16564,8 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         .then(function (data) {
           if (!alive || requestId !== state.accountRefreshId) return;
           render(data);
-          refreshPersonaNotice();
+          // 暂停身份资料提醒：后续版本重新设计文案和交互后再启用。
+          // refreshPersonaNotice();
           // WorkBuddy can complete today's check-in outside WorkDaddy. Ask the
           // idempotent official endpoint for the current account only, then
           // patch that card in place. An enabled check-in task owns the ordered
