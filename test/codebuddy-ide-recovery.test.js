@@ -33,7 +33,10 @@ function harness() {
     WebSocketCtor: Socket, createRendererApiBridge: () => async () => {}, API_TOKEN: 'fixture', ACTUAL_PORT: 1,
     BINDING: 'fixture', buildInjectScript: () => 'fixture-inject', redactDiagnosticText: s => s, log: () => {},
     PROFILE: { kind: 'codebuddy' }, cdp: { port: 1 }, fetch: async () => ({ json: async () => state.targets }),
-    AbortSignal, selectIdeTargets: list => list });
+    AbortSignal, selectIdeTargets: list => list,
+    // 切片范围覆盖了客户端运行状态的刷新块，需要提供 daemon 模块级常量；
+    // 常驻 daemon 语义为 false（真实探测子进程见 daemon-status-nonblocking.test.js）
+    PROBE_CLIENT_RUNNING: false });
   vm.runInContext(manager, context);
   return { state, sockets, context, timers,
     scan: () => vm.runInContext('ideSyncScan()', context),

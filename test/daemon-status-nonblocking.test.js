@@ -89,6 +89,8 @@ test('client running cache refreshes in the background and survives probe failur
     Date,
     setInterval: () => ({ unref() {} }),
     console,
+    // daemon 模块级常量：false = 当前是常驻 daemon，允许注册后台刷新
+    PROBE_CLIENT_RUNNING: false,
   };
   vm.runInNewContext(block, ctx);
 
@@ -109,12 +111,42 @@ test('client running cache refreshes in the background and survives probe failur
   assert.equal(probeCalls, 4);
 });
 
+test('one-shot probe subprocess never spawns another probe (self-replication guard)', async () => {
+  // 回归锁定：探测子进程从文件第一行开始执行，必然先途经模块顶层的启动刷新。
+  // 修复前它会在探测进程内部再派生下一代探测进程（立即一次 + setInterval 在
+  // execFile 的 15s 超时窗口内追加约 2 次），形成指数级进程链——
+  // 单机实测堆积 502 个 node 进程、load average 冲到 555。探测进程内必须零派生。
+  const anchor = daemonSource.indexOf('const clientRunningState = {');
+  assert.ok(anchor > 0, 'client running cache block not found in daemon.js');
+  const end = daemonSource.indexOf('async function cdpLoop', anchor);
+  assert.ok(end > anchor, 'cache block end anchor not found');
+  const block = daemonSource.slice(anchor, end);
+
+  let probeCalls = 0;
+  const ctx = {
+    execFile: () => { probeCalls += 1; },
+    process: { execPath: process.execPath },
+    __filename: 'daemon.js',
+    Date,
+    setInterval: () => ({ unref() {} }),
+    console,
+    // 当前进程就是一次性探测子进程
+    PROBE_CLIENT_RUNNING: true,
+  };
+  vm.runInNewContext(block, ctx);
+
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(probeCalls, 0, 'a probe subprocess must never spawn another probe; the process chain grows exponentially');
+  assert.equal(await ctx.refreshClientRunning(), null, 'probe subprocess must leave the cache untouched');
+  assert.equal(probeCalls, 0, 'refreshClientRunning() inside a probe subprocess must not shell out');
+});
+
 test('daemon behavior change ships a version and build bump so stale daemons are replaced', () => {
   const version = daemonSource.match(/const DAEMON_VERSION = '([^']+)'/);
   const buildId = daemonSource.match(/const DAEMON_BUILD_ID = '([^']+)'/);
   assert.ok(version && buildId, 'DAEMON_VERSION/DAEMON_BUILD_ID not found');
   assert.notEqual(version[1], '1.2.28', 'DAEMON_VERSION must be incremented for a daemon behavior change');
-  assert.match(buildId[1], /^release-1\.2\.35-/, 'DAEMON_BUILD_ID must be rewritten for the new build');
+  assert.ok(buildId[1].startsWith(`release-${version[1]}-`), 'DAEMON_BUILD_ID must be rewritten for the new build');
 });
 
 test('launcher httpGet uses a budget aligned with the daemon probe cost', () => {

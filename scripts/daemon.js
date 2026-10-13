@@ -488,8 +488,15 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 //         launcher 的 httpGet 预算同步对齐到 HTTP_GET_TIMEOUT_MS；Windows app.asar
 //         页面归属与 CDP 目标等待窗口也同步修复。
 // 1.2.35：账号页合并加密备份 token 刷新后的有效期快照，并按自然日限制成功刷新一次。
-const DAEMON_VERSION = '1.2.35';
-const DAEMON_BUILD_ID = 'release-1.2.35-20261012-panel-token-daily-limit';
+// 1.2.36：修复 --probe-client-running 一次性探测子进程的自我复制。探测子进程会从文件
+//         第一行开始执行，在走到文件末尾的探测分支之前，必然先途经模块顶层的
+//         refreshClientRunning() 启动刷新；原实现会在探测进程内部再派生下一代探测进程
+//         （立即一次，且 execFile 的 15s 超时窗口内 setInterval 还会追加约 2 次），
+//         形成指数级进程链：单机实测堆积 502 个 node 进程、load average 冲到 555，
+//         持续占用 CPU 并拖垮所有 WorkBuddy 会话（含子代理）。现在探测进程内不再注册
+//         任何刷新，探测子进程保持严格的「纯一次性」语义。
+const DAEMON_VERSION = '1.2.36';
+const DAEMON_BUILD_ID = 'release-1.2.36-20261013-probe-self-replication-guard';
 const usageReporter = createUsageReporter({ profile: PROFILE.id, version: DAEMON_VERSION });
 configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const automationDiscovery = createAutomationDiscovery({
@@ -2700,6 +2707,12 @@ const clientRunningState = { value: null, checkedAt: 0 };
 const CLIENT_RUNNING_REFRESH_MS = 5000;
 let clientRunningRefreshInFlight = false;
 function refreshClientRunning() {
+  // 一次性探测子进程（--probe-client-running）绝不允许再派生探测子进程。
+  // 探测进程会从文件第一行开始执行，在走到文件末尾的 PROBE_CLIENT_RUNNING 分支之前
+  // 就会途经这里的启动刷新；若不拦截，每次都会复制出下一代探测进程
+  // （立即一次 + setInterval 在 15s execFile 超时窗口内的两次触发，约 3 个后代），
+  // 形成指数级进程链：单机实测堆积 502 个 node 进程、load average 冲到 555。
+  if (PROBE_CLIENT_RUNNING) return Promise.resolve(clientRunningState.value);
   if (clientRunningRefreshInFlight) return Promise.resolve(clientRunningState.value);
   clientRunningRefreshInFlight = true;
   return new Promise((resolve) => {
@@ -2717,10 +2730,15 @@ function refreshClientRunning() {
   });
 }
 // 启动时立即刷新一次，随后按固定间隔在后台刷新（unref 避免阻止进程退出）
-refreshClientRunning().catch(() => {});
-if (typeof setInterval === 'function') {
-  const timer = setInterval(() => { refreshClientRunning().catch(() => {}); }, CLIENT_RUNNING_REFRESH_MS);
-  if (timer && typeof timer.unref === 'function') timer.unref();
+// 必须排除一次性探测子进程自身：它在执行到文件末尾的 PROBE_CLIENT_RUNNING 分支前
+// 会先跑到这里，若不加守卫就会在探测进程内部再注册一份刷新逻辑并复制出下一代
+// 探测进程，造成自我复制的进程链（与 refreshClientRunning 内的同源守卫形成双保险）。
+if (!PROBE_CLIENT_RUNNING) {
+  refreshClientRunning().catch(() => {});
+  if (typeof setInterval === 'function') {
+    const timer = setInterval(() => { refreshClientRunning().catch(() => {}); }, CLIENT_RUNNING_REFRESH_MS);
+    if (timer && typeof timer.unref === 'function') timer.unref();
+  }
 }
 
 async function cdpLoop() {
