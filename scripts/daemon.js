@@ -28,7 +28,7 @@ const path = require('path');
 const os = require('os');
 const crypto = require('crypto');
 const net = require('net');
-const { inspectPersona, copyPersona } = require('./persona.js');
+const { inspectPersona, copyPersona, readPersonaSettings, listPersonaSources, configurePersona, dismissPersonaNotice, syncSharedPersonaForSwitch } = require('./persona.js');
 let sessionSync = require('./session-sync.js');
 const {createCodeBuddyFiles} = require('./codebuddy-files.js');
 const { createAccountCreditCache } = require('./account-credit-cache.js');
@@ -489,12 +489,16 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 //         launcher 的 httpGet 预算同步对齐到 HTTP_GET_TIMEOUT_MS；Windows app.asar
 //         页面归属与 CDP 目标等待窗口也同步修复。
 // 1.2.35：账号页合并加密备份 token 刷新后的有效期快照，并按自然日限制成功刷新一次。
-// 1.2.37：新版账号个人身份档案支持确认复制、备份及 CDP 刷新，兼容旧版全局目录。
+// 1.2.37：新版账号个性化设置支持确认复制、备份及 CDP 刷新，兼容旧版全局目录。
 // 1.2.38：防止 --probe-client-running 探测进程再次派生探测进程；监控仅由持有单实例锁的 daemon 启动。
 // 1.2.39：限制 macOS pgrep 探针和父进程等待时间，避免系统过载时探针长期堆积。
 // 1.2.40：周期性客户端运行探测改用 tasklist 轻量存在性检查（不经 WMI），CIM 进程查询加 -Filter 服务端过滤，刷新间隔 5s→15s（可用 WORKDADDY_CLIENT_REFRESH_MS 覆盖）；完整 CIM 验证仅保留给 /api/client/relaunch 等用户主动操作。
-const DAEMON_VERSION = '1.2.40';
-const DAEMON_BUILD_ID = 'release-1.2.40-20261014-client-probe-wmi';
+// 1.2.42：账号设置支持共享身份与记忆，切换时同步最新档案并保留覆盖前备份。
+// 1.2.44：精简来源选择文字，明确共享范围仅限身份与本地记忆。
+// 1.2.45：同步功能统一使用 WorkBuddy 的「个性化」名称。
+// 1.2.43：共享身份提示使用全局说明浮层，来源列出未设置账号并简化文案。
+const DAEMON_VERSION = '1.2.45';
+const DAEMON_BUILD_ID = 'release-1.2.45-personalization-copy';
 const usageReporter = createUsageReporter({ profile: PROFILE.id, version: DAEMON_VERSION });
 configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const automationDiscovery = createAutomationDiscovery({
@@ -1892,7 +1896,12 @@ function syncCodeBuddyAuth() {
   return work;
 }
 async function switchAccountForProfile(uid) {
-  if (!codeBuddyNative) return switchTo(DATA_DIR, uid, log);
+  if (!codeBuddyNative) {
+    const sharing = PROFILE.kind === 'workbuddy' ? syncSharedPersonaForSwitch({ dataRoot: PROFILE.dataRoot,
+      backupRoot: DATA_DIR, accounts: listAccounts(DATA_DIR), sourceUid: String((currentAccount() || {}).uid || ''), targetUid: String(uid) }) : null;
+    try { return await switchTo(DATA_DIR, uid, log); }
+    catch (error) { if (sharing && sharing.rollback) sharing.rollback(); throw error; }
+  }
   await syncCodeBuddyAuth();
   if (fs.existsSync(AUTH_FILE)) backupCurrent(DATA_DIR, log);
   const file = accountBackupFile(uid);
@@ -10529,15 +10538,51 @@ function handleApi(req, res) {
     } catch (error) { return json(res, 400, { ok: false, error: error.message }); }
   }
 
+  if (req.method === 'GET' && p === '/api/persona/settings') {
+    try {
+      if (PROFILE.kind !== 'workbuddy' || !PROFILE.capabilities.accounts) return json(res, 200, { ok: true, supported: false });
+      const current = currentAccount();
+      const accounts = listAccounts(DATA_DIR);
+      if (current && !accounts.some(a => String(a.uid) === String(current.uid))) accounts.push(current);
+      return json(res, 200, { ok: true, supported: true, ...readPersonaSettings(DATA_DIR),
+        currentUid: String(current && current.uid || ''), sources: listPersonaSources({ dataRoot: PROFILE.dataRoot, accounts }) });
+    } catch (error) { return json(res, 400, { ok: false, error: error.message }); }
+  }
+
+  if (req.method === 'POST' && p === '/api/persona/settings') {
+    return readBody(req).then(async body => {
+      let release = null;
+      try {
+        if (PROFILE.kind !== 'workbuddy' || !PROFILE.capabilities.accounts) throw new Error('当前客户端不支持同步个性化');
+        release = await assertAccountSwitchIdle();
+        if (body.dismissNotice === true) return json(res, 200, { ok: true, ...dismissPersonaNotice(DATA_DIR) });
+        const current = currentAccount();
+        if (!current) throw new Error('请先登录账号');
+        if (body.currentUid !== String(current.uid)) throw new Error('当前账号已变化，请重新打开设置');
+        const accounts = listAccounts(DATA_DIR);
+        if (!accounts.some(a => String(a.uid) === String(current.uid))) accounts.push(current);
+        const result = configurePersona({ dataRoot: PROFILE.dataRoot, backupRoot: DATA_DIR, accounts,
+          currentUid: String(current.uid), mode: body.mode, sourceUid: body.sourceUid, revision: body.revision });
+        let reloaded = false;
+        if (result.changed) {
+          try { await reloadWorkBuddyPage({ waitForInjection: false, account: current }); reloaded = true; } catch (_) {}
+        }
+        return json(res, 200, { ok: true, ...result.settings, reloaded, reloadRequired: result.changed && !reloaded });
+      } catch (error) { return json(res, 400, { ok: false, error: error.message }); }
+      finally { if (release) release(); }
+    });
+  }
+
   if (req.method === 'POST' && p === '/api/persona-copy') {
     return readBody(req).then(async (body) => {
       let release = null;
       try {
-        if (PROFILE.kind !== 'workbuddy' || !PROFILE.capabilities.accounts) throw new Error('当前客户端不支持个人身份档案修复');
+        if (PROFILE.kind !== 'workbuddy' || !PROFILE.capabilities.accounts) throw new Error('当前客户端不支持个性化设置修复');
         release = await assertAccountSwitchIdle();
         const current = currentAccount();
         const accounts = listAccounts(DATA_DIR);
         if (current && !accounts.some(a => String(a.uid) === String(current.uid))) accounts.push(current);
+        if (readPersonaSettings(DATA_DIR).mode === 'shared') throw new Error('共享模式下请在账号设置中选择来源');
         const result = copyPersona({ dataRoot: PROFILE.dataRoot, backupRoot: DATA_DIR, accounts,
           targetUid: body.uid, sourceUid: body.sourceUid, confirmed: body.confirmed, revision: body.revision });
         let reloaded = false;
@@ -10545,9 +10590,9 @@ function handleApi(req, res) {
           try { await reloadWorkBuddyPage({ waitForInjection: false, account: current }); reloaded = true; }
           catch (_) { /* The disk repair is complete; report reload separately. */ }
         }
-        log('[persona] 个人身份档案复制完成，已保留修复前备份');
+        log('[persona] 个性化设置复制完成，已保留修复前备份');
         return json(res, 200, { ok: true, files: result.files, backedUp: true, reloaded,
-          hint: reloaded ? '身份档案已复制并刷新窗口' : '身份档案已复制，下次刷新窗口后生效' });
+          hint: reloaded ? '个性化设置已复制并刷新窗口' : '个性化设置已复制，下次刷新窗口后生效' });
       } catch (error) { return json(res, 400, { ok: false, error: error.message }); }
       finally { if (release) release(); }
     });

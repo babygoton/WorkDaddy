@@ -69,3 +69,38 @@ test('unknown accounts and non-WorkBuddy profiles cannot copy', async t => {
   assert.equal((await h.run({ method: 'GET', url: '/api/persona' })).body.status, 'unsupported');
   assert.equal((await h.run({ method: 'POST', url: '/api/persona-copy', body: { uid: 'b', confirmed: true } })).status, 400);
 });
+for (const profile of ['workbuddy-cn','workbuddy-ai']) test('shared settings persist dismissal, validate consent source and lock, and remain profile scoped: '+profile, async t => {
+  const h=harness(t,profile);
+  const before=await h.run({method:'GET',url:'/api/persona/settings'});
+  assert.equal(before.body.mode,'unset');
+  assert.deepEqual(Array.from(before.body.sources,s=>s.uid),['a','b','legacy']);
+  assert.equal(before.body.sources.find(s=>s.uid==='a').available,false);
+  assert.equal(JSON.stringify(before).includes('fixture MEMORY'),false);
+  assert.equal((await h.run({method:'POST',url:'/api/persona/settings',body:{dismissNotice:true}})).body.noticeDismissed,true);
+  assert.equal((await h.run({method:'GET',url:'/api/persona/settings'})).body.mode,'unset');
+  assert.equal((await h.run({method:'POST',url:'/api/persona/settings',body:{mode:'shared',currentUid:'a'}})).status,400);
+  const source=before.body.sources.find(s=>s.available);
+  const saved=await h.run({method:'POST',url:'/api/persona/settings',body:{mode:'shared',currentUid:'b',sourceUid:source.uid,revision:source.revision}});
+  assert.equal(saved.status,200); assert.equal(saved.body.mode,'shared'); assert.equal(saved.body.reloaded,true);
+  assert.equal(h.locked(),false);
+  assert.equal((await h.run({method:'POST',url:'/api/persona-copy',body:{uid:'a',confirmed:true}})).status,400);
+  assert.equal((await h.run({method:'POST',url:'/api/persona/settings',body:{mode:'independent',currentUid:'b'}})).body.mode,'independent');
+  h.context.PROFILE.kind='codebuddy';
+  assert.equal((await h.run({method:'GET',url:'/api/persona/settings'})).body.supported,false);
+  assert.equal((await h.run({method:'POST',url:'/api/persona/settings',body:{dismissNotice:true}})).status,400);
+});
+test('shared switching protects authentication until projection succeeds and undoes projection if authentication fails',async t=>{
+  const h=harness(t);
+  const options={dataRoot:h.dataRoot,backupRoot:h.context.DATA_DIR,accounts:[{uid:'a'},{uid:'b'}],currentUid:'b'};
+  persona.configurePersona({...options,mode:'shared',sourceUid:'legacy',revision:persona.listPersonaSources(options).find(s=>s.uid==='legacy').revision});
+  const context=vm.createContext({...h.context,codeBuddyNative:null,switchTo:async()=>{throw new Error('auth failed');}});
+  const seam=daemon.slice(daemon.indexOf('async function switchAccountForProfile(uid)'),daemon.indexOf('\nfunction scheduleBackup('));
+  vm.runInContext(seam,context);
+  await assert.rejects(context.switchAccountForProfile('a'),/auth failed/);
+  assert.equal(fs.existsSync(path.join(h.dataRoot,'user-a-personal')),false);
+  assert.equal(persona.readPersonaSettings(options.backupRoot).activeUid,'b');
+  let switched=false; context.switchTo=()=>{switched=true;};
+  fs.unlinkSync(path.join(h.dataRoot,'user-b-personal/USER.md'));
+  await assert.rejects(context.switchAccountForProfile('a'),/尚未完成/);
+  assert.equal(switched,false);
+});

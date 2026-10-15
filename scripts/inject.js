@@ -1424,32 +1424,38 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
   var WBS_ACCOUNT_NOTE_HOVER_KEY = 'workdaddy.account.noteHover.' + PROFILE_ID;
   var WBS_GROWTH_PLAN_HOVER_KEY = 'workdaddy.account.growthPlanHover.' + PROFILE_ID;
   var WBS_I18N_EN = {
-    "当前账号可能仍在首次身份引导": "This account may still be in identity onboarding",
-    "复制个人身份档案": "Copy personal identity files",
-    "请先完成身份档案确认": "Complete the identity confirmation first",
-    "该账号的个人目录为空或仍带有首次引导标记。可从下方来源复制 IDENTITY、USER、SOUL 和已有的 MEMORY；也可以保留独立身份。": "This account has an empty personal directory or an onboarding marker. Copy IDENTITY, USER, SOUL and any MEMORY from a source below, or keep its independent identity.",
-    "确认后将备份并替换目标档案、标记引导完成，移除 BOOTSTRAP。旧版全局档案保持原样。": "Confirmation backs up and replaces the target files, completes onboarding and removes BOOTSTRAP. Legacy global files are preserved.",
-    "保留独立身份并切换": "Keep independent identity and switch",
-    "复制并切换": "Copy and switch",
-    "备份并复制": "Back up and copy",
-    " 个档案文件": " identity files",
-    "已取消身份档案操作": "Identity operation canceled",
-    "身份档案已复制": "Identity files copied",
-    "账号切换已取消": "Account switch canceled",
-    "当前账号无需修复或没有可用来源": "No repair needed or no available source",
-    "旧版全局档案": "Legacy global files",
-    "个人身份档案复制完成，已保留修复前备份": "Personal identity files copied; original files backed up",
-    "当前客户端不支持个人身份档案修复": "Personal identity repair is unavailable for this client",
-    "身份档案已复制并刷新窗口": "Identity files copied and window refreshed",
-    "身份档案已复制，下次刷新窗口后生效": "Identity files copied; refresh the window to apply",
-    "请先确认复制身份档案": "Confirm copying identity files first",
+    "同步个性化": "Sync personalization",
+    "不再提醒": "Don't remind me again",
+    "了解同步个性化": "About personalization sync",
+    "同步个性化设置": "Sync personalization settings",
+    "让所有账号使用同一份个性化设置，修改后随账号切换一起更新。原有设置会自动备份。不包含「管理记忆」中的云端记忆。": "Use the same personalization settings across accounts. Changes sync when switching accounts. Existing settings are backed up. Cloud memory in Manage Memory is not included.",
+    "各账号独立": "Separate per account",
+    "所有账号共享": "Share across accounts",
+    "所有账号使用同一份个性化设置。": "Use the same personalization settings across accounts.",
+    "每个账号使用各自的个性化设置，已同步的内容会保留。": "Use separate personalization settings per account. Previously synced copies are kept.",
+    "共享设置来源": "Shared settings source",
+    "升级前共用的设置": "Settings shared before the upgrade",
+    "未设置": "Not set up",
+    "这是升级前所有账号共用的设置。": "These settings were shared by all accounts before the upgrade.",
+    "请先在任一账号设置个性化。": "Set up personalization in any account first.",
+    "个性化设置加载失败，请重新打开": "Could not load personalization settings. Reopen to retry.",
+    "设置已保存，刷新 WorkBuddy 后生效": "Saved. Reload WorkBuddy to apply.",
+    "请选择已完成设置的账号": "Choose an account that has been set up",
+    "当前账号已变化，请重新打开设置": "The account changed. Reopen settings.",
+    "来源个性化设置已变化，请重新选择": "The source changed. Select it again.",
+
+    "个性化设置复制完成，已保留修复前备份": "Personalization settings copied; original settings backed up",
+    "当前客户端不支持个性化设置修复": "Personalization repair is unavailable for this client",
+    "个性化设置已复制并刷新窗口": "Personalization settings copied and window refreshed",
+    "个性化设置已复制，下次刷新窗口后生效": "Personalization settings copied; refresh the window to apply",
+    "请先确认复制个性化设置": "Confirm copying personalization settings first",
     "该账号无需修复或没有可用来源": "No repair needed or no available source",
-    "目标身份档案已变化，请重新查看并确认": "Target identity files changed; review and confirm again",
-    "身份档案来源无效": "Invalid identity source",
-    "身份档案路径不能包含符号链接": "Identity paths must not contain symbolic links",
-    "身份档案文件过大，未执行复制": "Identity file too large; copy canceled",
-    "身份档案状态文件无效，请先手动检查": "Invalid identity state; inspect it manually first",
-    "身份档案必须为普通文件": "Identity files must be regular files",
+    "目标个性化设置已变化，请重新查看并确认": "Target personalization settings changed; review and confirm again",
+    "个性化设置来源无效": "Invalid personalization source",
+    "个性化设置路径不能包含符号链接": "Personalization paths must not contain symbolic links",
+    "个性化设置文件过大，未执行复制": "Personalization file too large; copy canceled",
+    "个性化设置状态文件无效，请先手动检查": "Invalid personalization state; inspect it manually first",
+    "个性化设置必须为普通文件": "Personalization files must be regular files",
     "复制失败且回滚未完成，请从 WorkDaddy 的 persona 备份目录恢复": "Copy and rollback failed; restore from the WorkDaddy persona backup directory",
     "迁移状态文件过大": "Migration state file too large",
     "账号格式无效": "Invalid account ID",
@@ -2491,17 +2497,8 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     return s ? Array.from(s)[0].toUpperCase() : '?';
   }
 
-  var personaSwitchPreflight = null;
   function api(path, opts) {
     opts = opts || {};
-    if (path === '/api/switch' && personaSwitchPreflight && !opts._wbsPersonaChecked) {
-      var switchBody;
-      try { switchBody = JSON.parse(opts.body || '{}'); } catch (_) { switchBody = {}; }
-      return personaSwitchPreflight(switchBody.uid).then(function () {
-        var checked = Object.assign({}, opts, { _wbsPersonaChecked: true });
-        return api(path, checked);
-      });
-    }
     var request = {};
     Object.keys(opts).forEach(function (key) { request[key] = opts[key]; });
     var headers = {};
@@ -2511,7 +2508,6 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     headers['X-WorkDaddy-Token'] = WBS_API_TOKEN;
     request.headers = headers;
     delete request.responseType;
-    delete request._wbsPersonaChecked;
     var response = CAPS.apiTransport === 'cdp' ? window.__wbsApiFetch(path, request, WBS_API_TOKEN) : fetch(API + path, request);
     return response.then(function (r) {
       if (r.ok && opts.responseType === 'blob') return r.blob().then(function (blob) {
@@ -6622,8 +6618,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         '<button class="wbs-acct-io wbs-acct-icon" type="button" data-act="account-more" title="账号设置" aria-label="账号设置"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2.75a2 2 0 0 1 2 1.4l.4 1.1 1.15.47 1.06-.48a2 2 0 0 1 2.4.45l.8.8a2 2 0 0 1 .45 2.4l-.48 1.06.47 1.15 1.1.4a2 2 0 0 1 0 3.8l-1.1.4-.47 1.15.48 1.06a2 2 0 0 1-.45 2.4l-.8.8a2 2 0 0 1-2.4.45l-1.06-.48-1.15.47-.4 1.1a2 2 0 0 1-3.8 0l-.4-1.1-1.15-.47-1.06.48a2 2 0 0 1-2.4-.45l-.8-.8a2 2 0 0 1-.45-2.4l.48-1.06-.47-1.15-1.1-.4a2 2 0 0 1 0-3.8l1.1-.4.47-1.15-.48-1.06a2 2 0 0 1 .45-2.4l.8-.8a2 2 0 0 1 2.4-.45l1.06.48 1.15-.47.4-1.1A2 2 0 0 1 12 2.75Z"/><circle cx="12" cy="12.5" r="3"/></svg></button>' +
         '</div>' +
         '</div>' +
-        // 暂停身份资料提醒入口：保留修复代码，当前版本不在账号页显示。
-        // '<div class="wbs-persona-notice" hidden><span>当前账号可能仍在首次身份引导</span><button type="button" class="wbs-modal-btn" data-act="persona-repair">复制个人身份档案</button></div>' +
+        '<div class="wbs-persona-notice" hidden><span class="wbs-persona-notice-label"><span>同步个性化</span><button type="button" class="wbs-acct-eye wbs-persona-help" aria-label="了解同步个性化" aria-expanded="false">' + MODEL_TIP_SVG + '</button></span><span class="wbs-persona-notice-actions"><button type="button" class="wbs-modal-btn" data-act="persona-settings">设置</button><button type="button" class="wbs-persona-dismiss" data-act="persona-dismiss">不再提醒</button></span></div>' +
         '<div class="wbs-acct-list"></div>' +
         '<button class="wbs-logout-btn" type="button" data-act="logout">' + LOGOUT_SVG + '<span>登录新账号</span></button>' +
         '<input type="file" id="wbs-import-file" accept=".json,application/json" style="display:none">';
@@ -6643,106 +6638,111 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       root.querySelector('#wbs-import-file').addEventListener('change', onImportFile);
     }
 
-    var closePersonaDialog = null;
-    function openPersonaDialog(info, switching) {
-      if (closePersonaDialog) return Promise.reject(new Error('请先完成身份档案确认'));
-      return new Promise(function (resolve, reject) {
-        var previousFocus = document.activeElement;
-        var mask = el('div', 'wbs-modal-mask wbs-persona-mask');
-        mask.innerHTML = '<div class="wbs-modal wbs-persona-modal" role="dialog" aria-modal="true" aria-labelledby="wbs-persona-title">' +
-          '<div class="wbs-modal-title" id="wbs-persona-title">复制个人身份档案</div>' +
-          '<div class="wbs-modal-body">该账号的个人目录为空或仍带有首次引导标记。可从下方来源复制 IDENTITY、USER、SOUL 和已有的 MEMORY；也可以保留独立身份。<br>确认后将备份并替换目标档案、标记引导完成，移除 BOOTSTRAP。旧版全局档案保持原样。</div>' +
-          '<div class="wbs-persona-sources"></div><div class="wbs-persona-error" role="alert"></div>' +
-          '<div class="wbs-modal-actions"><button type="button" class="wbs-modal-btn" data-persona="cancel">取消</button>' +
-          (switching ? '<button type="button" class="wbs-modal-btn" data-persona="skip">保留独立身份并切换</button>' : '') +
-          '<button type="button" class="wbs-modal-btn wbs-modal-ok" data-persona="copy">' + (switching ? '复制并切换' : '备份并复制') + '</button></div></div>';
-        var list = mask.querySelector('.wbs-persona-sources');
-        info.sources.forEach(function (source, index) {
-          var label = el('label', 'wbs-persona-source');
-          var radio = document.createElement('input');
-          radio.type = 'radio'; radio.name = 'wbs-persona-source'; radio.value = source.uid; radio.checked = index === 0;
-          label.appendChild(radio);
-          var text = document.createElement('span');
-          text.textContent = (state.mask && source.uid !== 'legacy' ? maskAccountName(source.nickname) : source.nickname) + '（' + source.files.length + ' 个档案文件）';
-          label.appendChild(text); list.appendChild(label);
+    if (accountsPane && CAPS.accounts) {
+      var personaHelp = accountsPane.querySelector('.wbs-persona-help');
+      var personaHelpPinned = false;
+      function hidePersonaHelp() {
+        personaHelpPinned = false;
+        personaHelp.setAttribute('aria-expanded', 'false');
+        personaHelp.removeAttribute('aria-describedby');
+        hideStatusPopover(personaHelp);
+      }
+      function showPersonaHelp() {
+        showStatusPopover(personaHelp, '<div class="wbs-daily-popover-head"><strong>同步个性化设置</strong></div><div class="wbs-persona-help-copy">让所有账号使用同一份个性化设置，修改后随账号切换一起更新。原有设置会自动备份。不包含「管理记忆」中的云端记忆。</div>', 'persona', 'below');
+        personaHelp.setAttribute('aria-describedby', 'wbs-status-popover');
+        personaHelp.setAttribute('aria-expanded', 'true');
+      }
+      listen(personaHelp, 'mouseenter', showPersonaHelp);
+      listen(personaHelp, 'mouseleave', function () { if (!personaHelpPinned && document.activeElement !== personaHelp) hidePersonaHelp(); });
+      listen(personaHelp, 'focus', showPersonaHelp);
+      listen(personaHelp, 'blur', hidePersonaHelp);
+      listen(personaHelp, 'click', function () { personaHelpPinned = !personaHelpPinned; if (personaHelpPinned) showPersonaHelp(); else hidePersonaHelp(); });
+      listen(document, 'pointerdown', function (event) { if (!personaHelp.contains(event.target)) hidePersonaHelp(); }, true);
+      listen(document, 'keydown', function (event) {
+        if (event.key === 'Escape' && statusPopoverOwner === personaHelp) { event.stopPropagation(); event.preventDefault(); hidePersonaHelp(); }
+      }, true);
+      listen(accountsPane, 'scroll', hidePersonaHelp, true);
+      listen(window, 'resize', hidePersonaHelp);
+      listen(accountsPane.querySelector('[data-act="persona-settings"]'), 'click', function () { hidePersonaHelp(); openAccountOrderModal(); });
+      listen(accountsPane.querySelector('[data-act="persona-dismiss"]'), 'click', function () {
+        hidePersonaHelp();
+        var button = accountsPane.querySelector('[data-act="persona-dismiss"]');
+        button.disabled = true;
+        api('/api/persona/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ dismissNotice: true }) })
+          .then(function () { if (alive) { state.personaRefreshId = (state.personaRefreshId || 0) + 1; accountsPane.querySelector('.wbs-persona-notice').hidden = true; } })
+          .catch(function (error) { if (alive) toast(error.message, true, root); })
+          .finally(function () { if (alive) button.disabled = false; });
+      });
+    }
+    function refreshPersonaNotice() {
+      var notice = accountsPane && accountsPane.querySelector('.wbs-persona-notice');
+      if (!notice) return;
+      var requestId = state.personaRefreshId = (state.personaRefreshId || 0) + 1;
+      api('/api/persona/settings').then(function (info) {
+        if (alive && requestId === state.personaRefreshId) notice.hidden = !info.supported || info.noticeDismissed || info.mode !== 'unset' || !info.currentUid;
+      }).catch(function () { if (alive && requestId === state.personaRefreshId) notice.hidden = true; });
+    }
+    function setupPersonaSettings(mask) {
+      var section = mask.querySelector('[data-persona-settings]');
+      var info = null, mode = 'independent', needsSource = false;
+      var select = section.querySelector('select');
+      var save = mask.querySelector('[data-order-save]');
+      save.disabled = true;
+      function sync() {
+        needsSource = !!info && mode === 'shared' && (info.mode !== 'shared' || info.activeUid !== info.currentUid);
+        section.querySelector('[data-persona-source]').hidden = !needsSource;
+        section.querySelector('[data-persona-description]').textContent = mode === 'shared'
+          ? '所有账号使用同一份个性化设置。'
+          : '每个账号使用各自的个性化设置，已同步的内容会保留。';
+        var sourceHint = section.querySelector('[data-persona-source-hint]');
+        sourceHint.textContent = info && !info.sources.some(function (source) { return source.available; })
+          ? '请先在任一账号设置个性化。'
+          : select.value === 'legacy' ? '这是升级前所有账号共用的设置。' : '';
+        sourceHint.hidden = !sourceHint.textContent;
+        applyI18n(section);
+      }
+      section.addEventListener('change', function (event) { if (event.target.name === 'wbs-persona-mode') { mode = event.target.value; sync(); } });
+      var loaded = api('/api/persona/settings').then(function (result) {
+        if (!alive || !mask.isConnected) return;
+        info = result;
+        save.disabled = false;
+        if (!info.supported) { section.hidden = true; return; }
+        mode = info.mode === 'shared' ? 'shared' : 'independent';
+        section.querySelectorAll('[name="wbs-persona-mode"]').forEach(function (radio) { radio.disabled = false; radio.checked = radio.value === mode; });
+        info.sources.forEach(function (source) {
+          var option = document.createElement('option'); option.value = source.uid;
+          var name = source.uid === 'legacy' ? wbsTranslateString('升级前共用的设置', WBS_LANGUAGE) : state.mask ? maskAccountName(source.nickname) : source.nickname;
+          option.textContent = name + (source.available ? '' : ' · ' + wbsTranslateString('未设置', WBS_LANGUAGE));
+          option.disabled = !source.available;
+          option.setAttribute('data-wbs-i18n-skip', '');
+          select.appendChild(option);
         });
-        var busy = false;
-        function finish(accepted) {
-          mask.remove(); mask.removeEventListener('keydown', onKey);
-          closePersonaDialog = null;
-          if (previousFocus && previousFocus.isConnected) previousFocus.focus();
-          if (accepted) resolve(); else reject(new Error('已取消身份档案操作'));
-        }
-        function onKey(event) {
-          event.stopPropagation();
-          if (event.key === 'Escape') { event.preventDefault(); if (!busy) finish(false); }
-          if (event.key === 'Tab') {
-            var controls = Array.from(mask.querySelectorAll('input,button')).filter(function (node) { return !node.disabled; });
-            var first = controls[0], last = controls[controls.length - 1];
-            if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
-            else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
-          }
-        }
-        closePersonaDialog = function () { finish(false); };
-        mask.addEventListener('keydown', onKey);
-        ['pointerdown', 'mousedown', 'dblclick', 'keyup'].forEach(function (type) { mask.addEventListener(type, function (event) { event.stopPropagation(); }); });
-        mask.addEventListener('click', function (event) {
-          event.stopPropagation();
-          var button = event.target.closest('[data-persona]');
-          if (!button || busy) return;
-          var action = button.getAttribute('data-persona');
-          if (action !== 'copy') { finish(action === 'skip'); return; }
-          busy = true;
-          mask.querySelectorAll('button,input').forEach(function (node) { node.disabled = true; });
-          api('/api/persona-copy', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ uid: info.uid, sourceUid: mask.querySelector('input:checked').value, confirmed: true, revision: info.revision })
+        var initialSource = info.sources.find(function (source) { return source.available && source.uid === info.currentUid; }) || info.sources.find(function (source) { return source.available; });
+        select.value = initialSource ? initialSource.uid : '';
+        select.addEventListener('change', sync);
+        section.querySelector('[data-persona-loading]').hidden = true;
+        sync();
+      }).catch(function (error) {
+        if (mask.isConnected) section.querySelector('[data-persona-loading]').textContent = '个性化设置加载失败，请重新打开';
+        throw error;
+      });
+      // Keep the rejection handled even if the user cancels instead of saving.
+      loaded.catch(function () {});
+      return function () {
+        return loaded.then(function () {
+          if (!info || !info.supported) return;
+          var source = needsSource && info.sources.find(function (item) { return item.uid === select.value && item.available; });
+          if (needsSource && !source) throw new Error('请选择已完成设置的账号');
+          if (info.mode === mode && !needsSource) return;
+          return api('/api/persona/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ mode: mode, currentUid: info.currentUid, sourceUid: source ? source.uid : undefined, revision: source ? source.revision : undefined })
           }).then(function (result) {
-            if (!alive) return;
-            toast(result.hint || '身份档案已复制', false, root);
-            finish(true); if (!switching) refresh();
-          }).catch(function (error) {
-            if (!alive) return;
-            busy = false; mask.querySelectorAll('button,input').forEach(function (node) { node.disabled = false; });
-            mask.querySelector('.wbs-persona-error').textContent = error.message;
-            mask.querySelector('[data-persona="cancel"]').focus();
+            info.mode = result.mode; info.activeUid = result.activeUid;
+            refreshPersonaNotice();
+            if (result.reloadRequired) toast('设置已保存，刷新 WorkBuddy 后生效', false, root);
           });
         });
-        mountPersistentOverlay(mask);
-        mask.querySelector('input').focus();
-      });
-    }
-    function beforePersonaSwitch(uid) {
-      if (!uid || !alive) return Promise.reject(new Error('账号切换已取消'));
-      return api('/api/persona?uid=' + encodeURIComponent(uid)).then(function (info) {
-        if (!alive) throw new Error('账号切换已取消');
-        if (info.eligible) return openPersonaDialog(info, true);
-      });
-    }
-    if (CAPS.accounts) {
-      // 暂停身份资料修复入口：保留 beforePersonaSwitch/openPersonaDialog，
-      // 当前版本切换账号直接执行，不再被身份资料弹窗短路。
-      // personaSwitchPreflight = beforePersonaSwitch;
-      // var personaButton = accountsPane.querySelector('[data-act="persona-repair"]');
-      // if (personaButton) listen(personaButton, 'click', function () {
-      //   api('/api/persona').then(function (info) {
-      //     if (!alive) return;
-      //     if (!info.eligible) { refreshPersonaNotice(); throw new Error('当前账号无需修复或没有可用来源'); }
-      //     return openPersonaDialog(info, false);
-      //   }).catch(function (error) { if (alive) toast(error.message, true, root); });
-      // });
-    }
-    registerDisposer(function () {
-      if (personaSwitchPreflight === beforePersonaSwitch) personaSwitchPreflight = null;
-      if (closePersonaDialog) closePersonaDialog();
-    });
-    function refreshPersonaNotice() {
-      var notice = accountsPane.querySelector('.wbs-persona-notice');
-      if (!notice) return;
-      notice.hidden = true;
-      var requestId = state.personaRefreshId = (state.personaRefreshId || 0) + 1;
-      api('/api/persona').then(function (info) {
-        if (alive && requestId === state.personaRefreshId) notice.hidden = !info.eligible;
-      }).catch(function () {});
+      };
     }
 
     function initialAutoCopyAllSeen() {
@@ -6831,6 +6831,11 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       });
       mask.innerHTML = '<div class="wbs-modal wbs-account-order-modal" role="dialog" aria-modal="true" aria-labelledby="wbs-account-order-title">' +
         '<div class="wbs-modal-title" id="wbs-account-order-title">账号设置</div>' +
+        '<section data-persona-settings><div class="wbs-account-settings-section">同步个性化</div>' +
+        '<div class="wbs-account-order-modes"><label><input type="radio" name="wbs-persona-mode" value="independent" disabled>各账号独立</label><label><input type="radio" name="wbs-persona-mode" value="shared" disabled>所有账号共享</label></div>' +
+        '<div class="wbs-persona-description" data-persona-loading role="status">加载中…</div><div class="wbs-persona-description" data-persona-description></div>' +
+        '<div data-persona-source hidden><label class="wbs-persona-source-label"><select aria-label="共享设置来源"></select></label>' +
+        '<div class="wbs-persona-description" data-persona-source-hint hidden></div></div></section>' +
         '<div class="wbs-account-settings-section">排序方式</div>' +
         '<div class="wbs-account-order-modes"><label><input type="radio" name="wbs-account-order" value="expiry">按积分临近时间</label>' +
         '<label><input type="radio" name="wbs-account-order" value="fixed">固定顺序</label></div>' +
@@ -6844,6 +6849,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         '<button class="wbs-modal-btn" type="button" data-order-cancel>取消</button>' +
         '<button class="wbs-modal-btn wbs-modal-ok" type="button" data-order-save>保存</button></div></div>';
       panel.appendChild(mask);
+      var savePersonaSettings = setupPersonaSettings(mask);
       var list = mask.querySelector('.wbs-account-order-list');
       mask.querySelector('[data-rotation-reminder]').checked = rotationReminderEnabled();
       mask.querySelector('[data-account-note-hover]').checked = accountNoteHoverEnabled();
@@ -6911,7 +6917,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
           move(from, from + (event.key === 'ArrowUp' ? -1 : 1));
         }
         if (event.key === 'Tab') {
-          var focusable = Array.from(mask.querySelectorAll('button,input')).filter(function (node) { return !node.disabled && node.getClientRects().length; });
+          var focusable = Array.from(mask.querySelectorAll('button,input,select')).filter(function (node) { return !node.disabled && node.getClientRects().length; });
           var first = focusable[0], last = focusable[focusable.length - 1];
           if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
           if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
@@ -6928,10 +6934,12 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         var noteHover = mask.querySelector('[data-account-note-hover]').checked;
         var growthHover = mask.querySelector('[data-growth-plan-hover]').checked;
         busy = true;
-        mask.querySelectorAll('button,input').forEach(function (node) { node.disabled = true; });
+        mask.querySelectorAll('button,input,select').forEach(function (node) { node.disabled = true; });
         mask.querySelector('[data-order-save]').textContent = '保存中…';
         api('/api/accounts/order', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: mode, uids: ordered.map(function (a) { return a.uid; }) }) })
           .then(function (result) {
+            return savePersonaSettings().then(function () { return result; });
+          }).then(function (result) {
             state.accountOrder = result.accountOrder;
             var ranks = new Map(); ordered.forEach(function (a, index) { ranks.set(a.uid, index + 1); });
             state.accounts.forEach(function (a) { a.sort = ranks.get(a.uid) || 0; });
@@ -6946,7 +6954,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
             busy = false; close();
           }).catch(function (error) {
             busy = false;
-            mask.querySelectorAll('button,input').forEach(function (node) { node.disabled = false; });
+            mask.querySelectorAll('button,input,select').forEach(function (node) { node.disabled = false; });
             mask.querySelector('[data-order-save]').textContent = '保存';
             mask.querySelector('[role="alert"]').textContent = error.message || '保存排序失败';
           });
@@ -16564,8 +16572,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         .then(function (data) {
           if (!alive || requestId !== state.accountRefreshId) return;
           render(data);
-          // 暂停身份资料提醒：后续版本重新设计文案和交互后再启用。
-          // refreshPersonaNotice();
+          refreshPersonaNotice();
           // WorkBuddy can complete today's check-in outside WorkDaddy. Ask the
           // idempotent official endpoint for the current account only, then
           // patch that card in place. An enabled check-in task owns the ordered
@@ -17956,8 +17963,8 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '.wbs-sess-actions{display:flex;gap:8px;justify-content:flex-end;padding-top:2px}',
     '.wbs-sess-del{flex-shrink:0;padding:7px 12px;border:1px solid #ff6b6b;border-radius:9px;background:color-mix(in srgb,#ff6b6b 10%,transparent);color:#ff6b6b;font-size:12px;cursor:pointer;line-height:1;transition:all .15s}',
     '.wbs-sess-del:hover{background:#ff6b6b;color:#fff}',
-    '.wbs-persona-notice:not([hidden]){display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px;margin-bottom:8px;border:1px solid var(--wb-border-primary,#ddd);border-radius:9px;background:var(--wb-bg-secondary,#f5f5f5);color:var(--wb-color-text-primary,#1f1f1f);font-size:12px}',
-    '.wbs-modal-mask.wbs-persona-mask{z-index:2147483647;padding:12px;box-sizing:border-box;pointer-events:auto}.wbs-modal.wbs-persona-modal{box-sizing:border-box;width:360px;max-width:100%;max-height:100%;overflow:auto}.wbs-persona-modal .wbs-modal-body{line-height:1.65;overflow-wrap:anywhere}.wbs-persona-sources{display:flex;flex-direction:column;gap:8px;margin-top:12px}.wbs-persona-source{display:flex;align-items:flex-start;gap:6px;font-size:12px;cursor:pointer;overflow-wrap:anywhere}.wbs-persona-source span{min-width:0}.wbs-persona-source input{flex-shrink:0}.wbs-persona-modal .wbs-modal-actions{flex-wrap:wrap}.wbs-persona-error{font-size:12px;color:var(--wb-color-text-primary,#1f1f1f);overflow-wrap:anywhere}.wbs-persona-error:not(:empty){margin-top:10px}.wbs-persona-source:focus-within{outline:2px solid var(--wb-accent-blue,#4f86ff);outline-offset:2px}',
+    '.wbs-persona-notice-label{display:flex;align-items:center;gap:4px;flex:1;min-width:0;overflow-wrap:anywhere}.wbs-persona-notice .wbs-persona-help{flex:0 0 24px;width:24px;height:24px;color:var(--wb-color-text-secondary)}.wbs-persona-notice .wbs-persona-help:hover{color:var(--wb-color-text-primary);background:var(--wb-bg-hover)}.wbs-persona-notice-actions{display:flex;align-items:center;gap:8px;flex:none;margin-left:auto}.wbs-persona-dismiss{padding:4px 0;border:0;background:transparent;color:var(--wb-color-text-secondary);font:inherit;font-size:11px;white-space:nowrap;cursor:pointer}.wbs-persona-dismiss:hover{color:var(--wb-color-text-primary)}.wbs-persona-dismiss:disabled{opacity:.5;cursor:default}.wbs-persona-notice button:focus-visible{outline:2px solid var(--wb-accent-primary,var(--wb-color-text-primary));outline-offset:2px}.wbs-acct-toolbar:has(+.wbs-persona-notice:not([hidden])){border-bottom-color:transparent}.wbs-status-popover.is-persona{max-width:calc(100vw - 16px)}.wbs-persona-help-copy{font-size:12px;line-height:1.6;overflow-wrap:anywhere;color:var(--wb-color-text-secondary)}.wbs-persona-description{font-size:11px;line-height:1.5;color:var(--wb-color-text-secondary);margin:7px 0;overflow-wrap:anywhere}.wbs-persona-source-label{display:flex;flex-direction:column;gap:6px;margin-top:10px;font-size:12px}.wbs-persona-source-label select{box-sizing:border-box;width:100%;min-width:0;padding:7px 9px;border:1px solid var(--wb-border-subtle);border-radius:8px;background:var(--wb-bg-secondary);color:var(--wb-color-text-primary);font:inherit}.wbs-account-order-modal section{flex-shrink:0}.wbs-account-order-modal :is(input,select):disabled{opacity:.5}:is(html.cb-dark,html[data-theme="dark"],body[data-vscode-theme-name*="dark" i],body[data-vscode-theme-name*="night" i]) .wbs-account-order-modal{color-scheme:dark}',
+    '.wbs-persona-notice:not([hidden]){display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px;margin-bottom:8px;border:1px solid var(--wb-border-default,#ddd);border-radius:9px;background:var(--wb-bg-secondary,#f5f5f5);color:var(--wb-color-text-primary,#1f1f1f);font-size:12px}',
     '.wbs-modal-mask{position:fixed;inset:0;z-index:2147483646;background:rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center}',
     /* 免打扰确认弹窗：挂载在面板容器内，仅覆盖面板区域（弹窗居中于面板，不盖住 WorkBuddy 窗口） */
     '.wbs-modal-mask.wbs-modal-mask-panel{position:absolute;inset:0;z-index:2147483645;border-radius:18px}',
@@ -17970,8 +17977,6 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     'html.cb-dark .wbs-modal-btn.wbs-modal-danger,html[data-theme="dark"] .wbs-modal-btn.wbs-modal-danger{color:#fff;background:#e03d3d;border-color:#e03d3d}',
     'html.cb-dark .wbs-modal-btn.wbs-modal-danger:hover,html[data-theme="dark"] .wbs-modal-btn.wbs-modal-danger:hover{background:#f04a4a}',
     'html.cb-dark .wbs-modal-mask,html[data-theme="dark"] .wbs-modal-mask{background:rgba(0,0,0,.55)}',
-    ':is(html.cb-dark,html[data-theme="dark"],body[data-vscode-theme-name*="dark" i],body[data-vscode-theme-name*="night" i]) .wbs-persona-modal{color-scheme:dark;background:var(--wb-bg-popover,#202126);color:var(--wb-color-text-primary,#e6e6e9)}:is(html.cb-dark,html[data-theme="dark"],body[data-vscode-theme-name*="dark" i],body[data-vscode-theme-name*="night" i]) .wbs-persona-modal :is(.wbs-modal-title,.wbs-modal-body,.wbs-persona-error){color:inherit}:is(html.cb-dark,html[data-theme="dark"],body[data-vscode-theme-name*="dark" i],body[data-vscode-theme-name*="night" i]) .wbs-persona-notice{background:var(--wb-bg-secondary,#292b31);border-color:var(--wb-border-default,#454750);color:var(--wb-color-text-primary,#e6e6e9)}',
-    ':is(html.cb-dark,html[data-theme="dark"],body[data-vscode-theme-name*="dark" i],body[data-vscode-theme-name*="night" i]) :is(.wbs-persona-notice,.wbs-persona-modal) .wbs-modal-btn:not(.wbs-modal-ok){background:var(--wb-bg-secondary,#292b31);border-color:var(--wb-border-default,#454750);color:var(--wb-color-text-secondary,#d5d5d9)}:is(html.cb-dark,html[data-theme="dark"],body[data-vscode-theme-name*="dark" i],body[data-vscode-theme-name*="night" i]) :is(.wbs-persona-notice,.wbs-persona-modal) .wbs-modal-btn:not(.wbs-modal-ok):hover{background:var(--wb-bg-hover,#3c3e45);color:var(--wb-color-text-primary,#e6e6e9)}.wbs-persona-modal :is(button,input):disabled{opacity:.5;cursor:wait}',
     '.wbs-checkin-risk-mask{padding:12px;box-sizing:border-box;pointer-events:auto}',
     '.wbs-modal.wbs-checkin-risk-modal{box-sizing:border-box;width:360px;max-width:100%;max-height:100%;display:flex;flex-direction:column;min-height:0}',
     '.wbs-checkin-risk-modal .wbs-modal-title,.wbs-checkin-risk-modal .wbs-modal-actions{flex-shrink:0}',
@@ -18134,7 +18139,8 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
 
     '.wbs-account-order-list{margin-top:9px;padding:1px;max-height:min(280px,40vh);overflow:auto;overscroll-behavior:contain;display:flex;flex-direction:column;gap:5px}',
     '.wbs-account-order-row{display:flex;align-items:center;gap:8px;min-height:34px;padding:3px 8px;border:1px solid var(--wb-border-subtle);border-radius:8px;background:var(--wb-bg-secondary);font-size:12px}.wbs-account-order-row>span{flex:1;min-width:0;overflow-wrap:anywhere}.wbs-account-order-row button{cursor:grab}.wbs-account-order-row.dragging{opacity:.45}.wbs-account-order-row.drop-target{border-color:var(--wb-accent-blue);background:var(--wb-bg-hover)}',
-    '.wbs-account-order-modal>.wbs-modal-actions{margin-top:14px;padding-top:10px;border-top:1px solid var(--wb-border-subtle,#eee)}.wbs-account-order-modal :is(button,input):focus-visible{outline:2px solid var(--wb-accent-blue);outline-offset:2px}.wbs-account-order-modal button:disabled{opacity:.5;cursor:default}',
+    '.wbs-account-order-modal>.wbs-modal-actions{margin-top:14px;padding-top:10px;border-top:1px solid var(--wb-border-subtle,#eee)}.wbs-account-order-modal :is(button,input,select):focus-visible{outline:2px solid var(--wb-accent-blue);outline-offset:2px}.wbs-account-order-modal button:disabled{opacity:.5;cursor:default}',
+    ':is(.wbs-account-order-modal,.wbs-persona-notice) .wbs-modal-btn:not(.wbs-modal-ok){color:var(--wb-color-text-secondary,#666)}:is(.wbs-account-order-modal,.wbs-persona-notice) .wbs-modal-btn:not(.wbs-modal-ok):hover{color:var(--wb-color-text-primary,#1f1f1f)}',
     '@media(max-width:420px){.wbs-account-order-modal{width:100%;max-width:calc(100% - 20px)}.wbs-account-order-modes{grid-template-columns:1fr}}',
     'html[data-wbs-theme-id="nebula"] .wbs-account-note-footer .primary{background:rgba(255,255,255,.9) !important;border-color:rgba(255,255,255,.9) !important;color:#11121a !important}.wbs-account-note-footer .primary:focus-visible{outline-color:var(--wb-color-text-primary,#1f1f1f)}html[data-wbs-theme-id="nebula"] .wbs-account-note-footer .primary:disabled{background:rgba(255,255,255,.78) !important;border-color:rgba(255,255,255,.78) !important;color:#34343c !important;opacity:1 !important}',
     '.wbs-initial-sync-modal{box-sizing:border-box;width:380px;max-width:calc(100% - 28px)}.wbs-initial-sync-copy{margin:-2px 0 12px;color:var(--wb-color-text-secondary,#666);font-size:11.5px;line-height:1.6;overflow-wrap:anywhere}.wbs-initial-sync-toggle{margin:0 0 10px}.wbs-initial-sync-error{min-height:17px;margin:0 0 2px}.wbs-initial-sync-modal .wbs-modal-actions{justify-content:flex-end}.wbs-initial-sync-modal .wbs-modal-ok{min-width:66px}',
