@@ -493,12 +493,14 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 // 1.2.38：防止 --probe-client-running 探测进程再次派生探测进程；监控仅由持有单实例锁的 daemon 启动。
 // 1.2.39：限制 macOS pgrep 探针和父进程等待时间，避免系统过载时探针长期堆积。
 // 1.2.40：周期性客户端运行探测改用 tasklist 轻量存在性检查（不经 WMI），CIM 进程查询加 -Filter 服务端过滤，刷新间隔 5s→15s（可用 WORKDADDY_CLIENT_REFRESH_MS 覆盖）；完整 CIM 验证仅保留给 /api/client/relaunch 等用户主动操作。
+// 1.2.41：会话工作目录巡检跳过已失效的卷，同一卷根只提示一次，卷恢复后自动继续修复。
 // 1.2.42：账号设置支持共享身份与记忆，切换时同步最新档案并保留覆盖前备份。
 // 1.2.44：精简来源选择文字，明确共享范围仅限身份与本地记忆。
 // 1.2.45：同步功能统一使用 WorkBuddy 的「个性化」名称。
 // 1.2.43：共享身份提示使用全局说明浮层，来源列出未设置账号并简化文案。
-const DAEMON_VERSION = '1.2.45';
-const DAEMON_BUILD_ID = 'release-1.2.45-personalization-copy';
+// 1.2.46：合入失效卷上的会话目录修复保护，避免后台反复尝试创建目录。
+const DAEMON_VERSION = '1.2.46';
+const DAEMON_BUILD_ID = 'release-1.2.46-session-cwd-volume-guard';
 const usageReporter = createUsageReporter({ profile: PROFILE.id, version: DAEMON_VERSION });
 configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const automationDiscovery = createAutomationDiscovery({
@@ -4802,6 +4804,8 @@ function createDirectoryNoFollow(directory) {
 }
 
 let sessionCwdRepairInFlight = null;
+// 只去重提示；每轮仍检查卷状态，盘符或共享恢复后无需重启 daemon。
+const reportedMissingCwdRoots = new Set();
 function repairMissingSessionWorkspaces() {
   if (sessionCwdRepairInFlight) return sessionCwdRepairInFlight;
   sessionCwdRepairInFlight = (async () => {
@@ -4809,10 +4813,17 @@ function repairMissingSessionWorkspaces() {
     const wbHome = path.dirname(SESSIONS_DB);
     const rows = await sqliteQuery("SELECT id, cwd FROM sessions WHERE deleted_at IS NULL AND cwd IS NOT NULL AND cwd != '';" );
     const repaired = [];
+    const missingCwdRoots = new Set();
     let skipped = 0;
     for (const row of rows.slice(0, 2000)) {
       const cwd = String(row.cwd || '').trim();
       if (!cwd || fs.existsSync(cwd) || !sessionPayloadExists(wbHome, row.id)) { skipped++; continue; }
+      const root = path.parse(cwd).root;
+      if (root && !fs.existsSync(root)) {
+        skipped++;
+        missingCwdRoots.add(root);
+        continue;
+      }
       try {
         createDirectoryNoFollow(cwd);
         if (fs.statSync(cwd).isDirectory()) repaired.push(cwd);
@@ -4820,6 +4831,12 @@ function repairMissingSessionWorkspaces() {
         skipped++;
         log(`[sessions-cwd-repair] 跳过 ${cwd}: ${error.message}`);
       }
+    }
+    // 缺失卷的提示只记录卷根，避免写入完整会话路径。
+    for (const root of missingCwdRoots) {
+      if (reportedMissingCwdRoots.has(root)) continue;
+      reportedMissingCwdRoots.add(root);
+      log(`[sessions-cwd-repair] 跳过所在卷不存在的会话：${root}`);
     }
     if (repaired.length) log(`[sessions-cwd-repair] 已恢复 ${repaired.length} 个会话工作目录（消息文件未改动）`);
     return { repaired, skipped };

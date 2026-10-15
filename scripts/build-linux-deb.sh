@@ -186,6 +186,7 @@ def add_entry(archive, path, name):
     info = archive.gettarinfo(str(path), name)
     info.uid = info.gid = 0
     info.uname = info.gname = 'root'
+    info.mtime = int(info.mtime)
     if info.isfile():
         with path.open('rb') as source:
             archive.addfile(info, source)
@@ -199,9 +200,10 @@ def add_tree(archive, root, prefix='.'):
 with tempfile.TemporaryDirectory() as tmp:
     control = pathlib.Path(tmp, 'control.tar.xz')
     data = pathlib.Path(tmp, 'data.tar.xz')
-    with tarfile.open(control, 'w:xz') as archive:
+    # Older dpkg rejects PAX extension headers, including fractional mtimes.
+    with tarfile.open(control, 'w:xz', format=tarfile.USTAR_FORMAT) as archive:
         add_tree(archive, stage / 'DEBIAN')
-    with tarfile.open(data, 'w:xz') as archive:
+    with tarfile.open(data, 'w:xz', format=tarfile.USTAR_FORMAT) as archive:
         for root in ('opt', 'usr'):
             add_entry(archive, stage / root, './' + root)
             add_tree(archive, stage / root, './' + root)

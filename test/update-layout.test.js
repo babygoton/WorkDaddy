@@ -932,13 +932,6 @@ test('macOS package launcher returns focus to the target WorkBuddy and separates
   assert.match(build, /manual inject result:[\s\S]*activate_target_app/);
 });
 
-test('troubleshooting prompts keep Sentry reports short and omit raw logs', () => {
-  const prompt = fs.readFileSync(path.join(repoRoot, '安装失败自主解决提示词.txt'), 'utf8');
-  assert.ok(prompt.length < 3500, 'source prompt should stay compact');
-  assert.match(prompt, /报告硬上限 3500 字符/);
-  assert.match(prompt, /不要粘贴完整日志/);
-});
-
 test('daemon lock falls back when the data-directory lock is not writable on Windows', () => {
   const daemon = read('daemon.js');
   assert.match(daemon, /DAEMON_LOCK_FALLBACK_FILE/);

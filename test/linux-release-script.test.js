@@ -2,6 +2,7 @@
 
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const test = require('node:test');
@@ -9,12 +10,72 @@ const test = require('node:test');
 const root = path.join(__dirname, '..');
 const script = path.join(root, 'scripts', 'build-linux-deb.sh');
 
+test('cross-packager writes tar headers supported by older dpkg with fractional file timestamps', (t) => {
+  const python = (process.platform === 'win32' ? ['python', 'python3'] : ['python3', 'python'])
+    .find(command => spawnSync(command, ['-c', 'import sys, tarfile, lzma; assert sys.version_info >= (3, 8)']).status === 0);
+  if (!python) {
+    t.skip('Requires Python 3.8+ with lzma for the cross-packager');
+    return;
+  }
+  const source = fs.readFileSync(script, 'utf8');
+  const packager = source.match(/<<'PY'\n([\s\S]*?)\nPY/)[1];
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'workdaddy-deb-compat-'));
+  try {
+    const stage = path.join(temp, 'stage');
+    const scripts = path.join(stage, 'opt/workdaddy/scripts');
+    fs.mkdirSync(path.join(stage, 'DEBIAN'), { recursive: true });
+    fs.mkdirSync(path.join(stage, 'usr/share/applications'), { recursive: true });
+    fs.mkdirSync(path.join(scripts, 'runtime/node'), { recursive: true });
+    fs.writeFileSync(path.join(stage, 'DEBIAN/control'), 'Package: workdaddy\nVersion: 1.2.14\nArchitecture: amd64\n');
+    const daemon = path.join(scripts, 'daemon.js');
+    fs.writeFileSync(daemon, "const DAEMON_VERSION = '1.2.14';\n");
+    fs.utimesSync(daemon, 1700000000.125, 1700000000.125);
+    const elf = Buffer.alloc(20);
+    elf.set([0x7f, 0x45, 0x4c, 0x46, 0x02]);
+    elf.writeUInt16LE(62, 18);
+    fs.writeFileSync(path.join(scripts, 'runtime/node/node'), elf, { mode: 0o755 });
+    const longPath = path.join(scripts, 'builtin', 'a'.repeat(70), 'theme.json');
+    fs.mkdirSync(path.dirname(longPath), { recursive: true });
+    fs.writeFileSync(longPath, '{}');
+    const checkHeaders = `
+import io
+import lzma
+with output.open('rb') as deb:
+    deb.seek(8)
+    for expected in ('debian-binary', 'control.tar.xz', 'data.tar.xz'):
+        header = deb.read(60)
+        size = int(header[48:58])
+        contents = deb.read(size)
+        deb.read(size % 2)
+        if not expected.endswith('.tar.xz'):
+            continue
+        raw = lzma.decompress(contents)
+        offset = 0
+        while any(raw[offset:offset + 512]):
+            block = raw[offset:offset + 512]
+            assert block[156:157] in (b'0', b'5'), (expected, block[156:157], 'unsupported tar header')
+            size = int(block[124:136].strip(b'\\x00 ') or b'0', 8)
+            offset += 512 + ((size + 511) // 512) * 512
+with tarfile.open(fileobj=io.BytesIO(contents), mode='r:xz') as archive:
+    assert archive.extractfile('./opt/workdaddy/scripts/daemon.js').read() == b"const DAEMON_VERSION = '1.2.14';\\n"
+    assert any(len(member.name) > 100 for member in archive.getmembers())
+    assert archive.getmember('./opt/workdaddy/scripts/runtime/node/node').mode == 0o755
+`;
+    const result = spawnSync(python, ['-', stage, path.join(temp, 'fixture.deb'), '1.2.14', '/opt/workdaddy', 'workdaddy', 'amd64'], {
+      input: packager + '\n' + checkHeaders, encoding: 'utf8',
+    });
+    assert.equal(result.status, 0, result.stderr || result.error?.message);
+  } finally {
+    fs.rmSync(temp, { recursive: true, force: true });
+  }
+});
+
 test('Linux release builds a versioned, self-contained Debian package without root install hooks', () => {
   const source = fs.readFileSync(script, 'utf8');
   assert.match(source, /dpkg-deb --build --root-owner-group/);
   assert.match(source, /CROSS_PACKAGE=1/);
-  assert.match(source, /tarfile\.open\(control, 'w:xz'\)/);
-  assert.match(source, /tarfile\.open\(data, 'w:xz'\)/);
+  assert.match(source, /tarfile\.open\(control, 'w:xz', format=tarfile\.USTAR_FORMAT\)/);
+  assert.match(source, /tarfile\.open\(data, 'w:xz', format=tarfile\.USTAR_FORMAT\)/);
   assert.match(source, /expected_machine = \{'amd64': 62, 'arm64': 183\}/);
   assert.match(source, /actual_machine = int\.from_bytes\(node\[18:20\], 'little'\)/);
   assert.match(source, /WORKDADDY_BUILD_ARCH/);
