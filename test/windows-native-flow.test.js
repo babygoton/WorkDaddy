@@ -172,6 +172,18 @@ test('the current CodeBuddy CN installer path uses exact-path checks without req
   assert.match(matchSource, /target\.Binary != "" \|\| codeBuddyBinaryMatches\(profile, record\.Path\)/);
 });
 
+test('native lifecycle matching keeps WorkBuddy CN separate from CodeBuddy CN', () => {
+  const native = read('scripts/windows-native/main.go');
+  const start = native.indexOf('func workBuddyImage(');
+  const end = native.indexOf('\nfunc processNamesForBinary(', start);
+  assert.ok(start >= 0 && end > start);
+  const source = native.slice(start, end);
+  assert.match(source, /if profile == profileCodeCN \{\s*return "CodeBuddy CN\.exe"/);
+  assert.match(source, /if profile == profileAI \{\s*return "WorkBuddyAI\.exe"/);
+  assert.match(source, /if profile == profileCN \{\s*return "WorkBuddy\.exe"/);
+  assert.match(source, /return "WorkBuddy\.exe"/);
+});
+
 test('CodeDaddy installer rejects a wrong executable before native process inspection', () => {
   const installer = read('scripts/win/workdaddy.iss');
   assert.match(installer, /function SelectedClientFile\(const Candidate: String\): Boolean/);

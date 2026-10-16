@@ -634,6 +634,9 @@ func workBuddyImage(profile string) string {
 	if profile == profileAI {
 		return "WorkBuddyAI.exe"
 	}
+	if profile == profileCN {
+		return "WorkBuddy.exe"
+	}
 	return "WorkBuddy.exe"
 }
 
