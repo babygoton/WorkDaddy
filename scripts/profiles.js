@@ -97,7 +97,7 @@ const PROFILES = {
     // User/globalStorage/state.vscdb 只保存 VS Code 状态，不是模型配置。
     modelsFile: path.join(home, '.codebuddy', 'models.json'),
     apiHost: 'https://www.codebuddy.cn',
-    capabilities: { accounts: true, sessions: true, models: true, stashPrompt: false, nativeComposer: true, theme: true, themeTakeover: false, enhance: false, panelAppearance: 'light', robotStyle: 'black', apiTransport: 'cdp', checkin: true, growthDaily: true },
+    capabilities: { accounts: true, sessions: true, models: true, stashPrompt: false, nativeComposer: true, theme: true, themeTakeover: false, enhance: false, panelAppearance: 'native', robotStyle: 'black', apiTransport: 'cdp', checkin: true, growthDaily: true },
     targetHints: ['codebuddy cn'],
   },
   'codebuddy-intl': {
@@ -111,7 +111,7 @@ const PROFILES = {
     sessionDb: path.join(appSupport, 'CodeBuddy', 'codebuddy-sessions.vscdb'),
     modelsFile: path.join(home, '.codebuddy', 'models.json'),
     apiHost: 'https://www.codebuddy.ai',
-    capabilities: { accounts: true, sessions: true, models: true, stashPrompt: false, nativeComposer: true, theme: true, themeTakeover: false, enhance: false, panelAppearance: 'light', robotStyle: 'black', apiTransport: 'cdp', checkin: false, builtinAutomations: false },
+    capabilities: { accounts: true, sessions: true, models: true, stashPrompt: false, nativeComposer: true, theme: true, themeTakeover: false, enhance: false, panelAppearance: 'native', robotStyle: 'black', apiTransport: 'cdp', checkin: false, builtinAutomations: false },
     targetHints: ['codebuddy'],
   },
 };

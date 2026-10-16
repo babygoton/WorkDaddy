@@ -315,12 +315,16 @@ test('primary actions use native button tokens in every interaction state', () =
   assert.match(glass, /\.wbs-status-popover/);
 });
 
-for (const nativeComposer of [false, true]) test('theme controls are rendered only for WorkBuddy: nativeComposer=' + nativeComposer, () => {
+for (const nativeComposer of [false, true]) test('theme controls match the client theme capability: nativeComposer=' + nativeComposer, () => {
   const context = { CAPS: {nativeComposer}, WBS_BRAND: 'WorkDaddy', themePane: {dataset:{}}, wireThemePane() {}, applyAvatar() {} };
   vm.runInNewContext(section('function buildThemePane()', '    // 增强 pane'), context);
   context.buildThemePane();
-  assert.equal((context.themePane.innerHTML.match(/name="wbs-theme"/g) || []).length, nativeComposer ? 0 : 5);
+  assert.equal((context.themePane.innerHTML.match(/name="wbs-theme"/g) || []).length, nativeComposer ? 2 : 5);
   assert.equal(context.themePane.innerHTML.includes('接管主题'), !nativeComposer);
+  if (nativeComposer) {
+    assert.match(context.themePane.innerHTML, /id="wbs-native-theme-card"/);
+    assert.doesNotMatch(context.themePane.innerHTML, /value="(?:eye-care|cyber-purple|nebula)"/);
+  }
 });
 
 test('rapid theme selections ignore stale failures and disabled takeover prevents writes', async () => {
@@ -341,6 +345,61 @@ test('rapid theme selections ignore stale failures and disabled takeover prevent
   context.sessState.themeTakeover = false;
   await context.selectTheme('default');
   assert.equal(requests.length, 2);
+});
+
+test('CodeBuddy theme choices use native light/dark mode without takeover', async () => {
+  const requests = [];
+  const context = {
+    CAPS: { nativeComposer: true, themeTakeover: false },
+    sessState: { themeTakeover: false }, themePane: null, root: {},
+    syncWallpaperCardVisibility() {}, toast() {},
+    api: (route, options) => new Promise((resolve, reject) => requests.push({ route, options, resolve, reject })),
+  };
+  vm.runInNewContext(section('    var ALLOWED_THEMES =', '    // 页面主题由 daemon'), context);
+  const pending = context.selectTheme('dark');
+  assert.equal(requests.length, 1);
+  assert.equal(JSON.parse(requests[0].options.body).nativeOnly, true);
+  requests[0].resolve({ ok: true });
+  await pending;
+  await context.selectTheme('nebula');
+  assert.equal(requests.length, 1, 'CodeBuddy must expose only the official light/dark modes');
+});
+
+test('daemon accepts nativeOnly only for CodeBuddy official modes', () => {
+  assert.match(daemon, /const nativeOnly = body\.nativeOnly === true && PROFILE\.capabilities\.nativeComposer/);
+  assert.match(daemon, /const applyOptions = nativeOnly \? \{ nativeOnly: true \} : null/);
+  assert.match(daemon, /applyOptions \? applyThemeByCdp\(id, applyOptions\) : applyThemeByCdp\(id\)/);
+  assert.match(daemon, /if \(nativeOnly && id !== 'default' && id !== 'dark'\)/);
+});
+
+test('theme apply route responds and persists native theme selections and handles failures', async () => {
+  const start = daemon.indexOf("  if (req.method === 'POST' && p === '/api/theme-apply') {");
+  const end = daemon.indexOf('\n  // 保存自定义主题', start);
+  const route = vm.runInNewContext('(async function (req, res, p) {' + daemon.slice(start, end) + '})', {
+    readBody: async req => req.body,
+    PROFILE: { capabilities: { nativeComposer: true } },
+    getTheme: () => ({}),
+    applyThemeByCdp: async (id, options) => {
+      if (id === 'default') throw new Error('CDP unavailable');
+      assert.equal(options.nativeOnly, true);
+      return { ok: true };
+    },
+    fs: { writeFileSync: (file, data) => saved.push(JSON.parse(data)) },
+    path, DATA_DIR: '/synthetic',
+    json: (res, status, body) => { res.status = status; res.body = body; },
+    log() {},
+  });
+  const saved = [];
+  const success = {};
+  await route({ method: 'POST', body: { id: 'dark', nativeOnly: true } }, success, '/api/theme-apply');
+  assert.equal(success.status, 200);
+  assert.equal(success.body.id, 'dark');
+  assert.equal(saved.length, 1);
+  assert.equal(saved[0].id, 'dark');
+  const failure = {};
+  await route({ method: 'POST', body: { id: 'default', nativeOnly: true } }, failure, '/api/theme-apply');
+  assert.equal(failure.status, 500);
+  assert.equal(saved.length, 1);
 });
 
 test('wallpaper controls are exclusive to the selected frosted theme', () => {

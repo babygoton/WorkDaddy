@@ -395,23 +395,31 @@ function normalizeAutoContinueError(error) {
   var details = terminal.details && typeof terminal.details === 'object' ? terminal.details : {};
   function numberValue() {
     for (var i = 0; i < arguments.length; i++) {
+      if (arguments[i] === null || arguments[i] === undefined || arguments[i] === '' || typeof arguments[i] === 'boolean') continue;
       var n = Number(arguments[i]);
       if (Number.isSafeInteger(n)) return n;
     }
     return null;
   }
-  var code = numberValue(error.code, error.bizCode, terminal.bizCode, details.code);
+  // The official cap banner gives terminal.bizCode=6004 precedence over the
+  // outer transport code (including 0/500), so statistics must do the same.
+  var code = Number(terminal.bizCode) === 6004 ? 6004 : numberValue(error.code, error.bizCode, terminal.bizCode, details.code);
   var statusCode = numberValue(error.statusCode, error.status, error.httpStatus);
   var requestModelId = String(error.requestModelId || error.modelId || details.requestModelId || '').slice(0, 160);
   var category = String(error.category || error.type || details.category || '').slice(0, 80).toLowerCase();
   var message = String(error.message || terminal.message || details.message || '').slice(0, 240);
+  // WorkBuddy 5.8's terminal.details is text, and may contain the only reset
+  // date. Match its banner's reset source without retaining provider text.
+  var resetTextSource = [terminal.details, terminal.message, error.message].filter(function (value) {
+    return typeof value === 'string';
+  }).map(function (value) { return value.slice(0, 4096); }).join(' ');
   var rateLimited = code === 6004 || statusCode === 429 || /rate.?limit|频率|限流/i.test(category + ' ' + message);
   var quotaExhausted = code === 14018 || code === 14012 || code === 14014 || code === 14019 || /quota|credit|额度|积分|余额/i.test(category + ' ' + message);
   var authFailure = statusCode === 401 || statusCode === 403 || /auth|credential|登录|认证/i.test(category + ' ' + message);
   var resetAt = null;
   var resetSource = details.resetAt || details.reset_at || terminal.resetAt || error.resetAt;
   if (resetSource === undefined || resetSource === null || resetSource === '') {
-    var resetMatch = /(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}(?:\s+UTC[+-]\d{1,2})?)/i.exec(message);
+    var resetMatch = /(\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\s*\(?UTC[+-]\d{1,2}\)?)?)/i.exec(resetTextSource);
     if (resetMatch) resetSource = resetMatch[1];
   }
   if (resetSource !== undefined && resetSource !== null && resetSource !== '') {
@@ -419,7 +427,10 @@ function normalizeAutoContinueError(error) {
     if (Number.isFinite(resetNumber)) resetAt = resetNumber < 1e12 ? Math.round(resetNumber * 1000) : Math.round(resetNumber);
     else {
       var resetText = String(resetSource).trim();
-      var parsed = Date.parse(resetText.replace(' UTC+8', '+08:00').replace(' UTC+0800', '+08:00').replace(' ', 'T'));
+      resetText = resetText.replace(/\s*\(?UTC\+0?8(?:00)?\)?$/i, '+08:00').replace(' ', 'T');
+      // Official cap dates are Shanghai wall clock, even on non-China hosts.
+      if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/.test(resetText)) resetText += '+08:00';
+      var parsed = Date.parse(resetText);
       if (Number.isFinite(parsed)) resetAt = parsed;
     }
   }
@@ -435,6 +446,68 @@ function normalizeAutoContinueError(error) {
     nonRetryable: rateLimited || quotaExhausted || authFailure || AUTO_CONTINUE_QUOTA_CODES[code] === true,
     terminal: terminal === error.terminal || terminal.isTerminal === true,
   };
+}
+
+// Cap statistics have their own read-only subscription. Auto-continue may be
+// disabled or detach a finished reply before its terminal error arrives.
+function createModelRateLimitObserver(options) {
+  var bindings = new Map();
+  var alive = true;
+  function inspect(controller, binding) {
+    if (!alive) return;
+    try {
+      var state = controller.sessionStore.getState() || {};
+      [state.error, state.warning].forEach(function (error) {
+        var normalized = normalizeAutoContinueError(error);
+        if (!normalized || normalized.code !== 6004) return;
+        var modelId = normalized.requestModelId || String(state.model || state.modelId || '');
+        if (!modelId) return;
+        binding.latest = {
+          conversationId: String(controller.conversationId || ''),
+          assistantId: String(error.requestId || ''),
+          rateLimited: true,
+          errorCode: 6004,
+          errorRequestModelId: modelId,
+          errorModelName: modelId,
+          errorResetAt: normalized.resetAt,
+        };
+      });
+      // Keep the sanitized cap after WorkBuddy clears a transient error, so a
+      // temporary local API failure can retry on the next discovery heartbeat.
+      if (binding.latest) options.record(binding.latest);
+    } catch (_) {}
+  }
+  function refresh() {
+    if (!alive) return;
+    var controllers;
+    try { controllers = options.discover() || []; } catch (_) { return; }
+    var seen = new Set(controllers);
+    bindings.forEach(function (binding, controller) {
+      if (seen.has(controller)) return;
+      try { if (binding.unsubscribe) binding.unsubscribe(); } catch (_) {}
+      bindings.delete(controller);
+    });
+    controllers.forEach(function (controller) {
+      if (!controller || !controller.sessionStore || typeof controller.sessionStore.getState !== 'function') return;
+      var binding = bindings.get(controller);
+      if (!binding) {
+        binding = {};
+        bindings.set(controller, binding);
+        try {
+          binding.unsubscribe = controller.sessionStore.subscribe(function () { inspect(controller, binding); });
+        } catch (_) {}
+      }
+      inspect(controller, binding);
+    });
+  }
+  refresh();
+  var timer = options.setInterval(refresh, 5000);
+  return { refresh: refresh, destroy: function () {
+    alive = false;
+    options.clearInterval(timer);
+    bindings.forEach(function (binding) { try { if (binding.unsubscribe) binding.unsubscribe(); } catch (_) {} });
+    bindings.clear();
+  } };
 }
 
 function classifyAutoContinueError(error) {
@@ -1014,6 +1087,7 @@ if (typeof module !== 'undefined' && module.exports) {
     classifySessionHealth: classifySessionHealth,
     classifyAutoContinueReply: classifyAutoContinueReply,
     normalizeAutoContinueError: normalizeAutoContinueError,
+    createModelRateLimitObserver: createModelRateLimitObserver,
     classifyAutoContinueError: classifyAutoContinueError,
     classifyAutoContinueControllerSnapshot: classifyAutoContinueControllerSnapshot,
     autoContinueMessageText: autoContinueMessageText,
@@ -2699,6 +2773,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     function mountPersistentOverlay(node) {
       node.setAttribute('data-wbs-panel-overlay', '');
       if (CAPS.panelAppearance === 'light') node.setAttribute('data-wbs-appearance', 'light');
+      if (CAPS.nativeComposer) node.setAttribute('data-wbs-profile', PROFILE_ID);
       document.body.appendChild(node);
       if (nativePanelMount) nativePanelMount.keep(node);
     }
@@ -10663,7 +10738,12 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         '<label class="wbs-ask-label" for="wbs-fab-auto-dock">自动贴边<span class="wbs-ask-hint">闲置 5 秒后收起，鼠标靠近即展开</span></label>' +
         '<label class="wbs-switch"><input type="checkbox" id="wbs-fab-auto-dock"><span class="wbs-switch-slider"></span></label>' +
         '</div></div>' +
-        (codeBuddyTheme ? '' : '<div class="wbs-pcard">' +
+        (codeBuddyTheme ? '<div class="wbs-pcard" id="wbs-native-theme-card">' +
+        '<div class="wbs-pcard-title">主题外观</div>' +
+        '<div class="wbs-theme-seg" id="wbs-theme-seg" role="radiogroup" aria-label="主题外观">' +
+        '<label class="wbs-theme-opt wbs-theme-option"><input type="radio" name="wbs-theme" value="default"><span>浅色</span></label>' +
+        '<label class="wbs-theme-opt wbs-theme-option"><input type="radio" name="wbs-theme" value="dark"><span>深色</span></label>' +
+        '</div></div>' : '<div class="wbs-pcard">' +
         '<div class="wbs-theme-takeover-row">' +
         '<div class="wbs-pcard-title">接管主题</div>' +
         '<label class="wbs-switch"><input type="checkbox" id="wbs-theme-takeover" checked aria-label="接管主题"><span class="wbs-switch-slider"></span></label></div>' +
@@ -12026,10 +12106,12 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         });
     }
 
-    // ===== 主题系统（WorkDaddy 换肤）：segmented 切换 =====
+    // ===== 主题系统：WorkDaddy 换肤 / CodeBuddy 官方浅色深色切换 =====
     // 主题 = CSS 变量覆盖（--wb-* / --dc-*），daemon 通过 CDP 注入 <style>。
-    // 五种外观共用主题接管；只有毛玻璃使用壁纸、蒙版和背景模糊。
-    var ALLOWED_THEMES = ['default', 'dark', 'nebula', 'eye-care', 'cyber-purple'];
+    // WorkDaddy 提供五种外观并共用主题接管；CodeBuddy 只暴露官方浅色/深色。
+    var ALLOWED_THEMES = (typeof CAPS !== 'undefined' && CAPS.nativeComposer)
+      ? ['default', 'dark']
+      : ['default', 'dark', 'nebula', 'eye-care', 'cyber-purple'];
     var currentThemeId = 'default';
     var themeSelectionSerial = 0;
     function syncThemeSelection(id) {
@@ -12041,16 +12123,33 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       });
       syncWallpaperCardVisibility(currentThemeId);
     }
+    function readNativeThemeId() {
+      if (!(typeof CAPS !== 'undefined' && CAPS.nativeComposer)) return null;
+      try {
+        var html = document.documentElement;
+        var body = document.body;
+        var dark = html && (html.getAttribute('data-theme') === 'dark' || html.classList.contains('cb-dark'));
+        dark = dark || body && (body.getAttribute('data-vscode-theme-kind') === 'vscode-dark' || body.getAttribute('data-vscode-theme-name') === 'IDE Night');
+        return dark ? 'dark' : 'default';
+      } catch (_) { return null; }
+    }
     function loadThemes() {
       var serial = themeSelectionSerial;
+      var nativeCurrent = readNativeThemeId();
+      if (nativeCurrent) syncThemeSelection(nativeCurrent);
       return api('/api/themes')
         .then(function (d) {
-          if (serial === themeSelectionSerial) syncThemeSelection(d.current);
+          if (serial === themeSelectionSerial) syncThemeSelection(nativeCurrent || d.current);
         })
         .catch(function () {});
     }
     function selectTheme(id) {
-      if (!sessState.themeTakeover || CAPS.themeTakeover === false || ALLOWED_THEMES.indexOf(id) < 0) return;
+      var nativeTheme = typeof CAPS !== 'undefined' && CAPS.nativeComposer;
+      if (!nativeTheme) {
+        if (!sessState.themeTakeover) return;
+        if (CAPS.themeTakeover === false) return;
+      }
+      if (ALLOWED_THEMES.indexOf(id) < 0) return;
       var previous = currentThemeId;
       var serial = ++themeSelectionSerial;
       syncThemeSelection(id);
@@ -12069,7 +12168,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       return api('/api/theme-apply', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ id: id }),
+        body: JSON.stringify({ id: id, nativeOnly: typeof CAPS !== 'undefined' && CAPS.nativeComposer }),
       });
     }
     // 壁纸控件仅在毛玻璃下显示；保留默认主题下上传壁纸的兼容目标。
@@ -13394,15 +13493,18 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     }
 
     function acRecordModelRateLimit(snapshot) {
-      if (!snapshot || !snapshot.rateLimited) return;
+      if (!snapshot || !snapshot.rateLimited || Number(snapshot.errorCode) !== 6004) return;
       var modelId = String(snapshot.errorRequestModelId || 'unknown-model').slice(0, 160);
       var code = Number(snapshot.errorCode);
       var signature = [snapshot.conversationId, snapshot.assistantId, modelId, code, snapshot.errorResetAt || ''].join('|');
       if (acRateLimitRecorded[signature]) return;
-      acRateLimitRecorded[signature] = true;
-      if (!acCurrentUidPromise) acCurrentUidPromise = api('/api/current').then(function (current) { return String(current && current.uid || '').trim(); }).catch(function () { return ''; });
+      acRateLimitRecorded[signature] = 'pending';
+      if (!acCurrentUidPromise) acCurrentUidPromise = api('/api/current').then(function (current) {
+        var uid = String(current && current.uid || '').trim();
+        if (!uid) throw new Error('Current account is not ready');
+        return uid;
+      }).catch(function (error) { acCurrentUidPromise = null; throw error; });
       acCurrentUidPromise.then(function (uid) {
-        if (!uid) return;
         return api('/api/model-rate-limit', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
@@ -13411,13 +13513,14 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
             modelId: modelId,
             modelName: snapshot.errorModelName || modelId,
             resetAt: snapshot.errorResetAt || null,
-            reasonCode: Number.isSafeInteger(code) ? code : 6004,
+            reasonCode: 6004,
             source: 'renderer-error',
           }),
         }).then(function () {
+          acRateLimitRecorded[signature] = true;
           try { window.dispatchEvent(new Event('workdaddy:accounts-updated')); } catch (_) {}
-        }).catch(function () {});
-      });
+        });
+      }).catch(function () { delete acRateLimitRecorded[signature]; });
     }
 
     function acControllerSnapshot(controller) {
@@ -17226,6 +17329,17 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       }
     });
 
+    var modelRateLimitObserver = createModelRateLimitObserver({
+      discover: function () {
+        return CAPS.accounts && WBS_COMPAT && typeof WBS_COMPAT.findConversationControllers === 'function'
+          ? WBS_COMPAT.findConversationControllers(document) : [];
+      },
+      record: acRecordModelRateLimit,
+      setInterval: setBuildInterval,
+      clearInterval: function (timer) { clearInterval(timer); },
+    });
+    registerDisposer(function () { modelRateLimitObserver.destroy(); });
+
     // 注入完成即按开关状态启动/停止监控（不依赖打开增强面板）
     try { ensureAutoContinueMonitor(); } catch (e) {}
     // 注入完成即同步会话模块状态（暂存/快捷短语开关 + 短语列表）并应用到输入框按钮显隐
@@ -17441,6 +17555,9 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '.wbs-panel.show{display:flex}',
     '.wbs-root.wbs-panel-light,[data-wbs-appearance="light"]{color-scheme:light;--wb-bg-primary:#fff;--wb-bg-secondary:#fff;--wb-bg-tertiary:#f2f2f2;--wb-bg-popover:#fff;--wb-bg-input:#fff;--wb-bg-hover:#f5f5f5;--wb-bg-active:#eee;--wb-border-subtle:#f0f0f0;--wb-border-default:#e5e5e5;--wb-border-hover:#ccc;--wb-border-strong:#ccc;--wb-color-text-primary:#1f1f1f;--wb-color-text-secondary:#666;--wb-color-text-tertiary:#999;--wb-icon-secondary:#666;--wb-icon-tertiary:#999;--wb-button-primary-bg:#1f1f1f;--wb-button-primary-fg:#fff;--wb-button-primary-bg-hover:#333;--wb-button-primary-bg-disabled:#eee;--wb-button-primary-fg-disabled:#999}',
     '.wbs-panel-light .wbs-panel{background:var(--wb-bg-popover);color:var(--wb-color-text-primary)}',
+    // CodeBuddy 的面板跟随官方浅色/深色；原生深色下必须在根节点同层覆盖
+    // 组件变量，否则宿主的深色文字规则会落在浅色面板上，形成白底浅字。
+    ':is(html.cb-dark,html[data-theme="dark"],body[data-vscode-theme-name*="dark" i],body[data-vscode-theme-name*="night" i]) :is(.wbs-root[data-wbs-profile="codebuddy-cn"],.wbs-root[data-wbs-profile="codebuddy-intl"]){color-scheme:dark;--wb-bg-primary:#0a0a0c;--wb-bg-secondary:#131316;--wb-bg-tertiary:#1b1b20;--wb-bg-popover:#131316;--wb-bg-input:#131316;--wb-bg-hover:color-mix(in srgb,#ffffff 7%,transparent);--wb-bg-active:color-mix(in srgb,#ffffff 10%,transparent);--wb-border-subtle:#202025;--wb-border-default:color-mix(in srgb,#ffffff 13%,transparent);--wb-border-hover:color-mix(in srgb,#ffffff 22%,transparent);--wb-border-strong:#2c2c33;--wb-color-text-primary:#e6e6e9;--wb-color-text-secondary:rgba(230,230,233,.72);--wb-color-text-tertiary:rgba(230,230,233,.55);--wb-icon-secondary:rgba(230,230,233,.72);--wb-icon-tertiary:rgba(230,230,233,.55);--wb-button-primary-bg:rgba(255,255,255,.92);--wb-button-primary-fg:#0a0a0c;--wb-button-primary-bg-hover:rgba(255,255,255,.8);--wb-button-primary-bg-disabled:rgba(230,230,233,.18);--wb-button-primary-fg-disabled:rgba(230,230,233,.42)}',
     // 英文文案更长：英文面板额外加宽，配合 label 自适应避免挤压
     'html[data-wbs-language="en"] .wbs-panel{width:880px}',
     // EN 下固定宽度 label 容易溢出：phone/credit/token 列的 label 释放为自适应宽度
@@ -17503,6 +17620,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '.wbs-credit-tip-value{display:flex;align-items:center;gap:8px;padding:8px 9px;border:1px solid var(--wb-border-subtle,rgba(20,24,32,.1));border-radius:8px;background:color-mix(in srgb,var(--wb-bg-secondary,#f6f7f8) 72%,transparent);color:var(--wb-color-text-primary,#1f1f1f)}.wbs-credit-tip-value i.credit{color:var(--wbs-tip-credit)}.wbs-credit-tip-value b{font-size:12px;font-variant-numeric:tabular-nums}.wbs-credit-tip-value+.wbs-daily-manual{margin-top:11px}',
     '.wbs-daily-popover-empty,.wbs-daily-refresh-error{margin-top:8px;padding-top:8px;border-top:1px solid var(--wb-border-subtle,rgba(20,24,32,.12));color:var(--wb-icon-secondary,#667085);font-size:10.5px;line-height:1.55;overflow-wrap:anywhere}.wbs-daily-refresh-error{color:var(--wb-color-text-secondary,#5f6368)}',
     'html.cb-dark .wbs-status-popover,html[data-theme="dark"] .wbs-status-popover,body[data-vscode-theme-name*="dark" i] .wbs-status-popover{background:color-mix(in srgb,var(--wb-bg-popover,#202126) 88%,transparent);border-color:var(--wb-border-subtle,rgba(255,255,255,.14));color:var(--wb-color-text-primary,#f2f3f5);box-shadow:0 14px 38px rgba(0,0,0,.42),inset 0 1px 0 rgba(255,255,255,.08)}',
+    ':is(html.cb-dark,html[data-theme="dark"],body[data-vscode-theme-name*="dark" i],body[data-vscode-theme-name*="night" i]) .wbs-status-popover[data-wbs-profile^="codebuddy-"]{color-scheme:dark;--wb-bg-primary:#0a0a0c;--wb-bg-secondary:#131316;--wb-bg-tertiary:#1b1b20;--wb-bg-popover:#131316;--wb-bg-input:#131316;--wb-bg-hover:color-mix(in srgb,#ffffff 7%,transparent);--wb-bg-active:color-mix(in srgb,#ffffff 10%,transparent);--wb-border-subtle:#202025;--wb-border-default:color-mix(in srgb,#ffffff 13%,transparent);--wb-border-hover:color-mix(in srgb,#ffffff 22%,transparent);--wb-border-strong:#2c2c33;--wb-color-text-primary:#e6e6e9;--wb-color-text-secondary:rgba(230,230,233,.72);--wb-color-text-tertiary:rgba(230,230,233,.55);--wb-icon-secondary:rgba(230,230,233,.72);--wb-icon-tertiary:rgba(230,230,233,.55);--wb-button-primary-bg:rgba(255,255,255,.92);--wb-button-primary-fg:#0a0a0c;--wb-button-primary-bg-hover:rgba(255,255,255,.8);--wb-button-primary-bg-disabled:rgba(230,230,233,.18);--wb-button-primary-fg-disabled:rgba(230,230,233,.42)}',
     '@media (prefers-reduced-motion:reduce){.wbs-daily-rings,.wbs-daily-liquid,.wbs-growth-task-action{transition:none!important}.wbs-daily-cat-mark{animation:none!important}.wbs-daily-refresh-spinner,.wbs-growth-task-action-spinner{animation-duration:1.8s}}',
     '.wbs-meta{display:flex;flex-direction:column;gap:2px}',
     '.wbs-secondary-row{flex-direction:row;align-items:center;justify-content:space-between;gap:12px;margin-bottom:8px}',
@@ -17969,6 +18087,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     /* 免打扰确认弹窗：挂载在面板容器内，仅覆盖面板区域（弹窗居中于面板，不盖住 WorkBuddy 窗口） */
     '.wbs-modal-mask.wbs-modal-mask-panel{position:absolute;inset:0;z-index:2147483645;border-radius:18px}',
     '.wbs-modal{width:300px;max-width:88vw;background:var(--wb-bg-popover,#fff);border-radius:14px;padding:16px;box-shadow:0 10px 40px rgba(0,0,0,.25);color:var(--wb-color-text-primary,#1f1f1f)}',
+    ':is(html.cb-dark,html[data-theme="dark"],body[data-vscode-theme-name*="dark" i],body[data-vscode-theme-name*="night" i]) :is(.wbs-modal,.wbs-account-note-popover,.wbs-status-popover,.wbs-credit-summary-popover){background:var(--wb-bg-popover,#131316);border-color:var(--wb-border-default,#2c2c33);color:var(--wb-color-text-primary,#e6e6e9)}',
     /* 弹窗文字主题适配：body 继承 .wbs-root 硬编码深色字，暗色下必须显式覆盖为浅色 */
     'html.cb-dark .wbs-modal,html.cb-dark .wbs-modal-title,html.cb-dark .wbs-modal-body,html[data-theme="dark"] .wbs-modal,html[data-theme="dark"] .wbs-modal-title,html[data-theme="dark"] .wbs-modal-body{color:#e6e6e9}',
     'html.cb-dark .wbs-modal-btn:not(:where(.wbs-modal-ok,.primary)),html[data-theme="dark"] .wbs-modal-btn:not(:where(.wbs-modal-ok,.primary)){color:#d5d5d9;border-color:rgba(232,232,234,0.16);background:rgba(255,255,255,0.05)}',

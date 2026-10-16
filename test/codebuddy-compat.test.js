@@ -14,12 +14,27 @@ test('CodeBuddy keeps accounts, sessions and models but disables composer enhanc
     for(const key of ['accounts','sessions','models','theme']) assert.equal(c[key],true);
     assert.equal(c.themeTakeover,false);assert.equal(c.enhance,false);assert.equal(c.nativeComposer,true);assert.equal(c.stashPrompt,false);
     assert.equal(c.sessionsReadOnly,undefined);assert.equal(c.modelsReadOnly,undefined);
-    assert.equal(c.apiTransport,'cdp');assert.equal(c.panelAppearance,'light');assert.equal(c.robotStyle,'black');
+    assert.equal(c.apiTransport,'cdp');assert.equal(c.panelAppearance,'native');assert.equal(c.robotStyle,'black');
   }
   assert.doesNotMatch(inject,/WBS_CODEBUDDY_BOOTSTRAP|CAPS\.sessionsReadOnly|CAPS\.modelsReadOnly/);
   assert.match(inject,/CAPS\.enhance === false/);
   assert.match(inject,/themeSwitch\.disabled = true/);
   assert.match(inject,/window\.__wbsApiFetch\(path, request, WBS_API_TOKEN\)/);
+});
+test('CodeBuddy panel follows the official dark theme palette instead of forcing light colors', () => {
+  assert.match(inject, /if \(CAPS\.panelAppearance === 'light'\) root\.classList\.add\('wbs-panel-light'\)/);
+  assert.match(inject, /html\.cb-dark,html\[data-theme="dark"\],body\[data-vscode-theme-name\*="dark" i\],body\[data-vscode-theme-name\*="night" i\]/);
+  assert.match(inject, /\.wbs-root\[data-wbs-profile="codebuddy-cn"\]/);
+  assert.match(inject, /--wb-bg-primary:#0a0a0c/);
+  assert.match(inject, /--wb-color-text-primary:#e6e6e9/);
+  assert.match(inject, /body\[data-vscode-theme-name\*="night" i\].*\.wbs-modal/);
+});
+test('CodeBuddy growth popover gives nested cards the dark palette too', () => {
+  assert.match(inject, /if \(CAPS\.nativeComposer\) node\.setAttribute\('data-wbs-profile', PROFILE_ID\)/);
+  assert.match(inject, /\.wbs-status-popover\[data-wbs-profile\^="codebuddy-"\][^']*--wb-bg-secondary:#131316/);
+  assert.match(inject, /\.wbs-status-popover\[data-wbs-profile\^="codebuddy-"\][^']*--wb-color-text-primary:#e6e6e9/);
+  assert.match(inject, /wbs-growth-task-section/);
+  assert.match(inject, /wbs-daily-detail/);
 });
 test('CodeBuddy injection compiles with all shared pages and the CSP-compatible bridge',()=>{
   const start=daemon.indexOf('function buildInjectScript()');

@@ -499,8 +499,9 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 // 1.2.45：同步功能统一使用 WorkBuddy 的「个性化」名称。
 // 1.2.43：共享身份提示使用全局说明浮层，来源列出未设置账号并简化文案。
 // 1.2.46：合入失效卷上的会话目录修复保护，避免后台反复尝试创建目录。
-const DAEMON_VERSION = '1.2.46';
-const DAEMON_BUILD_ID = 'release-1.2.46-session-cwd-volume-guard';
+// 1.2.47：CodeBuddy 主题页支持切换官方浅色/深色外观。
+const DAEMON_VERSION = '1.2.47';
+const DAEMON_BUILD_ID = 'release-1.2.47-codebuddy-native-theme';
 const usageReporter = createUsageReporter({ profile: PROFILE.id, version: DAEMON_VERSION });
 configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const automationDiscovery = createAutomationDiscovery({
@@ -8448,7 +8449,12 @@ function readBackgroundBlur() {
 }
 
 async function applyThemeByCdp(id, options = {}) {
-  if (!PROFILE.capabilities.theme || PROFILE.capabilities.themeTakeover === false) throw new Error(`${PROFILE.name} 暂不支持毛玻璃主题`);
+  const nativeOnly = options.nativeOnly === true;
+  if (!PROFILE.capabilities.theme || (PROFILE.capabilities.themeTakeover === false && !nativeOnly)) throw new Error(`${PROFILE.name} 暂不支持毛玻璃主题`);
+  // WorkBuddy's internal nebula transition also uses nativeOnly before
+  // applying its own CSS, so only an explicit non-native profile is rejected.
+  if (nativeOnly && PROFILE.capabilities.nativeComposer === false) throw new Error(`${PROFILE.name} 不支持原生主题切换`);
+  if (nativeOnly && id !== 'default' && id !== 'dark') throw new Error(`${PROFILE.name} 仅支持浅色和深色主题`);
   if (options.release && readSessionState().themeTakeoverEnabled !== false) return { applied: false, takeover: true };
   if (options.automatic && readSessionState().themeTakeoverEnabled === false) return { applied: false, takeover: false };
   if (!options.automatic && !options.nativeOnly && !options.release) themeApplyGeneration++;
@@ -11913,7 +11919,9 @@ function handleApi(req, res) {
     return readBody(req).then((body) => {
       const id = (body.id || 'default') + '';
       if (id !== 'default' && !getTheme(id)) return json(res, 404, { ok: false, error: '主题不存在: ' + id });
-      return applyThemeByCdp(id)
+      const nativeOnly = body.nativeOnly === true && PROFILE.capabilities.nativeComposer && (id === 'default' || id === 'dark');
+      const applyOptions = nativeOnly ? { nativeOnly: true } : null;
+      return (applyOptions ? applyThemeByCdp(id, applyOptions) : applyThemeByCdp(id))
         .then((info) => {
           if (info.cancelled) return json(res, 409, { ok: false, error: '主题切换已被后续操作取消' });
           try {
