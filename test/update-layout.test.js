@@ -924,6 +924,14 @@ test('macOS launchers resolve an explicit target configuration before auto-disco
   assert.match(build, /workbuddy-target\.js" --resolve --profile=/);
 });
 
+test('macOS launchers persist an automatically discovered enterprise target', () => {
+  const relaunch = read('relaunch-with-cdp.sh');
+  assert.match(relaunch, /单个企业客户端自动发现时也要持久化目标/);
+  assert.match(relaunch, /workbuddy-target\.js" --configure --platform darwin/);
+  assert.match(relaunch, /official_name="WorkBuddy"/);
+  assert.match(relaunch, /\[ "\$APP_NAME" != "\$official_name" \]/);
+});
+
 test('macOS package launcher returns focus to the target WorkBuddy and separates AI identity', () => {
   const build = fs.readFileSync(path.join(repoRoot, 'scripts', 'build-mac-dmg.sh'), 'utf8');
   assert.match(build, /activate_target_app\(\)/);

@@ -173,6 +173,39 @@ function findAuthFile(authDir, stem) {
   return matches.length === 1 ? path.join(authDir, matches[0]) : '';
 }
 
+// macOS 企业客户端的 Electron 进程名固定为 Electron，不能像 Windows/Linux
+// 一样从可执行文件名推导凭据文件。优先用 .app 名称生成精确文件名，
+// 再在 auth 目录中选择唯一的带后缀凭据，避免被历史遗留的官方文件遮蔽。
+function findMacAuthFile(authDir, appName, profileId) {
+  const canonical = path.join(authDir, profileId === 'workbuddy-ai'
+    ? 'workbuddy-desktop-ai.info'
+    : 'workbuddy-desktop.info');
+  let names;
+  try {
+    names = fs.readdirSync(authDir).filter((name) => /^workbuddy-desktop(?:-[^/]+)?\.info$/i.test(name));
+  } catch (_) {
+    return canonical;
+  }
+  const officialName = profileId === 'workbuddy-ai' ? 'WorkBuddy AI' : 'WorkBuddy';
+  if (clean(appName).toLowerCase() === officialName.toLowerCase()) return canonical;
+  const suffix = clean(appName).replace(/^workbuddy(?:\s*ai)?[\s_-]*/i, '').trim();
+  if (suffix) {
+    const exact = path.join(authDir, `workbuddy-desktop-${suffix}.info`);
+    if (names.some((name) => name === path.basename(exact))) return exact;
+  }
+  const custom = names.filter((name) => !/^workbuddy-desktop(?:-ai)?\.info$/i.test(name));
+  if (custom.length === 1) return path.join(authDir, custom[0]);
+  if (suffix && custom.length > 1) {
+    const tokens = suffix.toLowerCase().split(/[^a-z0-9\u0080-\uffff]+/).filter((token) => token.length > 1);
+    const matched = custom.filter((name) => {
+      const lower = name.toLowerCase();
+      return tokens.length > 0 && tokens.every((token) => lower.includes(token));
+    });
+    if (matched.length === 1) return path.join(authDir, matched[0]);
+  }
+  return canonical;
+}
+
 function buildTargetFromBinary(options = {}) {
   const platform = options.platform || process.platform;
   const pathApi = platformPath(platform);
@@ -252,6 +285,13 @@ function buildTargetFromBinary(options = {}) {
     const extensionAuth = posixPath.join(appSupport, 'CodeBuddyExtension', 'Data', 'Public', 'auth');
     const ai = profileId === 'workbuddy-ai';
     const workbuddyRoot = posixPath.join(home, ai ? '.workbuddy-ai' : '.workbuddy');
+    const authFile = findMacAuthFile(extensionAuth, appName, profileId);
+    let apiHost = ai ? 'https://www.workbuddy.ai' : 'https://www.codebuddy.cn';
+    try {
+      if (fs.existsSync(authFile)) {
+        apiHost = apiHostFromAuth(JSON.parse(fs.readFileSync(authFile, 'utf8'))) || apiHost;
+      }
+    } catch (_) {}
     return validateTarget({
       schemaVersion: 1,
       clientType: 'enterprise',
@@ -259,10 +299,10 @@ function buildTargetFromBinary(options = {}) {
       binary,
       version: clean(options.version),
       processNames: [processName],
-      authFile: posixPath.join(extensionAuth, ai ? 'workbuddy-desktop-ai.info' : 'workbuddy-desktop.info'),
+      authFile,
       sessionDb: posixPath.join(workbuddyRoot, 'workbuddy.db'),
       modelsFile: posixPath.join(workbuddyRoot, 'models.json'),
-      apiHost: ai ? 'https://www.workbuddy.ai' : 'https://www.codebuddy.cn',
+      apiHost,
       targetHints: [appName].filter(Boolean),
       cdp: { mode: 'argument', port },
       capabilities: { accounts: true, sessions: true, models: true, stashPrompt: true, theme: true, checkin: true },

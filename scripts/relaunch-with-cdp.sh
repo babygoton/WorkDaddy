@@ -162,6 +162,23 @@ if [ -f "$DIR/scripts/workbuddy-target.js" ]; then
   fi
 fi
 
+# 单个企业客户端自动发现时也要持久化目标；否则启动路径虽然指向企业
+# .app，daemon 仍会按官方 profile 读取 workbuddy-desktop.info。
+if [ -z "${TARGET_BIN:-}" ] && [ -n "$APP_BIN" ]; then
+  official_name="WorkBuddy"
+  [ "$PROFILE" = workbuddy-ai ] && official_name="WorkBuddy AI"
+  if [ "$APP_NAME" != "$official_name" ]; then
+    if ! "$NODE_BIN" "$DIR/scripts/workbuddy-target.js" --configure --platform darwin \
+        --profile="$PROFILE" --binary="$APP_BIN" --data-dir="$DATA_DIR" >/dev/null 2>"$TARGET_ERR"; then
+      echo "错误：无法保存自动发现的 WorkBuddy 客户端: $(tr '\n' ' ' <"$TARGET_ERR")"
+      rm -f "$TARGET_ERR"
+      exit 1
+    fi
+    rm -f "$TARGET_ERR"
+    TARGET_BIN="$APP_BIN"
+  fi
+fi
+
 # 候选不唯一或自动扫描不到时交给 macOS 原生应用选择器，由用户明确选择并自动记住结果。
 if [ -z "${TARGET_BIN:-}" ] && [ -z "$APP_BIN" ]; then
   SELECTED_APP="$(osascript <<'APPLESCRIPT' 2>/dev/null

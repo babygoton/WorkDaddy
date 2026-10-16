@@ -167,6 +167,76 @@ test('macOS target configuration accepts non-exe process names', () => {
   assert.deepEqual(target.cdp, { mode: 'argument', port: 9222 });
 });
 
+test('macOS enterprise targets discover the client-specific auth file and API host', () => {
+  const root = tempDir();
+  try {
+    const home = path.join(root, 'Users', 'tester');
+    const authDir = path.join(home, 'Library', 'Application Support', 'CodeBuddyExtension', 'Data', 'Public', 'auth');
+    fs.mkdirSync(authDir, { recursive: true });
+    fs.writeFileSync(path.join(authDir, 'workbuddy-desktop.info'), JSON.stringify({
+      account: { uid: 'old' }, auth: { domain: 'https://www.codebuddy.cn' },
+    }));
+    const enterpriseAuth = path.join(authDir, 'workbuddy-desktop-acme.info');
+    fs.writeFileSync(enterpriseAuth, JSON.stringify({
+      account: { uid: 'current' }, auth: { domain: 'https://acme.copilot.qq.com' },
+    }));
+
+    const target = buildTargetFromBinary({
+      binary: '/Applications/WorkBuddy Acme.app/Contents/MacOS/Electron',
+      profileId: 'workbuddy-cn',
+      platform: 'darwin',
+      home,
+    });
+    assert.equal(target.authFile, enterpriseAuth);
+    assert.equal(target.apiHost, 'https://acme.copilot.qq.com');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('macOS enterprise auth discovery matches the app suffix when multiple files exist', () => {
+  const root = tempDir();
+  try {
+    const home = path.join(root, 'Users', 'tester');
+    const authDir = path.join(home, 'Library', 'Application Support', 'CodeBuddyExtension', 'Data', 'Public', 'auth');
+    fs.mkdirSync(authDir, { recursive: true });
+    fs.writeFileSync(path.join(authDir, 'workbuddy-desktop-acme.info'), JSON.stringify({
+      account: { uid: 'acme' }, auth: { domain: 'https://acme.example.com' },
+    }));
+    fs.writeFileSync(path.join(authDir, 'workbuddy-desktop-other.info'), JSON.stringify({
+      account: { uid: 'other' }, auth: { domain: 'https://other.example.com' },
+    }));
+    const target = buildTargetFromBinary({
+      binary: '/Applications/WorkBuddy Acme.app/Contents/MacOS/Electron',
+      profileId: 'workbuddy-cn', platform: 'darwin', home,
+    });
+    assert.equal(target.authFile, path.join(authDir, 'workbuddy-desktop-acme.info'));
+    assert.equal(target.apiHost, 'https://acme.example.com');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('macOS official app keeps the canonical auth filename', () => {
+  const root = tempDir();
+  try {
+    const home = path.join(root, 'Users', 'tester');
+    const authDir = path.join(home, 'Library', 'Application Support', 'CodeBuddyExtension', 'Data', 'Public', 'auth');
+    fs.mkdirSync(authDir, { recursive: true });
+    const canonical = path.join(authDir, 'workbuddy-desktop.info');
+    fs.writeFileSync(canonical, '{}');
+    fs.writeFileSync(path.join(authDir, 'workbuddy-desktop-acme.info'), '{}');
+    const target = buildTargetFromBinary({
+      binary: '/Applications/WorkBuddy.app/Contents/MacOS/Electron',
+      profileId: 'workbuddy-cn', platform: 'darwin', home,
+    });
+    assert.equal(target.authFile, canonical);
+    assert.equal(target.apiHost, 'https://www.codebuddy.cn');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('target resolver accepts launcher-style equals arguments', () => {
   const dataDir = tempDir();
   const script = path.join(__dirname, '..', 'scripts', 'workbuddy-target.js');
