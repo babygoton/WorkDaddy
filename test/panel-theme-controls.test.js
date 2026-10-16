@@ -260,6 +260,7 @@ for (const trigger of ['switch', 'settings refresh']) test('frosted wallpaper st
   const requests = [];
   let resolveWallpapers;
   const context = {
+    alive: true, registerDisposer() {}, loadWallpaperRotation() {},
     CAPS: {}, currentThemeId: 'nebula', sessState: {}, enhancePane: null, conversationUsageEnabled: false,
     themePane: { querySelector: selector => nodes[selector] || null, querySelectorAll: () => [card] },
     root: { querySelector: selector => nodes[selector] || null },
@@ -275,7 +276,7 @@ for (const trigger of ['switch', 'settings refresh']) test('frosted wallpaper st
   };
   vm.runInNewContext(section('function applySessionModule(', '    /** 增强页快捷短语列表') +
     section('function syncWallpaperCardVisibility(', '    // 主题 pane 事件绑定') +
-    section('function loadWallpapers(force)', '    function setOpen('), context);
+    section('    var wallpaperPreviewUrls =', '    function setOpen('), context);
   context.applySessionModule({ ok: true, themeTakeoverEnabled: false });
   context.syncWallpaperCardVisibility('nebula'); // First visit with takeover off.
   assert.equal(requests.length, 0);
@@ -405,7 +406,7 @@ test('theme apply route responds and persists native theme selections and handle
 test('wallpaper controls are exclusive to the selected frosted theme', () => {
   const wallpaper = {style:{}}, shadow = {style:{}};
   let loads=0;
-  const context = {sessState:{themeTakeover:true}, loadWallpapers:()=>loads++, themePane:{querySelector: selector => selector==='#wbs-wallpaper-card'?wallpaper:shadow}};
+  const context = {sessState:{themeTakeover:true}, loadWallpaperRotation() {}, loadWallpapers:()=>loads++, themePane:{querySelector: selector => selector==='#wbs-wallpaper-card'?wallpaper:shadow}};
   vm.runInNewContext(section('function syncWallpaperCardVisibility(', '    // 关闭接管后'),context);
   for(const id of ['default','dark','eye-care','cyber-purple','nebula']) {
     context.syncWallpaperCardVisibility(id);

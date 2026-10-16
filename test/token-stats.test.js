@@ -164,7 +164,9 @@ test('token statistics UI keeps results under an overlay and exposes presets thr
   assert.match(source, /class="wbs-token-stats-overlay"/);
   assert.match(source, /overlay\.hidden = false/);
   assert.doesNotMatch(source, /data-token-search|data-token-reset/);
-  assert.doesNotMatch(source, /data-token-from|data-token-until|value="custom"/);
+  assert.doesNotMatch(source, /data-token-from|data-token-until/);
+  const segments = source.slice(source.indexOf('function usageTimeSegmentHtml('), source.indexOf('function onTokenStats()', source.indexOf('function usageTimeSegmentHtml(')));
+  assert.doesNotMatch(segments, /value="custom"/);
   assert.doesNotMatch(source, /wbs-token-stats-diagnostics/);
   assert.match(source, /api\('\/api\/token-stats\?cacheStatus=1'\)/);
   assert.match(source, /if \(!metadata\.cacheReady\)/);

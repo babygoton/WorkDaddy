@@ -1774,6 +1774,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     ' · 跳过': ' · Skipped', ' · 分叉': ' · Conflicts', '成功': 'Succeeded', '跳过': 'Skipped', '已跳过': 'Skipped', '部分失败': 'Partial failure', '分叉': 'Conflict', '处理中': 'Processing', '会话已分叉，已保留双方内容': 'Changed on both sides; neither side was overwritten', '部分文件失败': 'Some files failed', '当前任务未记录逐项明细。': 'No per-session details were recorded for this task.', '会话同步明细': 'Session sync details', '会话同步结果筛选': 'Filter session sync results', '当前分类没有会话。': 'No sessions in this category.', '正在把已标记的会话从「': 'Syncing marked sessions from “', '」同步到「': '” to “', '查看明细': 'View details', ' 个候选会话': ' candidate session(s)', ' 秒后自动关闭': ' seconds until automatic close',
     '收录 GitHub 和 Gitee 公开仓库。参考 ': 'Public GitHub and Gitee repositories are indexed. See ', '。': '.', '克隆示例仓库：': 'Clone the example repository: ', '删除 ': 'Delete ', ' 目录中不需要的示例任务。': ' directory tasks you do not need.', '把你的自动化任务 JSON 放进 ': 'Put your automation task JSON in ', ' 目录。': ' directory.', '提交改动并推送到 GitHub 或 Gitee。': 'Commit and push changes to GitHub or Gitee.', '在仓库简介中加入关键词 ': 'Add the keyword ',
     '导出账号': 'Export accounts', '导入账号': 'Import accounts', '导出会话': 'Export sessions', '导入会话': 'Import sessions', '导出快捷短语': 'Export quick phrases', '导入快捷短语': 'Import quick phrases', '同步选中到其他账号': 'Sync selected to another account', '删除选中': 'Delete selected', '操作会话': 'Session actions', '连通测试': 'Test connection', '编辑模型': 'Edit model', '模型已保存': 'Model saved', '模型已启用': 'Model enabled', '模型已复制': 'Model copied', '模型配置已共用': 'Model configuration shared', '与 {name} 共用模型配置': 'Model configuration shared with {name}', '当前模型': 'Current model', '备选模型': 'Backup models', '模型加载失败：': 'Failed to load models: ', '保存模型失败：': 'Failed to save model: ', '删除当前模型失败：': 'Failed to delete current model: ', '启用模型失败：': 'Failed to enable model: ', '连通测试失败：': 'Connection test failed: ',
+    '请选择壁纸文件夹': 'Choose a wallpaper folder', '壁纸模式': 'Wallpaper mode', '手动应用': 'Manual', '文件夹随机': 'Shuffle folder', '壁纸文件夹': 'Wallpaper folder', '选择或填写文件夹路径': 'Choose or enter a folder path', '选择文件夹': 'Choose folder', '切换间隔': 'Change every', '1 分钟': '1 minute', '3 分钟': '3 minutes', '5 分钟': '5 minutes', '10 分钟': '10 minutes', '30 分钟': '30 minutes', '1 小时': '1 hour', '自定义': 'Custom', '分钟': 'minutes', '自定义切换间隔（分钟）': 'Custom interval (minutes)', '立即换一张': 'Next wallpaper', '已暂停，恢复毛玻璃主题后继续': 'Paused until the frosted theme resumes', '当前：': 'Current: ', '等待应用壁纸': 'Waiting to apply wallpaper', '壁纸设置保存失败': 'Could not save wallpaper settings', '仅读取此文件夹内的 PNG / JPG / WebP，不复制或修改原文件；自动跳过超过 20MB 或 1600 万像素的图片。': 'Reads PNG / JPG / WebP from this folder without copying or modifying originals. Images over 20MB or 16 megapixels are skipped.',
     '选择要查看的账号': 'Choose an account to view', '选择账号并输入密码后导出备份': 'Choose accounts and enter a password to export backups', '从加密导出文件导入账号备份': 'Import account backups from an encrypted export', '使用密码导出选中会话': 'Export selected sessions with a password', '使用密码导出选中快捷短语': 'Export selected quick phrases with a password', '从加密文件导入会话': 'Import sessions from an encrypted file', '从加密文件导入快捷短语': 'Import quick phrases from an encrypted file', '仅支持 PNG / JPG / WebP': 'PNG / JPG / WebP only', '点击或拖拽上传壁纸': 'Click or drag to upload a wallpaper', '点击选择图片，或拖拽到此处': 'Click to choose an image, or drag it here', '支持 PNG / JPG / WebP，自动压缩；可添加多张': 'PNG / JPG / WebP supported; images are compressed automatically',
     '未命名账号': 'Unnamed account', '未命名模型': 'Unnamed model', '未命名': 'Unnamed', '未知错误': 'Unknown error', '未知': 'Unknown', '有效期未知': 'Expiry unknown', '未找到输入框': 'Composer not found', '输入框内容为空': 'Composer is empty', '当前输入框暂不支持引用插入': 'The current composer does not support quote insertion', '引用插入失败，请重试': 'Could not insert quote. Please try again', '短语不能为空': 'Quick phrase cannot be empty', '请输入快捷短语': 'Enter a quick phrase', '删除快捷短语': 'Delete quick phrase', '编辑快捷短语': 'Edit quick phrase', '新增快捷短语': 'Add quick phrase', '确定删除': 'Confirm deletion', '确认永久删除': 'Confirm permanent deletion',
     '本机回环 CDP 注入 · 不改官方安装包': 'Local CDP injection · official app untouched', '一个基于 ': 'A ', ' 的 WorkBuddy 桌面端增强工具。零侵入、零重签名——只把界面组件注入到正在运行的 WorkBuddy 渲染进程里。': ' WorkBuddy desktop enhancement tool using Chrome DevTools Protocol (CDP). No intrusion or re-signing; UI components are injected into the running renderer.', '问题反馈': 'Report an issue',
@@ -10767,9 +10768,22 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         '<div class="wbs-wallpapers" id="wbs-wallpapers"><div class="wbs-wp-loading">壁纸加载中…</div></div>' +
         '</div>' +
         '<div class="wbs-bg-panel" data-src-panel="custom" style="display:none">' +
+        '<div class="wbs-wallpaper-mode" role="radiogroup" aria-label="壁纸模式">' +
+        '<label><input type="radio" name="wbs-wallpaper-mode" value="manual" checked>手动应用</label>' +
+        '<label><input type="radio" name="wbs-wallpaper-mode" value="random">文件夹随机</label>' +
+        '</div>' +
+        '<div id="wbs-wallpaper-random" hidden>' +
+        '<label class="wbs-wallpaper-label" for="wbs-wallpaper-directory">壁纸文件夹</label>' +
+        '<div class="wbs-wallpaper-folder"><input id="wbs-wallpaper-directory" type="text" placeholder="选择或填写文件夹路径" autocomplete="off" spellcheck="false"><button type="button" id="wbs-wallpaper-pick" class="wbs-wallpaper-button">选择文件夹</button></div>' +
+        '<div class="wbs-wallpaper-interval"><label for="wbs-wallpaper-interval">切换间隔</label><select id="wbs-wallpaper-interval"><option value="1">1 分钟</option><option value="3">3 分钟</option><option value="5">5 分钟</option><option value="10" selected>10 分钟</option><option value="30">30 分钟</option><option value="60">1 小时</option><option value="custom">自定义</option></select>' +
+        '<label id="wbs-wallpaper-custom-wrap" hidden><input type="number" id="wbs-wallpaper-minutes" min="1" max="1440" step="1" value="10" aria-label="自定义切换间隔（分钟）"><span>分钟</span></label></div>' +
+        '<div class="wbs-wallpaper-actions"><button type="button" id="wbs-wallpaper-next" class="wbs-wallpaper-button">立即换一张</button><span class="wbs-wallpaper-status" id="wbs-wallpaper-status" role="status" aria-live="polite"></span></div>' +
+        '<div class="wbs-wallpaper-hint">仅读取此文件夹内的 PNG / JPG / WebP，不复制或修改原文件；自动跳过超过 20MB 或 1600 万像素的图片。</div>' +
+        '</div><div id="wbs-wallpaper-manual">' +
         '<div class="wbs-bg-upload" id="wbs-bg-upload" title="点击选择图片，或拖拽到此处"><span class="wbs-bg-upload-ico">+</span><span>点击或拖拽上传壁纸</span><span class="wbs-bg-upload-hint">支持 PNG / JPG / WebP，自动压缩；可添加多张</span></div>' +
         '<div class="wbs-wallpapers wbs-custom-wallpapers" id="wbs-custom-wallpapers"><div class="wbs-wp-loading">壁纸加载中…</div></div>' +
         '<input type="file" id="wbs-theme-file" accept="image/png,image/jpeg,image/webp" style="display:none">' +
+        '</div>' +
         '</div>' +
         '<div class="wbs-mask-row">' +
         '<label class="wbs-blur-label" for="wbs-mask-range">背景蒙版<span class="wbs-blur-hint">黑色半透明遮罩，压暗背景图</span></label>' +
@@ -11417,7 +11431,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       card.style.display = visible ? '' : 'none';
       var textCard = themePane.querySelector('#wbs-text-shadow-card');
       if (textCard) textCard.style.display = visible ? '' : 'none';
-      if (visible) loadWallpapers();
+      if (visible) { loadWallpapers(); loadWallpaperRotation(); }
     }
 
     // 关闭接管后只隐藏主题外观选项；头像和悬浮机器人独立于主题接管。
@@ -11474,6 +11488,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         dockSwitch.checked = fabQuietMode.isEnabled();
         dockSwitch.addEventListener('change', function () { fabQuietMode.setEnabled(this.checked); });
       }
+      wireWallpaperRotation();
       // 壁纸通过下方来源按钮管理，主题单选项使用 change 事件。
       themePane.addEventListener('click', function (e) {
         var t = e.target;
@@ -11649,6 +11664,111 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       // （开发调试入口已抽离至独立脚本 picker-internal.js，连点 logo 右侧按钮呼出）
     }
 
+    var wallpaperRotationState = null;
+    var wallpaperRotationBusy = false;
+    var wallpaperRotationDraft = false;
+    var wallpaperRotationReadSerial = 0;
+    function renderWallpaperRotation(info) {
+      if (!alive || !themePane || !info) return;
+      var previous = wallpaperRotationState;
+      wallpaperRotationState = info;
+      var random = info.mode === 'random';
+      if (random && (!previous || previous.mode !== 'random')) {
+        themePane.querySelectorAll('.wbs-bg-src').forEach(function (button) { button.classList.toggle('active', button.getAttribute('data-src') === 'custom'); });
+        themePane.querySelectorAll('.wbs-bg-panel').forEach(function (panel) { panel.style.display = panel.getAttribute('data-src-panel') === 'custom' ? '' : 'none'; });
+      }
+      themePane.querySelectorAll('input[name="wbs-wallpaper-mode"]').forEach(function (input) { input.checked = input.value === info.mode; });
+      var randomPanel = themePane.querySelector('#wbs-wallpaper-random');
+      var manualPanel = themePane.querySelector('#wbs-wallpaper-manual');
+      if (!randomPanel) return;
+      randomPanel.hidden = !random;
+      manualPanel.hidden = random;
+      var directory = themePane.querySelector('#wbs-wallpaper-directory');
+      if (document.activeElement !== directory) directory.value = info.directory || '';
+      directory.title = info.directory || '';
+      var interval = themePane.querySelector('#wbs-wallpaper-interval');
+      var minutes = themePane.querySelector('#wbs-wallpaper-minutes');
+      if (document.activeElement !== interval && document.activeElement !== minutes) {
+        interval.value = [1,3,5,10,30,60].indexOf(info.intervalMinutes) >= 0 ? String(info.intervalMinutes) : 'custom';
+        minutes.value = info.intervalMinutes;
+      }
+      themePane.querySelector('#wbs-wallpaper-custom-wrap').hidden = interval.value !== 'custom';
+      var status = themePane.querySelector('#wbs-wallpaper-status');
+      status.textContent = !info.directory ? '请选择壁纸文件夹' : info.error || (info.paused ? '已暂停，恢复毛玻璃主题后继续' : (info.current ? '当前：' + info.current : '等待应用壁纸'));
+      status.title = status.textContent;
+      status.dataset.error = info.error ? '1' : '0';
+      themePane.querySelector('#wbs-wallpaper-next').disabled = wallpaperRotationBusy || !random || !info.directory || info.paused;
+    }
+    function loadWallpaperRotation() {
+      if (!themePane || !themePane.querySelector('#wbs-wallpaper-random') || wallpaperRotationBusy || wallpaperRotationDraft) return;
+      var serial = ++wallpaperRotationReadSerial;
+      return api('/api/wallpaper-rotation').then(function (info) {
+        if (serial === wallpaperRotationReadSerial && !wallpaperRotationBusy) renderWallpaperRotation(info);
+      }).catch(function () {});
+    }
+    function wireWallpaperRotation() {
+      var panel = themePane.querySelector('#wbs-wallpaper-random');
+      if (!panel || panel.dataset.wired) return;
+      panel.dataset.wired = '1';
+      var directory = themePane.querySelector('#wbs-wallpaper-directory');
+      var interval = themePane.querySelector('#wbs-wallpaper-interval');
+      var minutes = themePane.querySelector('#wbs-wallpaper-minutes');
+      var pick = themePane.querySelector('#wbs-wallpaper-pick');
+      var next = themePane.querySelector('#wbs-wallpaper-next');
+      function busy(value) {
+        wallpaperRotationBusy = value;
+        wallpaperRotationReadSerial++;
+        themePane.querySelectorAll('input[name="wbs-wallpaper-mode"],#wbs-wallpaper-random input,#wbs-wallpaper-random select,#wbs-wallpaper-random button').forEach(function (node) { node.disabled = value; });
+        if (!value && wallpaperRotationState) next.disabled = wallpaperRotationState.mode !== 'random' || !wallpaperRotationState.directory || wallpaperRotationState.paused;
+      }
+      function choose() {
+        return api('/api/wallpaper-rotation/pick', { method: 'POST' }).then(function (info) {
+          if (!alive || info.cancelled) return false;
+          directory.value = info.directory;
+          return true;
+        });
+      }
+      function save(mode, shouldPick) {
+        if (wallpaperRotationBusy) return;
+        busy(true);
+        var prepare = shouldPick ? choose() : Promise.resolve(true);
+        return prepare.then(function (proceed) {
+          if (!proceed || !alive) return;
+          return api('/api/wallpaper-rotation', { method: 'POST', headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ mode: mode, directory: directory.value.trim(), intervalMinutes: Number(interval.value === 'custom' ? minutes.value : interval.value) })
+          }).then(function (info) { wallpaperRotationDraft = false; renderWallpaperRotation(info); });
+        }).catch(function (e) { if (alive) toast(e.message || '壁纸设置保存失败', true, root); })
+          .finally(function () { if (!alive) return; busy(false); if (wallpaperRotationState) renderWallpaperRotation(wallpaperRotationState); else loadWallpaperRotation(); });
+      }
+      themePane.querySelectorAll('input[name="wbs-wallpaper-mode"]').forEach(function (radio) {
+        radio.addEventListener('change', function () {
+          if (!radio.checked) return;
+          if (radio.value === 'random' && !directory.value.trim()) {
+            wallpaperRotationDraft = true;
+            renderWallpaperRotation(Object.assign({}, wallpaperRotationState, { mode: 'random', directory: '', current: '', paused: false }));
+            return;
+          }
+          wallpaperRotationDraft = false;
+          save(radio.value);
+        });
+      });
+      pick.addEventListener('click', function () { save('random', true); });
+      directory.addEventListener('change', function () { save('random'); });
+      interval.addEventListener('change', function () {
+        themePane.querySelector('#wbs-wallpaper-custom-wrap').hidden = interval.value !== 'custom';
+        if (interval.value === 'custom') { minutes.focus(); minutes.select(); } else save('random');
+      });
+      minutes.addEventListener('change', function () { save('random'); });
+      next.addEventListener('click', function () {
+        if (wallpaperRotationBusy) return;
+        busy(true);
+        api('/api/wallpaper-rotation/next', { method: 'POST' }).then(renderWallpaperRotation)
+          .catch(function (e) { if (alive) toast(e.message || '切换壁纸失败', true, root); }).finally(function () { busy(false); });
+      });
+      loadWallpaperRotation();
+    }
+    setBuildInterval(function () { if (state.open && themePane && themePane.style.display !== 'none') loadWallpaperRotation(); }, 15000);
+
     // 官方壁纸网格：加载 /api/wallpapers，渲染缩略图，点击切换背景图
     // file:// 页面无法直接 <img src="http://...">（Electron 拦截），改为 fetch → blob → objectURL 预览
     // 面板高度固定为主题页高度：防止切 tab 时高度忽高忽低（首次主题页壁纸渲染后锁定一次）
@@ -11660,11 +11780,22 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       var bodyEl = panel.querySelector('.wbs-body');
       if (bodyEl) bodyEl.style.overflowY = 'auto';
     }
+    var wallpaperPreviewUrls = [];
+    var wallpaperPreviewSerial = 0;
+    function releaseWallpaperPreviews() {
+      wallpaperPreviewSerial++;
+      wallpaperPreviewUrls.forEach(function (url) { URL.revokeObjectURL(url); });
+      wallpaperPreviewUrls = [];
+    }
+    registerDisposer(releaseWallpaperPreviews);
+    registerDisposer(function () { if (window.__wbsWallpaperRuntime) window.__wbsWallpaperRuntime.dispose(); });
     function loadWallpapers(force) {
       var grid = root.querySelector('#wbs-wallpapers');
       var cgrid = root.querySelector('#wbs-custom-wallpapers');
       if (!grid && !cgrid) return;
       if (grid && grid.dataset.loaded && !force) return;
+      releaseWallpaperPreviews();
+      var previewSerial = wallpaperPreviewSerial;
       if (grid) grid.dataset.loaded = '1';
       var base = API.replace(/\/api\/?$/, '');
       var wallpaperRequest = api('/api/wallpapers');
@@ -11672,6 +11803,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         setTimeout(function () { reject(new Error('壁纸请求超时')); }, 8000);
       });
       Promise.race([wallpaperRequest, wallpaperTimeout]).then(function (d) {
+        if (!alive || previewSerial !== wallpaperPreviewSerial) return;
         var list = d.wallpapers || [];
         var customList = d.customWallpapers || [];
         var current = d.currentWallpaper || null;
@@ -11713,7 +11845,10 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
           g.querySelectorAll('.wbs-wp-thumb img').forEach(function (im) {
             fetch(im.getAttribute('data-src'), { cache: 'no-store' })
               .then(function (r) { return r.ok ? r.blob() : Promise.reject(new Error('HTTP ' + r.status)); })
-              .then(function (blob) { im.src = URL.createObjectURL(blob); })
+              .then(function (blob) {
+                if (!alive || previewSerial !== wallpaperPreviewSerial || !im.isConnected) return;
+                var url = URL.createObjectURL(blob); wallpaperPreviewUrls.push(url); im.src = url;
+              })
               .catch(function () {
                 im.alt = '加载失败';
                 im.style.opacity = '.25';
@@ -11736,6 +11871,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
                 if (!r || !r.ok) throw new Error((r && r.error) || '切换壁纸失败');
                 toast('已应用壁纸「' + (card.getAttribute('title') || name) + '」', false, root);
                 loadWallpapers(true);
+                loadWallpaperRotation();
               }).catch(function (e) {
                 toast('切换壁纸失败: ' + (e.message || e), true, root);
               }).finally(function () { card.classList.remove('busy'); });
@@ -12380,6 +12516,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
               if (!d || !d.ok) throw new Error((d && d.error) || '替换背景图失败');
               toast('已添加并应用自定义壁纸', false, root);
               loadThemes();
+              loadWallpaperRotation();
               // 刷新自定义壁纸网格（含选中态）与当前壁纸高亮
               loadWallpapers(true);
             });
@@ -18199,6 +18336,18 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '.wbs-update-btn:disabled{opacity:.5;cursor:default}',
     '.wbs-update-progress{display:block;box-sizing:border-box;margin-top:8px;max-height:126px;overflow-y:auto;padding:7px 8px;border:1px solid rgba(226,75,74,.2);border-radius:8px;background:rgba(226,75,74,.045);font-size:10.5px;color:var(--wb-icon-tertiary,#888);line-height:1.5;overflow-wrap:anywhere;scrollbar-width:thin}',
     '.wbs-update-log-line{white-space:normal;word-break:break-word;padding:1px 0}',
+    '.wbs-wallpaper-mode{display:flex;flex-wrap:wrap;gap:8px 18px;margin:10px 0;font-size:12px;color:var(--wb-color-text-primary)}',
+    '.wbs-wallpaper-mode label{display:flex;align-items:center;gap:5px;cursor:pointer}.wbs-wallpaper-mode input{margin:0;accent-color:var(--wb-color-text-primary)}',
+    '#wbs-wallpaper-random[hidden],#wbs-wallpaper-manual[hidden],#wbs-wallpaper-custom-wrap[hidden]{display:none}',
+    '.wbs-wallpaper-label{display:block;margin-bottom:6px;font-size:12px;color:var(--wb-color-text-secondary)}',
+    '.wbs-wallpaper-folder{display:flex;gap:6px;min-width:0;flex-wrap:wrap}.wbs-wallpaper-folder input{flex:1;min-width:100px;width:0}',
+    '.wbs-wallpaper-folder input,.wbs-wallpaper-interval input,.wbs-wallpaper-interval select{box-sizing:border-box;height:28px;padding:4px 7px;border:1px solid var(--wb-border-default);border-radius:7px;background:var(--wb-bg-input);color:var(--wb-color-text-primary);font:inherit;font-size:12px}',
+    '.wbs-wallpaper-button{height:28px;flex-shrink:0;padding:4px 9px;border:1px solid var(--wb-border-default);border-radius:7px;background:var(--wb-bg-secondary);color:var(--wb-color-text-primary);font:inherit;font-size:12px;cursor:pointer;transition:background .15s,border-color .15s}',
+    '.wbs-wallpaper-button:hover{background:var(--wb-bg-hover);border-color:var(--wb-border-hover)}.wbs-wallpaper-button:disabled,#wbs-wallpaper-random input:disabled,#wbs-wallpaper-random select:disabled{opacity:.5;cursor:default}',
+    '.wbs-wallpaper-button:focus-visible,#wbs-wallpaper-random input:focus-visible,#wbs-wallpaper-random select:focus-visible,.wbs-wallpaper-mode input:focus-visible{outline:2px solid var(--wb-accent-blue,var(--wb-color-text-primary));outline-offset:2px}',
+    '.wbs-wallpaper-interval{display:flex;align-items:center;flex-wrap:wrap;gap:6px;margin-top:10px;font-size:12px;color:var(--wb-color-text-secondary)}.wbs-wallpaper-interval>label:first-child{margin-right:auto}#wbs-wallpaper-custom-wrap{display:flex;align-items:center;gap:5px}#wbs-wallpaper-minutes{width:64px}',
+    '.wbs-wallpaper-actions{display:flex;align-items:center;gap:8px;margin-top:10px;min-width:0}.wbs-wallpaper-status{min-width:0;overflow-wrap:anywhere;font-size:11px;line-height:1.5;color:var(--wb-color-text-secondary)}.wbs-wallpaper-status[data-error="1"]{color:var(--wb-color-text-primary)}',
+    '.wbs-wallpaper-hint{margin-top:8px;font-size:11px;line-height:1.6;overflow-wrap:anywhere;color:var(--wb-color-text-secondary)}',
     /* 官方壁纸网格 */
     '.wbs-wallpapers{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}',
     '.wbs-wp{border-radius:10px;overflow:hidden;cursor:pointer;border:2px solid transparent;transition:all .15s;position:relative}',

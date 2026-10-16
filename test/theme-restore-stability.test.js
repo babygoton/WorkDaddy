@@ -31,6 +31,7 @@ async function themeExpression(id, takeover = true, accountUid = null, options =
   const end = source.indexOf('\n/**', start);
   let expression;
   const context = {
+    wallpaperRotation: { status: () => ({ mode: 'manual' }) },
     PROFILE: { capabilities: { theme: true } }, cdp: { connected: true },
     readSessionState: () => ({ themeTakeoverEnabled: takeover }),
     themeApplyGeneration: 0,
@@ -363,6 +364,7 @@ test('a pending light reset cannot overwrite takeover re-enabled during a CDP re
   let takeover = false;
   let evaluations = 0;
   const context = {
+    wallpaperRotation: { status: () => ({ mode: 'manual' }) },
     PROFILE: { capabilities: { theme: true } }, cdp: { connected: true, ws: { readyState: 1 } },
     readSessionState: () => ({ themeTakeoverEnabled: takeover }), themeApplyGeneration: 0,
     currentAccount: () => null, getTheme: () => ({ dark: false, colors: {} }),
@@ -392,6 +394,7 @@ test('release resets light once then follows official dark and special skins acr
   document.adoptedStyleSheets = [];
   const tick = () => [...intervals.values()].forEach(fn => fn());
   const daemon = {
+    wallpaperRotation: { status: () => ({ mode: 'manual' }) },
     PROFILE: { capabilities: { theme: true } }, cdp: { connected: true }, themeApplyGeneration: 0,
     readSessionState: () => ({ themeTakeoverEnabled: false }),
     cdpSend: async (_, params) => { vm.runInNewContext(params.expression, context); return {}; },
@@ -479,6 +482,7 @@ test('nebula releases custom CSS and guards, waits for official dark, then reapp
   vm.runInNewContext(await themeExpression('nebula', true, 'current'), context);
   const stages = [];
   const daemon = {
+    wallpaperRotation: { status: () => ({ mode: 'manual' }) },
     PROFILE: { capabilities: { theme: true } }, cdp: { connected: true }, themeApplyGeneration: 0,
     setTimeout: resolve => resolve(),
     readSessionState: () => ({ themeTakeoverEnabled: true }), currentAccount: () => ({ uid: 'current' }),
@@ -575,6 +579,7 @@ test('frosted takeover completes even when background renderer timers and animat
   };
   let applies = 0;
   const daemon = {
+    wallpaperRotation: { status: () => ({ mode: 'manual' }) },
     PROFILE: { capabilities: { theme: true } }, cdp: { connected: true }, themeApplyGeneration: 0,
     readSessionState: () => ({ themeTakeoverEnabled: true }), currentAccount: () => null,
     getTheme: () => ({ dark: true, colors: {} }),

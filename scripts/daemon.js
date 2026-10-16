@@ -33,6 +33,7 @@ let sessionSync = require('./session-sync.js');
 const {createCodeBuddyFiles} = require('./codebuddy-files.js');
 const { createAccountCreditCache } = require('./account-credit-cache.js');
 const { spawn, spawnSync, execFile } = require('child_process');
+const { createWallpaperRotation, updateWallpaperInRenderer, pickWallpaperDirectory } = require('./wallpaper-rotation');
 const PROBE_CLIENT_RUNNING = process.argv.includes('--probe-client-running');
 const {
   assertSameProcessIdentity,
@@ -500,8 +501,9 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 // 1.2.43：共享身份提示使用全局说明浮层，来源列出未设置账号并简化文案。
 // 1.2.46：合入失效卷上的会话目录修复保护，避免后台反复尝试创建目录。
 // 1.2.47：CodeBuddy 主题页支持切换官方浅色/深色外观。
-const DAEMON_VERSION = '1.2.47';
-const DAEMON_BUILD_ID = 'release-1.2.47-codebuddy-native-theme';
+// 1.2.48：支持本地文件夹原图随机轮换壁纸，切换时复用主题并释放旧图资源。
+const DAEMON_VERSION = '1.2.48';
+const DAEMON_BUILD_ID = 'release-1.2.48-wallpaper-rotation';
 const usageReporter = createUsageReporter({ profile: PROFILE.id, version: DAEMON_VERSION });
 configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const automationDiscovery = createAutomationDiscovery({
@@ -4593,6 +4595,7 @@ async function injectWidget(reason, executionContextId) {
         if (reason === 'manual') throw new Error('注入后未检测到 WorkDaddy 组件（请检查 WorkBuddy 页面是否正常加载）');
       } else {
         log(`[cdp] 注入结果确认(${reason}): root=true widget=true url=${state.url}`);
+        if (wallpaperRotation.status().mode === 'random') wallpaperRotation.restore().catch(() => {});
       }
       return { result: r, mounted: Boolean(state && state.root && state.widget), state };
     })
@@ -7778,6 +7781,26 @@ async function waitAiIdle(maxMs = 60000, pollMs = 500, isCancelled = () => false
 const THEMES_DIR = path.join(DATA_DIR, 'themes');
 // 官方背景图库：面板「主题」页的默认壁纸（wallpaper-01.webp ~ wallpaper-NN.webp）
 const WALLPAPERS_DIR = path.join(THEMES_DIR, 'wallpapers');
+const wallpaperRotation = createWallpaperRotation({
+  configFile: path.join(DATA_DIR, 'wallpaper-rotation.json'),
+  isActive: () => !!(PROFILE.capabilities.theme && PROFILE.capabilities.themeTakeover !== false &&
+    cdp.connected && readSessionState().themeTakeoverEnabled !== false && readSavedThemeId() === 'nebula'),
+  invalidate: async () => {
+    if (!cdp.connected) return;
+    try { await cdpSend('Runtime.evaluate', { expression: "if(window.__wbsWallpaperRuntime)window.__wbsWallpaperRuntime.dispose()" }); } catch (_) {}
+  },
+  apply: async (image) => {
+    if (!cdp.connected) return false;
+    const r = await cdpSend('Runtime.evaluate', {
+      expression: '(' + updateWallpaperInRenderer.toString() + ')(' + JSON.stringify({
+        url: `http://${HOST}:${ACTUAL_PORT}/api/wallpaper-rotation/image?key=${image.key}`,
+        token: API_TOKEN,
+      }) + ')', awaitPromise: true, returnByValue: true, timeout: 10000,
+    });
+    return !!(r && r.result && r.result.value === true);
+  },
+});
+
 
 /** 内置资产源目录（首次启动初始化的来源，WorkDaddy.app 自包含打包）：
  * 1) 脚本同目录 builtin/（app 内置模式：Contents/Resources/scripts/builtin）
@@ -8553,7 +8576,7 @@ async function applyThemeByCdp(id, options = {}) {
           'linear-gradient(rgba(0,0,0,' + mask + '),rgba(0,0,0,' + mask + ')),',
           'linear-gradient(90deg,color-mix(in srgb,var(--wb-bg-primary) 40%,transparent) 0 18%,transparent 42%),',
           'linear-gradient(180deg,transparent 0 58%,color-mix(in srgb,var(--wb-bg-primary) 50%,transparent) 100%),',
-          'url(' + dataUrl + ') right center / cover no-repeat fixed !important;}',
+          'var(--wbs-wallpaper-image,url(' + dataUrl + ')) right center / cover no-repeat fixed !important;}',
           'body[data-vscode-theme-name] .teams-container,body[data-vscode-theme-name] .teams-container.is-mac{background:transparent !important;' + blurCss + '}',
           'body[data-vscode-theme-name] [data-view-id]{background:transparent !important}',
           'body[data-vscode-theme-name] .main-content{background:transparent !important}',
@@ -8572,6 +8595,7 @@ async function applyThemeByCdp(id, options = {}) {
     }
   }
   const expr = `(function(){
+    if (window.__wbsWallpaperRuntime) window.__wbsWallpaperRuntime.dispose();
     var h = document.documentElement, b = document.body;
     if (!h || !b) return { pending: true };
     try {
@@ -8917,6 +8941,9 @@ async function applyThemeByCdp(id, options = {}) {
     const detail = lastError && lastError.message ? lastError.message : '未知 CDP 响应';
     log('[theme] 应用主题失败: ' + detail);
     throw new Error('应用主题失败: ' + detail);
+  }
+  if (id === 'nebula' && takeoverEnabled && wallpaperRotation.status().mode === 'random') {
+    wallpaperRotation.restore().catch(() => {});
   }
   return { ok: true, applied: v.applied, dark: v.dark, bg: v.bg, text: v.text };
 }
@@ -11062,6 +11089,37 @@ function handleApi(req, res) {
     }
   }
 
+  // Rotation routes share the authenticated local API; external paths never
+  // appear in an image URL. Only an issued current/pending ticket can be read.
+  if (p.startsWith('/api/wallpaper-rotation')) {
+    if (!PROFILE.capabilities.theme || PROFILE.capabilities.themeTakeover === false) return json(res, 400, { ok: false, error: '当前客户端不支持壁纸轮换' });
+    if (req.method === 'GET' && p === '/api/wallpaper-rotation') return json(res, 200, { ok: true, ...wallpaperRotation.status() });
+    if (req.method === 'POST' && p === '/api/wallpaper-rotation') {
+      return readBody(req).then(body => wallpaperRotation.configure(body))
+        .then(info => json(res, 200, { ok: true, ...info }))
+        .catch(e => json(res, 400, { ok: false, error: e.message }));
+    }
+    if (req.method === 'POST' && p === '/api/wallpaper-rotation/pick') {
+      return pickWallpaperDirectory().then(directory => json(res, 200, { ok: true, directory, cancelled: !directory }))
+        .catch(e => json(res, 400, { ok: false, error: e.message }));
+    }
+    if (req.method === 'POST' && p === '/api/wallpaper-rotation/next') {
+      return wallpaperRotation.next().then(info => json(res, 200, { ok: true, ...info }));
+    }
+    if (req.method === 'GET' && p === '/api/wallpaper-rotation/image') {
+      return wallpaperRotation.openImage(url.searchParams.get('key')).then(image => {
+        const headers = { 'Content-Type': image.mime, 'Content-Length': image.size, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' };
+        if (res.__wbsCorsOrigin) { headers['Access-Control-Allow-Origin'] = res.__wbsCorsOrigin; headers.Vary = 'Origin'; }
+        if (res.destroyed) { image.handle.close().catch(() => {}); return; }
+        res.writeHead(200, headers);
+        const stream = image.handle.createReadStream({ start: 0 });
+        res.on('close', () => stream.destroy());
+        stream.on('error', () => res.destroy());
+        stream.pipe(res);
+      }).catch(() => { if (!res.headersSent) json(res, 404, { ok: false, error: '壁纸已失效或不可用' }); });
+    }
+  }
+
   // 官方背景图库列表（themes/wallpapers/*.webp），供面板「主题」页预览切换。
   // 附带 currentWallpaper：当前主题 background.webp 内容哈希匹配到的图库文件名（供面板高亮当前壁纸）
   // 附带 customWallpapers：用户上传的自定义壁纸（custom-*.webp），供面板分开展示
@@ -11996,7 +12054,7 @@ function handleApi(req, res) {
   // 注意：CDP 未连接时应用主题会失败，但文件与 current-theme.json 已保存——此时仍返回成功，
   //       由 restoreSavedTheme 在连接恢复后自动应用，避免"背景图已保存但应用失败"的报错困扰用户。
   if (req.method === 'POST' && p === '/api/theme-bg') {
-    return readBody(req).then((body) => {
+    return readBody(req).then(async (body) => {
       try {
         const id = String(body.id || '').replace(/[^A-Za-z0-9_-]/g, '_');
         if (!id) return json(res, 400, { ok: false, error: '缺少 id' });
@@ -12023,6 +12081,7 @@ function handleApi(req, res) {
           buf = Buffer.from(m[2], 'base64');
         }
         if (buf.length > 10 * 1024 * 1024) return json(res, 400, { ok: false, error: '图片不能超过 10MB' });
+        await wallpaperRotation.configure({ mode: 'manual' });
         const dir = path.join(THEMES_DIR, id);
         fs.mkdirSync(dir, { recursive: true });
         fs.writeFileSync(path.join(dir, 'background.webp'), buf);
