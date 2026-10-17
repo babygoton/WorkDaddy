@@ -231,6 +231,14 @@ test('account import accepts legacy plaintext and preserves encrypted token enve
   assert.equal(lib.wdCompatText(envelope), '(已加密)');
 });
 
+test('token phone claim fills an officially redacted phone field without exposing other claims', () => {
+  const payload = Buffer.from(JSON.stringify({ preferred_username: '13592246735', email: 'private@example.com' })).toString('base64url');
+  const token = `header.${payload}.signature`;
+  assert.equal(lib.wdCompatTokenPhone(token), '13592246735');
+  assert.equal(lib.wdCompatTokenPhone('header.invalid.signature'), '');
+  assert.equal(lib.wdCompatTokenPhone(''), '');
+});
+
 test('Windows encrypted-field key lookup honors the configured WorkBuddy target path', { skip: process.platform !== 'win32' }, () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'workdaddy-compat-target-'));
   const previousProfile = process.env.WBSWITCH_PROFILE;

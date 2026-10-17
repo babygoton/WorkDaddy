@@ -84,6 +84,23 @@ function wdCompatAuthToken(auth) {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+/**
+ * WorkBuddy 5.8 may redact account.phoneNumber while the access-token claims
+ * still carry the account's verified mobile as preferred_username. Keep only
+ * a strict mainland mobile shape; never expose arbitrary token claims.
+ */
+function wdCompatTokenPhone(token) {
+  const parts = String(token || '').split('.');
+  if (parts.length < 2) return '';
+  try {
+    const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
+    const candidates = [payload.phone_number, payload.phoneNumber, payload.mobile, payload.preferred_username];
+    return candidates.map((value) => String(value == null ? '' : value).trim()).find((value) => /^1\d{10}$/.test(value)) || '';
+  } catch (_) {
+    return '';
+  }
+}
+
 function wdCompatHasAuthCredential(auth) {
   if (!auth || typeof auth !== 'object') return false;
   const value = auth.accessToken ?? auth.access_token ?? auth.token;
@@ -1727,6 +1744,8 @@ function listAccounts(dataDir) {
         item.tokenExpiresAt = j.auth.expiresAt || null;
         item.refreshExpiresAt = j.auth.refreshExpiresAt || null;
         item.lastRefreshTime = j.auth.lastRefreshTime || null;
+        const tokenPhone = wdCompatTokenPhone(wdCompatAuthToken(j.auth));
+        if (tokenPhone) item.phone = tokenPhone;
       }
     } catch (_) {
       /* 文件损坏则显示空字段 */
@@ -1890,6 +1909,7 @@ module.exports = {
   wdCompatContainsEncryptedFields, // [wd-compat]
   wdCompatText, // [wd-compat]
   wdCompatAuthToken, // [wd-compat]
+  wdCompatTokenPhone, // [wd-compat]
   wdCompatHasAuthCredential, // [wd-compat]
   normalizeAccountImportJson, // [wd-compat]
   wdCompatDecryptAuthJson, // [wd-compat]

@@ -34,6 +34,7 @@ const {createCodeBuddyFiles} = require('./codebuddy-files.js');
 const { createAccountCreditCache } = require('./account-credit-cache.js');
 const { spawn, spawnSync, execFile } = require('child_process');
 const { createWallpaperRotation, updateWallpaperInRenderer, pickWallpaperDirectory } = require('./wallpaper-rotation');
+const { readClientLaunchSettings, setClientLaunchSettings, getClientLaunchArgs } = require('./client-launch-settings.js');
 const PROBE_CLIENT_RUNNING = process.argv.includes('--probe-client-running');
 const {
   assertSameProcessIdentity,
@@ -208,6 +209,14 @@ const {
   installBuiltinTask,
   removeBuiltinTasks,
 } = require('./automation.js');
+const {
+  ACCOUNT_SCOPE_KEY: AUTOMATION_ACCOUNT_SCOPE_KEY,
+  readAccountAutomations,
+  readAutomationSyncSettings,
+  writeAutomationSyncSettings,
+  syncAutomationsToAccount,
+  scopeTaskToAccount,
+} = require('./automation-account-sync.js');
 
 const { assertAccountRequestUrl, createTaskState, cancellableWait, createRendererGate, probeSessionReceipt, receiptComplete } = require('./automation-runtime.js');
 const { normalizeAutomationModelId, selectAutomationModel, verifyAutomationModel, restoreNewTaskModelPreference } = require('./automation-model.js');
@@ -219,6 +228,7 @@ const { previewPackage, PACKAGE_FORMAT_VERSION } = require('./automation-package
 const { exportTasks, importTasks, readTransferBody } = require('./automation-transfer.js');
 const { createAutomationDiscovery } = require('./automation-discovery.js');
 const { createAutomationLikesClient } = require('./automation-likes.js');
+const { createOfficialAutomationSync } = require('./official-automation-sync.js');
 
 const { createAutomationNotifier } = require('./toast-options.js');
 const { runCompletionReport, probeAccountCompletion } = require('./completion-report.js');
@@ -502,8 +512,14 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 // 1.2.46：合入失效卷上的会话目录修复保护，避免后台反复尝试创建目录。
 // 1.2.47：CodeBuddy 主题页支持切换官方浅色/深色外观。
 // 1.2.48：支持本地文件夹原图随机轮换壁纸，切换时复用主题并释放旧图资源。
-const DAEMON_VERSION = '1.2.48';
-const DAEMON_BUILD_ID = 'release-1.2.48-wallpaper-rotation';
+// 1.2.49：换号刷新回退清除旧账号快照；Windows AI 支持持久化软件渲染兼容设置。
+// 1.2.53：账号明文模式避开 WorkBuddy 已脱敏占位值；官方定时任务副本按最近编辑清理。
+// 1.2.54：手机号栏保留 WorkBuddy 官方脱敏手机号，不再误显示 UIN。
+// 1.2.55：官方昵称已脱敏时，账号名称跟随手机号来源，避免 UIN/手机号混用。
+// 1.2.56：从已验证的 access-token preferred_username 恢复官方脱敏手机号。
+// 1.2.57：CodeBuddy CN 成长计划跳转到可操作的 WorkBuddy 成长中心。
+const DAEMON_VERSION = '1.2.57';
+const DAEMON_BUILD_ID = 'release-1.2.57-codebuddy-growth-link';
 const usageReporter = createUsageReporter({ profile: PROFILE.id, version: DAEMON_VERSION });
 configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const automationDiscovery = createAutomationDiscovery({
@@ -2359,7 +2375,7 @@ function dispatchAutomationEvent(type, detail = {}) {
     automationEventKeys.add(key);
     while (automationEventKeys.size > 40) automationEventKeys.delete(automationEventKeys.values().next().value);
   }
-  const tasks = readAutomations(DATA_DIR).filter((task) => taskMatchesEvent(task, canonicalType, detail));
+  const tasks = (typeof readCurrentAutomations === 'function' ? readCurrentAutomations() : readAutomations(DATA_DIR)).filter((task) => taskMatchesEvent(task, canonicalType, detail));
   if (!tasks.length) return;
   const account = detail.account || currentAccount();
   tasks.forEach((task) => {
@@ -2868,7 +2884,27 @@ async function reloadWorkBuddyPage(options = {}) {
         log('[cdp] 账号快照导航失败，回退页面刷新');
       }
     }
-    if (!navigated) await withTimeout(cdpSend('Page.reload', { ignoreCache: false }), 10000, '刷新 WorkBuddy 页面');
+    if (!navigated) {
+      if (options.account && PROFILE.kind === 'workbuddy') {
+        // profile IPC 可能尚未观察到登录文件变化。直接 reload 会再次 hydrate
+        // URL 内旧账号的身份/套餐；清除快照后由官方正常 getAccount 流程恢复。
+        let cleared = false;
+        try {
+          const result = await withTimeout(cdpSend('Runtime.evaluate', {
+            expression: `(function () {
+              var url = new URL(location.href);
+              url.searchParams.delete('accountSnapshot');
+              history.replaceState(history.state, '', url.href);
+              return !new URL(location.href).searchParams.has('accountSnapshot');
+            })()`,
+            returnByValue: true,
+          }), 10000, '清除旧账号快照');
+          cleared = !!(result && !result.exceptionDetails && result.result && result.result.value === true);
+        } catch (_) {}
+        if (!cleared) throw new Error('无法清除旧账号快照，请重新打开 WorkDaddy 后重试切换');
+      }
+      await withTimeout(cdpSend('Page.reload', { ignoreCache: false }), 10000, '刷新 WorkBuddy 页面');
+    }
     if (options.waitForInjection === false) return true;
     const mounted = await pending.ready;
     if (!mounted) log('[cdp] 页面重载后组件未在 5 秒内确认挂载，继续后台流程');
@@ -3344,7 +3380,9 @@ function relaunchWorkBuddy() {
         const launcherHome = resolveLauncherHome(command);
         if (launcherHome) childEnv.HOME = launcherHome;
       }
-      const child = spawn(command, environmentMode ? [] : [`--remote-debugging-port=${port}`, ...(PROFILE.nativeDebugPort ? [`--inspect=127.0.0.1:${PROFILE.nativeDebugPort}`] : [])], {
+      const args = environmentMode ? [] : [`--remote-debugging-port=${port}`, ...(PROFILE.nativeDebugPort ? [`--inspect=127.0.0.1:${PROFILE.nativeDebugPort}`] : [])];
+      args.push(...getClientLaunchArgs(DATA_DIR, PROFILE.id, process.platform));
+      const child = spawn(command, args, {
         detached: true,
         stdio: 'ignore',
         windowsHide: true,
@@ -3878,12 +3916,23 @@ function automationSwitchAccount(account, options = {}) {
     try {
       if (options.isCancelled && options.isCancelled()) throw new Error('任务已停止');
       const active = currentAccount();
+      const sourceUid = String(active && active.uid || '');
       if (active && active.uid === uid) return { ok: true, uid, switched: false };
       automationSwitchProgress(options, options.restore ? 'restoring-account' : 'switching-account');
       releaseRendererReload = beginRendererReloadPriority();
       await preserveAccountSwitchTheme(uid);
       if (options.isCancelled && options.isCancelled()) throw new Error('任务已停止');
       const acct = await switchAccountForProfile(uid);
+      let automationSync = { enabled: false, copied: 0, skipped: 0, total: 0 };
+      let officialAutomationSync = { enabled: false, copied: 0, skipped: 0, total: 0 };
+      if (sourceUid && sourceUid !== uid && typeof automationSyncEnabled === 'function' && automationSyncEnabled()) {
+        automationSync.enabled = true;
+        try { Object.assign(automationSync, syncAccountAutomations(sourceUid, uid)); }
+        catch (error) { automationSync.error = '定时任务同步失败'; log(`[automation-switch] 定时任务同步失败: ${error.message}`); }
+        officialAutomationSync.enabled = true;
+        try { Object.assign(officialAutomationSync, await syncOfficialAccountAutomations(sourceUid, uid)); }
+        catch (error) { officialAutomationSync.error = '官方定时任务同步失败'; log(`[automation-switch] 官方定时任务同步失败: ${error.message}`); }
+      }
       pendingAutomationAccountSwitch = { account: { uid: acct.uid, nickname: acct.nickname } };
       await reloadWorkBuddyPage({ account: acct });
       if (pendingAutomationAccountSwitch) {
@@ -3891,7 +3940,6 @@ function automationSwitchAccount(account, options = {}) {
         pendingAutomationAccountSwitch = null;
         dispatchAutomationEvent('pageReady', { navigationSerial: mainFrameNavigationSerial, source: 'automation-account-switch', account: switchEvent.account });
       }
-      const sourceUid = String(active && active.uid || '');
       const rules = sourceUid ? getAutoCopyRules(DATA_DIR, sourceUid) : {};
       let job = null;
       if (rules.allSessions || (rules.sessionIds || []).length || (rules.workspaces || []).length) {
@@ -3902,7 +3950,7 @@ function automationSwitchAccount(account, options = {}) {
       releaseRendererReload = null;
       if (job) await waitAutomationSyncJob(job, options);
       if (options.isCancelled && options.isCancelled()) throw new Error('任务已停止');
-      return { ok: true, uid: acct.uid, nickname: acct.nickname, switched: true, syncJobId: job ? job.id : null };
+      return { ok: true, uid: acct.uid, nickname: acct.nickname, switched: true, syncJobId: job ? job.id : null, automationSync, officialAutomationSync };
     } catch (error) {
       pendingAutomationAccountSwitch = null;
       throw error;
@@ -4176,7 +4224,7 @@ function resumeAutomationAfterNavigation(run) {
   const next = run.pendingEvent;
   run.pendingEvent = null;
   if (!next || next.navigationSerial !== mainFrameNavigationSerial || next.pageSessionId !== cdpPageSessionId) return;
-  const task = readAutomations(DATA_DIR).find((item) => item.id === run.taskId && item.enabled && item.trigger.restartOnNavigation);
+  const task = (typeof readCurrentAutomations === 'function' ? readCurrentAutomations() : readAutomations(DATA_DIR)).find((item) => item.id === run.taskId && item.enabled && item.trigger.restartOnNavigation);
   if (task) startAutomationRun(task, next);
 }
 
@@ -4741,6 +4789,9 @@ async function writeDiagnosticsSnapshot(reason) {
 // ===== SESSIONS_API_MARK：会话管理（读 WorkBuddy workbuddy.db）=====
 const SESSIONS_DB = PROFILE.sessionDb;
 const SESSION_DB = createSessionDb({ dbPath: SESSIONS_DB });
+const officialAutomationSyncEngine = PROFILE.kind === 'workbuddy'
+  ? createOfficialAutomationSync({ dataDir: DATA_DIR, db: SESSION_DB })
+  : null;
 const CODEBUDDY_SESSIONS = PROFILE.kind === 'codebuddy' ? createCodeBuddySessionStore({
   readItems: async () => {
     const items=await codeBuddyNative.sessionItems();
@@ -7611,6 +7662,24 @@ function currentAccount() {
   }
 }
 
+function readCurrentAutomations() {
+  const uid = String((currentAccount() || {}).uid || '').trim();
+  return readAccountAutomations(DATA_DIR, uid);
+}
+
+function automationSyncEnabled() {
+  return readAutomationSyncSettings(DATA_DIR).enabled === true;
+}
+
+function syncAccountAutomations(sourceUid, targetUid) {
+  return syncAutomationsToAccount(DATA_DIR, sourceUid, targetUid);
+}
+
+async function syncOfficialAccountAutomations(sourceUid, targetUid) {
+  if (!officialAutomationSyncEngine) return { copied: 0, skipped: 0, total: 0 };
+  return officialAutomationSyncEngine(sourceUid, targetUid);
+}
+
 function accountBackupFile(uid) {
   const value = String(uid || '').trim();
   if (!/^[A-Za-z0-9_-]{1,128}$/.test(value)) {
@@ -9864,7 +9933,7 @@ function handleApi(req, res) {
 
   if (req.method === 'POST' && p === '/api/automations/export') {
     return readTransferBody(req).then(body => {
-      return exportTasks(readAutomations(DATA_DIR), body && body.ids);
+      return exportTasks(typeof readCurrentAutomations === 'function' ? readCurrentAutomations() : readAutomations(DATA_DIR), body && body.ids);
     }).then(result => json(res, 200, { ok: true, ...result }))
       .catch(error => json(res, 400, { ok: false, error: error.message }));
   }
@@ -9939,10 +10008,20 @@ function handleApi(req, res) {
     });
   }
 
+  if (req.method === 'GET' && p === '/api/automations/auto-sync') {
+    return json(res, 200, { ok: true, enabled: automationSyncEnabled() });
+  }
+  if (req.method === 'POST' && p === '/api/automations/auto-sync') {
+    return readBody(req).then((body) => {
+      if (!body || typeof body.enabled !== 'boolean') return json(res, 400, { ok: false, error: '缺少定时任务同步开关状态' });
+      return json(res, 200, { ok: true, ...writeAutomationSyncSettings(DATA_DIR, body.enabled) });
+    }).catch((error) => json(res, 400, { ok: false, error: error.message }));
+  }
+
   if (req.method === 'GET' && p === '/api/automations') {
     const imported = importAgentInbox(DATA_DIR, { profileId: PROFILE.id });
     imported.forEach((item) => log(`[automation-agent] request=${item.requestId} ${item.ok ? 'imported=' + item.taskId : 'rejected=' + item.error}`));
-    const tasks = readAutomations(DATA_DIR);
+    const tasks = typeof readCurrentAutomations === 'function' ? readCurrentAutomations() : readAutomations(DATA_DIR);
     let builtinMarkers = {};
     try { builtinMarkers = JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'automation-builtins.json'), 'utf8')) || {}; } catch (_) {}
     const runs = Array.from(automationRuns.values()).slice(-50).map(automationPublicRun);
@@ -9969,13 +10048,19 @@ function handleApi(req, res) {
       try {
         if (body && body.kind != null) throw new Error('任务包或索引不能作为本地任务执行');
         const task = validateTask(body && body.task ? body.task : body);
-        const tasks = readAutomations(DATA_DIR);
-        const index = tasks.findIndex((item) => item.id === task.id);
-        if (index >= 0 && !isSupportedTaskSchema(tasks[index])) throw new Error('任务使用更新的协议，请升级 WorkDaddy 后再编辑');
-        if (index < 0 && tasks.length >= 200) throw new Error('自动化任务数量已达到上限');
-        if (index >= 0) tasks[index] = task; else tasks.unshift(task);
-        writeAutomations(DATA_DIR, tasks);
-        return json(res, 200, { ok: true, task });
+        const allTasks = readAutomations(DATA_DIR);
+        const currentUid = String((currentAccount() || {}).uid || '').trim();
+        const index = allTasks.findIndex((item) => item.id === task.id && readAccountAutomations(DATA_DIR, currentUid).some((visible) => visible.id === item.id));
+        const sameIdIndex = allTasks.findIndex((item) => item.id === task.id);
+        if (sameIdIndex >= 0 && index < 0) throw new Error('任务 ID 已被其他账号使用');
+        if (index >= 0 && !isSupportedTaskSchema(allTasks[index])) throw new Error('任务使用更新的协议，请升级 WorkDaddy 后再编辑');
+        if (index < 0 && allTasks.length >= 200) throw new Error('自动化任务数量已达到上限');
+        const stored = index >= 0 && allTasks[index][AUTOMATION_ACCOUNT_SCOPE_KEY]
+          ? { ...task, [AUTOMATION_ACCOUNT_SCOPE_KEY]: allTasks[index][AUTOMATION_ACCOUNT_SCOPE_KEY] }
+          : index >= 0 ? task : scopeTaskToAccount(task, currentUid);
+        if (index >= 0) allTasks[index] = stored; else allTasks.unshift(stored);
+        writeAutomations(DATA_DIR, allTasks);
+        return json(res, 200, { ok: true, task: stored });
       } catch (error) { return json(res, 400, { ok: false, error: error.message }); }
     });
   }
@@ -9984,7 +10069,7 @@ function handleApi(req, res) {
     return readBody(req).then((body) => {
       try {
         const id = String(body && body.id || '').trim();
-        const task = readAutomations(DATA_DIR).find((item) => item.id === id);
+        const task = (typeof readCurrentAutomations === 'function' ? readCurrentAutomations() : readAutomations(DATA_DIR)).find((item) => item.id === id);
         if (!task) return json(res, 404, { ok: false, error: '自动化任务不存在' });
         if (!canManuallyRunTask(task)) return json(res, 409, { ok: false, error: '此任务由事件或定时自动触发，无需手动运行' });
         const running = Array.from(automationRuns.values()).find((run) => run.taskId === id && run.status === 'running');
@@ -9999,7 +10084,7 @@ function handleApi(req, res) {
     return readBody(req).then((body) => {
       try {
         const id = String(body && body.id || '').trim();
-        if (!readAutomations(DATA_DIR).some(task => task.id === id)) return json(res, 404, { ok: false, error: '自动化任务不存在' });
+        if (!(typeof readCurrentAutomations === 'function' ? readCurrentAutomations() : readAutomations(DATA_DIR)).some(task => task.id === id)) return json(res, 404, { ok: false, error: '自动化任务不存在' });
         if (Array.from(automationRuns.values()).some(run => run.safetyReviewTaskId === id && run.status === 'running')) {
           return json(res, 409, { ok: false, error: '该任务正在安全评估中' });
         }
@@ -10033,10 +10118,11 @@ function handleApi(req, res) {
         const ids = Array.isArray(body && body.ids) ? body.ids.map((id) => String(id || '').trim()).filter(Boolean).slice(0, 200) : [];
         const action = String(body && body.action || '').trim();
         const tasks = readAutomations(DATA_DIR);
-        const selected = tasks.filter((task) => ids.includes(task.id));
+        const visibleIds = new Set(readCurrentAutomations().map((task) => task.id));
+        const selected = tasks.filter((task) => visibleIds.has(task.id) && ids.includes(task.id));
         if (!selected.length) return json(res, 400, { ok: false, error: '未选择自动化任务' });
         if (action === 'delete') {
-          writeAutomations(DATA_DIR, tasks.filter((task) => !ids.includes(task.id)));
+          writeAutomations(DATA_DIR, tasks.filter((task) => !selected.some((item) => item.id === task.id)));
         } else if (action === 'enable' || action === 'disable') {
           if (selected.some(task => !isTaskCompatible(task))) throw new Error('任务使用更新的协议，请升级 WorkDaddy 后再编辑');
           selected.forEach((task) => { task.enabled = action === 'enable'; task.updatedAt = Date.now(); });
@@ -10045,7 +10131,7 @@ function handleApi(req, res) {
           if (selected.some((task) => !canManuallyRunTask(task))) return json(res, 409, { ok: false, error: '此任务由事件或定时自动触发，无需手动运行' });
           selected.forEach((task) => { if (!Array.from(automationRuns.values()).some((run) => run.taskId === task.id && run.status === 'running')) startAutomationRun(task); });
         } else return json(res, 400, { ok: false, error: '不支持的批量操作' });
-        return json(res, 200, { ok: true, action, count: selected.length, tasks: readAutomations(DATA_DIR) });
+        return json(res, 200, { ok: true, action, count: selected.length, tasks: typeof readCurrentAutomations === 'function' ? readCurrentAutomations() : readAutomations(DATA_DIR) });
       } catch (error) { return json(res, 400, { ok: false, error: error.message }); }
     });
   }
@@ -10477,6 +10563,23 @@ function handleApi(req, res) {
     });
   }
 
+  if (req.method === 'GET' && p === '/api/client-launch-settings') {
+    return json(res, 200, { ok: true, ...readClientLaunchSettings(DATA_DIR, PROFILE.id, process.platform) });
+  }
+
+  if (req.method === 'POST' && p === '/api/client-launch-settings') {
+    return readBody(req).then((body) => {
+      if (process.platform !== 'win32' || PROFILE.id !== 'workbuddy-ai' || !body || typeof body.softwareRendering !== 'boolean') {
+        return json(res, 400, { ok: false, error: '仅 Windows WorkBuddy AI 支持布尔值软件渲染设置' });
+      }
+      try {
+        return json(res, 200, { ok: true, ...setClientLaunchSettings(DATA_DIR, PROFILE.id, body, process.platform) });
+      } catch (_) {
+        return json(res, 500, { ok: false, error: '保存软件渲染设置失败，请重试' });
+      }
+    });
+  }
+
   // 诊断：保存一份不含 token 的本地快照，便于用户在异常机器上直接提供文件排查。
   if (req.method === 'GET' && p === '/api/diagnostics') {
     return writeDiagnosticsSnapshot('api-get').then((snapshot) => json(res, 200, { ok: true, file: DIAGNOSTICS_FILE, diagnostics: snapshot }));
@@ -10650,7 +10753,7 @@ function handleApi(req, res) {
 
   if (req.method === 'GET' && p === '/api/accounts') {
     const accounts = listAccountsWithRuntimeTokenCache();
-    const checkinAutomationEnabled = readAutomations(DATA_DIR).some(task => task.enabled && stepsContainCheckin(task.steps));
+    const checkinAutomationEnabled = readCurrentAutomations().some(task => task.enabled && stepsContainCheckin(task.steps));
     const cache = loadCheckinCache();
     const today = todayStr();
     return CREDIT_USAGE_STORE.listDailyCheckins(accounts.map((a) => a.uid), today)
@@ -12448,6 +12551,24 @@ function handleApi(req, res) {
         if (sourceUid !== uid) await preserveAccountSwitchTheme(uid);
         const acct = await switchAccountForProfile(uid);
         const hint = acct.nativeSwitched ? '原生登录态已切换，无需重启客户端' : '登录文件已切换，请刷新窗口使新账号生效';
+        let automationSync = { enabled: false, copied: 0, skipped: 0, total: 0 };
+        let officialAutomationSync = { enabled: false, copied: 0, skipped: 0, total: 0 };
+        if (sourceUid && sourceUid !== uid && typeof automationSyncEnabled === 'function' && automationSyncEnabled()) {
+          automationSync.enabled = true;
+          try {
+            Object.assign(automationSync, syncAccountAutomations(sourceUid, uid));
+          } catch (error) {
+            automationSync.error = '定时任务同步失败';
+            log(`[switch] 定时任务同步失败: ${error.message}`);
+          }
+          officialAutomationSync.enabled = true;
+          try {
+            Object.assign(officialAutomationSync, await syncOfficialAccountAutomations(sourceUid, uid));
+          } catch (error) {
+            officialAutomationSync.error = '官方定时任务同步失败';
+            log(`[switch] 官方定时任务同步失败: ${error.message}`);
+          }
+        }
         let reloaded = false;
         if (body.reload) {
           try {
@@ -12493,6 +12614,8 @@ function handleApi(req, res) {
           nickname: acct.nickname,
           reloaded,
           autoCopy: autoCopyJob ? { jobId: autoCopyJob.id, total: autoCopyJob.total, openSessionId: autoCopyJob.openSessionId || '' } : { total: 0 },
+          automationSync,
+          officialAutomationSync,
           hint: reloaded ? '已切换并触发窗口刷新' : hint,
         });
       } catch (e) {
@@ -12882,7 +13005,7 @@ setTimeout(() => { migrateAutoCopyTargetRevisionBaselines().catch(() => {}); }, 
 const tickAutomationSchedules = createScheduleTicker(DATA_DIR);
 function runAutomationSchedules() {
   if (PROFILE.capabilities.automations === false) return;
-  tickAutomationSchedules(readAutomations(DATA_DIR), startAutomationRun,
+  tickAutomationSchedules(readCurrentAutomations(), startAutomationRun,
     (id) => Array.from(automationRuns.values()).some((run) => run.taskId === id && run.status === 'running'));
 }
 runAutomationSchedules();

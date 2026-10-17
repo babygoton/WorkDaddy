@@ -14,7 +14,9 @@ function harness(options = {}) {
   let armed = false, settled = false, profileReads = 0, initialAccount;
   let live = { uid: 'target', nickname: '新账号 % &', type: 'personal', editionType: 'experience', isPro: false, accessToken: 'synthetic-secret' };
   if (Object.hasOwn(options, 'profile')) live = options.profile;
-  const renderer = { URL, location, wb: options.missingApi ? undefined : { account: { profile: async () => {
+  const renderer = { URL, location, history: { state: null, replaceState: (_state, _title, url) => {
+    location.href = url;
+  } }, wb: options.missingApi ? undefined : { account: { profile: async () => {
     profileReads++;
     if (options.profileThrows) throw new Error('synthetic-secret');
     return live;
@@ -33,8 +35,9 @@ function harness(options = {}) {
       calls.push({ method, params });
       if (method === 'Page.getFrameTree') return { frameTree: { frame: { id: 'main' } } };
       if (method === 'Runtime.evaluate') {
-        if (options.evaluateThrows) throw new Error('synthetic-secret');
-        if (options.exceptionDetails) return { exceptionDetails: { text: 'synthetic-secret' } };
+        if (options.evaluateThrows && params.expression.includes('account.profile')) throw new Error('synthetic-secret');
+        if (options.exceptionDetails && params.expression.includes('account.profile')) return { exceptionDetails: { text: 'synthetic-secret' } };
+        if (options.clearThrows && params.expression.includes('replaceState')) throw new Error('synthetic-secret');
         return { result: { value: await vm.runInNewContext(params.expression, renderer) } };
       }
       assert.equal(armed, true, 'arm injection before navigation or reload');
@@ -84,7 +87,19 @@ for (const options of [
   const h = harness(options);
   assert.equal(await h.run(), true);
   assert.equal(h.calls.at(-1).method, 'Page.reload');
+  assert.equal(h.initial(), null, 'fallback must not hydrate the previous account or its entitlement');
+  const next = new URL(h.location.href);
+  assert.equal(next.searchParams.get('extra'), 'a&b');
+  assert.equal(next.hash, '#chat');
   assert.doesNotMatch(h.logs.join('\n'), /synthetic-secret|accountSnapshot=/);
+});
+
+test('failed snapshot cleanup refuses to reload the old account', async () => {
+  const h = harness({ missingApi: true, clearThrows: true });
+  await assert.rejects(h.run(), /清除.*账号快照/);
+  assert.equal(h.calls.some(c => c.method === 'Page.reload'), false);
+  assert.equal(h.settled(), true);
+  assert.doesNotMatch(h.logs.join('\n'), /synthetic-secret/);
 });
 
 for (const options of [{ kind: 'codebuddy' }]) test('clients without the WorkBuddy snapshot contract keep normal reload: ' + JSON.stringify(options), async () => {

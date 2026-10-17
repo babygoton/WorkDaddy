@@ -52,6 +52,7 @@ const { getProfile, profileDataDir, isCodeBuddyBinary } = require('./profiles.js
 const { isTargetForProfile } = require('./cdp-targets.js');
 const { replaceFileWithRetry } = require('./atomic-file-write.js');
 const { parseUiPortState, profileUiPortCandidates } = require('./ui-port.js');
+const { getClientLaunchArgs } = require('./client-launch-settings.js');
 
 const SCRIPTS_DIR = __dirname;
 const WORKDADDY_APP_DIR = path.resolve(SCRIPTS_DIR, '..');
@@ -1162,6 +1163,7 @@ function launchWorkBuddy(wb) {
   const environmentMode = !!(PROFILE.cdp && PROFILE.cdp.mode === 'environment');
   const args = environmentMode ? [] : ['--remote-debugging-port=' + CDP_PORT];
   if (PROFILE.nativeDebugPort) args.push('--inspect=127.0.0.1:' + PROFILE.nativeDebugPort);
+  args.push(...getClientLaunchArgs(DATA_DIR, PROFILE.id, process.platform));
   const env = environmentMode
     ? { ...process.env, WORKBUDDY_REMOTE_DEBUGGING_PORT: String(CDP_PORT) }
     : process.env;

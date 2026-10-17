@@ -100,6 +100,24 @@ test('account listing marks backups that cannot be used for a dynamic switch', (
   }
 });
 
+test('account listing recovers the verified mobile from the token when WorkBuddy redacts phoneNumber', () => {
+  const f = fixture();
+  try {
+    fs.mkdirSync(path.join(f.dataDir, 'accounts'), { recursive: true });
+    const payload = Buffer.from(JSON.stringify({ preferred_username: '13592246735' }), 'utf8').toString('base64url');
+    fs.writeFileSync(path.join(f.dataDir, 'accounts', 'masked.info'), JSON.stringify({
+      account: { uid: 'masked', nickname: '135****6735', phoneNumber: '135****6735', uin: '330112549868' },
+      auth: { accessToken: `header.${payload}.signature`, domain: 'https://www.workbuddy.cn' },
+    }));
+    const account = run(f.root, f.dataDir, 'process.stdout.write(JSON.stringify(lib.listAccounts(process.env.WBSWITCH_DATA_DIR)[0]))');
+    assert.equal(account.nickname, '135****6735');
+    assert.equal(account.phone, '13592246735');
+    assert.equal(account.uin, '330112549868');
+  } finally {
+    fs.rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
 test('multiple valid files without one lastLogin marker are ambiguous and backup all', () => {
   const f = fixture();
   try {

@@ -89,14 +89,24 @@ test('model, wallpaper, and account cards escape each dynamic HTML sink', () => 
   const accounts = sourceBetween('function render(data)', 'function updateAccountSummary()');
   assert.equal((accounts.match(/escAttr\(a\.uid\)/g) || []).length, 3);
   assert.doesNotMatch(accounts, /data-primary-uid/);
-  assert.equal((accounts.match(/escAttr\(a\.nickname \|\| '未命名'\)/g) || []).length, 2);
-  assert.match(accounts, /var nameVal = state\.mask \? maskAccountName\(rawName\) : rawName;/);
-  assert.match(accounts, /var idVal = state\.mask \? maskAccountId\(rawId\) : rawId;/);
+  assert.equal((accounts.match(/escAttr\(accountDisplayName\(a, state\.mask\)\)/g) || []).length, 2);
+  assert.match(accounts, /var nameVal = accountDisplayName\(a, state\.mask\);/);
+  assert.match(accounts, /var idVal = accountDisplayId\(a, state\.mask\);/);
   assert.match(accounts, /wbs-name">' \+ esc\(nameVal\)/);
   assert.match(accounts, /wbs-val">' \+ esc\(idVal\)/);
   assert.match(accounts, /wbs-val[^\n]+esc\(ts\.label\)/);
   assert.doesNotMatch(accounts, /data-(?:uid|name)="' \+ a\./);
   assert.doesNotMatch(accounts, /var idVal = a\.phone \? a\.phone/);
+});
+
+test('clear account mode does not echo an official redaction placeholder', () => {
+  const helpers = sourceBetween('function looksOfficiallyMasked(', 'function maskAccountName(');
+  const getDisplay = new Function(`${helpers}; return { looksOfficiallyMasked, accountDisplayName, accountDisplayId };`);
+  const { looksOfficiallyMasked, accountDisplayName, accountDisplayId } = getDisplay();
+  assert.equal(looksOfficiallyMasked('135****6735'), true);
+  assert.equal(accountDisplayName({ nickname: '135****6735', phone: '135****6735', uin: '998877' }, false), '135****6735');
+  assert.equal(accountDisplayId({ phone: '135****6735', uin: '998877' }, false), '135****6735');
+  assert.equal(accountDisplayName({ nickname: 'Alice', uin: '998877' }, false), 'Alice');
 });
 
 test('account masking preference persists per WorkDaddy profile', () => {

@@ -228,6 +228,29 @@ test('growth actions open the official center and never write through local grow
   }
 });
 
+test('CodeBuddy CN growth actions use the operable WorkBuddy growth site', async () => {
+  const helperStart = inject.indexOf('    var OFFICIAL_GROWTH_TARGET');
+  const helperEnd = inject.indexOf('    function confirmCurrentGrowthAccount', helperStart);
+  assert.ok(helperStart > 0 && helperEnd > helperStart);
+  const source = inject.slice(helperStart, helperEnd);
+  const calls = [], listeners = {};
+  const adapter = {
+    on(event, handler) { listeners[event] = handler; return () => { delete listeners[event]; }; },
+    emit(event) { assert.equal(event, 'request-device-auth-code'); setImmediate(() => listeners['request-device-auth-code-result']({ success: true, deviceCode: 'device-code-cn' })); },
+    openExternal(url) { calls.push(url); return Promise.resolve(); },
+  };
+  const open = Function('api', 'toast', 'root', 'findWbsAdapter', 'window', 'PROFILE_ID', source + '\nreturn openOfficialGrowthCenter;')(
+    () => Promise.resolve(), () => {}, {}, () => adapter, { __wbsAdapter: adapter }, 'codebuddy-cn'
+  );
+  await open();
+  assert.equal(calls.length, 1);
+  const opened = new URL(calls[0]);
+  assert.equal(opened.origin, 'https://www.workbuddy.cn');
+  assert.equal(opened.pathname, '/console/client-login');
+  assert.equal(opened.searchParams.get('code'), 'device-code-cn');
+  assert.match(opened.searchParams.get('target'), /^\/profile\/growth-center\?fromSource=gwzcw\.15291246/);
+});
+
 test('modern adapter shim forwards the official login event and external-open methods', () => {
   const start = inject.indexOf('    function findWbsAdapter()');
   const end = inject.indexOf('    function bootstrapModernQueueBridge()', start);

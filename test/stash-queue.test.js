@@ -232,6 +232,17 @@ test('modern queue path uses the top-level notifying adapter and clears stale ad
   assert.match(inject, /stashSessionAtClick = sessionId/);
 });
 
+test('modern WorkBuddy queue rows put the stash tag before the renamed actions group', () => {
+  const inject = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'inject.js'), 'utf8');
+  const start = inject.indexOf('function syncQueueTags()');
+  const end = inject.indexOf('\n    function watchQueueOrder()', start);
+  assert.ok(start >= 0 && end > start);
+  const sync = inject.slice(start, end);
+  assert.match(sync, /\.conversation-message-queue-item-actions/);
+  assert.match(sync, /\.cb-message-queue-item-actions/);
+  assert.match(sync, /actions\.insertBefore\(tag, actions\.firstChild\)/);
+});
+
 test('real modern queue actions remain owned by WorkBuddy official handlers', () => {
   const inject = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'inject.js'), 'utf8');
   const start = inject.indexOf('function handleModernQueueActionClick(event)');
