@@ -499,8 +499,8 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 // 1.2.45：同步功能统一使用 WorkBuddy 的「个性化」名称。
 // 1.2.43：共享身份提示使用全局说明浮层，来源列出未设置账号并简化文案。
 // 1.2.46：合入失效卷上的会话目录修复保护，避免后台反复尝试创建目录。
-const DAEMON_VERSION = '1.2.46';
-const DAEMON_BUILD_ID = 'release-1.2.46-session-cwd-volume-guard';
+const DAEMON_VERSION = '1.2.47';
+const DAEMON_BUILD_ID = 'feature-1.2.47-follow-system-theme';
 const usageReporter = createUsageReporter({ profile: PROFILE.id, version: DAEMON_VERSION });
 configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const automationDiscovery = createAutomationDiscovery({
@@ -8321,9 +8321,88 @@ async function restoreNativeAppearanceByCdp() {
 function readSavedThemeId() {
   try {
     const id = JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'current-theme.json'), 'utf8')).id;
-    if (typeof id === 'string' && (id === 'default' || getTheme(id))) return id;
+    if (typeof id === 'string' && (id === 'default' || id === 'system' || getTheme(id))) return id;
   } catch (_) {}
   return 'default';
+}
+
+/** 解析「跟随系统」主题：直接读取操作系统的深浅色设置，跨 macOS/Windows/Linux 一致。
+ * 不能依赖渲染进程的 prefers-color-scheme：WorkBuddy 自己的原生主题被显式设定后，
+ * Electron nativeTheme.themeSource 被锁定，matchMedia 反映的是锁定值而非操作系统状态
+ * （实测系统深色时渲染进程 matchMedia 仍返回浅色）。因此按平台直读：
+ * - Windows: 注册表 AppsUseLightTheme（0=深色）
+ * - macOS:   defaults read -g AppleInterfaceStyle（Dark=深色，浅色时报错）
+ * - Linux:   gsettings org.gnome.desktop.interface color-scheme（含 dark=深色）
+ * OS 检测失败时回退渲染进程 matchMedia（themeSource 未被锁定的环境下仍然正确），
+ * 再失败则回退浅色，保证功能可降级。
+ */
+function execCaptureText(cmd, args, timeoutMs = 4000) {
+  return new Promise((resolve, reject) => {
+    execFile(cmd, args, { encoding: 'utf8', timeout: timeoutMs, windowsHide: true }, (err, stdout) => {
+      if (err) reject(err); else resolve(String(stdout || ''));
+    });
+  });
+}
+async function resolveSystemThemeByRenderer() {
+  try {
+    const reply = await cdpSend('Runtime.evaluate', {
+      expression: `(function(){try{var m=window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)');return m&&m.matches?'dark':'default';}catch(e){return 'default';}})()`,
+      returnByValue: true,
+    });
+    return reply && reply.result && reply.result.value === 'dark' ? 'dark' : 'default';
+  } catch (_) {
+    return 'default';
+  }
+}
+async function resolveSystemTheme() {
+  try {
+    if (process.platform === 'win32') {
+      try {
+        const out = await execCaptureText('reg', ['query', 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize', '/v', 'AppsUseLightTheme']);
+        if (/AppsUseLightTheme/i.test(out)) return /0x0\b/i.test(out) ? 'dark' : 'default';
+      } catch (_) {}
+      // reg.exe 不可用（例如被安全软件的程序黑名单拦截、EPERM）时回退 PowerShell 读注册表，
+      // 与 windows-process-boundary 的 powershell 查询同模式，保证受限环境下功能仍可用
+      try {
+        const out = await execCaptureText('powershell', ['-NoProfile', '-Command', "(Get-ItemProperty 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize').AppsUseLightTheme"], 8000);
+        if (/^[01]/.test(String(out).trim())) return String(out).trim() === '0' ? 'dark' : 'default';
+      } catch (_) {}
+      return resolveSystemThemeByRenderer();
+    }
+    if (process.platform === 'darwin') {
+      // 浅色模式下该键不存在，defaults 以非零退出：按浅色处理
+      const out = await execCaptureText('defaults', ['read', '-g', 'AppleInterfaceStyle']).catch(() => '');
+      return /dark/i.test(out) ? 'dark' : 'default';
+    }
+    const out = await execCaptureText('gsettings', ['get', 'org.gnome.desktop.interface', 'color-scheme']).catch(() => '');
+    return /dark/i.test(out) ? 'dark' : 'default';
+  } catch (_) {
+    return resolveSystemThemeByRenderer();
+  }
+}
+
+// 「跟随系统」轮询：系统深浅色变化没有跨平台的事件通知，用轻量轮询保证实时性
+// （Windows 单次 reg 查询 ~几十 ms）。仅 system 模式下轮询，切换到具体主题后自动停止；
+// 解析结果有变化时以 automatic 语义重新应用，不递增 generation，用户手动操作仍可取消。
+let systemThemeTimer = null;
+let lastResolvedSystemTheme = null;
+function stopSystemThemePolling() {
+  if (systemThemeTimer) { clearInterval(systemThemeTimer); systemThemeTimer = null; }
+}
+function startSystemThemePolling() {
+  if (systemThemeTimer) return;
+  systemThemeTimer = setInterval(async () => {
+    try {
+      if (!cdp.connected || readSavedThemeId() !== 'system') { stopSystemThemePolling(); return; }
+      if (readSessionState().themeTakeoverEnabled === false) return;
+      const resolved = await resolveSystemTheme();
+      if (resolved !== lastResolvedSystemTheme) {
+        log('[theme] 系统深浅色变化 -> ' + (resolved === 'dark' ? '深色' : '浅色') + '，自动切换主题');
+        await applyThemeByCdp('system', { automatic: true });
+      }
+    } catch (_) {}
+  }, 5000);
+  if (typeof systemThemeTimer.unref === 'function') systemThemeTimer.unref();
 }
 
 /** 恢复已保存的主题（CDP 连接/页面刷新后调用）：读取 current-theme.json 重新应用，保证深浅色在重启/刷新后仍生效 */
@@ -8451,6 +8530,16 @@ async function applyThemeByCdp(id, options = {}) {
   if (!PROFILE.capabilities.theme || PROFILE.capabilities.themeTakeover === false) throw new Error(`${PROFILE.name} 暂不支持毛玻璃主题`);
   if (options.release && readSessionState().themeTakeoverEnabled !== false) return { applied: false, takeover: true };
   if (options.automatic && readSessionState().themeTakeoverEnabled === false) return { applied: false, takeover: false };
+  // 'system' 不是具体主题：先解析成当前系统对应的 'dark'/'default' 再应用。
+  // 解析放在代数自增之前，一次用户操作只递增一次 generation。
+  // 记录解析基线并启动轮询，保证停留在 system 模式时系统深浅色变化能自动跟随。
+  if (id === 'system') {
+    const resolved = await resolveSystemTheme();
+    lastResolvedSystemTheme = resolved;
+    startSystemThemePolling();
+    const info = await applyThemeByCdp(resolved, options);
+    return { ...info, system: true, resolved };
+  }
   if (!options.automatic && !options.nativeOnly && !options.release) themeApplyGeneration++;
   const applyGeneration = themeApplyGeneration;
   if (!cdp.connected) throw new Error('CDP 未连接');
@@ -11912,7 +12001,8 @@ function handleApi(req, res) {
   if (req.method === 'POST' && p === '/api/theme-apply') {
     return readBody(req).then((body) => {
       const id = (body.id || 'default') + '';
-      if (id !== 'default' && !getTheme(id)) return json(res, 404, { ok: false, error: '主题不存在: ' + id });
+      // 'system' 是保留模式（跟随系统深浅色），不对应 getTheme 的具体主题
+      if (id !== 'default' && id !== 'system' && !getTheme(id)) return json(res, 404, { ok: false, error: '主题不存在: ' + id });
       return applyThemeByCdp(id)
         .then((info) => {
           if (info.cancelled) return json(res, 409, { ok: false, error: '主题切换已被后续操作取消' });
