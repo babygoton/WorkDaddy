@@ -35,6 +35,7 @@ const { createAccountCreditCache } = require('./account-credit-cache.js');
 const { spawn, spawnSync, execFile } = require('child_process');
 const { createWallpaperRotation, updateWallpaperInRenderer, pickWallpaperDirectory } = require('./wallpaper-rotation');
 const { readClientLaunchSettings, setClientLaunchSettings, getClientLaunchArgs } = require('./client-launch-settings.js');
+const { getWorkBuddyLaunchEnv } = require('./workbuddy-launch-env.js');
 const PROBE_CLIENT_RUNNING = process.argv.includes('--probe-client-running');
 const {
   assertSameProcessIdentity,
@@ -519,8 +520,9 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 // 1.2.56：从已验证的 access-token preferred_username 恢复官方脱敏手机号。
 // 1.2.57：CodeBuddy CN 成长计划跳转到可操作的 WorkBuddy 成长中心。
 // 1.2.58：官方定时任务按历史关联双向同步修改，保持已保存账号一致。
-const DAEMON_VERSION = '1.2.58';
-const DAEMON_BUILD_ID = 'release-1.2.58-shared-official-automations';
+// 1.2.59：Windows 两端启动分别固定官方更新源、配置目录和临时缓存，避免串端更新。
+const DAEMON_VERSION = '1.2.59';
+const DAEMON_BUILD_ID = 'release-1.2.59-windows-update-isolation';
 const usageReporter = createUsageReporter({ profile: PROFILE.id, version: DAEMON_VERSION });
 configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const automationDiscovery = createAutomationDiscovery({
@@ -3374,7 +3376,7 @@ function relaunchWorkBuddy() {
       }
       // 日志用 ASCII 标记（非用户可见文案，无需进 i18n 词典）
       log(`[logout] 以 ${environmentMode ? '环境变量' : '命令行参数'} CDP=${port} 重启 WorkBuddy: ${command}${viaLauncher ? ' [via launcher]' : ''}`);
-      const childEnv = { ...process.env };
+      const childEnv = getWorkBuddyLaunchEnv(PROFILE, DATA_DIR, process.platform, process.env);
       if (environmentMode) childEnv.WORKBUDDY_REMOTE_DEBUGGING_PORT = String(port);
       if (viaLauncher) {
         // 关键：启动器要用它自己环境的 $HOME 反推真实家目录，必须还原真实 HOME

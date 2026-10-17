@@ -53,6 +53,7 @@ const { isTargetForProfile } = require('./cdp-targets.js');
 const { replaceFileWithRetry } = require('./atomic-file-write.js');
 const { parseUiPortState, profileUiPortCandidates } = require('./ui-port.js');
 const { getClientLaunchArgs } = require('./client-launch-settings.js');
+const { getWorkBuddyLaunchEnv } = require('./workbuddy-launch-env.js');
 
 const SCRIPTS_DIR = __dirname;
 const WORKDADDY_APP_DIR = path.resolve(SCRIPTS_DIR, '..');
@@ -1164,9 +1165,8 @@ function launchWorkBuddy(wb) {
   const args = environmentMode ? [] : ['--remote-debugging-port=' + CDP_PORT];
   if (PROFILE.nativeDebugPort) args.push('--inspect=127.0.0.1:' + PROFILE.nativeDebugPort);
   args.push(...getClientLaunchArgs(DATA_DIR, PROFILE.id, process.platform));
-  const env = environmentMode
-    ? { ...process.env, WORKBUDDY_REMOTE_DEBUGGING_PORT: String(CDP_PORT) }
-    : process.env;
+  const env = getWorkBuddyLaunchEnv(PROFILE, DATA_DIR, process.platform, process.env);
+  if (environmentMode) env.WORKBUDDY_REMOTE_DEBUGGING_PORT = String(CDP_PORT);
   const child = spawn(wb, args, {
     // WorkBuddy 是 GUI 程序：windowsHide:true 会把 STARTUPINFO 的 wShowWindow 置为 SW_HIDE，
     // 新版 Electron 主窗口显示走 ShowWindow(SW_SHOWDEFAULT) 会继承该值，导致主窗口隐藏启动、

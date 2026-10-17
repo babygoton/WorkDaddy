@@ -7,6 +7,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 const { EventEmitter } = require('node:events');
 const { readClientLaunchSettings, setClientLaunchSettings, getClientLaunchArgs } = require('../scripts/client-launch-settings.js');
+const { getWorkBuddyLaunchEnv } = require('../scripts/workbuddy-launch-env.js');
 const read = name => fs.readFileSync(path.join(__dirname, '../scripts', name), 'utf8');
 const expectedFlags = ['--disable-gpu', '--use-gl=angle', '--use-angle=swiftshader-webgl', '--enable-unsafe-swiftshader'];
 function fixture(t) {
@@ -48,9 +49,9 @@ test('normal Windows startup and daemon relaunch both apply the persisted flags 
   setClientLaunchSettings(dir, 'workbuddy-ai', { softwareRendering: true }, 'win32');
   const launches = [];
   const ctx = {
-    PROFILE: { id: 'workbuddy-ai', cdp: { mode: 'environment' } }, DATA_DIR: dir, CDP_PORT: 9223,
+    PROFILE: { id: 'workbuddy-ai', dataRoot: path.join(dir, '.workbuddy-ai'), cdp: { mode: 'environment' } }, DATA_DIR: dir, CDP_PORT: 9223,
     process: { platform: 'win32', env: {} }, IS_WIN: true, IS_LINUX: false, path,
-    getClientLaunchArgs, log() {}, selectCdpPort: async () => 9223,
+    getClientLaunchArgs, getWorkBuddyLaunchEnv, log() {}, selectCdpPort: async () => 9223,
     resolveWorkBuddyBinary: () => 'C:\\WorkBuddyAI.exe', sleep: async () => {}, restoreWorkBuddyWindow: async () => {},
     spawn: (command, args, options) => {
       launches.push({ command, args: Array.from(args), options });
