@@ -1562,8 +1562,9 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '初始化设置': 'Initial setup',
     '切换账号自动同步所有会话': 'Automatically sync all sessions when switching accounts',
     '同步定时任务': 'Sync scheduled tasks',
-    '切换账号时自动同步当前账号的定时任务': 'Automatically sync this account’s scheduled tasks when switching accounts',
+    '切换账号时保持所有已保存账号的定时任务一致，包括重命名和删除': 'Keep scheduled tasks identical across saved accounts on switch, including renames and deletions',
     '已同步': 'Synced',
+    '已同步定时任务': 'Scheduled tasks synced',
     '个定时任务': ' scheduled task(s)',
     '已开启同步定时任务': 'Scheduled task sync enabled',
     '已关闭同步定时任务': 'Scheduled task sync disabled',
@@ -9337,7 +9338,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         '<span class="wbs-sess-auto-all-box" aria-hidden="true"><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="12" height="12" rx="2"/><path class="wbs-sess-auto-all-check" d="m4.5 8 2.2 2.2L11.5 5.5"/></svg></span>' +
         '<span class="wbs-sess-auto-all-label">自动同步所有会话</span>' +
         '</button>' +
-        '<button class="wbs-sess-auto-all" type="button" id="wbs-sess-auto-automations" role="checkbox" aria-checked="false" aria-label="同步定时任务" title="切换账号时自动同步当前账号的定时任务">' +
+        '<button class="wbs-sess-auto-all" type="button" id="wbs-sess-auto-automations" role="checkbox" aria-checked="false" aria-label="同步定时任务" title="切换账号时保持所有已保存账号的定时任务一致，包括重命名和删除">' +
         '<span class="wbs-sess-auto-all-box" aria-hidden="true"><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="12" height="12" rx="2"/><path class="wbs-sess-auto-all-check" d="m4.5 8 2.2 2.2L11.5 5.5"/></svg></span>' +
         '<span class="wbs-sess-auto-all-label">同步定时任务</span>' +
         '</button>' +
@@ -16823,13 +16824,15 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
               var automationSync = r && r.automationSync;
               var officialAutomationSync = r && r.officialAutomationSync;
               var automationCopied = (automationSync && automationSync.copied || 0) + (officialAutomationSync && officialAutomationSync.copied || 0);
+              var automationChanged = automationCopied + (officialAutomationSync && officialAutomationSync.updated || 0) + (officialAutomationSync && officialAutomationSync.removed || 0);
+              var automationError = (automationSync && automationSync.error) || (officialAutomationSync && officialAutomationSync.error);
               // 兜底文案优先用 daemon 返回的 hint：codebuddy 走原生会话替换，切换即时生效
               // （无需重启/刷新），"重启后生效"只适用于 WorkBuddy 文件替换且 CDP 刷新失败的场景。
               toast(
-                r.reloaded
-                  ? (automationCopied ? '已切换为「' + (r.nickname || r.uid) + '」，' + t('已同步') + ' ' + automationCopied + t('个定时任务') : autoCopy && autoCopy.jobId ? '已切换为「' + (r.nickname || r.uid) + '」，正在同步已标记会话…' : '已切换为「' + (r.nickname || r.uid) + '」，开始领取积分…')
+                automationError ? '已切换为「' + (r.nickname || r.uid) + '」，' + automationError : r.reloaded
+                  ? (automationChanged ? '已切换为「' + (r.nickname || r.uid) + '」，' + t('已同步定时任务') : autoCopy && autoCopy.jobId ? '已切换为「' + (r.nickname || r.uid) + '」，正在同步已标记会话…' : '已切换为「' + (r.nickname || r.uid) + '」，开始领取积分…')
                   : (r.hint || '已切换为「' + (r.nickname || r.uid) + '」，重启后生效'),
-                false,
+                !!automationError,
                 root
               );
               if (autoCopy && autoCopy.jobId) pollAutoCopyJob(autoCopy.jobId, r.nickname || r.uid);

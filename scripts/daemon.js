@@ -518,8 +518,9 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 // 1.2.55：官方昵称已脱敏时，账号名称跟随手机号来源，避免 UIN/手机号混用。
 // 1.2.56：从已验证的 access-token preferred_username 恢复官方脱敏手机号。
 // 1.2.57：CodeBuddy CN 成长计划跳转到可操作的 WorkBuddy 成长中心。
-const DAEMON_VERSION = '1.2.57';
-const DAEMON_BUILD_ID = 'release-1.2.57-codebuddy-growth-link';
+// 1.2.58：官方定时任务按历史关联双向同步修改，保持已保存账号一致。
+const DAEMON_VERSION = '1.2.58';
+const DAEMON_BUILD_ID = 'release-1.2.58-shared-official-automations';
 const usageReporter = createUsageReporter({ profile: PROFILE.id, version: DAEMON_VERSION });
 configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const automationDiscovery = createAutomationDiscovery({
@@ -4790,7 +4791,11 @@ async function writeDiagnosticsSnapshot(reason) {
 const SESSIONS_DB = PROFILE.sessionDb;
 const SESSION_DB = createSessionDb({ dbPath: SESSIONS_DB });
 const officialAutomationSyncEngine = PROFILE.kind === 'workbuddy'
-  ? createOfficialAutomationSync({ dataDir: DATA_DIR, db: SESSION_DB })
+  ? createOfficialAutomationSync({
+    dataDir: DATA_DIR,
+    db: SESSION_DB,
+    getAccountUids: () => listAccounts(DATA_DIR).map(account => account.uid),
+  })
   : null;
 const CODEBUDDY_SESSIONS = PROFILE.kind === 'codebuddy' ? createCodeBuddySessionStore({
   readItems: async () => {
