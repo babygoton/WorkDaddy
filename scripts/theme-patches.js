@@ -519,7 +519,7 @@ module.exports = [
     id: 'patch-107',
     themeId: 'nebula',
     desc: '毛玻璃主题下新版 teams 输入工具条的语音、上下文用量和增强按钮触发器去掉背景色，避免右侧出现多余色块。',
-    css: ':is(html.cb-dark,html[data-theme="dark"]) body[data-vscode-theme-name] .teams-container .cr-input-toolbar__right>span:is(.cr-voice-trigger-tooltip,.cr-context-usage-tooltip-trigger,.cr-enhance-button-tooltip),body[data-vscode-theme-name="IDE Night"] .teams-container .cr-input-toolbar__right>span:is(.cr-voice-trigger-tooltip,.cr-context-usage-tooltip-trigger,.cr-enhance-button-tooltip){background:transparent !important;background-color:transparent !important;box-shadow:none !important;backdrop-filter:none !important;-webkit-backdrop-filter:none !important;}',
+    css: ':is(html.cb-dark,html[data-theme="dark"]) body[data-vscode-theme-name] .teams-container .cr-input-toolbar__right>span:is(.cr-voice-trigger-tooltip,.cr-context-usage-tooltip-trigger,.cr-enhance-button-tooltip),:is(html.cb-dark,html[data-theme="dark"]) body[data-vscode-theme-name] .teams-container .cr-input-toolbar__right>span.cr-voice-trigger-wrap>span.cr-voice-trigger-tooltip,body[data-vscode-theme-name="IDE Night"] .teams-container .cr-input-toolbar__right>span:is(.cr-voice-trigger-tooltip,.cr-context-usage-tooltip-trigger,.cr-enhance-button-tooltip),body[data-vscode-theme-name="IDE Night"] .teams-container .cr-input-toolbar__right>span.cr-voice-trigger-wrap>span.cr-voice-trigger-tooltip{background:transparent !important;background-color:transparent !important;box-shadow:none !important;backdrop-filter:none !important;-webkit-backdrop-filter:none !important;}',
   },
   /* 原 patch-82（AI 端快捷短语弹层 z-index 抬升）已移入 inject.js 常驻样式：
      theme-patches 仅在非默认主题时注入，默认浅色主题下会失效；层级修复不依赖主题，随注入脚本常驻更可靠。 */

@@ -153,6 +153,9 @@ test('glass composer triggers receive an inline transparent background after tea
   assert.match(source, /node\.style\.setProperty\('background', 'transparent', 'important'\)/);
   assert.match(source, /node\.style\.setProperty\('background-color', 'transparent', 'important'\)/);
   assert.match(source, /\.cr-context-usage-tooltip-trigger/);
+  const triggerSync = section('function syncGlassComposerTriggerBackgrounds()', 'function onInputSync()');
+  assert.ok(triggerSync.includes('.cr-input-toolbar__right > span.cr-voice-trigger-wrap > span.cr-voice-trigger-tooltip'),
+    'nested voice trigger receives the inline override after remounts');
   assert.match(source, /glassThemeObserver\.observe\(document\.documentElement/);
   assert.match(source, /\.wbs-account-note-footer \.primary:disabled\{background:rgba\(255,255,255,\.78\) !important[^}]*color:#34343c !important/);
 });

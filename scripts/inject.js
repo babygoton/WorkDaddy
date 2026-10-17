@@ -5335,6 +5335,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       var html = document.documentElement;
       var glass = html && html.getAttribute('data-wbs-theme-id') === 'nebula';
       var selector = '.teams-container .cr-input-toolbar__right > span.cr-voice-trigger-tooltip,' +
+        '.teams-container .cr-input-toolbar__right > span.cr-voice-trigger-wrap > span.cr-voice-trigger-tooltip,' +
         '.teams-container .cr-input-toolbar__right > span.cr-context-usage-tooltip-trigger,' +
         '.teams-container .cr-input-toolbar__right > span.cr-enhance-button-tooltip';
       document.querySelectorAll(selector).forEach(function (node) {

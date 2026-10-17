@@ -102,6 +102,15 @@ test('nebula removes backgrounds from teams composer utility trigger wrappers', 
   assert.match(patch.css, /background-color:transparent !important/);
 });
 
+test('nebula removes the voice trigger background inside its new wrapper', () => {
+  const patch = patches.find(p => p.id === 'patch-107');
+  const nestedVoice = '.teams-container .cr-input-toolbar__right>span.cr-voice-trigger-wrap>span.cr-voice-trigger-tooltip';
+  assert.equal(patch.themeId, 'nebula');
+  for (const prefix of [':is(html.cb-dark,html[data-theme="dark"]) body[data-vscode-theme-name]', 'body[data-vscode-theme-name="IDE Night"]']) {
+    assert.ok(patch.css.includes(prefix + ' ' + nestedVoice), 'nested voice trigger is transparent in ' + prefix);
+  }
+});
+
 test('generic dark popup text repair excludes the WorkDaddy status popover', () => {
   const patch = patches.find(item => item.id === 'patch-44');
   const selectors = patch.css.slice(0, patch.css.indexOf('{')).split(',');
