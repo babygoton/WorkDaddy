@@ -524,8 +524,9 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 // 1.2.60：自定义安装的 CDP 目标绑定到选定安装目录。
 // 1.2.61：合入跟随系统主题，防止异步检测覆盖后续手动选择。
 // 1.2.62：手动复制会话到当前账号后刷新官方列表，无需再次切号。
-const DAEMON_VERSION = '1.2.62';
-const DAEMON_BUILD_ID = 'release-1.2.62-manual-session-list-refresh';
+// 1.2.63：跟随系统将浅色恢复视为成功，持续轮询并更新外观基线。
+const DAEMON_VERSION = '1.2.63';
+const DAEMON_BUILD_ID = 'release-1.2.63-system-theme-light-polling';
 const usageReporter = createUsageReporter({ profile: PROFILE.id, version: DAEMON_VERSION });
 configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const automationDiscovery = createAutomationDiscovery({
@@ -9124,7 +9125,8 @@ async function applyThemeByCdp(id, options = {}) {
   if (id === 'nebula' && takeoverEnabled && wallpaperRotation.status().mode === 'random') {
     wallpaperRotation.restore().catch(() => {});
   }
-  if (systemMode && v.applied) {
+  // 浅色成功恢复官方样式时 applied=false（无自定义覆盖），仍须启动轮询并更新基线。
+  if (systemMode && (v.applied || id === 'default')) {
     lastResolvedSystemTheme = id;
     startSystemThemePolling();
   }

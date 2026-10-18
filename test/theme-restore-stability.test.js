@@ -102,6 +102,51 @@ function renderer() {
   return { context, document, observers, flush: () => observers.filter(o => o.active).forEach(o => o.callback([])) };
 }
 
+for (const initial of ['default', 'dark']) test('system polling follows repeated OS changes from ' + initial + ' using real renderer replies', async () => {
+  const page = renderer();
+  const intervals = new Map();
+  let appearance = initial, timer = 0, evaluations = 0;
+  const daemon = {
+    PROFILE: { capabilities: { theme: true } }, cdp: { connected: true },
+    readSessionState: () => ({ themeTakeoverEnabled: true }), themeApplyGeneration: 0,
+    readSavedThemeId: () => 'system', currentAccount: () => null,
+    getTheme: id => ({ dark: id !== 'default', colors: {} }),
+    LOCAL_THEME_OVERRIDES: [], themeExtrasCss: () => '', themeVarsCss: () => '',
+    wallpaperRotation: { status: () => ({ mode: 'manual' }) },
+    setTimeout: resolve => resolve(), log() {},
+    setInterval: fn => { const handle = { id: ++timer, unref() {} }; intervals.set(handle, fn); return handle; },
+    clearInterval: handle => intervals.delete(handle),
+    cdpSend: async (_, params) => {
+      evaluations++;
+      return { result: { value: vm.runInNewContext(params.expression, page.context) } };
+    },
+  };
+  vm.createContext(daemon);
+  const helpers = source.indexOf('function execCaptureText(');
+  vm.runInContext(source.slice(helpers, source.indexOf('function readSavedThemeId()', helpers)), daemon);
+  const apply = source.indexOf('async function applyThemeByCdp(id, options = {})');
+  vm.runInContext(source.slice(apply, source.indexOf('\n/**', apply)), daemon);
+  daemon.resolveSystemTheme = async () => appearance;
+  const result = await daemon.applyThemeByCdp('system');
+  assert.equal(result.applied, initial !== 'default', 'applied describes custom overrides, not success');
+  assert.equal(intervals.size, 1, 'both initial appearances must start polling');
+  assert.equal(vm.runInContext('lastResolvedSystemTheme', daemon), initial);
+  for (const next of ['default', 'dark', 'default', 'dark', 'default']) {
+    const changed = appearance !== next;
+    appearance = next;
+    const before = evaluations;
+    await [...intervals.values()][0]();
+    assert.equal(evaluations, before + (changed ? 1 : 0), 'only a changed appearance reaches CDP');
+    assert.equal(page.document.documentElement.getAttribute('data-theme'), next === 'dark' ? 'dark' : 'light');
+    assert.equal(page.document.documentElement.classList.contains('cb-dark'), next === 'dark');
+    assert.equal(page.document.body.getAttribute('data-vscode-theme-name'), next === 'dark' ? 'IDE Night' : 'IDE Light');
+    assert.equal(vm.runInContext('lastResolvedSystemTheme', daemon), next, 'light must advance the successful baseline');
+    assert.equal(intervals.size, 1, 'polling must remain single across changes');
+  }
+  await daemon.applyThemeByCdp('dark');
+  assert.equal(intervals.size, 0, 'a manual appearance stops following');
+});
+
 for (const snapshot of ['light', 'dark', null]) test('native sync follows both official theme buttons with snapshot ' + snapshot, () => {
   const { context, document } = renderer();
   const intervals = new Map();
