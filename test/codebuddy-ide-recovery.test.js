@@ -92,7 +92,7 @@ test('manual copy/migrate handlers reload the IDE workbench for the current acco
   // 当前账号都刷新；自动复制路径不得触发 reload（切号 session-change 已清缓存）。
   const copyBlock = source.slice(source.indexOf("p === '/api/sessions/copy'"), source.indexOf("p === '/api/sessions/migrate'"));
   const migrateBlock = source.slice(source.indexOf("p === '/api/sessions/migrate'"), source.indexOf("删除会话（真实删除）"));
-  assert.match(copyBlock, /copied > 0 && targetUid === String\(\(currentAccount\(\) \|\| \{\}\)\.uid \|\| ''\)\) \{\s*\n\s*reloadIdeWorkbenchWindows\('sessions-copy'\)/);
+  assert.match(copyBlock, /copied > 0 && targetUid === String\(\(currentAccount\(\) \|\| \{\}\)\.uid \|\| ''\)\) \{[^}]*reloadIdeWorkbenchWindows\('sessions-copy'\)/);
   assert.match(migrateBlock, /reloadIdeWorkbenchWindows\('sessions-migrate'\)/);
   // 自动复制（startAutoCopyJob 路径）不得调用 reload
   const autoCopyStart = source.indexOf('function startAutoCopyJob');

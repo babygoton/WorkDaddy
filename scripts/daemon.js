@@ -523,8 +523,9 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 // 1.2.59：Windows 两端启动分别固定官方更新源、配置目录和临时缓存，避免串端更新。
 // 1.2.60：自定义安装的 CDP 目标绑定到选定安装目录。
 // 1.2.61：合入跟随系统主题，防止异步检测覆盖后续手动选择。
-const DAEMON_VERSION = '1.2.61';
-const DAEMON_BUILD_ID = 'release-1.2.61-follow-system-theme';
+// 1.2.62：手动复制会话到当前账号后刷新官方列表，无需再次切号。
+const DAEMON_VERSION = '1.2.62';
+const DAEMON_BUILD_ID = 'release-1.2.62-manual-session-list-refresh';
 const usageReporter = createUsageReporter({ profile: PROFILE.id, version: DAEMON_VERSION });
 configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const automationDiscovery = createAutomationDiscovery({
@@ -11999,6 +12000,9 @@ function handleApi(req, res) {
         // reloadIdeWorkbenchWindows 注释）。同步到其他账号无需刷新——切号时
         // session-change 会清缓存。
         if (copied > 0 && targetUid === String((currentAccount() || {}).uid || '')) {
+          // SQLite copies bypass WorkBuddy's collection notifications. Publish
+          // the completed batch before success, as automatic sync already does.
+          await refreshWorkBuddySessionList(targetUid, 'sessions-copy');
           reloadIdeWorkbenchWindows('sessions-copy');
         }
         return json(res, 200, { ok: true, copied, skipped, conflicts, targetUid, warning });
