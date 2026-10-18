@@ -7850,22 +7850,39 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     }
 
     function copyPlainText(text) {
-      if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
-        return navigator.clipboard.writeText(String(text));
+      text = String(text);
+      function copyWithSelection() {
+        return new Promise(function (resolve, reject) {
+          var previousFocus = document.activeElement;
+          var textarea = document.createElement('textarea');
+          textarea.value = text;
+          textarea.setAttribute('readonly', '');
+          textarea.style.position = 'fixed';
+          textarea.style.left = '-9999px';
+          textarea.style.top = '0';
+          textarea.style.opacity = '0';
+          var copied = false;
+          try {
+            document.body.appendChild(textarea);
+            textarea.select();
+            copied = document.execCommand('copy');
+          } catch (_) {
+          } finally {
+            textarea.remove();
+            if (previousFocus && typeof previousFocus.focus === 'function') {
+              try { previousFocus.focus({ preventScroll: true }); } catch (_) {}
+            }
+          }
+          if (copied) resolve(); else reject(new Error('复制失败'));
+        });
       }
-      return new Promise(function (resolve, reject) {
-        var textarea = document.createElement('textarea');
-        textarea.value = String(text);
-        textarea.setAttribute('readonly', '');
-        textarea.style.position = 'fixed';
-        textarea.style.opacity = '0';
-        document.body.appendChild(textarea);
-        textarea.select();
-        var copied = false;
-        try { copied = document.execCommand('copy'); } catch (_) {}
-        document.body.removeChild(textarea);
-        if (copied) resolve(); else reject(new Error('复制失败'));
-      });
+      // Electron may expose the Clipboard API while denying write permission.
+      try {
+        if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+          return Promise.resolve(navigator.clipboard.writeText(text)).catch(copyWithSelection);
+        }
+      } catch (_) {}
+      return copyWithSelection();
     }
 
     // 导出账号：密码必填，daemon 使用随机 salt 加密后触发浏览器下载。
