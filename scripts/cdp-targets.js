@@ -1,5 +1,7 @@
 'use strict';
 
+const { win32: winPath } = require('node:path');
+
 // CDP target 归属判定（纯函数，无副作用，便于单测）。
 // 背景：WorkDaddy 现在支持四个客户端（WorkBuddy CN / WorkBuddy AI / CodeBuddy CN /
 // CodeBuddy 国际版），每个客户端由独立 daemon（WBSWITCH_PROFILE 绑定）驱动。旧版未绑定
@@ -7,8 +9,8 @@
 // "这是 WorkBuddy"，容易把兄弟客户端的页面误认成自己的注入目标：
 //   - 对别人的页面执行注入（把组件送错端）；
 //   - 注入失败后反复重试，每次先清理旧组件，把对方 daemon 注入好的组件也一并销毁。
-// 本模块提供严格的归属判定：优先依据应用包路径 / 登录域名（强信号），拒绝一切明确属于
-// 其他客户端的页面；无强信号时才按 profile 类型走宽松兜底。
+// 本模块提供严格的归属判定：自定义 Windows 目标先核对所选安装目录；其余目标
+// 优先依据应用包路径 / 登录域名（强信号），无强信号时才按 profile 类型走兜底。
 
 /**
  * 归一化 URL：Electron file:// URL 中空格编码为 %20（如 WorkBuddy%20AI.app），
@@ -95,8 +97,24 @@ function isTargetForProfile(target, profile) {
   const desc = String(target.description || '');
   const haystack = `${url} ${title} ${desc}`;
 
+  // 自定义 Windows 客户端的安装路径是用户显式绑定的身份，可能与基础 profile
+  // 的 CN/AI 分类不同。file 页面必须位于所选程序的安装目录内，不能用通用标题
+  // 或裸应用名覆盖目录不匹配，否则会认领另一安装目录下的同名客户端。
+  if (profile.customTarget && /^[A-Za-z]:[\\/]/.test(profile.appPath || '') && /^file:/i.test(url)) {
+    try {
+      const pageUrl = new URL(url);
+      if (pageUrl.hostname) return false;
+      const pagePath = decodeURIComponent(pageUrl.pathname);
+      if (!/^\/[A-Za-z]:\//.test(pagePath)) return false;
+      const relative = winPath.relative(winPath.dirname(profile.appPath), pagePath.slice(1));
+      return !!relative && relative !== '..' && !relative.startsWith('..\\') && !winPath.isAbsolute(relative);
+    } catch (_) {
+      return false;
+    }
+  }
+
   // Windows 官方安装目录的 app.asar 路径是比标题更可靠的归属证据，必须先于
-  // customTarget/标题兜底判断；企业目标仍保留自己的精确信号策略。
+  // 标题兜底判断；自定义目标已先按所选安装目录判断。
   const cls = classifyTarget(url, title, desc);
   const normalizedUrl = normalizeTargetUrl(url);
   const windowsOfficialPath = /^file:\/\/\/[A-Za-z]:\//i.test(normalizedUrl) && (

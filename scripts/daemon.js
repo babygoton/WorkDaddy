@@ -521,8 +521,8 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 // 1.2.57：CodeBuddy CN 成长计划跳转到可操作的 WorkBuddy 成长中心。
 // 1.2.58：官方定时任务按历史关联双向同步修改，保持已保存账号一致。
 // 1.2.59：Windows 两端启动分别固定官方更新源、配置目录和临时缓存，避免串端更新。
-const DAEMON_VERSION = '1.2.59';
-const DAEMON_BUILD_ID = 'release-1.2.59-windows-update-isolation';
+const DAEMON_VERSION = '1.2.60';
+const DAEMON_BUILD_ID = 'release-1.2.60-custom-target-cdp-binding';
 const usageReporter = createUsageReporter({ profile: PROFILE.id, version: DAEMON_VERSION });
 configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const automationDiscovery = createAutomationDiscovery({
@@ -1983,8 +1983,10 @@ const cdp = {
   ws: null,
   connected: false,
   port: null,
+  endpointReachable: false,
   targetUrl: null,
   targetTitle: null,
+  targetDescription: null,
   error: null,
   id: 0,
   pending: new Map(),
@@ -2078,6 +2080,7 @@ function runPendingReloadInjection(reason, executionContextId) {
 }
 
 async function findCdpEndpoint() {
+  cdp.endpointReachable = false;
   // profile 已由启动器绑定时不能扫描其他产品的端口；CodeBuddy Agents/Editor
   // 共用 Browser 标识，跨 profile 扫描会把注入发到另一端。
   //
@@ -2097,7 +2100,9 @@ async function findCdpEndpoint() {
       ]);
       const version = await versionRes.json();
       const list = await listRes.json();
-      const targets = Array.isArray(list) ? list : [];
+      if (!version || typeof version.Browser !== 'string' || !Array.isArray(list)) continue;
+      cdp.endpointReachable = true;
+      const targets = list;
       const browserInfo = [version.Browser, version['User-Agent']].filter(Boolean).join(' ');
       const belongsToWorkBuddy = /workbuddy|codebuddy/i.test(browserInfo) || (IS_LINUX && targetsBelongToProfile(targets));
       if (belongsToWorkBuddy && targets.some(isWorkBuddyCdpTarget)) {
@@ -2279,7 +2284,9 @@ async function connectCdp() {
   cdp.port = await findCdpEndpoint();
   if (!cdp.port) {
     cdp.connected = false;
-    cdp.error = '未发现 CDP 端口（WorkBuddy 需以 --remote-debugging-port 启动）';
+    cdp.error = cdp.endpointReachable
+      ? '调试端口可达，但未找到与当前配置匹配的客户端页面，请检查所选客户端路径与 profile 配置'
+      : '未发现 CDP 端口（WorkBuddy 需以 --remote-debugging-port 启动）';
     return false;
   }
   const target = await getPageTarget(cdp.port).catch(() => null);
@@ -2296,6 +2303,7 @@ async function connectCdp() {
       cdp.error = null;
       cdp.targetUrl = target.url || '';
       cdp.targetTitle = target.title || '';
+      cdp.targetDescription = target.description || '';
       // Target ids survive a transient WebSocket reconnect but change with a
       // restarted renderer, unlike the navigation serial missed while offline.
       cdpPageSessionId = String(target.id || target.webSocketDebuggerUrl || 'unknown');
@@ -2689,8 +2697,8 @@ function resetClientDebugState() {
 }
 
 // clientRunning: true=进程在跑 / false=没跑 / null=未知（探测失败时不计数，避免误报）
-function updateClientDebugState({ cdpConnected, clientRunning }) {
-  if (cdpConnected || clientRunning === false) {
+function updateClientDebugState({ cdpConnected, cdpReachable, clientRunning }) {
+  if (cdpConnected || cdpReachable || clientRunning === false) {
     return resetClientDebugState();
   }
   if (clientRunning !== true) return clientDebugState;
@@ -2829,7 +2837,7 @@ async function cdpLoop() {
     // 不静默杀进程；恢复由用户在状态页一键触发（POST /api/client/relaunch）。
     try {
       // clientRunning 已由后台一次性子进程刷新，避免 cdpLoop 周期性阻塞事件循环。
-      updateClientDebugState({ cdpConnected: cdp.connected, clientRunning: clientRunningState.value });
+      updateClientDebugState({ cdpConnected: cdp.connected, cdpReachable: cdp.endpointReachable, clientRunning: clientRunningState.value });
     } catch (e) {
       log(`[cdp] 客户端状态探测异常: ${e.message}`);
     }
@@ -4550,11 +4558,11 @@ async function injectWidget(reason, executionContextId) {
   if (!cdp.connected) {
     return Promise.reject(new Error('CDP 未连接，无法注入组件'));
   }
-  // 防御闸：绝不向其他客户端的页面注入。四客户端支持后，未绑定 profile 的旧 daemon
-  // 可能扫到兄弟客户端页面；其余环节（归属判定/清理跳过）已拦截，这里作为最后一道保险。
+  // 防御闸与发现/选页共用归属规则，既隔离兄弟客户端，也尊重自定义安装目录绑定。
   if (cdp.targetUrl) {
-    const cls = classifyTarget(cdp.targetUrl, cdp.targetTitle || '');
-    if (cls && cls !== PROFILE.id) {
+    const target = { type: 'page', url: cdp.targetUrl, title: cdp.targetTitle || '', description: cdp.targetDescription || '' };
+    if (!isTargetForProfile(target, PROFILE)) {
+      const cls = classifyTarget(target.url, target.title, target.description) || 'unknown';
       log(`[cdp] 目标页面属于 ${cls}（当前 profile=${PROFILE.id}），拒绝注入`);
       return Promise.reject(new Error(`目标页面 ${cls} 不属于当前 profile ${PROFILE.id}`));
     }
@@ -10489,7 +10497,7 @@ function handleApi(req, res) {
         // 客户端进程是否在跑 / 调试端口是否可达 / 是否命中"更新后丢失调试端口"状态
         // running 由后台定时刷新（refreshClientRunning），请求线程直读缓存，不再同步探测
         running: clientRunningState.value,
-        cdpReachable: cdp.connected,
+        cdpReachable: cdp.connected || cdp.endpointReachable,
         needsDebugRelaunch: clientDebugState.needsDebugRelaunch,
         debugStateUpdatedAt: clientDebugState.updatedAt || null,
       },
@@ -12808,7 +12816,10 @@ function startServer() {
       // web/ 调试界面已移除（web 目录不再打包），根路径返回自包含的状态提示页
       const c = currentAccount();
       const needRelaunch = clientDebugState.needsDebugRelaunch;
-      const warnBlock = needRelaunch
+      const targetMismatch = !cdp.connected && cdp.endpointReachable;
+      const warnBlock = targetMismatch
+        ? '<p style="max-width:420px;margin:18px auto 0;color:#f0b35e;font-size:13px;line-height:1.6">调试端口可达，但未找到与当前配置匹配的客户端页面。请检查所选客户端路径与 profile 配置。</p>'
+        : needRelaunch
         ? '<div style="max-width:420px;margin:18px auto 0;padding:14px 16px;border:1px solid #7a4a1f;border-radius:10px;background:#2a1c0e;text-align:left">' +
           '<p style="margin:0 0 8px;color:#f0b35e;font-weight:600">⚠ 检测到客户端需要恢复</p>' +
           '<p style="margin:0 0 12px;color:#d8c9b0;font-size:13px;line-height:1.6">WorkBuddy 正在运行，但未以调试模式启动（通常是官方自动更新后自行重启导致），WorkDaddy 无法注入面板。点击下方按钮将以调试模式重启客户端，恢复右下角机器人按钮。</p>' +

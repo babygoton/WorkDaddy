@@ -39,6 +39,41 @@ test('classifyTarget 识别 Windows 安装目录中的 app.asar 页面', () => {
   assert.equal(classifyTarget('file:///E:/WorkBuddy%20AI/resources/app.asar/renderer/index.html', 'WorkBuddy'), 'workbuddy-ai');
 });
 
+test('Windows custom target 按所选安装目录认领页面，允许 AI profile 显式绑定国内版', () => {
+  const profile = {
+    ...PROFILES['workbuddy-ai'], customTarget: true,
+    appPath: 'E:\\WorkBuddy\\WorkBuddy.exe',
+    apiHost: 'https://www.workbuddy.cn', targetHints: ['workbuddy'],
+  };
+  const own = { type: 'page', url: WIN_CN_URL, title: 'WorkBuddy' };
+  assert.equal(isTargetForProfile(own, profile), true);
+  assert.equal(selectPageTarget([own], profile), own);
+  for (const url of [WIN_AI_URL, 'file:///D:/WorkBuddy/resources/app.asar/renderer/index.html',
+    'file:///E:/WorkBuddy-old/resources/app.asar/renderer/index.html',
+    'file:///E:/WorkBuddy/../Other/resources/index.html',
+    'file://other-host/E:/WorkBuddy/resources/index.html']) {
+    assert.equal(isTargetForProfile({ ...own, url }, profile), false, url);
+  }
+  // 未配置 custom target 时，绑定端口也不能覆盖官方路径归属。
+  assert.equal(isTargetForProfile(own, PROFILES['workbuddy-ai']), false);
+});
+
+test('Windows custom target 正确处理编码、大小写、路径边界及非官方目录', () => {
+  const profile = {
+    ...PROFILES['workbuddy-ai'], customTarget: true,
+    appPath: 'C:\\Company Apps\\企业版\\WorkBuddy.exe', targetHints: ['workbuddy'],
+  };
+  const own = { type: 'page', title: 'WorkBuddy',
+    url: 'file:///c:/company%20apps/%E4%BC%81%E4%B8%9A%E7%89%88/resources/app.asar/renderer/index.html?locale=zh-CN' };
+  assert.equal(isTargetForProfile(own, profile), true);
+  for (const url of ['file:///C:/Other/resources/app.asar/renderer/index.html',
+    'file:///C:/Company%20Apps/企业版-backup/resources/index.html',
+    'file:///C:/Company%20Apps/%ZZ/resources/index.html',
+    'file:///C:/Company%20Apps/企业版/%2e%2e/Other/index.html']) {
+    assert.equal(isTargetForProfile({ ...own, url }, profile), false, url);
+  }
+});
+
 test('classifyTarget 依据登录域名识别国际版/国内版', () => {
   assert.equal(classifyTarget('https://www.workbuddy.ai/profile/plans-usage', ''), 'workbuddy-ai');
   assert.equal(classifyTarget('https://www.workbuddy.cn/profile/plans-usage', ''), 'workbuddy-cn');

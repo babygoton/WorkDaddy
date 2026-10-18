@@ -90,6 +90,17 @@ test('恢复后（CDP 连上）标记被清除', () => {
   assert.equal(h.state().consecutiveMiss, 0);
 });
 
+test('CDP 端口可达但页面不匹配时，不提示重启且清除历史标记', () => {
+  const h = harness();
+  for (let i = 0; i < 3; i++) h.update({ cdpConnected: false, clientRunning: true });
+  assert.equal(h.state().needsDebugRelaunch, true);
+  for (let i = 0; i < 5; i++) {
+    h.update({ cdpConnected: false, cdpReachable: true, clientRunning: true });
+  }
+  assert.equal(h.state().consecutiveMiss, 0);
+  assert.equal(h.state().needsDebugRelaunch, false);
+});
+
 test('一键恢复先走安全退出，再启动带 CDP 的客户端', () => {
   const start = source.indexOf("p === '/api/client/relaunch'");
   assert.ok(start >= 0);
