@@ -1852,7 +1852,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '安装程序已打开，请按提示退出 WorkBuddy 并完成安装。': 'The installer is open. Please quit WorkBuddy as prompted and finish installing.',
     '安装程序已打开，请到任务栏选择安装窗口；按提示退出 WorkBuddy 后完成安装。': 'The installer is open. Select its window from the taskbar, then quit WorkBuddy as prompted to finish installing.',
     '停止旧服务…': 'Stopping old service…', '发现新版本，准备更新…': 'New version available; preparing to update…',
-    '已应用主题「': 'Theme applied: “', '已恢复官方头像': 'Restored the official avatar', '已应用官方头像': 'Applied the official avatar',
+    '已应用主题「': 'Theme applied: “', '已跟随系统，当前使用「': 'Following system, currently “', '」外观': '” appearance', '跟随操作系统的深浅色模式自动切换': 'Follow the operating system dark/light mode and switch automatically', '已恢复官方头像': 'Restored the official avatar', '已应用官方头像': 'Applied the official avatar',
     '头像已更新 ✓': 'Avatar updated ✓', '头像处理失败：': 'Avatar processing failed:',
     '已开启：需要你决策时 WorkBuddy 会用弹窗提问（全局生效）': 'Enabled: WorkBuddy asks with a dialog when your decision is needed (applies globally)',
     // —— 第八批：壁纸/授权/休眠/开启风险文案与时间相对词前导空格变体 ——
@@ -10670,6 +10670,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         '<div class="wbs-theme-managed" id="wbs-theme-appearance-options">' +
         '<div class="wbs-pcard-title">主题外观</div>' +
         '<div class="wbs-theme-seg" id="wbs-theme-seg" role="radiogroup" aria-label="主题外观">' +
+        '<label class="wbs-theme-opt wbs-theme-option" title="跟随操作系统的深浅色模式自动切换"><input type="radio" name="wbs-theme" value="system"><span>跟随系统</span></label>' +
         '<label class="wbs-theme-opt wbs-theme-option"><input type="radio" name="wbs-theme" value="default"><span>浅色</span></label>' +
         '<label class="wbs-theme-opt wbs-theme-option"><input type="radio" name="wbs-theme" value="dark"><span>深色</span></label>' +
         '<label class="wbs-theme-opt wbs-theme-option"><input type="radio" name="wbs-theme" value="eye-care"><span>护眼绿</span></label>' +
@@ -12029,7 +12030,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     // ===== 主题系统（WorkDaddy 换肤）：segmented 切换 =====
     // 主题 = CSS 变量覆盖（--wb-* / --dc-*），daemon 通过 CDP 注入 <style>。
     // 五种外观共用主题接管；只有毛玻璃使用壁纸、蒙版和背景模糊。
-    var ALLOWED_THEMES = ['default', 'dark', 'nebula', 'eye-care', 'cyber-purple'];
+    var ALLOWED_THEMES = ['system', 'default', 'dark', 'nebula', 'eye-care', 'cyber-purple'];
     var currentThemeId = 'default';
     var themeSelectionSerial = 0;
     function syncThemeSelection(id) {
@@ -12054,10 +12055,15 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       var previous = currentThemeId;
       var serial = ++themeSelectionSerial;
       syncThemeSelection(id);
-      return applyTheme(id).then(function () {
+      return applyTheme(id).then(function (info) {
         if (serial !== themeSelectionSerial) return;
-        var names = { 'default': '浅色', 'dark': '深色', 'eye-care': '护眼绿', 'cyber-purple': '赛博紫', 'nebula': '毛玻璃' };
-        toast('已应用主题「' + names[id] + '」', false, root);
+        var names = { 'system': '跟随系统', 'default': '浅色', 'dark': '深色', 'eye-care': '护眼绿', 'cyber-purple': '赛博紫', 'nebula': '毛玻璃' };
+        if (id === 'system') {
+          // daemon 返回按系统解析出的具体外观，让用户确认当前落在深色还是浅色
+          toast('已跟随系统，当前使用「' + (info && info.resolved === 'dark' ? '深色' : '浅色') + '」外观', false, root);
+        } else {
+          toast('已应用主题「' + names[id] + '」', false, root);
+        }
       }).catch(function (error) {
         if (serial !== themeSelectionSerial) return;
         syncThemeSelection(previous);
@@ -12074,10 +12080,28 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     }
     // 壁纸控件仅在毛玻璃下显示；保留默认主题下上传壁纸的兼容目标。
     function themeSelectValue() {
-      return currentThemeId !== 'default' && currentThemeId !== 'dark' ? currentThemeId : 'nebula';
+      return currentThemeId !== 'default' && currentThemeId !== 'dark' && currentThemeId !== 'system' ? currentThemeId : 'nebula';
     }
     // 页面主题由 daemon 在早期注入/加载时恢复；不要延迟 POST 旧主题，
     // 否则旧页面的异步请求可能覆盖用户刚选择的主题。
+
+    // ===== 跟随系统（prefers-color-scheme）：系统深浅色变化时实时重新应用 =====
+    // 'system' 模式下监听渲染进程 matchMedia（Electron 中默认跟随操作系统深浅色，
+    // macOS/Windows/Linux 表现一致）；变化时重新 POST /api/theme-apply {id:'system'}，
+    // 由 daemon 重新解析并应用，持久化状态保持 'system' 不被落定的深/浅色覆盖。
+    function setupSystemThemeWatcher() {
+      if (window.__wbsSystemThemeWatcher) return; // 防重复注入导致多次应用
+      var media = null;
+      try { media = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null; } catch (_) {}
+      if (!media) return; // 环境不支持时静默降级：仍可手动切换具体主题
+      var onChange = function () {
+        if (currentThemeId === 'system') selectTheme('system');
+      };
+      if (typeof media.addEventListener === 'function') media.addEventListener('change', onChange);
+      else if (typeof media.addListener === 'function') media.addListener(onChange); // 旧版 Chromium 兼容
+      window.__wbsSystemThemeWatcher = onChange;
+    }
+    setupSystemThemeWatcher();
 
     // ===== 元素检查（隐藏入口，实现抽离在 picker-internal.js，git 不跟踪）=====
     // 连续点击面板标题 5 次 → 在标题右侧显示「🔍 拾取」按钮；点击进入拾取模式。

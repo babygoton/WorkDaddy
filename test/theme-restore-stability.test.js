@@ -26,6 +26,52 @@ for (const saved of ['default', 'dark', 'eye-care', 'cyber-purple', 'nebula', 'm
   });
 }
 
+for (const matches of [true, false]) test('follow-system restore forwards the system mode into the apply pipeline: matches=' + matches, async () => {
+  const start = source.indexOf('function readSavedThemeId()');
+  const restore = source.indexOf('async function restoreSavedTheme()');
+  const end = source.indexOf('\n/**', restore);
+  let evaluated = 0;
+  const context = {
+    PROFILE: { capabilities: { theme: true } }, cdp: { connected: true },
+    readSessionState: () => ({ themeTakeoverEnabled: true }),
+    DATA_DIR: '/test', path, fs: { readFileSync: () => JSON.stringify({ id: 'system' }) },
+    getTheme: id => ['default', 'dark', 'eye-care', 'cyber-purple', 'nebula'].includes(id),
+    // applyThemeByCdp 的真实实现负责把 'system' 解析成深/浅色（见下方 apply 测试）；
+    // 这里只验证 restoreSavedTheme 不拦截、不改写 'system'。
+    applyThemeByCdp: async (id) => { evaluated++; return { system: id === 'system', resolved: matches ? 'dark' : 'default' }; },
+    cdpSend: async () => { throw new Error('restore must not query matchMedia itself'); },
+  };
+  vm.runInNewContext(source.slice(start, end), context);
+  await context.restoreSavedTheme();
+  assert.equal(evaluated, 1);
+});
+
+test('follow-system apply resolves once and reuses the normal theme pipeline', async () => {
+  const start = source.indexOf('async function applyThemeByCdp(id, options = {})');
+  const end = source.indexOf('\n/**', start);
+  let pollingStarted = 0;
+  const context = {
+    PROFILE: { capabilities: { theme: true } }, cdp: { connected: true },
+    readSessionState: () => ({ themeTakeoverEnabled: true }), themeApplyGeneration: 0,
+    currentAccount: () => null, getTheme: () => ({ dark: true, colors: {} }),
+    LOCAL_THEME_OVERRIDES: [], themeExtrasCss: () => '', themeVarsCss: () => '',
+    setTimeout: resolve => resolve(),
+    resolveSystemTheme: async () => 'dark',
+    startSystemThemePolling: () => { pollingStarted++; },
+    stopSystemThemePolling: () => {},
+    lastResolvedSystemTheme: null,
+    log: () => {},
+    cdpSend: async () => ({ result: { value: { applied: true, ready: true } } }),
+  };
+  vm.runInNewContext(source.slice(start, end), context);
+  const info = await context.applyThemeByCdp('system');
+  assert.equal(info.system, true);
+  assert.equal(info.resolved, 'dark');
+  assert.equal(info.applied, true);
+  assert.equal(pollingStarted, 1, 'system mode must start the OS theme polling');
+  assert.equal(context.lastResolvedSystemTheme, 'dark');
+});
+
 async function themeExpression(id, takeover = true, accountUid = null, options = {}) {
   const start = source.indexOf('async function applyThemeByCdp(id, options = {})');
   const end = source.indexOf('\n/**', start);

@@ -44,9 +44,9 @@ test('theme choices do not activate official data-theme scopes and robot radios 
   assert.match(pane, /value="default"/);
 });
 
-test('theme pane restores five radio choices and enabling takeover restores the saved theme', () => {
+test('theme pane restores six radio choices and enabling takeover restores the saved theme', () => {
   const pane = section('function buildThemePane()', 'function buildEnhancePane()');
-  for (const id of ['default', 'dark', 'eye-care', 'cyber-purple', 'nebula']) {
+  for (const id of ['system', 'default', 'dark', 'eye-care', 'cyber-purple', 'nebula']) {
     assert.ok(pane.includes('name="wbs-theme" value="' + id + '"'));
   }
   assert.match(pane, /<div class="wbs-pcard-title">接管主题<\/div>/);
@@ -319,7 +319,7 @@ for (const nativeComposer of [false, true]) test('theme controls are rendered on
   const context = { CAPS: {nativeComposer}, WBS_BRAND: 'WorkDaddy', themePane: {dataset:{}}, wireThemePane() {}, applyAvatar() {} };
   vm.runInNewContext(section('function buildThemePane()', '    // 增强 pane'), context);
   context.buildThemePane();
-  assert.equal((context.themePane.innerHTML.match(/name="wbs-theme"/g) || []).length, nativeComposer ? 0 : 5);
+  assert.equal((context.themePane.innerHTML.match(/name="wbs-theme"/g) || []).length, nativeComposer ? 0 : 6);
   assert.equal(context.themePane.innerHTML.includes('接管主题'), !nativeComposer);
 });
 
@@ -343,12 +343,44 @@ test('rapid theme selections ignore stale failures and disabled takeover prevent
   assert.equal(requests.length, 2);
 });
 
+test('follow system persists the system mode and reports the resolved appearance', async () => {
+  const requests = [], notices = [];
+  const context = {
+    CAPS: {}, sessState: {themeTakeover:true}, themePane:null, root:{},
+    syncWallpaperCardVisibility() {}, toast: message => notices.push(message),
+    api: (route, options) => { requests.push({route, options}); return Promise.resolve({ok:true, resolved:'dark'}); },
+  };
+  vm.runInNewContext(section('    var ALLOWED_THEMES =', '    // 页面主题由 daemon'), context);
+  await context.selectTheme('system');
+  assert.equal(context.currentThemeId, 'system');
+  assert.deepEqual(requests.map(r=>JSON.parse(r.options.body).id), ['system']);
+  assert.match(notices[0], /深色/);
+  // 壁纸目标在「跟随系统」下与浅色/深色一致：不会把 system 当作自定义主题目录
+  assert.equal(context.themeSelectValue(), 'nebula');
+});
+
+test('system theme changes reapply the follow-system mode in real time', () => {
+  const listeners = [];
+  const media = { addEventListener: (type, fn) => listeners.push(fn) };
+  const applied = [];
+  const context = {
+    window: { matchMedia: () => media },
+    CAPS: {}, sessState: { themeTakeover: true }, themePane: null, root: {},
+    currentThemeId: 'system',
+    selectTheme: id => applied.push(id),
+  };
+  vm.runInNewContext(section('    // ===== 跟随系统', '    // ===== 元素检查'), context);
+  assert.equal(listeners.length, 1);
+  listeners[0]();
+  assert.deepEqual(applied, ['system']);
+});
+
 test('wallpaper controls are exclusive to the selected frosted theme', () => {
   const wallpaper = {style:{}}, shadow = {style:{}};
   let loads=0;
   const context = {sessState:{themeTakeover:true}, loadWallpapers:()=>loads++, themePane:{querySelector: selector => selector==='#wbs-wallpaper-card'?wallpaper:shadow}};
   vm.runInNewContext(section('function syncWallpaperCardVisibility(', '    // 关闭接管后'),context);
-  for(const id of ['default','dark','eye-care','cyber-purple','nebula']) {
+  for(const id of ['system','default','dark','eye-care','cyber-purple','nebula']) {
     context.syncWallpaperCardVisibility(id);
     assert.equal(wallpaper.style.display, id==='nebula'?'':'none');
     assert.equal(shadow.style.display, wallpaper.style.display);
