@@ -7,7 +7,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 const source = fs.readFileSync(path.join(__dirname, '../scripts/daemon.js'), 'utf8');
 
-for (const saved of ['default', 'dark', 'eye-care', 'cyber-purple', 'nebula', 'missing', null]) {
+for (const saved of ['default', 'dark', 'eye-care', 'cyber-purple', 'nebula', 'system', 'missing', null]) {
   test('theme takeover restores the saved choice after navigation: ' + saved, async () => {
     const start = source.indexOf('function readSavedThemeId()');
     const restore = source.indexOf('async function restoreSavedTheme()');
@@ -26,6 +26,33 @@ for (const saved of ['default', 'dark', 'eye-care', 'cyber-purple', 'nebula', 'm
   });
 }
 
+test('follow-system apply resolves once and reuses the normal theme pipeline', async () => {
+  const start = source.indexOf('async function applyThemeByCdp(id, options = {})');
+  const end = source.indexOf('\n/**', start);
+  let pollingStarted = 0, resolutions = 0;
+  const context = {
+    PROFILE: { capabilities: { theme: true } }, cdp: { connected: true },
+    readSessionState: () => ({ themeTakeoverEnabled: true }), themeApplyGeneration: 0, stopSystemThemePolling() {},
+    currentAccount: () => null, getTheme: () => ({ dark: true, colors: {} }),
+    LOCAL_THEME_OVERRIDES: [], themeExtrasCss: () => '', themeVarsCss: () => '',
+    setTimeout: resolve => resolve(),
+    wallpaperRotation: { status: () => ({ mode: 'manual' }) },
+    resolveSystemTheme: async () => { resolutions++; return 'dark'; },
+    startSystemThemePolling: () => { pollingStarted++; },
+    lastResolvedSystemTheme: null,
+    log: () => {},
+    cdpSend: async () => ({ result: { value: { applied: true, ready: true } } }),
+  };
+  vm.runInNewContext(source.slice(start, end), context);
+  const info = await context.applyThemeByCdp('system');
+  assert.equal(resolutions, 1);
+  assert.equal(info.system, true);
+  assert.equal(info.resolved, 'dark');
+  assert.equal(info.applied, true);
+  assert.equal(pollingStarted, 1, 'system mode must start the OS theme polling');
+  assert.equal(context.lastResolvedSystemTheme, 'dark');
+});
+
 async function themeExpression(id, takeover = true, accountUid = null, options = {}) {
   const start = source.indexOf('async function applyThemeByCdp(id, options = {})');
   const end = source.indexOf('\n/**', start);
@@ -34,7 +61,7 @@ async function themeExpression(id, takeover = true, accountUid = null, options =
     wallpaperRotation: { status: () => ({ mode: 'manual' }) },
     PROFILE: { capabilities: { theme: true } }, cdp: { connected: true },
     readSessionState: () => ({ themeTakeoverEnabled: takeover }),
-    themeApplyGeneration: 0,
+    themeApplyGeneration: 0, stopSystemThemePolling() {},
     setTimeout: resolve => resolve(),
     currentAccount: () => accountUid ? { uid: accountUid } : null, getTheme: () => ({ dark: id !== 'default', colors: {} }),
     LOCAL_THEME_OVERRIDES: [], themeExtrasCss: () => '', themeVarsCss: () => '',
@@ -233,7 +260,7 @@ test('turning off takeover restores the WorkBuddy appearance saved before takeov
   context.localStorage.setItem('workbuddy.appearance.lastApplied.css', JSON.stringify({ resourceKey: 'special', css: ':root { --wb-bg-primary: pink; }' }));
   context.localStorage.setItem('workbuddy.appearance.mode::personal::personal::other', 'dark');
   const daemon = {
-    cdp: { connected: true }, themeApplyGeneration: 0,
+    cdp: { connected: true }, themeApplyGeneration: 0, stopSystemThemePolling() {},
     readSessionState: () => ({ themeTakeoverEnabled: false }),
     currentAccount: () => ({ uid }),
     cdpSend: async (_, params) => { vm.runInNewContext(params.expression, context); return {}; },
@@ -366,7 +393,7 @@ test('a pending light reset cannot overwrite takeover re-enabled during a CDP re
   const context = {
     wallpaperRotation: { status: () => ({ mode: 'manual' }) },
     PROFILE: { capabilities: { theme: true } }, cdp: { connected: true, ws: { readyState: 1 } },
-    readSessionState: () => ({ themeTakeoverEnabled: takeover }), themeApplyGeneration: 0,
+    readSessionState: () => ({ themeTakeoverEnabled: takeover }), themeApplyGeneration: 0, stopSystemThemePolling() {},
     currentAccount: () => null, getTheme: () => ({ dark: false, colors: {} }),
     LOCAL_THEME_OVERRIDES: [], themeExtrasCss: () => '', themeVarsCss: () => '',
     cdpSend: async () => { evaluations++; takeover = true; context.themeApplyGeneration++; return { result: { value: { pending: true } } }; },
@@ -395,7 +422,7 @@ test('release resets light once then follows official dark and special skins acr
   const tick = () => [...intervals.values()].forEach(fn => fn());
   const daemon = {
     wallpaperRotation: { status: () => ({ mode: 'manual' }) },
-    PROFILE: { capabilities: { theme: true } }, cdp: { connected: true }, themeApplyGeneration: 0,
+    PROFILE: { capabilities: { theme: true } }, cdp: { connected: true }, themeApplyGeneration: 0, stopSystemThemePolling() {},
     readSessionState: () => ({ themeTakeoverEnabled: false }),
     cdpSend: async (_, params) => { vm.runInNewContext(params.expression, context); return {}; },
     applyThemeByCdp: async (id, options) => {
@@ -483,7 +510,7 @@ test('nebula releases custom CSS and guards, waits for official dark, then reapp
   const stages = [];
   const daemon = {
     wallpaperRotation: { status: () => ({ mode: 'manual' }) },
-    PROFILE: { capabilities: { theme: true } }, cdp: { connected: true }, themeApplyGeneration: 0,
+    PROFILE: { capabilities: { theme: true } }, cdp: { connected: true }, themeApplyGeneration: 0, stopSystemThemePolling() {},
     setTimeout: resolve => resolve(),
     readSessionState: () => ({ themeTakeoverEnabled: true }), currentAccount: () => ({ uid: 'current' }),
     getTheme: id => ({ dark: id !== 'default', colors: {} }),
@@ -580,7 +607,7 @@ test('frosted takeover completes even when background renderer timers and animat
   let applies = 0;
   const daemon = {
     wallpaperRotation: { status: () => ({ mode: 'manual' }) },
-    PROFILE: { capabilities: { theme: true } }, cdp: { connected: true }, themeApplyGeneration: 0,
+    PROFILE: { capabilities: { theme: true } }, cdp: { connected: true }, themeApplyGeneration: 0, stopSystemThemePolling() {},
     readSessionState: () => ({ themeTakeoverEnabled: true }), currentAccount: () => null,
     getTheme: () => ({ dark: true, colors: {} }),
     LOCAL_THEME_OVERRIDES: [], themeExtrasCss: () => '', themeVarsCss: () => '',

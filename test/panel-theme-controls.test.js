@@ -44,9 +44,9 @@ test('theme choices do not activate official data-theme scopes and robot radios 
   assert.match(pane, /value="default"/);
 });
 
-test('theme pane restores five radio choices and enabling takeover restores the saved theme', () => {
+test('theme pane restores six radio choices and enabling takeover restores the saved theme', () => {
   const pane = section('function buildThemePane()', 'function buildEnhancePane()');
-  for (const id of ['default', 'dark', 'eye-care', 'cyber-purple', 'nebula']) {
+  for (const id of ['system', 'default', 'dark', 'eye-care', 'cyber-purple', 'nebula']) {
     assert.ok(pane.includes('name="wbs-theme" value="' + id + '"'));
   }
   assert.match(pane, /<div class="wbs-pcard-title">接管主题<\/div>/);
@@ -323,11 +323,11 @@ for (const nativeComposer of [false, true]) test('theme controls match the clien
   const context = { CAPS: {nativeComposer}, WBS_BRAND: 'WorkDaddy', themePane: {dataset:{}}, wireThemePane() {}, applyAvatar() {} };
   vm.runInNewContext(section('function buildThemePane()', '    // 增强 pane'), context);
   context.buildThemePane();
-  assert.equal((context.themePane.innerHTML.match(/name="wbs-theme"/g) || []).length, nativeComposer ? 2 : 5);
+  assert.equal((context.themePane.innerHTML.match(/name="wbs-theme"/g) || []).length, nativeComposer ? 2 : 6);
   assert.equal(context.themePane.innerHTML.includes('接管主题'), !nativeComposer);
   if (nativeComposer) {
     assert.match(context.themePane.innerHTML, /id="wbs-native-theme-card"/);
-    assert.doesNotMatch(context.themePane.innerHTML, /value="(?:eye-care|cyber-purple|nebula)"/);
+    assert.doesNotMatch(context.themePane.innerHTML, /value="(?:system|eye-care|cyber-purple|nebula)"/);
   }
 });
 
@@ -366,6 +366,7 @@ test('CodeBuddy theme choices use native light/dark mode without takeover', asyn
   requests[0].resolve({ ok: true });
   await pending;
   await context.selectTheme('nebula');
+  await context.selectTheme('system');
   assert.equal(requests.length, 1, 'CodeBuddy must expose only the official light/dark modes');
 });
 
@@ -381,6 +382,7 @@ test('theme apply route responds and persists native theme selections and handle
   const end = daemon.indexOf('\n  // 保存自定义主题', start);
   const route = vm.runInNewContext('(async function (req, res, p) {' + daemon.slice(start, end) + '})', {
     readBody: async req => req.body,
+    themeApplyGeneration: 0,
     PROFILE: { capabilities: { nativeComposer: true } },
     getTheme: () => ({}),
     applyThemeByCdp: async (id, options) => {
@@ -406,12 +408,28 @@ test('theme apply route responds and persists native theme selections and handle
   assert.equal(saved.length, 1);
 });
 
+test('follow system persists the system mode and reports the resolved appearance', async () => {
+  const requests = [], notices = [];
+  const context = {
+    CAPS: {}, sessState: {themeTakeover:true}, themePane:null, root:{},
+    syncWallpaperCardVisibility() {}, toast: message => notices.push(message),
+    api: (route, options) => { requests.push({route, options}); return Promise.resolve({ok:true, resolved:'dark'}); },
+  };
+  vm.runInNewContext(section('    var ALLOWED_THEMES =', '    // 页面主题由 daemon'), context);
+  await context.selectTheme('system');
+  assert.equal(context.currentThemeId, 'system');
+  assert.deepEqual(requests.map(r=>JSON.parse(r.options.body).id), ['system']);
+  assert.match(notices[0], /深色/);
+  // 壁纸目标在「跟随系统」下与浅色/深色一致：不会把 system 当作自定义主题目录
+  assert.equal(context.themeSelectValue(), 'nebula');
+});
+
 test('wallpaper controls are exclusive to the selected frosted theme', () => {
   const wallpaper = {style:{}}, shadow = {style:{}};
   let loads=0;
   const context = {sessState:{themeTakeover:true}, loadWallpaperRotation() {}, loadWallpapers:()=>loads++, themePane:{querySelector: selector => selector==='#wbs-wallpaper-card'?wallpaper:shadow}};
   vm.runInNewContext(section('function syncWallpaperCardVisibility(', '    // 关闭接管后'),context);
-  for(const id of ['default','dark','eye-care','cyber-purple','nebula']) {
+  for(const id of ['system','default','dark','eye-care','cyber-purple','nebula']) {
     context.syncWallpaperCardVisibility(id);
     assert.equal(wallpaper.style.display, id==='nebula'?'':'none');
     assert.equal(shadow.style.display, wallpaper.style.display);

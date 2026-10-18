@@ -521,8 +521,10 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 // 1.2.57：CodeBuddy CN 成长计划跳转到可操作的 WorkBuddy 成长中心。
 // 1.2.58：官方定时任务按历史关联双向同步修改，保持已保存账号一致。
 // 1.2.59：Windows 两端启动分别固定官方更新源、配置目录和临时缓存，避免串端更新。
-const DAEMON_VERSION = '1.2.60';
-const DAEMON_BUILD_ID = 'release-1.2.60-custom-target-cdp-binding';
+// 1.2.60：自定义安装的 CDP 目标绑定到选定安装目录。
+// 1.2.61：合入跟随系统主题，防止异步检测覆盖后续手动选择。
+const DAEMON_VERSION = '1.2.61';
+const DAEMON_BUILD_ID = 'release-1.2.61-follow-system-theme';
 const usageReporter = createUsageReporter({ profile: PROFILE.id, version: DAEMON_VERSION });
 configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const automationDiscovery = createAutomationDiscovery({
@@ -8426,10 +8428,90 @@ async function restoreNativeAppearanceByCdp() {
   } catch (_) {}
 }
 
+// 系统设置优先于 renderer matchMedia（官方 nativeTheme 可能已锁定后者）。
+function execCaptureText(cmd, args, timeoutMs = 4000) {
+  return new Promise((resolve, reject) => {
+    execFile(cmd, args, { encoding: 'utf8', timeout: timeoutMs, windowsHide: true }, (err, stdout, stderr) => {
+      if (err) { err.stderr = stderr; reject(err); } else resolve(String(stdout || ''));
+    });
+  });
+}
+async function resolveSystemThemeByRenderer() {
+  try {
+    const reply = await cdpSend('Runtime.evaluate', {
+      expression: `(function(){try{var m=window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)');return m&&m.matches?'dark':'default';}catch(e){return 'default';}})()`,
+      returnByValue: true,
+    });
+    return reply && reply.result && reply.result.value === 'dark' ? 'dark' : 'default';
+  } catch (_) {
+    return 'default';
+  }
+}
+async function resolveSystemTheme() {
+  try {
+    if (process.platform === 'win32') {
+      try {
+        const out = await execCaptureText('reg', ['query', 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize', '/v', 'AppsUseLightTheme']);
+        const match = out.match(/AppsUseLightTheme\s+REG_DWORD\s+0x([01])\b/i);
+        if (match) return match[1] === '0' ? 'dark' : 'default';
+      } catch (_) {}
+      // reg.exe 不可用（例如被安全软件的程序黑名单拦截、EPERM）时回退 PowerShell 读注册表，
+      // 与 windows-process-boundary 的 powershell 查询同模式，保证受限环境下功能仍可用
+      try {
+        const out = await execCaptureText('powershell', ['-NoProfile', '-Command', "(Get-ItemProperty 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize').AppsUseLightTheme"], 8000);
+        if (/^[01]$/.test(String(out).trim())) return String(out).trim() === '0' ? 'dark' : 'default';
+      } catch (_) {}
+      return resolveSystemThemeByRenderer();
+    }
+    if (process.platform === 'darwin') {
+      try {
+        const out = await execCaptureText('defaults', ['read', '-g', 'AppleInterfaceStyle']);
+        if (/^dark$/i.test(out.trim())) return 'dark';
+        if (!out.trim()) return 'default';
+      } catch (error) {
+        // 浅色时键不存在；权限、超时和命令不可用必须继续降级。
+        if (error.code === 1 && /AppleInterfaceStyle[\s\S]*does not exist/i.test(error.stderr || '')) return 'default';
+      }
+      return resolveSystemThemeByRenderer();
+    }
+    const out = (await execCaptureText('gsettings', ['get', 'org.gnome.desktop.interface', 'color-scheme'])).trim();
+    if (/^['"]?prefer-dark['"]?$/.test(out)) return 'dark';
+    if (/^['"]?prefer-light['"]?$/.test(out)) return 'default';
+    return resolveSystemThemeByRenderer();
+  } catch (_) {
+    return resolveSystemThemeByRenderer();
+  }
+}
+
+// 只在 system 模式轮询 OS，不在 renderer 安装会跨 reinjection 残留的监听器。
+let systemThemeTimer = null;
+let systemThemePollInFlight = false;
+let lastResolvedSystemTheme = null;
+function stopSystemThemePolling() {
+  if (systemThemeTimer) { clearInterval(systemThemeTimer); systemThemeTimer = null; }
+}
+function startSystemThemePolling() {
+  if (systemThemeTimer) return;
+  systemThemeTimer = setInterval(async () => {
+    if (systemThemePollInFlight) return;
+    if (!cdp.connected || readSavedThemeId() !== 'system') { stopSystemThemePolling(); return; }
+    if (readSessionState().themeTakeoverEnabled === false) return;
+    systemThemePollInFlight = true;
+    try {
+      await applyThemeByCdp('system', { automatic: true, systemPoll: true });
+    } catch (_) {
+      // 不推进基线：下轮重试同一个系统外观。
+    } finally {
+      systemThemePollInFlight = false;
+    }
+  }, 5000);
+  if (typeof systemThemeTimer.unref === 'function') systemThemeTimer.unref();
+}
+
 function readSavedThemeId() {
   try {
     const id = JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'current-theme.json'), 'utf8')).id;
-    if (typeof id === 'string' && (id === 'default' || getTheme(id))) return id;
+    if (typeof id === 'string' && (id === 'default' || id === 'system' || getTheme(id))) return id;
   } catch (_) {}
   return 'default';
 }
@@ -8564,9 +8646,20 @@ async function applyThemeByCdp(id, options = {}) {
   if (nativeOnly && id !== 'default' && id !== 'dark') throw new Error(`${PROFILE.name} 仅支持浅色和深色主题`);
   if (options.release && readSessionState().themeTakeoverEnabled !== false) return { applied: false, takeover: true };
   if (options.automatic && readSessionState().themeTakeoverEnabled === false) return { applied: false, takeover: false };
-  if (!options.automatic && !options.nativeOnly && !options.release) themeApplyGeneration++;
+  if (!options.automatic && !options.nativeOnly && !options.release) {
+    themeApplyGeneration++;
+    stopSystemThemePolling();
+  }
   const applyGeneration = themeApplyGeneration;
   if (!cdp.connected) throw new Error('CDP 未连接');
+  const systemMode = id === 'system';
+  if (systemMode) {
+    id = await resolveSystemTheme();
+    // 在第一次 await 之前记录 generation，旧的自动恢复和手动请求均不能覆盖后续选择。
+    if (applyGeneration !== themeApplyGeneration || readSessionState().themeTakeoverEnabled === false ||
+        (options.systemPoll && readSavedThemeId() !== 'system')) return { applied: false, cancelled: true };
+    if (options.systemPoll && id === lastResolvedSystemTheme) return { applied: false, unchanged: true, system: true, resolved: id };
+  }
   const takeoverEnabled = !options.nativeOnly && readSessionState().themeTakeoverEnabled !== false;
   if (id === 'nebula' && takeoverEnabled) {
     // 分开两个 CDP 回合：释放自定义 CSS/守护，让官方深色真正渲染，再接管毛玻璃。
@@ -9004,6 +9097,7 @@ async function applyThemeByCdp(id, options = {}) {
       if (options.release && (readSessionState().themeTakeoverEnabled !== false || applyGeneration !== themeApplyGeneration)) return { applied: false, takeover: readSessionState().themeTakeoverEnabled !== false };
       if (options.automatic && (readSessionState().themeTakeoverEnabled === false || applyGeneration !== themeApplyGeneration)) return { applied: false, takeover: false };
       r = await cdpSend('Runtime.evaluate', { expression: expr, returnByValue: true });
+      if (applyGeneration !== themeApplyGeneration) return { applied: false, cancelled: true };
       if (r && r.exceptionDetails) {
         const detail = r.exceptionDetails.exception && r.exceptionDetails.exception.description;
         throw new Error(detail || r.exceptionDetails.text || 'Runtime.evaluate 执行失败');
@@ -9029,7 +9123,12 @@ async function applyThemeByCdp(id, options = {}) {
   if (id === 'nebula' && takeoverEnabled && wallpaperRotation.status().mode === 'random') {
     wallpaperRotation.restore().catch(() => {});
   }
-  return { ok: true, applied: v.applied, dark: v.dark, bg: v.bg, text: v.text };
+  if (systemMode && v.applied) {
+    lastResolvedSystemTheme = id;
+    startSystemThemePolling();
+  }
+  return { ok: true, applied: v.applied, dark: v.dark, bg: v.bg, text: v.text,
+    ...(systemMode ? { system: true, resolved: id } : {}) };
 }
 
 /**
@@ -12094,10 +12193,12 @@ function handleApi(req, res) {
   if (req.method === 'POST' && p === '/api/theme-apply') {
     return readBody(req).then((body) => {
       const id = (body.id || 'default') + '';
-      if (id !== 'default' && !getTheme(id)) return json(res, 404, { ok: false, error: '主题不存在: ' + id });
+      if (id !== 'default' && id !== 'system' && !getTheme(id)) return json(res, 404, { ok: false, error: '主题不存在: ' + id });
       const nativeOnly = body.nativeOnly === true && PROFILE.capabilities.nativeComposer && (id === 'default' || id === 'dark');
       const applyOptions = nativeOnly ? { nativeOnly: true } : null;
-      return (applyOptions ? applyThemeByCdp(id, applyOptions) : applyThemeByCdp(id))
+      const applying = applyOptions ? applyThemeByCdp(id, applyOptions) : applyThemeByCdp(id);
+      const requestGeneration = themeApplyGeneration;
+      return applying
         .then((info) => {
           if (info.cancelled) return json(res, 409, { ok: false, error: '主题切换已被后续操作取消' });
           try {
@@ -12108,6 +12209,11 @@ function handleApi(req, res) {
           return json(res, 200, { ok: true, ...info, id });
         })
         .catch((e) => {
+          // 手动切换失败时仍保留原有 system 模式，并让下轮重试实际外观。
+          if (!nativeOnly && requestGeneration === themeApplyGeneration && readSavedThemeId() === 'system') {
+            lastResolvedSystemTheme = null;
+            startSystemThemePolling();
+          }
           log('[theme] API 应用失败: ' + e.message);
           return json(res, 500, { ok: false, error: e.message });
         });

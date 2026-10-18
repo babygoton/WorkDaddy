@@ -1940,7 +1940,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '安装程序已打开，请按提示退出 WorkBuddy 并完成安装。': 'The installer is open. Please quit WorkBuddy as prompted and finish installing.',
     '安装程序已打开，请到任务栏选择安装窗口；按提示退出 WorkBuddy 后完成安装。': 'The installer is open. Select its window from the taskbar, then quit WorkBuddy as prompted to finish installing.',
     '停止旧服务…': 'Stopping old service…', '发现新版本，准备更新…': 'New version available; preparing to update…',
-    '已应用主题「': 'Theme applied: “', '已恢复官方头像': 'Restored the official avatar', '已应用官方头像': 'Applied the official avatar',
+    '已应用主题「': 'Theme applied: “', '已跟随系统，当前使用「': 'Following system, currently “', '」外观': '” appearance', '跟随操作系统的深浅色模式自动切换': 'Follow the operating system dark/light mode and switch automatically', '已恢复官方头像': 'Restored the official avatar', '已应用官方头像': 'Applied the official avatar',
     '头像已更新 ✓': 'Avatar updated ✓', '头像处理失败：': 'Avatar processing failed:',
     '已开启：需要你决策时 WorkBuddy 会用弹窗提问（全局生效）': 'Enabled: WorkBuddy asks with a dialog when your decision is needed (applies globally)',
     // —— 第八批：壁纸/授权/休眠/开启风险文案与时间相对词前导空格变体 ——
@@ -10839,6 +10839,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         '<div class="wbs-theme-managed" id="wbs-theme-appearance-options">' +
         '<div class="wbs-pcard-title">主题外观</div>' +
         '<div class="wbs-theme-seg" id="wbs-theme-seg" role="radiogroup" aria-label="主题外观">' +
+        '<label class="wbs-theme-opt wbs-theme-option" title="跟随操作系统的深浅色模式自动切换"><input type="radio" name="wbs-theme" value="system"><span>跟随系统</span></label>' +
         '<label class="wbs-theme-opt wbs-theme-option"><input type="radio" name="wbs-theme" value="default"><span>浅色</span></label>' +
         '<label class="wbs-theme-opt wbs-theme-option"><input type="radio" name="wbs-theme" value="dark"><span>深色</span></label>' +
         '<label class="wbs-theme-opt wbs-theme-option"><input type="radio" name="wbs-theme" value="eye-care"><span>护眼绿</span></label>' +
@@ -12374,10 +12375,10 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
 
     // ===== 主题系统：WorkDaddy 换肤 / CodeBuddy 官方浅色深色切换 =====
     // 主题 = CSS 变量覆盖（--wb-* / --dc-*），daemon 通过 CDP 注入 <style>。
-    // WorkDaddy 提供五种外观并共用主题接管；CodeBuddy 只暴露官方浅色/深色。
+    // WorkDaddy 提供六种外观并共用主题接管；CodeBuddy 只暴露官方浅色/深色。
     var ALLOWED_THEMES = (typeof CAPS !== 'undefined' && CAPS.nativeComposer)
       ? ['default', 'dark']
-      : ['default', 'dark', 'nebula', 'eye-care', 'cyber-purple'];
+      : ['system', 'default', 'dark', 'nebula', 'eye-care', 'cyber-purple'];
     var currentThemeId = 'default';
     var themeSelectionSerial = 0;
     function syncThemeSelection(id) {
@@ -12419,10 +12420,15 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       var previous = currentThemeId;
       var serial = ++themeSelectionSerial;
       syncThemeSelection(id);
-      return applyTheme(id).then(function () {
+      return applyTheme(id).then(function (info) {
         if (serial !== themeSelectionSerial) return;
-        var names = { 'default': '浅色', 'dark': '深色', 'eye-care': '护眼绿', 'cyber-purple': '赛博紫', 'nebula': '毛玻璃' };
-        toast('已应用主题「' + names[id] + '」', false, root);
+        var names = { 'system': '跟随系统', 'default': '浅色', 'dark': '深色', 'eye-care': '护眼绿', 'cyber-purple': '赛博紫', 'nebula': '毛玻璃' };
+        if (id === 'system') {
+          // daemon 返回按系统解析出的具体外观，让用户确认当前落在深色还是浅色
+          toast('已跟随系统，当前使用「' + (info && info.resolved === 'dark' ? '深色' : '浅色') + '」外观', false, root);
+        } else {
+          toast('已应用主题「' + names[id] + '」', false, root);
+        }
       }).catch(function (error) {
         if (serial !== themeSelectionSerial) return;
         syncThemeSelection(previous);
@@ -12439,7 +12445,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     }
     // 壁纸控件仅在毛玻璃下显示；保留默认主题下上传壁纸的兼容目标。
     function themeSelectValue() {
-      return currentThemeId !== 'default' && currentThemeId !== 'dark' ? currentThemeId : 'nebula';
+      return currentThemeId !== 'default' && currentThemeId !== 'dark' && currentThemeId !== 'system' ? currentThemeId : 'nebula';
     }
     // 页面主题由 daemon 在早期注入/加载时恢复；不要延迟 POST 旧主题，
     // 否则旧页面的异步请求可能覆盖用户刚选择的主题。
@@ -18531,6 +18537,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '.wbs-theme-seg{display:flex;background:var(--wb-bg-tertiary,#f0f0f0);border-radius:10px;padding:3px;gap:3px;margin-bottom:8px}',
     '.wbs-theme-option{position:relative;text-align:center;line-height:normal}.wbs-theme-option input{position:absolute;opacity:0;width:1px;height:1px}.wbs-theme-option:has(input:focus-visible){outline:2px solid var(--wb-icon-secondary);outline-offset:1px}',
     '.wbs-theme-opt{flex:1;min-width:0;padding:6px 4px;border:none;border-radius:8px;background:transparent;color:var(--wb-icon-secondary,#666);font-size:12px;font-weight:600;cursor:pointer;transition:all .15s;font-family:inherit;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+    '#wbs-theme-seg .wbs-theme-option:has(input[value="system"]){flex:1.5}',
     '.wbs-theme-opt:hover{color:var(--wb-color-text-primary,#1f1f1f)}',
     '.wbs-theme-opt.active{background:var(--wb-button-primary-bg,#1f1f1f);color:var(--wb-button-primary-fg,#fff);box-shadow:0 1px 4px rgba(0,0,0,.2)}',
     /* 背景图来源切换（WorkDaddy 壁纸 / 自定义背景图） */

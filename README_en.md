@@ -52,7 +52,7 @@ CodeBuddy support targets its **Electron agent window**, not the VS Code editor 
 - **Automation tasks:** discover and import tasks from public GitHub and Gitee repositories, or describe what you need and let WorkBuddy create a task. Supports manual, event, and scheduled triggers, run logs, stopping tasks, and JSON / ZIP export.
 - **Quiet approval mode:** automatically handle supported permission prompts while you are away.
 - **Stash prompts:** send drafts to WorkBuddy's pending message queue while preserving images, files, and quotes for later use.
-- **Themes:** WorkBuddy’s Manage theme switch offers Light, Dark, Eye-care green, Cyber purple, and Frosted glass. Frosted glass supports preset and custom wallpapers; turning management off restores the client’s native appearance.
+- **Themes:** WorkBuddy’s Manage theme switch offers Follow system, Light, Dark, Eye-care green, Cyber purple, and Frosted glass. “Follow system” tracks the operating system’s dark/light mode and switches automatically. Frosted glass supports preset and custom wallpapers; turning management off restores the client’s native appearance.
 - **Session migration:** copy sessions between accounts automatically or manually and continue working where you left off.
 - **Session branching:** once enabled under Enhance, any reply can start a new conversation that keeps the chat up to that reply, while the original conversation stays untouched.
 - **Model tools:** manage and switch models more easily, including multiple configurations with the same model name.
@@ -223,7 +223,7 @@ Click the robot button in the lower-right corner of WorkBuddy or the CodeBuddy E
 | Tab            | Purpose                                                                                                                                   |
 | -------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
 | **Accounts**   | View account counts, credits, model rate limits and estimated reset times, daily check-in status, consecutive active days, growth progress, and Buddy travel status; switch, delete, or add accounts; import/export encrypted backups               |
-| **Theme**      | WorkBuddy: manage five themes, wallpapers, avatars, blur, and overlays. CodeBuddy: black or white floating robot settings     |
+| **Theme**      | WorkBuddy: manage six themes (including follow system), wallpapers, avatars, blur, and overlays. CodeBuddy: black or white floating robot settings     |
 | **Sessions**   | Filter by account and date, copy or delete in bulk, and configure automatic session or workspace copying when switching accounts          |
 | **Models**     | Manage current and alternative models, including backups, copying, editing, enabling, connectivity tests, and bulk deletion               |
 | **Enhance**    | Configure quiet approvals, auto-continue, session branching, prompt stashing, and quick phrases                                                              |
