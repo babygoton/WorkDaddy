@@ -10847,6 +10847,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         (codeBuddyTheme ? '<div class="wbs-pcard" id="wbs-native-theme-card">' +
         '<div class="wbs-pcard-title">主题外观</div>' +
         '<div class="wbs-theme-seg" id="wbs-theme-seg" role="radiogroup" aria-label="主题外观">' +
+        '<label class="wbs-theme-opt wbs-theme-option" title="跟随操作系统的深浅色模式自动切换"><input type="radio" name="wbs-theme" value="system"><span>跟随系统</span></label>' +
         '<label class="wbs-theme-opt wbs-theme-option"><input type="radio" name="wbs-theme" value="default"><span>浅色</span></label>' +
         '<label class="wbs-theme-opt wbs-theme-option"><input type="radio" name="wbs-theme" value="dark"><span>深色</span></label>' +
         '</div></div>' : '<div class="wbs-pcard">' +
@@ -12390,11 +12391,11 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         });
     }
 
-    // ===== 主题系统：WorkDaddy 换肤 / CodeBuddy 官方浅色深色切换 =====
+    // ===== 主题系统：WorkDaddy 换肤 / CodeBuddy 官方外观切换 =====
     // 主题 = CSS 变量覆盖（--wb-* / --dc-*），daemon 通过 CDP 注入 <style>。
-    // WorkDaddy 提供六种外观并共用主题接管；CodeBuddy 只暴露官方浅色/深色。
+    // WorkDaddy 提供六种外观并共用主题接管；CodeBuddy 提供跟随系统与官方浅色/深色。
     var ALLOWED_THEMES = (typeof CAPS !== 'undefined' && CAPS.nativeComposer)
-      ? ['default', 'dark']
+      ? ['system', 'default', 'dark']
       : ['system', 'default', 'dark', 'nebula', 'eye-care', 'cyber-purple'];
     var currentThemeId = 'default';
     var themeSelectionSerial = 0;
@@ -12423,7 +12424,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       if (nativeCurrent) syncThemeSelection(nativeCurrent);
       return api('/api/themes')
         .then(function (d) {
-          if (serial === themeSelectionSerial) syncThemeSelection(nativeCurrent || d.current);
+          if (serial === themeSelectionSerial) syncThemeSelection(d.current === 'system' ? 'system' : nativeCurrent || d.current);
         })
         .catch(function () {});
     }

@@ -525,8 +525,9 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 // 1.2.61：合入跟随系统主题，防止异步检测覆盖后续手动选择。
 // 1.2.62：手动复制会话到当前账号后刷新官方列表，无需再次切号。
 // 1.2.63：跟随系统将浅色恢复视为成功，持续轮询并更新外观基线。
-const DAEMON_VERSION = '1.2.63';
-const DAEMON_BUILD_ID = 'release-1.2.63-system-theme-light-polling';
+// 1.2.64：CodeBuddy 原生主题支持跟随系统，重连恢复并与手动选择互斥。
+const DAEMON_VERSION = '1.2.64';
+const DAEMON_BUILD_ID = 'release-1.2.64-codebuddy-system-theme';
 const usageReporter = createUsageReporter({ profile: PROFILE.id, version: DAEMON_VERSION });
 configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const automationDiscovery = createAutomationDiscovery({
@@ -8497,10 +8498,11 @@ function startSystemThemePolling() {
   systemThemeTimer = setInterval(async () => {
     if (systemThemePollInFlight) return;
     if (!cdp.connected || readSavedThemeId() !== 'system') { stopSystemThemePolling(); return; }
-    if (readSessionState().themeTakeoverEnabled === false) return;
+    const nativeOnly = PROFILE.capabilities.nativeComposer === true;
+    if (!nativeOnly && readSessionState().themeTakeoverEnabled === false) return;
     systemThemePollInFlight = true;
     try {
-      await applyThemeByCdp('system', { automatic: true, systemPoll: true });
+      await applyThemeByCdp('system', { automatic: true, systemPoll: true, ...(nativeOnly ? { nativeOnly: true } : {}) });
     } catch (_) {
       // 不推进基线：下轮重试同一个系统外观。
     } finally {
@@ -8520,8 +8522,13 @@ function readSavedThemeId() {
 
 /** 恢复已保存的主题（CDP 连接/页面刷新后调用）：读取 current-theme.json 重新应用，保证深浅色在重启/刷新后仍生效 */
 async function restoreSavedTheme() {
-  if (!PROFILE.capabilities.theme || PROFILE.capabilities.themeTakeover === false) return;
-  if (!cdp.connected) return;
+  if (!PROFILE.capabilities.theme || !cdp.connected) return;
+  if (PROFILE.capabilities.nativeComposer) {
+    // 原生手动选择由官方保存；system 需 daemon 在重连后继续跟随。
+    if (readSavedThemeId() === 'system') await applyThemeByCdp('system', { automatic: true, nativeOnly: true });
+    return;
+  }
+  if (PROFILE.capabilities.themeTakeover === false) return;
   if (readSessionState().themeTakeoverEnabled === false) {
     // 重载/重连时保留官方选择，不能再次触发关闭开关的一次性浅色重置。
     await startNativeAppearanceSyncByCdp();
@@ -8640,15 +8647,15 @@ function readBackgroundBlur() {
 }
 
 async function applyThemeByCdp(id, options = {}) {
-  const nativeOnly = options.nativeOnly === true;
+  const nativeOnly = options.nativeOnly === true || PROFILE.capabilities.nativeComposer === true;
   if (!PROFILE.capabilities.theme || (PROFILE.capabilities.themeTakeover === false && !nativeOnly)) throw new Error(`${PROFILE.name} 暂不支持毛玻璃主题`);
   // WorkBuddy's internal nebula transition also uses nativeOnly before
   // applying its own CSS, so only an explicit non-native profile is rejected.
   if (nativeOnly && PROFILE.capabilities.nativeComposer === false) throw new Error(`${PROFILE.name} 不支持原生主题切换`);
-  if (nativeOnly && id !== 'default' && id !== 'dark') throw new Error(`${PROFILE.name} 仅支持浅色和深色主题`);
+  if (nativeOnly && id !== 'default' && id !== 'dark' && id !== 'system') throw new Error(`${PROFILE.name} 仅支持跟随系统、浅色和深色主题`);
   if (options.release && readSessionState().themeTakeoverEnabled !== false) return { applied: false, takeover: true };
-  if (options.automatic && readSessionState().themeTakeoverEnabled === false) return { applied: false, takeover: false };
-  if (!options.automatic && !options.nativeOnly && !options.release) {
+  if (options.automatic && !nativeOnly && readSessionState().themeTakeoverEnabled === false) return { applied: false, takeover: false };
+  if (!options.automatic && (!options.nativeOnly || PROFILE.capabilities.nativeComposer) && !options.release) {
     themeApplyGeneration++;
     stopSystemThemePolling();
   }
@@ -8658,11 +8665,11 @@ async function applyThemeByCdp(id, options = {}) {
   if (systemMode) {
     id = await resolveSystemTheme();
     // 在第一次 await 之前记录 generation，旧的自动恢复和手动请求均不能覆盖后续选择。
-    if (applyGeneration !== themeApplyGeneration || readSessionState().themeTakeoverEnabled === false ||
+    if (applyGeneration !== themeApplyGeneration || (!nativeOnly && readSessionState().themeTakeoverEnabled === false) ||
         (options.systemPoll && readSavedThemeId() !== 'system')) return { applied: false, cancelled: true };
     if (options.systemPoll && id === lastResolvedSystemTheme) return { applied: false, unchanged: true, system: true, resolved: id };
   }
-  const takeoverEnabled = !options.nativeOnly && readSessionState().themeTakeoverEnabled !== false;
+  const takeoverEnabled = !nativeOnly && readSessionState().themeTakeoverEnabled !== false;
   if (id === 'nebula' && takeoverEnabled) {
     // 分开两个 CDP 回合：释放自定义 CSS/守护，让官方深色真正渲染，再接管毛玻璃。
     // 不改持久化接管开关，避免中途失败或并发操作留下错误的用户设置。
@@ -8949,8 +8956,8 @@ async function applyThemeByCdp(id, options = {}) {
       wbsSyncNativeTheme(mode);
       return true;
     }
-    if (${takeoverEnabled || options.release || options.nativeOnly ? 'true' : 'false'}) wbsPrepareNativeAppearance(${JSON.stringify(id === 'nebula' || options.nativeOnly ? 'dark' : 'light')});
-    if (${options.release || options.nativeOnly ? 'true' : 'false'}) {
+    if (${takeoverEnabled || options.release || nativeOnly ? 'true' : 'false'}) wbsPrepareNativeAppearance(${JSON.stringify(id === 'nebula' || nativeOnly ? 'dark' : 'light')});
+    if (${options.release || nativeOnly ? 'true' : 'false'}) {
       wbsClearNativeCustomCss();
         // 清掉特殊皮肤缓存；外观快照留给 releaseThemeByCdp 立即恢复。
         try {
@@ -9097,7 +9104,7 @@ async function applyThemeByCdp(id, options = {}) {
       // 重连重试也必须服从后续主题选择或关闭接管，不能把过期阶段重新应用。
       if (applyGeneration !== themeApplyGeneration) return { applied: false, cancelled: true };
       if (options.release && (readSessionState().themeTakeoverEnabled !== false || applyGeneration !== themeApplyGeneration)) return { applied: false, takeover: readSessionState().themeTakeoverEnabled !== false };
-      if (options.automatic && (readSessionState().themeTakeoverEnabled === false || applyGeneration !== themeApplyGeneration)) return { applied: false, takeover: false };
+      if (options.automatic && ((!nativeOnly && readSessionState().themeTakeoverEnabled === false) || applyGeneration !== themeApplyGeneration)) return { applied: false, takeover: false };
       r = await cdpSend('Runtime.evaluate', { expression: expr, returnByValue: true });
       if (applyGeneration !== themeApplyGeneration) return { applied: false, cancelled: true };
       if (r && r.exceptionDetails) {
@@ -12200,7 +12207,7 @@ function handleApi(req, res) {
     return readBody(req).then((body) => {
       const id = (body.id || 'default') + '';
       if (id !== 'default' && id !== 'system' && !getTheme(id)) return json(res, 404, { ok: false, error: '主题不存在: ' + id });
-      const nativeOnly = body.nativeOnly === true && PROFILE.capabilities.nativeComposer && (id === 'default' || id === 'dark');
+      const nativeOnly = body.nativeOnly === true && PROFILE.capabilities.nativeComposer && (id === 'default' || id === 'dark' || id === 'system');
       const applyOptions = nativeOnly ? { nativeOnly: true } : null;
       const applying = applyOptions ? applyThemeByCdp(id, applyOptions) : applyThemeByCdp(id);
       const requestGeneration = themeApplyGeneration;
@@ -12216,7 +12223,7 @@ function handleApi(req, res) {
         })
         .catch((e) => {
           // 手动切换失败时仍保留原有 system 模式，并让下轮重试实际外观。
-          if (!nativeOnly && requestGeneration === themeApplyGeneration && readSavedThemeId() === 'system') {
+          if (requestGeneration === themeApplyGeneration && readSavedThemeId() === 'system') {
             lastResolvedSystemTheme = null;
             startSystemThemePolling();
           }

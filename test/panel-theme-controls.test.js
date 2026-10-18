@@ -323,11 +323,11 @@ for (const nativeComposer of [false, true]) test('theme controls match the clien
   const context = { CAPS: {nativeComposer}, WBS_BRAND: 'WorkDaddy', themePane: {dataset:{}}, wireThemePane() {}, applyAvatar() {} };
   vm.runInNewContext(section('function buildThemePane()', '    // 增强 pane'), context);
   context.buildThemePane();
-  assert.equal((context.themePane.innerHTML.match(/name="wbs-theme"/g) || []).length, nativeComposer ? 2 : 6);
+  assert.equal((context.themePane.innerHTML.match(/name="wbs-theme"/g) || []).length, nativeComposer ? 3 : 6);
   assert.equal(context.themePane.innerHTML.includes('接管主题'), !nativeComposer);
   if (nativeComposer) {
     assert.match(context.themePane.innerHTML, /id="wbs-native-theme-card"/);
-    assert.doesNotMatch(context.themePane.innerHTML, /value="(?:system|eye-care|cyber-purple|nebula)"/);
+    assert.doesNotMatch(context.themePane.innerHTML, /value="(?:eye-care|cyber-purple|nebula)"/);
   }
 });
 
@@ -351,7 +351,7 @@ test('rapid theme selections ignore stale failures and disabled takeover prevent
   assert.equal(requests.length, 2);
 });
 
-test('CodeBuddy theme choices use native light/dark mode without takeover', async () => {
+test('CodeBuddy theme choices use native system/light/dark mode without takeover', async () => {
   const requests = [];
   const context = {
     CAPS: { nativeComposer: true, themeTakeover: false },
@@ -366,15 +366,18 @@ test('CodeBuddy theme choices use native light/dark mode without takeover', asyn
   requests[0].resolve({ ok: true });
   await pending;
   await context.selectTheme('nebula');
-  await context.selectTheme('system');
-  assert.equal(requests.length, 1, 'CodeBuddy must expose only the official light/dark modes');
+  const system = context.selectTheme('system');
+  assert.equal(requests.length, 2);
+  assert.deepEqual(JSON.parse(requests[1].options.body), { id: 'system', nativeOnly: true });
+  requests[1].resolve({ ok: true, resolved: 'default' }); await system;
+  assert.equal(context.currentThemeId, 'system');
 });
 
 test('daemon accepts nativeOnly only for CodeBuddy official modes', () => {
   assert.match(daemon, /const nativeOnly = body\.nativeOnly === true && PROFILE\.capabilities\.nativeComposer/);
   assert.match(daemon, /const applyOptions = nativeOnly \? \{ nativeOnly: true \} : null/);
   assert.match(daemon, /applyOptions \? applyThemeByCdp\(id, applyOptions\) : applyThemeByCdp\(id\)/);
-  assert.match(daemon, /if \(nativeOnly && id !== 'default' && id !== 'dark'\)/);
+  assert.match(daemon, /if \(nativeOnly && id !== 'default' && id !== 'dark' && id !== 'system'\)/);
 });
 
 test('theme apply route responds and persists native theme selections and handles failures', async () => {
@@ -382,7 +385,7 @@ test('theme apply route responds and persists native theme selections and handle
   const end = daemon.indexOf('\n  // 保存自定义主题', start);
   const route = vm.runInNewContext('(async function (req, res, p) {' + daemon.slice(start, end) + '})', {
     readBody: async req => req.body,
-    themeApplyGeneration: 0,
+    themeApplyGeneration: 0, readSavedThemeId: () => 'default',
     PROFILE: { capabilities: { nativeComposer: true } },
     getTheme: () => ({}),
     applyThemeByCdp: async (id, options) => {
@@ -402,10 +405,14 @@ test('theme apply route responds and persists native theme selections and handle
   assert.equal(success.body.id, 'dark');
   assert.equal(saved.length, 1);
   assert.equal(saved[0].id, 'dark');
+  const system = {};
+  await route({ method: 'POST', body: { id: 'system', nativeOnly: true } }, system, '/api/theme-apply');
+  assert.equal(system.status, 200);
+  assert.equal(saved[1].id, 'system');
   const failure = {};
   await route({ method: 'POST', body: { id: 'default', nativeOnly: true } }, failure, '/api/theme-apply');
   assert.equal(failure.status, 500);
-  assert.equal(saved.length, 1);
+  assert.equal(saved.length, 2);
 });
 
 test('follow system persists the system mode and reports the resolved appearance', async () => {
@@ -435,4 +442,15 @@ test('wallpaper controls are exclusive to the selected frosted theme', () => {
     assert.equal(shadow.style.display, wallpaper.style.display);
   }
   assert.equal(loads,1);
+});
+
+for (const nativeMode of ['default', 'dark']) test('CodeBuddy reopens the saved system selection over native ' + nativeMode, async () => {
+  const context = {
+    CAPS: { nativeComposer: true }, themePane: null,
+    document: { documentElement: { getAttribute: () => nativeMode === 'dark' ? 'dark' : 'light', classList: { contains: () => false } }, body: { getAttribute: () => '' } },
+    syncWallpaperCardVisibility() {}, api: async () => ({ current: 'system' }),
+  };
+  vm.runInNewContext(section('    var ALLOWED_THEMES =', '    // 页面主题由 daemon'), context);
+  await context.loadThemes();
+  assert.equal(context.currentThemeId, 'system');
 });

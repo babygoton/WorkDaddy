@@ -81,7 +81,7 @@ function systemContext(overrides = {}) {
   const start = source.indexOf('function execCaptureText(');
   assert.ok(start >= 0, 'system theme helpers are present');
   const context = {
-    process: { platform: 'linux' },
+    PROFILE: { capabilities: { theme: true } }, process: { platform: 'linux' },
     cdp: { connected: true }, readSavedThemeId: () => 'system',
     readSessionState: () => ({ themeTakeoverEnabled: true }),
     setInterval: () => ({ unref() {} }), clearInterval() {},
@@ -195,4 +195,65 @@ test('polling serializes slow lookups and retries an unsuccessful application', 
   assert.equal(applications, 2, 'unchanged successful preference must not reapply');
   const stale = tick(); saved = 'default'; resolve('default'); await stale;
   assert.equal(applications, 2, 'a changed saved mode cancels a pending poll');
+});
+
+for (const profile of ['codebuddy-cn', 'codebuddy-intl']) test(profile + ' follows system without takeover and stops on native manual selection', async () => {
+  let tick, timerCount = 0, stopped = 0, mode = 'default', calls = 0;
+  const native = { id: profile, capabilities: { theme: true, nativeComposer: true, themeTakeover: false } };
+  const context = systemContext({ ...applyContext(), PROFILE: native,
+    readSessionState: () => ({ themeTakeoverEnabled: false }),
+    setInterval: fn => { tick = fn; timerCount++; return { unref() {} }; }, clearInterval: () => { stopped++; },
+    resolveSystemTheme: async () => mode,
+    cdpSend: async (_, params) => {
+      calls++;
+      assert.ok(params.expression.includes('if (false && typeof MutationObserver'), 'native mode must not install a takeover guard');
+      return { result: { value: { applied: mode !== 'default' } } };
+    },
+  });
+  vm.runInContext(applySource, context);
+  context.resolveSystemTheme = async () => mode;
+  const first = await context.applyThemeByCdp('system', { nativeOnly: true });
+  assert.equal(first.resolved, 'default');
+  for (mode of ['dark', 'default', 'dark', 'default']) await tick();
+  assert.equal(calls, 5);
+  assert.equal(timerCount, 1);
+  await tick(); assert.equal(calls, 5, 'unchanged preferences do not reapply');
+  await context.applyThemeByCdp('dark', { nativeOnly: true });
+  assert.equal(stopped, 1, 'manual native selections stop following');
+});
+
+for (const nativeOnly of [false, true]) test('native manual selection cancels a pending CodeBuddy system lookup: ' + nativeOnly, async () => {
+  let finish, calls = 0;
+  const context = applyContext({
+    PROFILE: { capabilities: { theme: true, nativeComposer: true, themeTakeover: false } },
+    readSessionState: () => ({ themeTakeoverEnabled: false }),
+    resolveSystemTheme: () => new Promise(resolve => { finish = resolve; }),
+    cdpSend: async (_, params) => {
+      calls++;
+      assert.ok(params.expression.includes('if (true) {\n      wbsClearNativeCustomCss();'), 'inferred native mode must clean up native CSS too');
+      return { result: { value: { applied: true } } };
+    },
+  });
+  const pending = context.applyThemeByCdp('system', { nativeOnly: true });
+  await context.applyThemeByCdp('dark', { nativeOnly });
+  finish('default');
+  assert.equal((await pending).cancelled, true);
+  assert.equal(calls, 1);
+});
+
+test('CodeBuddy restores system mode after reconnect while leaving native manual choices alone', async () => {
+  const start = source.indexOf('async function restoreSavedTheme()');
+  const restore = source.slice(start, source.indexOf('\n/**', start));
+  let saved = 'system', applied = [];
+  const context = {
+    PROFILE: { capabilities: { theme: true, nativeComposer: true, themeTakeover: false } },
+    cdp: { connected: true }, readSavedThemeId: () => saved,
+    readSessionState: () => ({ themeTakeoverEnabled: false }),
+    applyThemeByCdp: async (id, options) => { applied.push({ id, ...options }); },
+  };
+  vm.runInNewContext(restore, context);
+  await context.restoreSavedTheme();
+  assert.deepEqual(applied, [{ id: 'system', automatic: true, nativeOnly: true }]);
+  for (saved of ['default', 'dark', 'nebula']) await context.restoreSavedTheme();
+  assert.equal(applied.length, 1);
 });
