@@ -614,7 +614,17 @@ function compareSnapshots(left, right) {
   for (let i = 0; i < Math.min(a.length, b.length); i++) if (a[i] !== b[i]) return { kind: 'conflict' };
   if (a.length !== b.length) return { kind: a.length > b.length ? 'left-extends' : 'right-extends' };
   for (const [key, file] of left.files) {
-    if (right.files.has(key) && right.files.get(key).semantic !== file.semantic) return { kind: 'conflict' };
+    if (right.files.has(key) && right.files.get(key).semantic !== file.semantic) {
+      // artifact-index records which artifacts a conversation has presented. Its
+      // lastUpdated stamp and artifact count drift independently per account as a
+      // result of each account's own local present/open activity, so a divergent
+      // index is not evidence of a divergent conversation. Treating it as a
+      // conflict makes the daemon allocate a brand-new physical session copy on
+      // every account switch, which is what produces endless duplicates.
+      // Supporting-file drift is reconciled by the normal file sync path instead.
+      if (key === 'artifact-index/__session__.json') continue;
+      return { kind: 'conflict' };
+    }
   }
   const missingRight = [...left.files.keys()].some(key => !right.files.has(key));
   const missingLeft = [...right.files.keys()].some(key => !left.files.has(key));
