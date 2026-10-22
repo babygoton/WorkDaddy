@@ -26,6 +26,14 @@ function assertSafePath(file) {
     cursor = parent;
   }
 }
+
+// 绿色便携版中 %APPDATA%\WorkDaddy 是指向 Userdata 的 Junction（目录联接）。
+// Node 的 lstat 会把 Junction 判为符号链接，导致上方 assertSafePath 误拒路径。
+// 此处先用 realpathSync 把 Junction 透明解析为真实目录，使安全检查与安装版一致，
+// 且不改变安全语义（解析后整条父链不再含符号链接；深层真实符号链接仍会被拦）。
+function resolveBackupRoot(root) {
+  try { return fs.realpathSync(path.resolve(root)); } catch (_) { return path.resolve(root); }
+}
 function snapshot(dir) {
   assertSafePath(dir);
   const result = {};
@@ -97,7 +105,7 @@ function inspectPersona(options) {
 }
 
 function personaSettingsFile(backupRoot) {
-  const file = path.join(path.resolve(backupRoot), 'persona', 'settings.json');
+  const file = path.join(resolveBackupRoot(backupRoot), 'persona', 'settings.json');
   assertSafePath(file);
   return file;
 }
@@ -127,7 +135,7 @@ function dismissPersonaNotice(backupRoot) {
   return writePersonaSettings(backupRoot, { ...readPersonaSettings(backupRoot), noticeDismissed: true });
 }
 function sharedPersonaDir(backupRoot) {
-  const dir = path.join(path.resolve(backupRoot), 'persona', 'shared');
+  const dir = path.join(resolveBackupRoot(backupRoot), 'persona', 'shared');
   assertSafePath(dir);
   return dir;
 }
@@ -146,7 +154,7 @@ function listPersonaSources({ dataRoot, accounts = [] }) {
   return sources;
 }
 function backupPersonaDirectory(backupRoot, label, original) {
-  const dir = path.join(path.resolve(backupRoot), 'persona', 'backups', label,
+  const dir = path.join(resolveBackupRoot(backupRoot), 'persona', 'backups', label,
     `${Date.now()}-${crypto.randomBytes(6).toString('hex')}`);
   assertSafePath(dir);
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
@@ -254,7 +262,7 @@ function copyPersona(options) {
   const writes = {};
   for (const name of IDENTITY_FILES) if (nonempty(sourceFiles, name)) writes[name] = sourceFiles[name].text;
   writes['workspace-state.json'] = JSON.stringify(state, null, 2) + '\n';
-  const backupDir = path.join(path.resolve(options.backupRoot), 'persona', options.targetUid, `${Date.now()}-${crypto.randomBytes(6).toString('hex')}`);
+  const backupDir = path.join(resolveBackupRoot(options.backupRoot), 'persona', options.targetUid, `${Date.now()}-${crypto.randomBytes(6).toString('hex')}`);
   assertSafePath(backupDir);
   fs.mkdirSync(backupDir, { recursive: true, mode: 0o700 });
   for (const name of Object.keys(original)) fs.writeFileSync(path.join(backupDir, name), original[name].text, { mode: 0o600, flag: 'wx' });
