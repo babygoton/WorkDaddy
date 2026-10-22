@@ -7,9 +7,27 @@ function normalizeAutomationModelId(value) {
   return value.trim();
 }
 
+// WorkBuddy 对本地自定义模型的 id 统一加 custom-local: 前缀（实测选项 id 为
+// custom-local:freellmapi-auto），而任务配置按 models.json 习惯写裸 id
+// （freellmapi-auto）。比对时去掉该前缀再比较，两种写法视为同一模型，
+// 避免"未知模型 ID"误判。
+function isSameModel(optionId, model) {
+  const strip = (value) => String(value == null ? '' : value).replace(/^custom-local:/, '');
+  const left = strip(optionId);
+  const right = strip(model);
+  return !!left && left === right;
+}
+
 // Runs in WorkBuddy's renderer through CDP. The option's own onSelect is the
 // complete WorkBuddy path; its DOM onClick wrapper and sessionStore setter are not.
 async function selectAutomationModel({ model, conversationId, accountUid }) {
+  // 前缀容错逻辑必须内联：本函数经 toString() 由 CDP 注入渲染进程，模块级 helper 不可见。
+  const isSameModel = (optionId, configured) => {
+    const strip = (value) => String(value == null ? '' : value).replace(/^custom-local:/, '');
+    const left = strip(optionId);
+    const right = strip(configured);
+    return !!left && left === right;
+  };
   const trigger = Array.from(document.querySelectorAll('button.cr-model-selector__trigger'))
     .find((element) => { const rect = element.getBoundingClientRect(); return rect.width > 0 && rect.height > 0; });
   if (!trigger) throw new Error('当前输入框没有模型选择器');
@@ -52,10 +70,10 @@ async function selectAutomationModel({ model, conversationId, accountUid }) {
   }).filter(Boolean);
   const selectedModel = () => {
     if (controller) {
-      return controller.sessionStore.getState().model === model &&
-        controller.config?.getConversation?.()?.configManager?.model === model;
+      return isSameModel(controller.sessionStore.getState().model, model) &&
+        isSameModel(controller.config?.getConversation?.()?.configManager?.model, model);
     }
-    try { return JSON.parse(window.localStorage.getItem(storageKey) || '{}').id === model; }
+    try { return isSameModel(JSON.parse(window.localStorage.getItem(storageKey) || '{}').id, model); }
     catch (_) { return false; }
   };
   let previousModel = null;
@@ -64,11 +82,11 @@ async function selectAutomationModel({ model, conversationId, accountUid }) {
     await openMenu();
     const available = options();
     previousModel = available.find((item) => item.props.isSelected)?.option.id || null;
-    const target = available.find((item) => item.option.id === model);
+    const target = available.find((item) => isSameModel(item.option.id, model));
     if (!target) throw new Error('未知模型 ID；请从 WorkBuddy 模型列表选择有效 ID');
     if (target.option.disabled) throw new Error('指定模型当前不可用');
     if (!previousModel) throw new Error('无法确认当前模型');
-    changed = previousModel !== model;
+    changed = !isSameModel(previousModel, model);
     if (changed) target.props.onSelect();
     for (let attempt = 0; attempt < 50; attempt++) {
       if (selectedModel() && (!target.option.name || (trigger.innerText || trigger.textContent || '').includes(target.option.name))) {
@@ -100,6 +118,13 @@ async function selectAutomationModel({ model, conversationId, accountUid }) {
 }
 
 function verifyAutomationModel({ model, conversationId, accountUid, displayName }) {
+  // 前缀容错逻辑必须内联：本函数经 toString() 由 CDP 注入渲染进程，模块级 helper 不可见。
+  const isSameModel = (optionId, configured) => {
+    const strip = (value) => String(value == null ? '' : value).replace(/^custom-local:/, '');
+    const left = strip(optionId);
+    const right = strip(configured);
+    return !!left && left === right;
+  };
   const trigger = Array.from(document.querySelectorAll('button.cr-model-selector__trigger'))
     .find((element) => element.getBoundingClientRect().width > 0);
   if (!trigger || displayName && !(trigger.innerText || trigger.textContent || '').includes(displayName)) return false;
@@ -108,12 +133,12 @@ function verifyAutomationModel({ model, conversationId, accountUid, displayName 
     if (!root || root.getAttribute('data-root-id') !== conversationId) return false;
     const controller = (window.__wbsWorkBuddyCompat?.findConversationControllers?.(document) || [])
       .find((item) => String(item.conversationId) === conversationId);
-    return !!controller && controller.sessionStore.getState().model === model &&
-      controller.config?.getConversation?.()?.configManager?.model === model;
+    return !!controller && isSameModel(controller.sessionStore.getState().model, model) &&
+      isSameModel(controller.config?.getConversation?.()?.configManager?.model, model);
   }
   const tab = document.querySelector('button.conversation-list-tab-button.active');
   if (!tab || !/^(新建任务|New Task)$/i.test((tab.getAttribute('aria-label') || tab.textContent || '').trim())) return false;
-  try { return JSON.parse(window.localStorage.getItem('cb-newtask:model:' + accountUid) || '{}').id === model; }
+  try { return isSameModel(JSON.parse(window.localStorage.getItem('cb-newtask:model:' + accountUid) || '{}').id, model); }
   catch (_) { return false; }
 }
 
@@ -129,4 +154,4 @@ function restoreNewTaskModelPreference(selection) {
   } catch (_) { return { restored: false }; }
 }
 
-module.exports = { normalizeAutomationModelId, selectAutomationModel, verifyAutomationModel, restoreNewTaskModelPreference };
+module.exports = { normalizeAutomationModelId, isSameModel, selectAutomationModel, verifyAutomationModel, restoreNewTaskModelPreference };

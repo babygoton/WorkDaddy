@@ -3825,10 +3825,18 @@ async function automationNotifyToast(detail) {
 }
 let accountSwitchInProgress = false;
 const accountSyncFailures = new Map();
+// session-sync.js 对"空壳/元数据会话"有两路抛错：文件 0 行（'为空'）与有行但无
+// message 记录（'没有消息'）。二者都是 WorkBuddy 正常瞬态行（如新建未发送的草稿），
+// 必须同等跳过而非记失败——只精确匹配其一会让另一路把整批同步判 partial 并中断
+// 账号切换（2026-10-21 实测：keep-accounts-active 任务被单个空壳会话阻断）。
+const EMPTY_SESSION_SKIP_ERRORS = ['会话消息文件为空，未同步', '会话消息文件没有消息，未同步'];
+function isEmptySessionSkipError(errorText) {
+  return EMPTY_SESSION_SKIP_ERRORS.includes(String(errorText == null ? '' : errorText));
+}
 function isIgnorableAutomationSyncFailure(job) {
   if (!job || job.status === 'done' || !Array.isArray(job.details) || !job.details.length) return false;
   const failed = job.details.filter(item => item && item.status === 'failed');
-  return failed.length > 0 && failed.every(item => item.error === '会话消息文件没有消息，未同步');
+  return failed.length > 0 && failed.every(item => isEmptySessionSkipError(item.error));
 }
 async function assertSessionSyncIdle(sessionIds = []) {
   if (PROFILE.kind === 'codebuddy') {
@@ -3837,18 +3845,32 @@ async function assertSessionSyncIdle(sessionIds = []) {
     return;
   }
   if (PROFILE.kind !== 'workbuddy') return;
-  if (!cdp.connected) throw new Error('无法确认会话状态，请连接 WorkBuddy 后重试');
   const ids = Array.isArray(sessionIds) ? sessionIds.map((id) => String(id || '').trim()).filter(Boolean) : [];
   const expression = ids.length
     ? "typeof window.__wbsSessionsBusy === 'function' ? window.__wbsSessionsBusy(" + JSON.stringify(ids) + ") : (typeof window.__wbsAnySessionBusy === 'function' ? window.__wbsAnySessionBusy() : null)"
     : "typeof window.__wbsAnySessionBusy === 'function' ? window.__wbsAnySessionBusy() : null";
-  const result = await cdpSend('Runtime.evaluate', {
-    expression,
-    returnByValue: true,
-  });
-  const busy = result && result.result && result.result.value;
-  if (result.exceptionDetails || typeof busy !== 'boolean') throw new Error('无法确认会话状态，请等待面板加载后重试');
-  if (busy) throw new Error('当前账号有会话仍在运行，请等待完成或停止后再同步');
+  // 账号切换后渲染进程会重新加载，注入的忙检查函数有就绪延迟。就绪前一次性报错会把
+  // 整批会话复制判失败（partial 进而中断自动切换），与错误信息"请等待面板加载后重试"
+  // 的语义相悖。这里对有界窗口做轮询：函数就绪即返回判定，超时（60s）后才报错。
+  const deadline = Date.now() + 60000;
+  for (;;) {
+    if (!cdp.connected) throw new Error('无法确认会话状态，请连接 WorkBuddy 后重试');
+    let busy = null;
+    let settled = false;
+    try {
+      const result = await cdpSend('Runtime.evaluate', { expression, returnByValue: true });
+      if (!result.exceptionDetails) {
+        busy = result && result.result && result.result.value;
+        settled = typeof busy === 'boolean';
+      }
+    } catch (_) { /* 页面重载期间 evaluate 可能失败，纳入等待 */ }
+    if (settled) {
+      if (busy) throw new Error('当前账号有会话仍在运行，请等待完成或停止后再同步');
+      return;
+    }
+    if (Date.now() >= deadline) throw new Error('无法确认会话状态，请等待面板加载后重试');
+    await sleep(500);
+  }
 }
 
 async function assertAccountSwitchIdle() {
@@ -6416,9 +6438,11 @@ function startAutoCopyJob(sourceUid, targetUid, plan, labels) {
         } catch (e) {
           recoverOpenSessionTarget(src);
           const errorText = String(e.message || e).slice(0, 240);
-          if (errorText === '会话消息文件没有消息，未同步') {
+          if (isEmptySessionSkipError(errorText)) {
             // Empty metadata-only sessions are normal transient WorkBuddy
             // rows (for example a newly opened draft), not sync failures.
+            // 两路空壳文案（文件 0 行 / 有行无 message 记录）都走此分支，见
+            // EMPTY_SESSION_SKIP_ERRORS 定义处注释。
             if (typeof getSessionDirtyIndex === 'function' && typeof clearSessionDirty === 'function') {
               const dirty = getSessionDirtyIndex().get(sourceUid, src.id);
               if (dirty) clearSessionDirty(sourceUid, src.id, dirty.at);
@@ -9570,6 +9594,11 @@ async function sendStashToComposer(record) {
   }
   if (Date.now() >= sendDeadline) throw new Error('等待发送按钮可点击超时（5 秒），未发送');
   if (!sv || !sv.ok) throw new Error((sv && sv.error) || '未找到发送按钮');
+  // 输入到点击之间留出 Slate/React 同步窗口：实测（2026-10-22）账号切换后新建任务页
+  // remount 完成即输入并立即点击官方发送按钮，按钮已 enabled，但提交时 Slate 内部
+  // 模型可能尚未同步（DOM 有文本、模型为空）——发送被静默忽略、文本滞留，2 秒后被
+  // "输入框仍有内容"误判为未发送。300ms 窗口让编辑器状态先收敛再点击。
+  await new Promise((resolve) => setTimeout(resolve, 300));
   if (record.guard) await record.guard();
   if (record.beforeSubmit) await record.beforeSubmit();
   if (sv.selector === 'codebuddy-official-send-button') {
