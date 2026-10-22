@@ -6,7 +6,7 @@
     "5da6eef70860f1d0893ab7490e92d16efcda607eaf34597fbd26f20c8bac7693"
   ],
   "name": "逐账号例行发送固定提示词消息",
-  "description": "依次切换所有账号，使用 Deepseek-V4.1-Flash 新建会话发送 1+1=，按会话回执等待回复完成，最后恢复开始时的账号。",
+  "description": "依次切换所有账号，使用 freellmapi-auto 新建会话发送 1+1=，按会话回执等待回复完成，最后恢复开始时的账号。",
   "enabled": true,
   "trigger": {
     "type": "manual",
@@ -30,7 +30,7 @@
         {
           "op": "session.create",
           "message": "1+1=",
-          "model": "deepseek-v4.1-flash",
+          "model": "custom-local:freellmapi-auto",
           "saveAs": "receipt"
         },
         {
