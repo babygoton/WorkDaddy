@@ -23,6 +23,39 @@ test('dismissal persists without selecting a mode and can later enable sharing',
   f.enable();
   assert.equal(p.readPersonaSettings(f.options.backupRoot).mode,'shared');
 });
+test('a redirected backup root supports unset settings, sharing and rollback without following inner links', t => {
+  const f = fixture(t);
+  const actualRoot = f.options.backupRoot;
+  fs.mkdirSync(actualRoot);
+  const alias = actualRoot + '-alias';
+  fs.symlinkSync(actualRoot, alias, process.platform === 'win32' ? 'junction' : 'dir');
+  f.options.backupRoot = alias;
+  assert.equal(p.readPersonaSettings(alias).mode, 'unset');
+  assert.equal(p.syncSharedPersonaForSwitch({ ...f.options, sourceUid: 'a', targetUid: 'b' }).skipped, true);
+  f.enable();
+  f.write('a', 'USER.md', 'updated');
+  const prepared = p.syncSharedPersonaForSwitch({ ...f.options, sourceUid: 'a', targetUid: 'b' });
+  assert.equal(fs.readFileSync(f.file('b', 'USER.md'), 'utf8'), 'updated');
+  prepared.rollback();
+  assert.equal(fs.readFileSync(f.file('b', 'USER.md'), 'utf8'), 'bUSER.md');
+  const outside = path.join(path.dirname(actualRoot), 'outside');
+  fs.mkdirSync(outside);
+  fs.rmSync(path.join(actualRoot, 'persona', 'shared'), { recursive: true });
+  fs.symlinkSync(outside, path.join(actualRoot, 'persona', 'shared'), process.platform === 'win32' ? 'junction' : 'dir');
+  assert.throws(() => p.syncSharedPersonaForSwitch({ ...f.options, sourceUid: 'a', targetUid: 'b' }), /符号链接/);
+  assert.deepEqual(fs.readdirSync(outside), []);
+});
+test('a not-yet-created backup root beneath a redirected parent can initialize settings', t => {
+  const f = fixture(t);
+  const actualRoot = f.options.backupRoot;
+  fs.mkdirSync(actualRoot);
+  const alias = actualRoot + '-alias';
+  fs.symlinkSync(actualRoot, alias, process.platform === 'win32' ? 'junction' : 'dir');
+  const nested = path.join(alias, 'new', 'profile');
+  assert.equal(p.readPersonaSettings(nested).mode, 'unset');
+  p.dismissPersonaNotice(nested);
+  assert.equal(p.readPersonaSettings(path.join(actualRoot, 'new', 'profile')).noticeDismissed, true);
+});
 test('shared A edits reach B; B edits and optional memory deletion reach A, preserving state', t => {
   const f=fixture(t); f.enable();
   f.write('a','MEMORY.md','new A memory');

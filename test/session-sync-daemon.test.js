@@ -664,7 +664,7 @@ test('unchanged requested session resolves its target without entering the copy 
   assert.equal(ctx.publicAutoCopyJob(job).openSessionId, 'existing-target');
 });
 
-test('empty message sessions are skipped instead of shown as sync failures', async () => {
+for (const error of ['会话消息文件没有消息，未同步', '会话消息文件为空，未同步']) test('empty message sessions are skipped instead of shown as sync failures: ' + error, async () => {
   let cleared = 0;
   const ctx = { codeBuddyFiles: null,
     crypto,
@@ -672,7 +672,7 @@ test('empty message sessions are skipped instead of shown as sync failures', asy
     autoCopyJobs: new Map(), autoCopyQueue: [], Date,
     yieldAutoCopyToRenderer: async () => {},
     buildAutoCopyPlan: async () => [{ id: 'empty-session' }],
-    copySessionRecord: async () => { throw Error('会话消息文件没有消息，未同步'); },
+    copySessionRecord: async () => { throw Error(error); },
     getSessionDirtyIndex: () => ({ get: () => ({ at: 7 }) }),
     clearSessionDirty: (_uid, _id, at) => { if (at === 7) cleared++; return true; },
     log() {}, runAutoCopyQueue() {}, pruneAutoCopyJobs() {}, setTimeout,

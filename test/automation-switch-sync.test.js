@@ -110,11 +110,11 @@ test('pruning public job history cannot erase failed synchronization; successful
   assert.deepEqual(h.switches, ['b']);
 });
 
-test('an empty message-file session does not block automation account switching', async () => {
+for (const error of ['会话消息文件没有消息，未同步', '会话消息文件为空，未同步']) test('empty sessions do not block automation account switching: ' + error, async () => {
   const h = harness();
   const run = h.ctx.automationSwitchAccount({ uid: 'b' }, h.options);
   await tick(); await tick();
-  h.jobs[0].finish('partial', [{ status: 'failed', error: '会话消息文件没有消息，未同步' }]);
+  h.jobs[0].finish('partial', [{ status: 'failed', error }]);
   await run;
   assert.deepEqual(h.switches, ['b']);
 });

@@ -44,7 +44,7 @@ test('toast content is always written as text', () => {
 });
 
 test('session and account selectors escape every text and attribute sink', () => {
-  const accountSelect = sourceBetween('function loadSessionAccounts()', 'function loadSessions()');
+  const accountSelect = sourceBetween('function loadSessionAccounts()', 'function canRefreshSessions()');
   assert.match(accountSelect, /'<option value="' \+ escAttr\(a\.uid\) \+ '">' \+ esc\(a\.nickname/);
   assert.doesNotMatch(accountSelect, /'<option value="' \+ a\.uid/);
   assert.doesNotMatch(accountSelect, /\+ \(a\.nickname \|\|/);

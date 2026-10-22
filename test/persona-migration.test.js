@@ -64,6 +64,18 @@ test('explicit scoped source wins over stale legacy files', t => {
   f.copy({ sourceUid: 'a' });
   assert.equal(fs.readFileSync(path.join(f.target, 'MEMORY.md'), 'utf8'), 'scoped MEMORY.md');
 });
+test('explicit repair backs up through a redirected backup root', t => {
+  const f = fixture(t);
+  fs.mkdirSync(f.opts.backupRoot);
+  const alias = f.opts.backupRoot + '-alias';
+  fs.symlinkSync(f.opts.backupRoot, alias, process.platform === 'win32' ? 'junction' : 'dir');
+  f.opts.backupRoot = alias;
+  f.write(f.target, 'BOOTSTRAP.md', 'original');
+  const result = f.copy();
+  assert.equal(fs.readFileSync(path.join(result.backupDir, 'BOOTSTRAP.md'), 'utf8'), 'original');
+  assert.equal(fs.existsSync(path.join(f.target, 'BOOTSTRAP.md')), false);
+  assert.equal(f.preview().status, 'initialized');
+});
 for (const variant of ['memory', 'completed', 'partial']) test('protect independent target: ' + variant, t => {
   const f = fixture(t);
   if (variant === 'memory') { f.write(f.target, 'MEMORY.md', 'independent'); f.write(f.target, 'BOOTSTRAP.md', 'stale'); }

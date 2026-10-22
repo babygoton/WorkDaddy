@@ -32,7 +32,7 @@ function harness() {
     updateCheckinCells() {}, updateCreditCell() {}, fetchActivityForAccounts() {}, toast() {}, root: {},
     MODEL_EDIT_SVG: '', PRIMARY_ACCOUNT_SVG: '', SWITCH_SVG: '', TRASH_SVG: '',
     setBuildTimeout: fn => fn(), setTimeout: () => 1, clearTimeout() {},
-    checkForUpdate() {}, acCheckPromptOnOpen() {}, syncSessionModule() {}, fetchDailyProgressForAccounts() {}, pollActiveSessionCopyNotice() {},
+    checkForUpdate() {}, acCheckPromptOnOpen() {}, syncSessionModule() {}, refreshSessionsSilently() {}, fetchDailyProgressForAccounts() {}, pollActiveSessionCopyNotice() {},
   });
   vm.runInContext([
     section('  function isKnownActivityStreak(', '  function el(tag'),

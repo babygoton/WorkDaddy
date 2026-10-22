@@ -526,8 +526,9 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 // 1.2.62：手动复制会话到当前账号后刷新官方列表，无需再次切号。
 // 1.2.63：跟随系统将浅色恢复视为成功，持续轮询并更新外观基线。
 // 1.2.64：CodeBuddy 原生主题支持跟随系统，重连恢复并与手动选择互斥。
-const DAEMON_VERSION = '1.2.64';
-const DAEMON_BUILD_ID = 'release-1.2.64-codebuddy-system-theme';
+// 1.2.65：兼容空会话同步、自定义模型和重定向备份目录，工作目录恢复退避重试。
+const DAEMON_VERSION = '1.2.65';
+const DAEMON_BUILD_ID = 'release-1.2.65-session-sync-persona-compat';
 const usageReporter = createUsageReporter({ profile: PROFILE.id, version: DAEMON_VERSION });
 configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const automationDiscovery = createAutomationDiscovery({
@@ -3828,7 +3829,7 @@ const accountSyncFailures = new Map();
 function isIgnorableAutomationSyncFailure(job) {
   if (!job || job.status === 'done' || !Array.isArray(job.details) || !job.details.length) return false;
   const failed = job.details.filter(item => item && item.status === 'failed');
-  return failed.length > 0 && failed.every(item => item.error === '会话消息文件没有消息，未同步');
+  return failed.length > 0 && failed.every(item => ['会话消息文件没有消息，未同步', '会话消息文件为空，未同步'].includes(item.error));
 }
 async function assertSessionSyncIdle(sessionIds = []) {
   if (PROFILE.kind === 'codebuddy') {
@@ -4065,7 +4066,7 @@ function startAutomationRun(task, event = null) {
     }
     const accountUid = (currentAccount() || {}).uid;
     if (!accountUid) throw new Error('没有可用账号');
-    const modelId = detail.model === undefined ? null : normalizeAutomationModelId(detail.model);
+    let modelId = detail.model === undefined ? null : normalizeAutomationModelId(detail.model);
     if (op === 'session.create') await withInput(() => ensureAutomationNewTask({ guard: () => {
       if (isCancelled() || (currentAccount() || {}).uid !== accountUid) throw new Error('发送前账号或运行状态已变化');
     }, cwd: detail.cwd, workspace: detail.workspace }));
@@ -4094,6 +4095,7 @@ function startAutomationRun(task, event = null) {
       if (modelId) {
         modelSelection = await withInput(() => selectAutomationModelById(modelId,
           op === 'session.send' ? { conversationId: detail.conversationId } : { accountUid }));
+        modelId = modelSelection.model;
         appendRunLog('session:model:confirmed');
         // Selecting a model on New Task may mount its provisional conversation
         // before any text is entered. Treat that renderer-owned transition as
@@ -4881,6 +4883,7 @@ function createDirectoryNoFollow(directory) {
 let sessionCwdRepairInFlight = null;
 // 只去重提示；每轮仍检查卷状态，盘符或共享恢复后无需重启 daemon。
 const reportedMissingCwdRoots = new Set();
+const sessionCwdRepairFailures = new Map();
 function repairMissingSessionWorkspaces() {
   if (sessionCwdRepairInFlight) return sessionCwdRepairInFlight;
   sessionCwdRepairInFlight = (async () => {
@@ -4889,23 +4892,50 @@ function repairMissingSessionWorkspaces() {
     const rows = await sqliteQuery("SELECT id, cwd FROM sessions WHERE deleted_at IS NULL AND cwd IS NOT NULL AND cwd != '';" );
     const repaired = [];
     const missingCwdRoots = new Set();
+    const activeCwds = new Set();
     let skipped = 0;
     for (const row of rows.slice(0, 2000)) {
       const cwd = String(row.cwd || '').trim();
-      if (!cwd || fs.existsSync(cwd) || !sessionPayloadExists(wbHome, row.id)) { skipped++; continue; }
+      if (!cwd) { skipped++; continue; }
+      const key = path.resolve(cwd).toLowerCase();
+      if (fs.existsSync(cwd)) {
+        sessionCwdRepairFailures.delete(key);
+        skipped++;
+        continue;
+      }
+      if (!sessionPayloadExists(wbHome, row.id)) { skipped++; continue; }
+      activeCwds.add(key);
       const root = path.parse(cwd).root;
       if (root && !fs.existsSync(root)) {
         skipped++;
         missingCwdRoots.add(root);
         continue;
       }
+      const previous = sessionCwdRepairFailures.get(key);
+      if (previous && Date.now() < previous.nextRetryAt) { skipped++; continue; }
       try {
         createDirectoryNoFollow(cwd);
-        if (fs.statSync(cwd).isDirectory()) repaired.push(cwd);
+        if (fs.statSync(cwd).isDirectory()) {
+          repaired.push(cwd);
+          sessionCwdRepairFailures.delete(key);
+        }
       } catch (error) {
         skipped++;
-        log(`[sessions-cwd-repair] 跳过 ${cwd}: ${error.message}`);
+        // Retry transient failures with bounded backoff. Do not persist/log the
+        // filesystem error message: it may contain a private workspace path.
+        const code = ['EACCES', 'EPERM', 'ENOENT', 'ENOTDIR', 'EEXIST'].includes(error.code) ? error.code : 'UNSAFE_PATH';
+        const attempts = previous ? Math.min(previous.attempts + 1, 5) : 1;
+        sessionCwdRepairFailures.set(key, { attempts, code,
+          nextRetryAt: Date.now() + Math.min(30000 * Math.pow(2, attempts - 1), 300000) });
+        if (!previous || previous.code !== code) {
+          log(code === 'UNSAFE_PATH'
+            ? '[sessions-cwd-repair] 跳过不安全的会话工作目录（符号链接或非目录路径），稍后重试'
+            : `[sessions-cwd-repair] 会话工作目录恢复失败（${code}），稍后重试`);
+        }
       }
+    }
+    for (const key of sessionCwdRepairFailures.keys()) {
+      if (!activeCwds.has(key)) sessionCwdRepairFailures.delete(key);
     }
     // 缺失卷的提示只记录卷根，避免写入完整会话路径。
     for (const root of missingCwdRoots) {
@@ -6416,7 +6446,7 @@ function startAutoCopyJob(sourceUid, targetUid, plan, labels) {
         } catch (e) {
           recoverOpenSessionTarget(src);
           const errorText = String(e.message || e).slice(0, 240);
-          if (errorText === '会话消息文件没有消息，未同步') {
+          if (['会话消息文件没有消息，未同步', '会话消息文件为空，未同步'].includes(errorText)) {
             // Empty metadata-only sessions are normal transient WorkBuddy
             // rows (for example a newly opened draft), not sync failures.
             if (typeof getSessionDirtyIndex === 'function' && typeof clearSessionDirty === 'function') {

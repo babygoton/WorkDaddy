@@ -20,10 +20,11 @@ function harness({ isWin = true, kind = 'workbuddy' } = {}) {
       { id: 'fixture-b', cwd: 'G:\\fixture\\project-b' },
     ],
     roots: new Set(), directories: new Set(), symlinks: new Set(),
-    missingPayloads: new Set(), mkdir: [], logs: [], denied: false, queries: 0,
+    missingPayloads: new Set(), mkdir: [], logs: [], denied: false, queries: 0, now: 1000000,
   };
   const missing = () => Object.assign(new Error('fixture path missing'), { code: 'ENOENT' });
   const context = vm.createContext({
+    Date: { now: () => state.now },
     path: path.win32,
     fs: {
       existsSync(target) {
@@ -94,15 +95,26 @@ test('missing UNC shares are skipped and can recover on a later repair tick', as
   assert.deepEqual(Array.from((await h.tick()).repaired), [cwd]);
 });
 
-test('mounted-drive permission failures retain the existing retry behavior', async () => {
+test('mounted-drive permission failures back off and recover without flooding logs or exposing paths', async () => {
   const h = harness();
   h.state.roots.add('G:\\');
   h.state.denied = true;
   for (let tick = 0; tick < 2; tick++) assert.equal((await h.tick()).skipped, 2);
-  assert.equal(h.state.mkdir.length, 4);
-  assert.equal(h.state.logs.length, 4);
-  assert.ok(h.state.logs.every(message => message.includes('fixture access denied')));
+  assert.equal(h.state.mkdir.length, 2);
+  assert.equal(h.state.logs.length, 2);
+  assert.ok(h.state.logs.every(message => !message.includes('fixture') && !message.includes('project')));
   assert.ok(h.state.logs.every(message => !message.includes('所在卷不存在')));
+  h.state.now += 30000;
+  await h.tick();
+  assert.equal(h.state.mkdir.length, 4);
+  assert.equal(h.state.logs.length, 2);
+  h.state.denied = false;
+  h.state.now += 60000;
+  assert.equal((await h.tick()).repaired.length, 2);
+  h.state.directories.clear();
+  h.state.denied = true;
+  await h.tick();
+  assert.equal(h.state.logs.filter(message => message.includes('EACCES')).length, 4, 'a recovered path starts a fresh failure episode');
 });
 
 test('existing directories and sessions without stored payloads are never recreated', async () => {
@@ -115,11 +127,46 @@ test('existing directories and sessions without stored payloads are never recrea
   assert.deepEqual(h.state.logs, []);
 });
 
+test('repair backoff is capped and deleting a session clears its failure episode', async () => {
+  const h = harness();
+  h.state.rows = [h.state.rows[0]];
+  const rows = h.state.rows;
+  h.state.roots.add('G:\\'); h.state.denied = true;
+  await h.tick();
+  let attempts = 1;
+  for (const delay of [30000, 60000, 120000, 240000, 300000, 300000]) {
+    h.state.now += delay - 1; await h.tick();
+    assert.equal(h.state.mkdir.length, attempts);
+    h.state.now++; await h.tick();
+    assert.equal(h.state.mkdir.length, ++attempts);
+  }
+  assert.equal(h.state.logs.length, 1);
+  h.state.rows = []; await h.tick();
+  h.state.rows = rows; await h.tick();
+  assert.equal(h.state.mkdir.length, attempts + 1);
+  assert.equal(h.state.logs.length, 2);
+});
+
+test('a payload-less session sharing a failed workspace cannot reset its backoff', async () => {
+  const h = harness();
+  h.state.rows[1].cwd = h.state.rows[0].cwd;
+  h.state.missingPayloads.add(h.state.rows[1].id);
+  h.state.roots.add('G:\\'); h.state.denied = true;
+  await h.tick(); await h.tick();
+  assert.equal(h.state.mkdir.length, 1);
+  assert.equal(h.state.logs.length, 1);
+  h.state.missingPayloads.add(h.state.rows[0].id);
+  await h.tick();
+  h.state.missingPayloads.clear(); await h.tick();
+  assert.equal(h.state.mkdir.length, 2);
+  assert.equal(h.state.logs.length, 2);
+});
+
 test('cwd repair still rejects symbolic-link ancestors on a mounted drive', async () => {
   const h = harness();
   h.state.roots.add('G:\\');
   h.state.symlinks.add('G:\\fixture');
-  assert.equal((await h.tick()).skipped, 2);
+  for (let tick = 0; tick < 3; tick++) assert.equal((await h.tick()).skipped, 2);
   assert.deepEqual(h.state.mkdir, []);
   assert.equal(h.state.logs.length, 2);
   assert.ok(h.state.logs.every(message => message.includes('符号链接')));

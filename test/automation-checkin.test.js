@@ -150,7 +150,7 @@ test('panel-open emits once per user opening and excludes automation restoration
   const calls=[];const noop=()=>{};
   const ctx={window:{},state:{open:false,creditRunId:0},panel:{classList:{toggle:noop}},fab:{classList:{toggle:noop}},
     api:(route,options)=>{if(route==='/api/automations/discovery')return Promise.resolve({tasks:[]});calls.push([route,JSON.parse(options.body).type]);return Promise.resolve();},
-    preloadAutomationDiscovery:()=>Promise.resolve({tasks:[]}),CAPS:{accounts:false},refresh:noop,checkForUpdate:noop,acCheckPromptOnOpen:noop,syncSessionModule:noop,closeSessionCopyNotice:noop,fabQuietMode:{wake:noop}};
+    preloadAutomationDiscovery:()=>Promise.resolve({tasks:[]}),CAPS:{accounts:false},refresh:noop,refreshSessionsSilently:noop,checkForUpdate:noop,acCheckPromptOnOpen:noop,syncSessionModule:noop,closeSessionCopyNotice:noop,fabQuietMode:{wake:noop}};
   vm.createContext(ctx);vm.runInContext(ui.slice(start,end),ctx);
   ctx.setOpen(true);ctx.setOpen(true);assert.equal(calls.length,1);
   ctx.setOpen(false);ctx.setOpen(true,{automation:true});assert.equal(calls.length,1);

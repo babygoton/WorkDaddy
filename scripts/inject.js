@@ -8601,7 +8601,10 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         if (themePane && !themePane.dataset.built) buildThemePane();
         syncWallpaperCardVisibility(currentThemeId);
       }
-      if (name === 'sessions' && sessionsPane && !sessionsPane.dataset.built) buildSessionsPane();
+      if (name === 'sessions' && sessionsPane) {
+        if (!sessionsPane.dataset.built) buildSessionsPane();
+        else refreshSessionsSilently();
+      }
       if (name === 'models' && modelsPane && !modelsPane.dataset.built) buildModelsPane();
       if (name === 'enhance' && enhancePane && !enhancePane.dataset.built) buildEnhancePane();
       if (name === 'automations' && automationPane && !automationPane.dataset.built) buildAutomationPane();
@@ -9393,6 +9396,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       wireSessionsPane();
       loadSessionAccounts();
       loadSessions();
+      setBuildInterval(refreshSessionsSilently, 5000);
       loadAutomationSyncSetting();
       pollActiveSessionCopyJob();
       pollSessionExport();
@@ -9502,31 +9506,68 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       }).catch(function () {});
     }
 
-    function loadSessions() {
+    function canRefreshSessions() {
+      return alive && state.open && !document.hidden && sessionsPane && sessionsPane.classList.contains('active') &&
+        !sessionsState.batchMode && !Object.keys(sessionsState.selected || {}).some(function (id) { return sessionsState.selected[id]; }) &&
+        !sessionsState.autoCopyAllBusy && !sessionsState.autoSyncAutomationsBusy &&
+        !(sessionsState.exportJob && sessionsState.exportJob.running) &&
+        !(sessionsState.autoCopyJob && /^(queued|running)$/.test(sessionsState.autoCopyJob.status)) &&
+        !Array.from(root.querySelectorAll('.wbs-modal-mask, .wbs-panel-modal-mask')).some(function (mask) {
+          return !mask.hidden && mask.getClientRects().length > 0;
+        });
+    }
+    function refreshSessionsSilently() {
+      if (!canRefreshSessions() || sessionsState.loading) return;
+      return loadSessions({ silent: true });
+    }
+    function loadSessions(options) {
       if (!sessionsPane) return;
       var listEl = sessionsPane.querySelector('#wbs-sess-list');
       if (!listEl) return;
-      listEl.innerHTML = '<div class="wbs-empty">加载中…</div>';
+      var silent = !!(options && options.silent);
+      if (silent && (!canRefreshSessions() || sessionsState.loading)) return;
+      var snapshot = silent ? JSON.stringify([sessionsState.list, sessionsState.totalBytes, sessionsState.autoCopy, sessionsState.autoCopyAll]) : null;
+      var serial = sessionsState.readSerial = (sessionsState.readSerial || 0) + 1;
+      sessionsState.loading = true;
+      if (!silent) listEl.innerHTML = '<div class="wbs-empty">加载中…</div>';
       // uid: undefined=当前账号(不传)，''=全部账号，具体值=指定账号
       var url = '/api/sessions?range=' + (sessionsState.range || '7d');
       if (sessionsState.uid !== undefined) url += '&uid=' + encodeURIComponent(sessionsState.uid);
-      api(url).then(function (d) {
+      return api(url).then(function (d) {
+        if (!alive || serial !== sessionsState.readSerial || (silent && !canRefreshSessions())) return;
+        // A local rule toggle may finish before this older read returns.
+        if (silent && snapshot !== JSON.stringify([sessionsState.list, sessionsState.totalBytes, sessionsState.autoCopy, sessionsState.autoCopyAll])) return;
+        var nextList = (d && d.sessions) || [];
+        var nextAutoCopy = (d && d.autoCopy) || null;
+        if (silent && snapshot === JSON.stringify([nextList, d && d.totalBytes, nextAutoCopy, !!(d && d.autoCopyAll)])) return;
+        // Capture at response time so scrolling during the request is retained.
+        var listScroll = listEl.scrollTop, bodyScroll = body.scrollTop;
         // 任务会话（is_playground=1）保留在列表中，由渲染层归入「任务」分组展示与操作。
-        sessionsState.list = ((d && d.sessions) || []);
+        sessionsState.list = nextList;
         sessionsState.totalBytes = d && d.totalBytes;
-        sessionsState.autoCopy = (d && d.autoCopy) || null;
+        sessionsState.autoCopy = nextAutoCopy;
         sessionsState.autoCopyAll = !!(d && d.autoCopyAll);
-        sessionsState.selected = {};
-        sessionsState.wsExpanded = {};
+        if (!silent) {
+          sessionsState.selected = {};
+          sessionsState.wsExpanded = {};
+        }
         renderSessions();
+        if (silent) {
+          listEl.scrollTop = listScroll;
+          body.scrollTop = bodyScroll;
+        }
         // 筛选变化后退出批量模式（勾选框隐藏 + 恢复工具栏右侧按钮）
-        if (sessionsState.batchMode) {
+        if (!silent && sessionsState.batchMode) {
           sessionsState.batchMode = false;
           setSessBatchBar(false);
         }
         updateSessCount();
       }).catch(function (e) {
-        listEl.innerHTML = '<div class="wbs-empty">会话加载失败: ' + esc(e.message || e) + '</div>';
+        if (!silent && alive && serial === sessionsState.readSerial) {
+          listEl.innerHTML = '<div class="wbs-empty">会话加载失败: ' + esc(e.message || e) + '</div>';
+        }
+      }).finally(function () {
+        if (serial === sessionsState.readSerial) sessionsState.loading = false;
       });
     }
 
@@ -12079,6 +12120,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       }
       fabQuietMode.wake();
       if (open) {
+        if (newlyOpened) refreshSessionsSilently();
         if (newlyOpened && typeof automationPane !== 'undefined' && automationPane && automationPane.__wbsRefreshDiscovery) automationPane.__wbsRefreshDiscovery();
         else if (newlyOpened && typeof preloadAutomationDiscovery === 'function') preloadAutomationDiscovery().catch(function () {});
         if (newlyOpened && !(options && options.automation)) api('/api/automations/events', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ type: 'panelOpened' }) }).catch(function () {});

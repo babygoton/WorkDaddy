@@ -963,7 +963,8 @@ test('session ranges use last-modified time and preserve standard WorkBuddy work
   const inject = read('inject.js');
   assert.match(daemon, /Number\(row\.last_activity_at \?\? row\.updated_at \?\? row\.created_at\) >= rangeMs/);
   assert.match(daemon, /ORDER BY COALESCE\(last_activity_at, updated_at, created_at\) DESC/);
-  assert.match(inject, /sessionsState\.list = \(\(d && d\.sessions\) \|\| \[\]\);/);
+  assert.match(inject, /var nextList = \(d && d\.sessions\) \|\| \[\];/);
+  assert.match(inject, /sessionsState\.list = nextList;/);
   assert.match(inject, /if \(isTaskSessionRecordUI\(s\)\) \{ tasks\.push\(s\); return; \}/);
   assert.match(inject, /fmtHumanTime\(s\.last_activity_at \|\| s\.updated_at \|\| s\.created_at\)/);
 });

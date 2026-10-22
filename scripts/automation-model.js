@@ -64,10 +64,14 @@ async function selectAutomationModel({ model, conversationId, accountUid }) {
     await openMenu();
     const available = options();
     previousModel = available.find((item) => item.props.isSelected)?.option.id || null;
-    const target = available.find((item) => item.option.id === model);
+    // Prefer the exact ID: official and custom models may share a name. Older
+    // callers may omit the custom-local prefix; resolve that only as a fallback.
+    const target = available.find((item) => item.option.id === model) ||
+      (!model.startsWith('custom-local:') && available.find((item) => item.option.id === 'custom-local:' + model));
     if (!target) throw new Error('未知模型 ID；请从 WorkBuddy 模型列表选择有效 ID');
     if (target.option.disabled) throw new Error('指定模型当前不可用');
     if (!previousModel) throw new Error('无法确认当前模型');
+    model = target.option.id;
     changed = previousModel !== model;
     if (changed) target.props.onSelect();
     for (let attempt = 0; attempt < 50; attempt++) {

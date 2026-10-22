@@ -74,7 +74,7 @@ function rendererHarness(session, options = {}) {
   let menuOpen = false;
   let selectedCalls = 0;
   const storage = new Map([['cb-newtask:model:account', JSON.stringify({ id: selected, reasoningEffort: 'high' })]]);
-  const names = { 'original-model': 'Original', 'deepseek-v4.1-flash': 'Deepseek-V4.1-Flash' };
+  const names = { 'original-model': 'Original', ...(options.models || { 'deepseek-v4.1-flash': 'Deepseek-V4.1-Flash' }) };
   const trigger = {
     innerText: names[selected],
     getBoundingClientRect: () => ({ width: 90, height: 25 }),
@@ -150,6 +150,65 @@ test('an unconfirmed core switch restores the previously selected model', async 
   assert.equal(session.state().selected, 'original-model');
   assert.equal(session.state().coreModel, 'original-model');
   assert.equal(session.state().menuOpen, false);
+});
+
+test('bare custom model IDs resolve to the real ID for verification and preference restoration', async () => {
+  for (const session of [false, true]) {
+    const h = rendererHarness(session, { models: { 'custom-local:fixture': 'Fixture' } });
+    const selection = await h.run({ model: 'fixture', ...(session ? { conversationId: 'conversation' } : { accountUid: 'account' }) });
+    assert.equal(selection.model, 'custom-local:fixture');
+    assert.equal(h.verify({ model: selection.model, ...(session ? { conversationId: 'conversation' } : { accountUid: 'account' }) }), true);
+    if (!session) assert.equal(h.restore(selection).restored, true);
+  }
+});
+
+test('exact model IDs take precedence and explicit custom IDs never select an official namesake', async () => {
+  const h = rendererHarness(true, { models: { 'custom-local:fixture': 'Custom', fixture: 'Official' } });
+  assert.equal((await h.run({ model: 'fixture', conversationId: 'conversation' })).model, 'fixture');
+  assert.equal(h.state().selected, 'fixture');
+  assert.equal((await h.run({ model: 'custom-local:fixture', conversationId: 'conversation' })).model, 'custom-local:fixture');
+  assert.equal(h.verify({ model: 'fixture', conversationId: 'conversation' }), false, 'send guard must use the resolved full ID');
+  const officialOnly = rendererHarness(true, { models: { fixture: 'Official' } });
+  await assert.rejects(officialOnly.run({ model: 'custom-local:fixture', conversationId: 'conversation' }), /未知模型/);
+  assert.equal(officialOnly.state().selectedCalls, 0);
+});
+
+test('daemon send guards and receipts use the resolved custom ID for new and existing sessions', async () => {
+  const source = fs.readFileSync(path.join(__dirname, '../scripts/daemon.js'), 'utf8');
+  const start = source.indexOf('  const sessionAction = async (op, detail) => {');
+  const end = source.indexOf('  // Compatibility aliases', start);
+  assert.ok(start > 0 && end > start);
+  for (const op of ['session.create', 'session.send']) {
+    let submitted = false;
+    const confirmed = [];
+    const ctx = {
+      isCancelled: () => false, currentAccount: () => ({ uid: 'account' }),
+      normalizeAutomationModelId, withInput: async fn => fn(),
+      ensureAutomationNewTask: async () => {}, appendRunLog() {}, lastReceipt: null,
+      readSession: async () => submitted ? { conversationId: 'conversation', userMessageId: 'sent' }
+        : op === 'session.send' ? { conversationId: 'conversation', userMessageId: 'previous', busy: false } : null,
+      selectAutomationModelById: async model => {
+        assert.equal(model, 'fixture');
+        return { model: 'custom-local:fixture', changed: true, displayName: 'Fixture' };
+      },
+      confirmAutomationModel: async model => {
+        assert.equal(model, 'custom-local:fixture'); confirmed.push(model);
+      },
+      acSendPhrase: async (_message, options) => {
+        await options.guard(); options.beforeSubmit(); submitted = true;
+      },
+      readAutomationAgentSurface: async () => ({ newTaskReady: false }),
+      restoreAutomationNewTaskPreference: async selection => {
+        assert.equal(selection.model, 'custom-local:fixture'); return { restored: true };
+      },
+      Date,
+    };
+    vm.runInNewContext(source.slice(start, end) + '\nglobalThis.sessionAction = sessionAction;', ctx);
+    const receipt = await ctx.sessionAction(op, { model: 'fixture', message: 'fixture', conversationId: 'conversation' });
+    assert.equal(receipt.model, 'custom-local:fixture');
+    assert.equal(receipt.userMessageId, 'sent');
+    assert.equal(confirmed.length, op === 'session.create' ? 2 : 1);
+  }
 });
 
 test('daemon selects and checks the model before sending, and ships the renderer helper', () => {
