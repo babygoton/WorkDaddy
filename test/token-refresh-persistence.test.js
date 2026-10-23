@@ -7,7 +7,9 @@ const os = require('node:os');
 const path = require('node:path');
 const vm = require('node:vm');
 const test = require('node:test');
-const { normalizeTimestamp, shouldRefreshAccessToken } = require('../scripts/token-refresh');
+const { normalizeTimestamp, shouldRefreshAccessToken, refreshAuthToken } = require('../scripts/token-refresh');
+const { PROFILES } = require('../scripts/profiles');
+const { replaceNativeSession } = require('../scripts/codebuddy-native');
 
 // Exercise the real crypto helpers without obtaining a user's WorkBuddy key.
 const fixtureKey = Buffer.alloc(32, 7);
@@ -15,7 +17,7 @@ function cryptoHarness() {
   const source = fs.readFileSync(path.join(__dirname, '../scripts/lib.js'), 'utf8');
   const start = source.indexOf('function isWbEncryptedEnvelope(');
   const end = source.indexOf('// ===================== [wd-compat] 适配层结束', start);
-  return vm.runInNewContext(source.slice(start, end) + '\n({wdCompatEncryptAuthJson, wdCompatDecryptAuthJson, wdCompatContainsEncryptedFields});', {
+  return vm.runInNewContext(source.slice(start, end) + '\n({wdCompatEncryptAuthJson, wdCompatDecryptAuthJson, wdCompatContainsEncryptedFields, wdCompatAuthToken, wdCompatHasAuthCredential, wdCompatText, isWbEncryptedEnvelope});', {
     crypto, Buffer, WD_COMPAT: { key: fixtureKey, decOk: 0, decFail: 0 },
     wdCompatLog() {},
   });
@@ -79,15 +81,17 @@ function daemonHarness(t, options = {}) {
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   fs.mkdirSync(path.join(dir, 'accounts'));
   const file = path.join(dir, 'accounts/fixture.info');
+  const stored = fixture();
+  if (options.profile) stored.auth.domain = options.profile.apiHost;
   fs.writeFileSync(file, JSON.stringify(options.plaintext
-    ? compat.wdCompatDecryptAuthJson(fixture()) : fixture()), { mode: 0o600 });
+    ? compat.wdCompatDecryptAuthJson(stored) : stored), { mode: 0o600 });
   let requests = 0;
   let failWrite = false;
   const context = {
     ...compat, fs: { ...fs, writeFileSync(...args) {
       if (failWrite && String(args[0]).startsWith(file)) throw new Error('fixture write failure');
       return fs.writeFileSync(...args);
-    } }, path, process, DATA_DIR: dir, PROFILE: { apiHost: 'https://fixture.invalid' },
+    } }, path, process, DATA_DIR: dir, PROFILE: options.profile || { apiHost: 'https://fixture.invalid' },
     normalizeTokenTimestamp: normalizeTimestamp, shouldRefreshAccessToken,
     todayStr: (d = new Date()) => d.toISOString().slice(0, 10),
     accountBackupFile: () => file,
@@ -96,10 +100,17 @@ function daemonHarness(t, options = {}) {
       return [{ uid: 'fixture', tokenExpiresAt: auth.expiresAt, lastRefreshTime: auth.lastRefreshTime }];
     },
     redactDiagnosticText: () => 'redacted', log() {},
-    refreshAuthToken: async (auth) => {
+    refreshAuthToken: async (auth, refreshOptions) => {
       requests++;
       await Promise.resolve();
       if (options.onRefresh) options.onRefresh(file);
+      if (options.profile) return refreshAuthToken(auth, { ...refreshOptions, fetchImpl: async (url, init) => {
+        assert.equal(url, options.profile.apiHost + '/v2/plugin/auth/token/refresh');
+        assert.equal(init.headers['X-Refresh-Token'], 'old-refresh');
+        return { ok: true, status: 200, json: async () => ({ code: 0, data: {
+          accessToken: 'new-access', refreshToken: 'new-refresh', expiresIn: 3600,
+        } }) };
+      } });
       return { ok: true, auth: { ...auth, accessToken: 'new-access', refreshToken: 'new-refresh',
         lastRefreshTime: Date.now(), expiresAt: Date.now() + 28 * 86400000 } };
     },
@@ -109,6 +120,31 @@ function daemonHarness(t, options = {}) {
   const end = source.indexOf('/**\n * 打开账号面板时按日保活', start);
   vm.createContext(context);
   vm.runInContext(source.slice(start, end), context);
+  let nativeStored;
+  if (options.profile) {
+    // Run the real native switch and persistence transaction against isolated
+    // official-service storage. No inspector connection or user account I/O.
+    const service = {
+      currentSession: { account: { uid: 'other' }, auth: { accessToken: 'other-access', domain: options.profile.apiHost } },
+      async storeSession(session) { nativeStored = structuredClone(session); },
+      _onDidChangeSession: { fire() {} }, scheduleRefresh() {},
+    };
+    Object.assign(context, {
+      URL, Buffer, ACTIVE_PROFILE: options.profile, DYNAMIC_AUTH_DISCOVERY: false,
+      AUTH_FILE: path.join(dir, 'native-current.info'),
+      codeBuddyNative: {
+        read: async () => structuredClone(service.currentSession),
+        replace: session => replaceNativeSession.call(service, session),
+      },
+      backupCurrent() {
+        const current = JSON.parse(fs.readFileSync(context.AUTH_FILE, 'utf8'));
+        fs.copyFileSync(context.AUTH_FILE, path.join(dir, 'accounts', current.account.uid + '.info'));
+      },
+    });
+    const lib = fs.readFileSync(path.join(__dirname, '../scripts/lib.js'), 'utf8');
+    vm.runInContext(lib.slice(lib.indexOf('function normalizeAuthDomain('), lib.indexOf('/**\n * Normalize a user-supplied account JSON')), context);
+    vm.runInContext(source.slice(source.indexOf('let nativeAuthSyncTail = Promise.resolve();'), source.indexOf('\nfunction scheduleBackup(')), context);
+  }
   return {
     dir, file, refresh: context.refreshAccountBackupToken,
     list: context.listAccountsWithRuntimeTokenCache,
@@ -117,6 +153,8 @@ function daemonHarness(t, options = {}) {
     counts: () => requests,
     failWrite(value) { failWrite = value; },
     signature: context.accountBackupSignature,
+    nativeSwitch: uid => context.switchAccountForProfile(uid),
+    nativeStored: () => nativeStored,
   };
 }
 
@@ -133,6 +171,23 @@ test('encrypted refresh survives cache loss and same-day daily keepalive reads t
   assert.equal(next.root.auth.refreshToken, 'new-refresh');
   assert.equal(h.counts(), 1);
 });
+
+for (const profileId of ['codebuddy-cn', 'codebuddy-intl']) {
+  for (const plaintext of [true, false]) {
+    test(`${profileId} ${plaintext ? 'plaintext' : 'encrypted'} refresh survives cache loss and reaches native switch storage`, async t => {
+      const h = daemonHarness(t, { profile: PROFILES[profileId], plaintext });
+      assert.equal((await h.refresh('fixture', { force: true })).persisted, true);
+      h.restart();
+      const result = await h.nativeSwitch('fixture');
+      assert.equal(result.nativeSwitched, true);
+      assert.equal(h.nativeStored().auth.accessToken, 'new-access');
+      assert.equal(h.nativeStored().auth.refreshToken, 'new-refresh');
+      assert.equal(h.nativeStored().auth.domain, PROFILES[profileId].apiHost);
+      assert.equal(h.read().auth.refreshToken, 'new-refresh');
+      assert.equal(h.counts(), 1);
+    });
+  }
+}
 
 test('legacy public refresh dates never suppress refresh or replace durable token expiry', async t => {
   const h = daemonHarness(t);
