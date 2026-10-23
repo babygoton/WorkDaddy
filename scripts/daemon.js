@@ -3401,7 +3401,10 @@ function relaunchWorkBuddy() {
       const child = spawn(command, args, {
         detached: true,
         stdio: 'ignore',
-        windowsHide: true,
+        // WorkBuddy 是 GUI 程序：windowsHide:true 会把 STARTUPINFO.wShowWindow 置为 SW_HIDE，
+        // Electron 主窗口走 ShowWindow(SW_SHOWDEFAULT) 会继承该值，导致重启后主窗口隐藏启动、
+        // 只剩托盘图标。与 win-launcher.js 的冷启动路径保持一致（那里的注释早已说明此坑）。
+        windowsHide: false,
         env: childEnv,
       });
       await new Promise((resolve, reject) => {
