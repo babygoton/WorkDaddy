@@ -8,6 +8,7 @@ const vm = require('node:vm');
 const { EventEmitter } = require('node:events');
 const { getClientLaunchArgs } = require('../scripts/client-launch-settings.js');
 const { getWorkBuddyLaunchEnv } = require('../scripts/workbuddy-launch-env.js');
+const { PROFILES } = require('../scripts/profiles.js');
 
 function fixture(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wbs-update-424-'));
@@ -39,6 +40,32 @@ function launchContext(profile, dataDir, env, spawn) {
     vm.runInNewContext(source.slice(start, source.indexOf(endMarker, start)), ctx);
   }
   return ctx;
+}
+
+for (const id of ['workbuddy-cn', 'workbuddy-ai', 'codebuddy-cn', 'codebuddy-intl']) {
+  test(`#468 ${id}: Windows GUI startup and relaunch never request a hidden main window`, async t => {
+    const dir = fixture(t);
+    const launches = [];
+    const profile = { ...PROFILES[id], dataRoot: path.join(dir, id), cdp: { ...PROFILES[id].cdp } };
+    const ctx = launchContext(profile, dir, {}, (command, args, options) => launches.push({ command, args, options }));
+    for (const mode of ['environment', 'argument']) {
+      profile.cdp.mode = mode;
+      ctx.launchWorkBuddy('C:\\WorkBuddy.exe');
+      await ctx.relaunchWorkBuddy();
+      assert.equal(launches.length, 2);
+      for (const launch of launches.splice(0)) {
+        assert.equal(launch.options.windowsHide, false, 'GUI spawn must not inherit SW_HIDE');
+        assert.equal(launch.options.detached, true);
+        assert.equal(launch.options.stdio, 'ignore');
+        if (mode === 'environment') {
+          assert.equal(launch.options.env.WORKBUDDY_REMOTE_DEBUGGING_PORT, '9223');
+        } else {
+          assert.ok(launch.args.includes('--remote-debugging-port=9223'));
+          if (profile.nativeDebugPort) assert.ok(launch.args.includes(`--inspect=127.0.0.1:${profile.nativeDebugPort}`));
+        }
+      }
+    }
+  });
 }
 
 // Replay the official updater's two independent inputs: an environment override

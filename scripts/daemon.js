@@ -529,8 +529,9 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 // 1.2.64：CodeBuddy 原生主题支持跟随系统，重连恢复并与手动选择互斥。
 // 1.2.65：兼容空会话同步、自定义模型和重定向备份目录，工作目录恢复退避重试。
 // 1.2.66：刷新凭据按原信封加密保存，同账号刷新去重，过期账号保留手动切换。
-const DAEMON_VERSION = '1.2.66';
-const DAEMON_BUILD_ID = 'release-1.2.66-persist-refreshed-credentials';
+// 1.2.67：Windows 重启 GUI 客户端时不再请求隐藏主窗口，与冷启动保持一致。
+const DAEMON_VERSION = '1.2.67';
+const DAEMON_BUILD_ID = 'release-1.2.67-visible-windows-relaunch';
 const usageReporter = createUsageReporter({ profile: PROFILE.id, version: DAEMON_VERSION });
 configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const automationDiscovery = createAutomationDiscovery({
@@ -3404,7 +3405,10 @@ function relaunchWorkBuddy() {
       const child = spawn(command, args, {
         detached: true,
         stdio: 'ignore',
-        windowsHide: true,
+        // WorkBuddy 是 GUI 程序：windowsHide:true 会把 STARTUPINFO.wShowWindow 置为 SW_HIDE，
+        // Electron 主窗口走 ShowWindow(SW_SHOWDEFAULT) 会继承该值，导致重启后主窗口隐藏启动、
+        // 只剩托盘图标。与 win-launcher.js 的冷启动路径保持一致（那里的注释早已说明此坑）。
+        windowsHide: false,
         env: childEnv,
       });
       await new Promise((resolve, reject) => {
