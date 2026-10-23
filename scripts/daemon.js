@@ -91,6 +91,7 @@ const {
   wdCompatText, // [wd-compat]
   wdCompatContainsEncryptedFields, // [wd-compat]
   wdCompatDecryptAuthJson, // [wd-compat] WorkBuddy 5.6+ 字段信封解密
+  wdCompatEncryptAuthJson, // [wd-compat] 刷新凭据按原信封加密落盘
   wdCompatAuthToken, // [wd-compat] 仅返回可直接发送的明文 token
   normalizeAccountImportJson, // [wd-compat] 明文/信封账号导入归一化
   backupPath,
@@ -527,8 +528,9 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 // 1.2.63：跟随系统将浅色恢复视为成功，持续轮询并更新外观基线。
 // 1.2.64：CodeBuddy 原生主题支持跟随系统，重连恢复并与手动选择互斥。
 // 1.2.65：兼容空会话同步、自定义模型和重定向备份目录，工作目录恢复退避重试。
-const DAEMON_VERSION = '1.2.65';
-const DAEMON_BUILD_ID = 'release-1.2.65-session-sync-persona-compat';
+// 1.2.66：刷新凭据按原信封加密保存，同账号刷新去重，过期账号保留手动切换。
+const DAEMON_VERSION = '1.2.66';
+const DAEMON_BUILD_ID = 'release-1.2.66-persist-refreshed-credentials';
 const usageReporter = createUsageReporter({ profile: PROFILE.id, version: DAEMON_VERSION });
 configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const automationDiscovery = createAutomationDiscovery({
@@ -4267,8 +4269,9 @@ function saveCheckinCache(cache) {
   }
 }
 
-// 加密备份的刷新结果只缓存公开时间字段，绝不把解密后的 token 写回磁盘。
+// 刷新结果必须加密落盘；写入失败时暂存内存，下次先重试保存，避免再次轮换丢失凭据。
 const backupAuthRuntimeCache = new Map();
+const accountTokenRefreshes = new Map();
 let accountTokenRefreshInFlight = null;
 const TOKEN_REFRESH_STATE_FILE = path.join(DATA_DIR, 'token-refresh-state.json');
 let tokenRefreshState = null;
@@ -4310,7 +4313,8 @@ function saveTokenRefreshState() {
 
 function persistedTokenRefreshState(uid, signature) {
   const record = loadTokenRefreshState().accounts[String(uid || '')];
-  if (!record || record.signature !== signature) return null;
+  // 旧版只有公开时间、没有对应的新凭据，不能据此跳过刷新或显示更晚的有效期。
+  if (!record || record.signature !== signature || record.credentialsPersisted !== true) return null;
   return record;
 }
 
@@ -4320,6 +4324,7 @@ function rememberTokenRefreshSuccess(uid, file, auth) {
   const lastRefreshTime = normalizeTokenTimestamp(auth && auth.lastRefreshTime) || Date.now();
   loadTokenRefreshState().accounts[String(uid)] = {
     signature,
+    credentialsPersisted: true,
     lastRefreshTime,
     expiresAt: normalizeTokenTimestamp(auth && auth.expiresAt),
     refreshExpiresAt: normalizeTokenTimestamp(auth && auth.refreshExpiresAt),
@@ -4328,8 +4333,7 @@ function rememberTokenRefreshSuccess(uid, file, auth) {
 }
 
 /**
- * 将加密备份 token 刷新后仅存在内存中的公开时间字段合并到账号列表。
- * 加密备份不能把解密后的 token 写回磁盘，但账号页仍应显示新有效期。
+ * 有效期必须来自实际持有的凭据，不能使用旧版仅保存的公开时间。
  */
 function listAccountsWithRuntimeTokenCache() {
   return listAccounts(DATA_DIR).map((account) => {
@@ -4355,21 +4359,59 @@ function listAccountsWithRuntimeTokenCache() {
 
 /** 刷新备份账号凭证：临期惰性刷新，或当天尚未成功刷新时执行保活。 */
 async function refreshAccountBackupToken(uid, options = {}) {
-  const file = path.join(DATA_DIR, 'accounts', uid + '.info');
+  if (accountTokenRefreshes.has(uid)) return accountTokenRefreshes.get(uid);
+  const task = performAccountTokenRefresh(uid, options).finally(() => {
+    if (accountTokenRefreshes.get(uid) === task) accountTokenRefreshes.delete(uid);
+  });
+  accountTokenRefreshes.set(uid, task);
+  return task;
+}
+
+function persistRefreshedAccount(uid, file, root, stored, sourceSignature, sourceText) {
+  const tmp = `${file}.tmp.${process.pid}.${Math.random().toString(36).slice(2)}`;
+  try {
+    if (accountBackupSignature(file) !== sourceSignature || fs.readFileSync(file, 'utf8') !== sourceText) {
+      backupAuthRuntimeCache.delete(uid);
+      return { root: null, refreshed: false, persisted: false, error: 'account-changed-during-refresh' };
+    }
+    const output = wdCompatContainsEncryptedFields(stored) ? wdCompatEncryptAuthJson(root, stored) : root;
+    fs.writeFileSync(tmp, JSON.stringify(output, null, 2), { mode: 0o600, flag: 'wx' });
+    fs.renameSync(tmp, file);
+  } catch (_) {
+    try { if (fs.existsSync(tmp)) fs.unlinkSync(tmp); } catch (_) {}
+    // 不记录原始加密/文件异常，避免错误文本带出凭据或账号备份内容。
+    log(`[token-refresh] 账号 ${uid} 刷新结果落盘失败，将重试保存`);
+    return { root, refreshed: true, persisted: false, error: 'write-account-failed' };
+  }
+  backupAuthRuntimeCache.delete(uid);
+  rememberTokenRefreshSuccess(uid, file, root.auth);
+  return { root, refreshed: true, persisted: true };
+}
+
+async function performAccountTokenRefresh(uid, options) {
+  let file;
   let root;
+  let stored;
+  let sourceText;
   let encryptedAtRest = false;
   let sourceSignature = '';
   try {
+    file = accountBackupFile(uid);
     const stat = fs.statSync(file);
     sourceSignature = `${stat.mtimeMs}:${stat.size}`;
-    const stored = JSON.parse(fs.readFileSync(file, 'utf8'));
+    sourceText = fs.readFileSync(file, 'utf8');
+    stored = JSON.parse(sourceText);
     encryptedAtRest = wdCompatContainsEncryptedFields(stored);
     const cached = backupAuthRuntimeCache.get(uid);
     root = cached && cached.signature === sourceSignature
       ? cached.root
-      : wdCompatDecryptAuthJson(stored); // [wd-compat]
-  } catch (e) {
-    return { root: null, error: 'read-account-failed: ' + e.message };
+      : wdCompatDecryptAuthJson(JSON.parse(sourceText)); // 保留原信封作为写入模板。
+    if (cached && cached.signature !== sourceSignature) backupAuthRuntimeCache.delete(uid);
+    if (cached && cached.signature === sourceSignature && cached.pendingPersistence) {
+      return persistRefreshedAccount(uid, file, root, stored, sourceSignature, sourceText);
+    }
+  } catch (_) {
+    return { root: null, error: 'read-account-failed' };
   }
   const auth = root && root.auth && typeof root.auth === 'object' ? root.auth : null;
   if (!auth) return { root, skipped: true, reason: 'no-auth' };
@@ -4384,31 +4426,24 @@ async function refreshAccountBackupToken(uid, options = {}) {
   if (options.dailyKeepalive === true && !dailyDue) return { root, skipped: true };
   if (options.force !== true && !dailyDue && !shouldRefreshAccessToken(auth, now)) return { root, skipped: true };
 
+  if (encryptedAtRest) {
+    try {
+      // 在可能轮换 refresh token 的请求之前确认可以重新加密，不能刷新成功后才发现无法保存。
+      wdCompatEncryptAuthJson(root, stored);
+      if (typeof (auth.accessToken ?? auth.access_token) !== 'string' ||
+          typeof (auth.refreshToken ?? auth.refresh_token) !== 'string') throw new Error('encrypted-credentials-unavailable');
+    } catch (_) {
+      return { root, refreshed: false, error: 'encrypt-account-unavailable' };
+    }
+  }
   const result = await refreshAuthToken(auth, { apiHost: PROFILE.apiHost, fetchImpl: globalThis.fetch, now });
   if (!result.ok) {
     log(`[token-refresh] 账号 ${uid} 刷新失败: ${redactDiagnosticText(result.error, 300)}`);
     return { root, refreshed: false, error: result.error };
   }
   const nextRoot = Object.assign({}, root, { auth: result.auth });
-  if (encryptedAtRest) {
-    backupAuthRuntimeCache.set(uid, { signature: sourceSignature, root: nextRoot });
-    rememberTokenRefreshSuccess(uid, file, result.auth);
-    log(`[token-refresh] 账号 ${uid} 已刷新（加密备份仅保存在内存）`);
-    return { root: nextRoot, refreshed: true, persisted: false };
-  }
-  const tmp = file + '.tmp';
-  try {
-    fs.writeFileSync(tmp, JSON.stringify(nextRoot, null, 2), { mode: 0o600 });
-    fs.renameSync(tmp, file);
-    fs.chmodSync(file, 0o600);
-  } catch (e) {
-    try { if (fs.existsSync(tmp)) fs.unlinkSync(tmp); } catch (_) {}
-    log(`[token-refresh] 账号 ${uid} 刷新结果落盘失败: ${e.message}`);
-    return { root, refreshed: false, error: 'write-account-failed: ' + e.message };
-  }
-  backupAuthRuntimeCache.delete(uid);
-  rememberTokenRefreshSuccess(uid, file, result.auth);
-  return { root: nextRoot, refreshed: true, persisted: true };
+  backupAuthRuntimeCache.set(uid, { signature: sourceSignature, root: nextRoot, pendingPersistence: true });
+  return persistRefreshedAccount(uid, file, nextRoot, stored, sourceSignature, sourceText);
 }
 
 /**

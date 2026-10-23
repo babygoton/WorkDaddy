@@ -1991,6 +1991,8 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     // —— 第十二批：切换/删除断句模板 + ' 天' 时间变体 ——
     ' 天': ' days',
     '已切换到「': 'Switched to “', '再次点击确认切换': 'Click again to confirm switch', '再次点击确认切换为「': 'Click again to confirm switching to “',
+    '切换（可能需要重新登录）': 'Switch (sign-in may be required)',
+    '，可能需要重新登录': '; sign-in may be required',
     '切换中…': 'Switching…', '已切换为「': 'Switched to “', '将永久删除「': 'Permanently delete “', '已永久删除「': 'Permanently deleted “',
     // —— 第十三批：弹窗/登录方式/更新流/会话归档等二级页文案（扫描网修复后暴露）——
     '确定删除这 {n} 条快捷短语吗？删除后不可恢复。': 'Delete these {n} quick phrases? This cannot be undone.',
@@ -16820,11 +16822,11 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         var checkinBadge = checkinBadgeHtml(a);
         var modelRateLimitBadge = typeof modelRateLimitBadgeHtml === 'function' ? modelRateLimitBadgeHtml(a) : '';
         var invalidAuthBadge = a.authValid === false ? '<span class="wbs-badge wbs-auth-invalid">认证数据无效</span>' : '';
-        // 当前登录账号隐藏操作；认证已过期的账号保留删除，但隐藏切换，避免进入登录页。
-        var expired = isIdentityExpired(a);
+        // 过期账号仍可手动切换检查登录状态；仅损坏的认证备份禁止切换。
+        var expired = isIdentityExpired(a) || a.creditExpired;
         var ops = (isCur
           ? ''
-          : (expired || a.authValid === false ? '' : '<button class="wbs-icon-btn wbs-acc-switch" type="button" title="切换" data-uid="' + escAttr(a.uid) + '" data-name="' + escAttr(accountDisplayName(a, state.mask)) + '">' + SWITCH_SVG + '</button>') +
+          : (a.authValid === false ? '' : '<button class="wbs-icon-btn wbs-acc-switch" type="button" title="' + (expired ? '切换（可能需要重新登录）' : '切换') + '" data-uid="' + escAttr(a.uid) + '" data-name="' + escAttr(accountDisplayName(a, state.mask)) + '">' + SWITCH_SVG + '</button>') +
             '<button class="wbs-icon-btn wbs-del" type="button" title="删除" data-uid="' + escAttr(a.uid) + '" data-name="' + escAttr(accountDisplayName(a, state.mask)) + '">' + TRASH_SVG + '</button>');
         ops = '<div class="wbs-ops"' + (isCur ? ' hidden' : '') + '>' + ops + '</div>';
         // 国际版没有手机号：用 UIN（账号唯一数字标识）替代展示；国内版仍显示手机。
@@ -16851,18 +16853,22 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       list.querySelectorAll('.wbs-acc-switch').forEach(function (btn) {
         var armed = false;
         var armedTimer = null;
+        var switchTitle = btn.getAttribute('title');
         btn.addEventListener('click', function () {
           if (btn.disabled) return;
           if (!armed) {
             armed = true;
             btn.classList.add('armed');
             btn.setAttribute('title', '再次点击确认切换');
-            toast('再次点击确认切换为「' + btn.dataset.name + '」', false, root);
+            var needsLogin = state.accounts.some(function (a) {
+              return a.uid === btn.dataset.uid && (isIdentityExpired(a) || a.creditExpired);
+            });
+            toast('再次点击确认切换为「' + btn.dataset.name + '」' + (needsLogin ? '，可能需要重新登录' : ''), false, root);
             clearTimeout(armedTimer);
             armedTimer = setBuildTimeout(function () {
               armed = false;
               btn.classList.remove('armed');
-              btn.setAttribute('title', '切换');
+              btn.setAttribute('title', switchTitle);
             }, 3000);
             return;
           }
@@ -16870,7 +16876,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
           armed = false;
           btn.classList.remove('armed');
           btn.disabled = true;
-          var prevTitle = btn.getAttribute('title');
+          var prevTitle = switchTitle;
           btn.setAttribute('title', '切换中…');
           api('/api/switch', {
             method: 'POST',
@@ -17279,12 +17285,11 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
           nameGroup.insertAdjacentHTML('beforeend', modelLimitBadge);
         }
         if (cell) {
-          var hidden = isIdentityExpired(account);
           // 不再整格隐藏/清空：过期时由 creditBlockHtml 展示「登录身份过期」诊断文案
           cell.classList.remove('wbs-credit-hidden');
           cell.innerHTML = creditBlockHtml(account.credits, account.creditSegments, account);
           var switchBtn = cards[i].querySelector('.wbs-acc-switch');
-          if (switchBtn) switchBtn.style.display = hidden || account.creditExpired || account.authValid === false ? 'none' : '';
+          if (switchBtn) switchBtn.style.display = account.authValid === false ? 'none' : '';
         }
       }
       updateDailyProgressCells();
@@ -17517,11 +17522,10 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       for (var j = 0; j < state.accounts.length; j++) {
         if (state.accounts[j].uid === uid) { account = state.accounts[j]; break; }
       }
-      var hidden = isIdentityExpired(account);
       elCredit.classList.remove('wbs-credit-hidden');
       elCredit.innerHTML = creditBlockHtml(credits, segments || [], account);
       var cellSwitch = card.querySelector('.wbs-acc-switch');
-      if (cellSwitch) cellSwitch.style.display = hidden || (account && (account.creditExpired || account.authValid === false)) ? 'none' : '';
+      if (cellSwitch) cellSwitch.style.display = account && account.authValid === false ? 'none' : '';
     }
 
     // ===== 调试：暴露内部状态到 window.__wbsDiag（控制台可调） =====

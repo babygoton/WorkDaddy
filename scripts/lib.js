@@ -198,16 +198,19 @@ function wdCompatStaticKey() {
   throw new Error(lastErr);
 }
 
-function wdCompatOpenEnvelope(env, key) {
+function wdCompatEnvelopeAAD(env) {
   const FRAMING_FIELD = 2, FMT_FIELD = 'WBEV1', AAD_DOMAIN = Buffer.from('WB-AAD\0', 'ascii');
   const lp = (s) => { const b = Buffer.from(s, 'utf8'); const l = Buffer.alloc(4); l.writeUInt32BE(b.length); return Buffer.concat([l, b]); };
   const u32 = (n) => { const b = Buffer.alloc(4); b.writeUInt32BE(n); return b; };
-  const aad = Buffer.concat([
+  return Buffer.concat([
     AAD_DOMAIN, Buffer.from([1]), lp(FMT_FIELD), lp('sym-v1'), u32(env.suite || 1),
     lp(env.keyId || ''), Buffer.from([FRAMING_FIELD]), Buffer.from([0]), Buffer.from([0]),
   ]);
+}
+
+function wdCompatOpenEnvelope(env, key) {
   const d = crypto.createDecipheriv('aes-256-gcm', key, Buffer.from(env.nonce, 'base64'), { authTagLength: 16 });
-  d.setAAD(aad);
+  d.setAAD(wdCompatEnvelopeAAD(env));
   d.setAuthTag(Buffer.from(env.authTag, 'base64'));
   return Buffer.concat([d.update(Buffer.from(env.ciphertext, 'base64')), d.final()]).toString('utf8');
 }
@@ -234,6 +237,51 @@ function wdCompatDecryptAuthJson(json) {
   };
   walk(json);
   return json;
+}
+
+/** 按原备份的字段信封加密刷新结果；密钥或模板不可用时拒绝写入，绝不降级明文。 */
+function wdCompatEncryptAuthJson(json, template) {
+  if (!wdCompatContainsEncryptedFields(template)) throw new Error('missing-encryption-template');
+  const key = wdCompatStaticKey();
+  let fallbackEnvelope = null;
+  const envelopes = new Map();
+  const inspect = (node) => {
+    if (isWbEncryptedEnvelope(node)) {
+      const env = JSON.parse(Buffer.from(node.envelope, 'base64').toString('utf8'));
+      if (env.suite !== 1) throw new Error('unsupported-encryption-suite');
+      wdCompatOpenEnvelope(env, key); // 先验证原信封及密钥，再允许刷新/写入。
+      envelopes.set(node, env);
+      if (!fallbackEnvelope) fallbackEnvelope = env;
+    } else if (node && typeof node === 'object') Object.values(node).forEach(inspect);
+  };
+  inspect(template);
+  const seal = (value, env) => {
+    const nonce = crypto.randomBytes(12);
+    const cipher = crypto.createCipheriv('aes-256-gcm', key, nonce, { authTagLength: 16 });
+    cipher.setAAD(wdCompatEnvelopeAAD(env));
+    const ciphertext = Buffer.concat([cipher.update(value, 'utf8'), cipher.final()]);
+    return { $wbEncrypted: 1, envelope: Buffer.from(JSON.stringify({
+      suite: env.suite, keyId: env.keyId || '', nonce: nonce.toString('base64'),
+      authTag: cipher.getAuthTag().toString('base64'), ciphertext: ciphertext.toString('base64'),
+    })).toString('base64') };
+  };
+  const credentialKeys = new Set(['accessToken', 'access_token', 'refreshToken', 'refresh_token', 'idToken', 'id_token', 'token']);
+  const walk = (value, original, inAuth = false, field = '') => {
+    if (isWbEncryptedEnvelope(original)) {
+      if (isWbEncryptedEnvelope(value) && value.envelope === original.envelope) return { ...original };
+      if (typeof value !== 'string') throw new Error('invalid-encrypted-field-type');
+      return seal(value, envelopes.get(original));
+    }
+    if (inAuth && credentialKeys.has(field) && typeof value === 'string') return seal(value, fallbackEnvelope);
+    if (Array.isArray(value)) return value.map((item, index) => walk(item, original && original[index], inAuth));
+    if (value && typeof value === 'object') {
+      const result = {};
+      for (const name of Object.keys(value)) result[name] = walk(value[name], original && original[name], inAuth || name === 'auth', name);
+      return result;
+    }
+    return value;
+  };
+  return walk(json, template);
 }
 // ===================== [wd-compat] 适配层结束 =====================
 
@@ -1913,6 +1961,7 @@ module.exports = {
   wdCompatHasAuthCredential, // [wd-compat]
   normalizeAccountImportJson, // [wd-compat]
   wdCompatDecryptAuthJson, // [wd-compat]
+  wdCompatEncryptAuthJson, // [wd-compat]
   getAccountOrder,
   setAccountOrder,
   setAccountNote,

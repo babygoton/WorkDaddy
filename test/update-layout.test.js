@@ -997,9 +997,9 @@ test('account cards keep the compact three-row layout', () => {
   // 账号页暂不展示“发起独立会话保持活跃”入口；daemon 接口保留供内部/后续流程使用。
   assert.doesNotMatch(script, /wbs-growth-activate/);
   assert.doesNotMatch(script, /api\('\/api\/growth\/activate'/);
-  assert.match(script, /expired \|\| a\.authValid === false \? '' : '<button class="wbs-icon-btn wbs-acc-switch"/);
+  assert.match(script, /\(a\.authValid === false \? '' : '<button class="wbs-icon-btn wbs-acc-switch"/);
   assert.match(script, /var invalidAuthBadge = a\.authValid === false/);
-  assert.match(script, /switchBtn\.style\.display = hidden \|\| account\.creditExpired \|\| account\.authValid === false \? 'none' : ''/);
+  assert.match(script, /switchBtn\.style\.display = account\.authValid === false \? 'none' : ''/);
   assert.match(script, /height:5px;min-height:5px/);
   assert.match(script, /\.wbs-credit-segment:first-child\{border-radius:3px 0 0 3px\}/);
   assert.match(script, /\.wbs-credit-segment:last-child\{border-radius:0 3px 3px 0\}/);
