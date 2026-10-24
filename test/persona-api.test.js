@@ -104,3 +104,44 @@ test('shared switching protects authentication until projection succeeds and und
   await assert.rejects(context.switchAccountForProfile('a'),/尚未完成/);
   assert.equal(switched,false);
 });
+
+for (const profile of ['workbuddy-cn', 'workbuddy-ai']) {
+  for (const targetUid of ['a', 'b']) test(profile + ': login-page switching resumes shared persona for ' + targetUid, async t => {
+    const h = harness(t, profile);
+    const options = { dataRoot: h.dataRoot, backupRoot: h.context.DATA_DIR, accounts: [{ uid: 'a' }, { uid: 'b' }], currentUid: 'b' };
+    persona.configurePersona({ ...options, mode: 'shared', sourceUid: 'legacy', revision: persona.listPersonaSources(options).find(s => s.uid === 'legacy').revision });
+    fs.writeFileSync(path.join(h.dataRoot, 'user-b-personal/USER.md'), 'latest shared edit');
+    let current = null;
+    const switches = [];
+    const context = vm.createContext({ ...h.context, codeBuddyNative: null, currentAccount: () => current,
+      listAccounts: () => options.accounts,
+      switchTo: async (_, uid) => { switches.push(uid); current = { uid }; return current; },
+    });
+    const seam = daemon.slice(daemon.indexOf('async function switchAccountForProfile(uid)'), daemon.indexOf('\nfunction scheduleBackup('));
+    vm.runInContext(seam, context);
+    assert.equal((await context.switchAccountForProfile(targetUid)).uid, targetUid);
+    assert.deepEqual(switches, [targetUid]);
+    assert.equal(persona.readPersonaSettings(options.backupRoot).activeUid, targetUid);
+    assert.equal(fs.readFileSync(path.join(h.dataRoot, `user-${targetUid}-personal/USER.md`), 'utf8'), 'latest shared edit');
+    const nextUid = targetUid === 'a' ? 'b' : 'a';
+    await context.switchAccountForProfile(nextUid);
+    assert.equal(persona.readPersonaSettings(options.backupRoot).activeUid, nextUid);
+    assert.equal(fs.readFileSync(path.join(h.dataRoot, `user-${nextUid}-personal/USER.md`), 'utf8'), 'latest shared edit');
+  });
+}
+
+test('login-page auth failure rolls shared persona back; a different logged-in account remains guarded', async t => {
+  const h = harness(t);
+  const options = { dataRoot: h.dataRoot, backupRoot: h.context.DATA_DIR, accounts: [{ uid: 'a' }, { uid: 'b' }], currentUid: 'b' };
+  persona.configurePersona({ ...options, mode: 'shared', sourceUid: 'legacy', revision: persona.listPersonaSources(options).find(s => s.uid === 'legacy').revision });
+  const context = vm.createContext({ ...h.context, codeBuddyNative: null, currentAccount: () => null,
+    listAccounts: () => options.accounts, switchTo: async () => { throw new Error('auth failed'); },
+  });
+  const seam = daemon.slice(daemon.indexOf('async function switchAccountForProfile(uid)'), daemon.indexOf('\nfunction scheduleBackup('));
+  vm.runInContext(seam, context);
+  await assert.rejects(context.switchAccountForProfile('a'), /auth failed/);
+  assert.equal(fs.existsSync(path.join(h.dataRoot, 'user-a-personal')), false);
+  assert.equal(persona.readPersonaSettings(options.backupRoot).activeUid, 'b');
+  context.currentAccount = () => ({ uid: 'a' });
+  await assert.rejects(context.switchAccountForProfile('b'), /当前账号已变化/);
+});

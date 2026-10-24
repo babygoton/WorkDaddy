@@ -248,10 +248,14 @@ function configurePersona(options) {
 }
 function syncSharedPersonaForSwitch(options) {
   const settings = readPersonaSettings(options.backupRoot);
-  if (settings.mode !== 'shared' || options.sourceUid === options.targetUid) return { skipped: true };
-  if (settings.activeUid !== options.sourceUid) throw new Error('当前账号已变化，请在账号设置中重新选择共享来源');
+  if (settings.mode !== 'shared') return { skipped: true };
+  // The login page has no auth uid. Resume from the last shared projection so
+  // edits made before logout survive, without adopting another logged-in user.
+  const sourceUid = options.sourceUid || settings.activeUid;
+  if (sourceUid === options.targetUid) return { skipped: true };
+  if (settings.activeUid !== sourceUid) throw new Error('当前账号已变化，请在账号设置中重新选择共享来源');
   if (!options.accounts.some(a => String(a.uid) === options.targetUid)) throw new Error('目标账号不存在');
-  const sourceDir = personaDir(options.dataRoot, options.sourceUid);
+  const sourceDir = personaDir(options.dataRoot, sourceUid);
   const files = snapshot(sourceDir);
   return applySharedPersona({ ...options, sourceDir }, files, { ...settings, activeUid: options.targetUid });
 }
