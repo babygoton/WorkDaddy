@@ -15,7 +15,7 @@ for (const saved of ['default', 'dark', 'eye-care', 'cyber-purple', 'nebula', 's
     const applied = [];
     const context = {
       PROFILE: { capabilities: { theme: true } }, cdp: { connected: true },
-      readSessionState: () => ({ themeTakeoverEnabled: true }),
+      lastVideoKey: '', readSessionState: () => ({ themeTakeoverEnabled: true }),
       DATA_DIR: '/test', path, fs: { readFileSync: () => saved === null ? '{invalid' : JSON.stringify({id:saved}) },
       getTheme: id => ['default','dark','eye-care','cyber-purple','nebula'].includes(id),
       applyThemeByCdp: async id => applied.push(id),
@@ -32,7 +32,7 @@ test('follow-system apply resolves once and reuses the normal theme pipeline', a
   let pollingStarted = 0, resolutions = 0;
   const context = {
     PROFILE: { capabilities: { theme: true } }, cdp: { connected: true },
-    readSessionState: () => ({ themeTakeoverEnabled: true }), themeApplyGeneration: 0, stopSystemThemePolling() {},
+    lastVideoKey: '', readSessionState: () => ({ themeTakeoverEnabled: true }), themeApplyGeneration: 0, stopSystemThemePolling() {},
     currentAccount: () => null, getTheme: () => ({ dark: true, colors: {} }),
     LOCAL_THEME_OVERRIDES: [], themeExtrasCss: () => '', themeVarsCss: () => '',
     setTimeout: resolve => resolve(),
@@ -60,7 +60,7 @@ async function themeExpression(id, takeover = true, accountUid = null, options =
   const context = {
     wallpaperRotation: { status: () => ({ mode: 'manual' }) },
     PROFILE: { capabilities: { theme: true } }, cdp: { connected: true },
-    readSessionState: () => ({ themeTakeoverEnabled: takeover }),
+    lastVideoKey: '', readSessionState: () => ({ themeTakeoverEnabled: takeover }),
     themeApplyGeneration: 0, stopSystemThemePolling() {},
     setTimeout: resolve => resolve(),
     currentAccount: () => accountUid ? { uid: accountUid } : null, getTheme: () => ({ dark: id !== 'default', colors: {} }),
@@ -108,7 +108,7 @@ for (const initial of ['default', 'dark']) test('system polling follows repeated
   let appearance = initial, timer = 0, evaluations = 0;
   const daemon = {
     PROFILE: { capabilities: { theme: true } }, cdp: { connected: true },
-    readSessionState: () => ({ themeTakeoverEnabled: true }), themeApplyGeneration: 0,
+    lastVideoKey: '', readSessionState: () => ({ themeTakeoverEnabled: true }), themeApplyGeneration: 0,
     readSavedThemeId: () => 'system', currentAccount: () => null,
     getTheme: id => ({ dark: id !== 'default', colors: {} }),
     LOCAL_THEME_OVERRIDES: [], themeExtrasCss: () => '', themeVarsCss: () => '',
@@ -244,7 +244,7 @@ test('theme takeover opt-out follows native appearance on reload without forcing
   const context = {
     PROFILE: { capabilities: { theme: true } }, cdp: { connected: true },
     DATA_DIR: '/test', path, fs: { existsSync: () => true, readFileSync: () => '{"id":"nebula"}' },
-    readSessionState: () => ({ themeTakeoverEnabled: false }),
+    lastVideoKey: '', readSessionState: () => ({ themeTakeoverEnabled: false }),
     startNativeAppearanceSyncByCdp: async () => applied.push('native'),
     applyThemeByCdp: async id => applied.push(id),
   };
@@ -306,7 +306,7 @@ test('turning off takeover restores the WorkBuddy appearance saved before takeov
   context.localStorage.setItem('workbuddy.appearance.mode::personal::personal::other', 'dark');
   const daemon = {
     cdp: { connected: true }, themeApplyGeneration: 0, stopSystemThemePolling() {},
-    readSessionState: () => ({ themeTakeoverEnabled: false }),
+    lastVideoKey: '', readSessionState: () => ({ themeTakeoverEnabled: false }),
     currentAccount: () => ({ uid }),
     cdpSend: async (_, params) => { vm.runInNewContext(params.expression, context); return {}; },
     startNativeAppearanceSyncByCdp: async () => {
@@ -438,7 +438,7 @@ test('a pending light reset cannot overwrite takeover re-enabled during a CDP re
   const context = {
     wallpaperRotation: { status: () => ({ mode: 'manual' }) },
     PROFILE: { capabilities: { theme: true } }, cdp: { connected: true, ws: { readyState: 1 } },
-    readSessionState: () => ({ themeTakeoverEnabled: takeover }), themeApplyGeneration: 0, stopSystemThemePolling() {},
+    lastVideoKey: '', readSessionState: () => ({ themeTakeoverEnabled: takeover }), themeApplyGeneration: 0, stopSystemThemePolling() {},
     currentAccount: () => null, getTheme: () => ({ dark: false, colors: {} }),
     LOCAL_THEME_OVERRIDES: [], themeExtrasCss: () => '', themeVarsCss: () => '',
     cdpSend: async () => { evaluations++; takeover = true; context.themeApplyGeneration++; return { result: { value: { pending: true } } }; },
@@ -468,7 +468,7 @@ test('release resets light once then follows official dark and special skins acr
   const daemon = {
     wallpaperRotation: { status: () => ({ mode: 'manual' }) },
     PROFILE: { capabilities: { theme: true } }, cdp: { connected: true }, themeApplyGeneration: 0, stopSystemThemePolling() {},
-    readSessionState: () => ({ themeTakeoverEnabled: false }),
+    lastVideoKey: '', readSessionState: () => ({ themeTakeoverEnabled: false }),
     cdpSend: async (_, params) => { vm.runInNewContext(params.expression, context); return {}; },
     applyThemeByCdp: async (id, options) => {
       lightResets++;
@@ -557,7 +557,7 @@ test('nebula releases custom CSS and guards, waits for official dark, then reapp
     wallpaperRotation: { status: () => ({ mode: 'manual' }) },
     PROFILE: { capabilities: { theme: true } }, cdp: { connected: true }, themeApplyGeneration: 0, stopSystemThemePolling() {},
     setTimeout: resolve => resolve(),
-    readSessionState: () => ({ themeTakeoverEnabled: true }), currentAccount: () => ({ uid: 'current' }),
+    lastVideoKey: '', readSessionState: () => ({ themeTakeoverEnabled: true }), currentAccount: () => ({ uid: 'current' }),
     getTheme: id => ({ dark: id !== 'default', colors: {} }),
     LOCAL_THEME_OVERRIDES: [], themeExtrasCss: () => '', themeVarsCss: () => '',
     cdpSend: async (_, params) => {
@@ -653,7 +653,7 @@ test('frosted takeover completes even when background renderer timers and animat
   const daemon = {
     wallpaperRotation: { status: () => ({ mode: 'manual' }) },
     PROFILE: { capabilities: { theme: true } }, cdp: { connected: true }, themeApplyGeneration: 0, stopSystemThemePolling() {},
-    readSessionState: () => ({ themeTakeoverEnabled: true }), currentAccount: () => null,
+    lastVideoKey: '', readSessionState: () => ({ themeTakeoverEnabled: true }), currentAccount: () => null,
     getTheme: () => ({ dark: true, colors: {} }),
     LOCAL_THEME_OVERRIDES: [], themeExtrasCss: () => '', themeVarsCss: () => '',
     setTimeout: (resolve, ms) => { delays.push(ms); resolve(); },

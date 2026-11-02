@@ -12,7 +12,7 @@ const applySource = source.slice(applyStart, source.indexOf('\n/**', applyStart)
 function applyContext(overrides = {}) {
   const context = {
     PROFILE: { capabilities: { theme: true } }, cdp: { connected: true },
-    readSessionState: () => ({ themeTakeoverEnabled: true }), themeApplyGeneration: 0,
+    lastVideoKey: '', readSessionState: () => ({ themeTakeoverEnabled: true }), themeApplyGeneration: 0,
     currentAccount: () => null, getTheme: () => ({ dark: true, colors: {} }),
     LOCAL_THEME_OVERRIDES: [], themeExtrasCss: () => '', themeVarsCss: () => '',
     wallpaperRotation: { status: () => ({ mode: 'manual' }) },
@@ -44,7 +44,7 @@ for (const automatic of [false, true]) test('later manual choice cancels a pendi
 test('disabling takeover during a system lookup prevents application', async () => {
   let resolve, takeover = true;
   const context = applyContext({
-    readSessionState: () => ({ themeTakeoverEnabled: takeover }),
+    lastVideoKey: '', readSessionState: () => ({ themeTakeoverEnabled: takeover }),
     resolveSystemTheme: () => new Promise(done => { resolve = done; }),
     cdpSend: async () => { throw new Error('must not apply'); },
   });
@@ -83,7 +83,7 @@ function systemContext(overrides = {}) {
   const context = {
     PROFILE: { capabilities: { theme: true } }, process: { platform: 'linux' },
     cdp: { connected: true }, readSavedThemeId: () => 'system',
-    readSessionState: () => ({ themeTakeoverEnabled: true }),
+    lastVideoKey: '', readSessionState: () => ({ themeTakeoverEnabled: true }),
     setInterval: () => ({ unref() {} }), clearInterval() {},
     cdpSend: async () => ({ result: { value: 'dark' } }),
     ...overrides,
@@ -201,7 +201,7 @@ for (const profile of ['codebuddy-cn', 'codebuddy-intl']) test(profile + ' follo
   let tick, timerCount = 0, stopped = 0, mode = 'default', calls = 0;
   const native = { id: profile, capabilities: { theme: true, nativeComposer: true, themeTakeover: false } };
   const context = systemContext({ ...applyContext(), PROFILE: native,
-    readSessionState: () => ({ themeTakeoverEnabled: false }),
+    lastVideoKey: '', readSessionState: () => ({ themeTakeoverEnabled: false }),
     setInterval: fn => { tick = fn; timerCount++; return { unref() {} }; }, clearInterval: () => { stopped++; },
     resolveSystemTheme: async () => mode,
     cdpSend: async (_, params) => {
@@ -226,7 +226,7 @@ for (const nativeOnly of [false, true]) test('native manual selection cancels a 
   let finish, calls = 0;
   const context = applyContext({
     PROFILE: { capabilities: { theme: true, nativeComposer: true, themeTakeover: false } },
-    readSessionState: () => ({ themeTakeoverEnabled: false }),
+    lastVideoKey: '', readSessionState: () => ({ themeTakeoverEnabled: false }),
     resolveSystemTheme: () => new Promise(resolve => { finish = resolve; }),
     cdpSend: async (_, params) => {
       calls++;
@@ -248,7 +248,7 @@ test('CodeBuddy restores system mode after reconnect while leaving native manual
   const context = {
     PROFILE: { capabilities: { theme: true, nativeComposer: true, themeTakeover: false } },
     cdp: { connected: true }, readSavedThemeId: () => saved,
-    readSessionState: () => ({ themeTakeoverEnabled: false }),
+    lastVideoKey: '', readSessionState: () => ({ themeTakeoverEnabled: false }),
     applyThemeByCdp: async (id, options) => { applied.push({ id, ...options }); },
   };
   vm.runInNewContext(restore, context);
