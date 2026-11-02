@@ -6,6 +6,10 @@ const http = require('node:http');
 const crypto = require('node:crypto');
 const BINDING = '__wbsLocalApiRequest';
 const MAX_BYTES = 64 * 1024 * 1024;
+// 需要以流式（Blob 分片）上传的路由：这些路径的请求体可能有几十 MB，
+// 一次性塞进 JSON 载荷会撞上 CDP 报文体积上限，也会把渲染进程内存顶爆。
+const CHUNKED_UPLOAD_PATHS = ['/api/sessions/import', '/api/theme-video/upload'];
+const isChunkedUploadPath = path => CHUNKED_UPLOAD_PATHS.some(p => path === p || path.startsWith(p + '?'));
 
 function createRendererApiBridge({ token, port, send }) {
   let active = 0;
@@ -88,7 +92,7 @@ function createRendererApiBridge({ token, port, send }) {
       await reply({error:'本地 API 请求无效或过多'}); return;
     }
     if (request.kind==='upload-start') {
-      if(path!=='/api/sessions/import' || method!=='POST' || contentType!=='application/octet-stream' ||
+      if(!isChunkedUploadPath(path) || method!=='POST' || contentType!=='application/octet-stream' ||
          typeof request.uploadId!=='string' || !/^[\w:-]{1,100}$/.test(request.uploadId) || uploads.has(request.uploadId) ||
          !Number.isSafeInteger(request.totalBytes) || request.totalBytes<=0) {await reply({error:'上传请求无效'});return;}
       const opened=openRequest(path,method,contentType,request.totalBytes);
@@ -135,12 +139,19 @@ function installRendererBridge(binding) {
       catch (_) {pending.delete(id);clearTimeout(timer);reject(new Error('本地 API 尚未连接'));}
     });
   }
+  // 注意：installRendererBridge 会被 toString() 后注入渲染进程，函数体不能引用
+  // 模块作用域的变量（isChunkedUploadPath 等），白名单必须在函数内自己写。
+  function bodyNeedsChunking(path, body) {
+    if (!(body instanceof Blob)) return false;
+    return path === '/api/sessions/import' ||
+      path === '/api/theme-video/upload' || path.indexOf('/api/theme-video/upload?') === 0;
+  }
   window.__wbsApiFetch = async function (path, options, token) {
     options=options || {};
     var body=options.body;
     var contentType=options.headers && (options.headers['content-type'] || options.headers['Content-Type']);
     var request={path:path,method:options.method || 'GET',contentType:contentType};
-    if(body instanceof Blob && path==='/api/sessions/import') {
+    if(bodyNeedsChunking(path, body)) {
       var uploadId=prefix+':upload:'+(++serial);
       await transmit(Object.assign({},request,{kind:'upload-start',uploadId:uploadId,totalBytes:body.size}),token);
       try {

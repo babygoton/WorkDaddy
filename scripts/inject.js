@@ -1790,6 +1790,8 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '导出账号': 'Export accounts', '导入账号': 'Import accounts', '导出会话': 'Export sessions', '导入会话': 'Import sessions', '导出快捷短语': 'Export quick phrases', '导入快捷短语': 'Import quick phrases', '同步选中到其他账号': 'Sync selected to another account', '删除选中': 'Delete selected', '操作会话': 'Session actions', '连通测试': 'Test connection', '编辑模型': 'Edit model', '模型已保存': 'Model saved', '模型已启用': 'Model enabled', '模型已复制': 'Model copied', '模型配置已共用': 'Model configuration shared', '与 {name} 共用模型配置': 'Model configuration shared with {name}', '当前模型': 'Current model', '备选模型': 'Backup models', '模型加载失败：': 'Failed to load models: ', '保存模型失败：': 'Failed to save model: ', '删除当前模型失败：': 'Failed to delete current model: ', '启用模型失败：': 'Failed to enable model: ', '连通测试失败：': 'Connection test failed: ',
     '请选择壁纸文件夹': 'Choose a wallpaper folder', '壁纸模式': 'Wallpaper mode', '手动应用': 'Manual', '文件夹随机': 'Shuffle folder', '壁纸文件夹': 'Wallpaper folder', '选择或填写文件夹路径': 'Choose or enter a folder path', '选择文件夹': 'Choose folder', '切换间隔': 'Change every', '1 分钟': '1 minute', '3 分钟': '3 minutes', '5 分钟': '5 minutes', '10 分钟': '10 minutes', '30 分钟': '30 minutes', '1 小时': '1 hour', '自定义': 'Custom', '分钟': 'minutes', '自定义切换间隔（分钟）': 'Custom interval (minutes)', '立即换一张': 'Next wallpaper', '已暂停，恢复毛玻璃主题后继续': 'Paused until the frosted theme resumes', '当前：': 'Current: ', '等待应用壁纸': 'Waiting to apply wallpaper', '壁纸设置保存失败': 'Could not save wallpaper settings', '仅读取此文件夹内的 PNG / JPG / WebP，不复制或修改原文件；自动跳过超过 20MB 或 1600 万像素的图片。': 'Reads PNG / JPG / WebP from this folder without copying or modifying originals. Images over 20MB or 16 megapixels are skipped.',
     '选择要查看的账号': 'Choose an account to view', '选择账号并输入密码后导出备份': 'Choose accounts and enter a password to export backups', '从加密导出文件导入账号备份': 'Import account backups from an encrypted export', '使用密码导出选中会话': 'Export selected sessions with a password', '使用密码导出选中快捷短语': 'Export selected quick phrases with a password', '从加密文件导入会话': 'Import sessions from an encrypted file', '从加密文件导入快捷短语': 'Import quick phrases from an encrypted file', '仅支持 PNG / JPG / WebP': 'PNG / JPG / WebP only', '点击或拖拽上传壁纸': 'Click or drag to upload a wallpaper', '点击选择图片，或拖拽到此处': 'Click to choose an image, or drag it here', '支持 PNG / JPG / WebP，自动压缩；可添加多张': 'PNG / JPG / WebP supported; images are compressed automatically',
+    // 视频壁纸（毛玻璃主题的背景层）
+    '视频壁纸': 'Video wallpaper', 'MP4 / WebM · 自动静音循环': 'MP4 / WebM · muted loop', '点击或拖拽上传视频': 'Click or drag to upload a video', '点击选择视频，或拖拽到此处': 'Click to choose a video, or drag it here', '最大 128MB；选择图片壁纸会自动移除视频': 'Up to 128MB. Choosing an image wallpaper removes the video.', '移除视频壁纸': 'Remove video wallpaper', '当前视频 · ': 'Current video · ', '仅支持 MP4 / WebM 视频': 'MP4 / WebM videos only', '视频不能超过': 'Video must be under ', '正在上传视频壁纸…': 'Uploading video wallpaper…', '视频壁纸已应用': 'Video wallpaper applied', '上传视频壁纸失败': 'Video wallpaper upload failed', '已移除视频壁纸': 'Video wallpaper removed', '移除视频壁纸失败': 'Could not remove video wallpaper',
     '未命名账号': 'Unnamed account', '未命名模型': 'Unnamed model', '未命名': 'Unnamed', '未知错误': 'Unknown error', '未知': 'Unknown', '有效期未知': 'Expiry unknown', '未找到输入框': 'Composer not found', '输入框内容为空': 'Composer is empty', '当前输入框暂不支持引用插入': 'The current composer does not support quote insertion', '引用插入失败，请重试': 'Could not insert quote. Please try again', '短语不能为空': 'Quick phrase cannot be empty', '请输入快捷短语': 'Enter a quick phrase', '删除快捷短语': 'Delete quick phrase', '编辑快捷短语': 'Edit quick phrase', '新增快捷短语': 'Add quick phrase', '确定删除': 'Confirm deletion', '确认永久删除': 'Confirm permanent deletion',
     '本机回环 CDP 注入 · 不改官方安装包': 'Local CDP injection · official app untouched', '一个基于 ': 'A ', ' 的 WorkBuddy 桌面端增强工具。零侵入、零重签名——只把界面组件注入到正在运行的 WorkBuddy 渲染进程里。': ' WorkBuddy desktop enhancement tool using Chrome DevTools Protocol (CDP). No intrusion or re-signing; UI components are injected into the running renderer.', '问题反馈': 'Report an issue',
     // —— 覆盖度补齐（分区域，模板条目支持 {name} 占位，匹配时最长优先）——
@@ -10928,6 +10930,16 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         '<div class="wbs-bg-upload" id="wbs-bg-upload" title="点击选择图片，或拖拽到此处"><span class="wbs-bg-upload-ico">+</span><span>点击或拖拽上传壁纸</span><span class="wbs-bg-upload-hint">支持 PNG / JPG / WebP，自动压缩；可添加多张</span></div>' +
         '<div class="wbs-wallpapers wbs-custom-wallpapers" id="wbs-custom-wallpapers"><div class="wbs-wp-loading">壁纸加载中…</div></div>' +
         '<input type="file" id="wbs-theme-file" accept="image/png,image/jpeg,image/webp" style="display:none">' +
+        // 视频壁纸：和图片壁纸共用蒙版/毛玻璃，只是背景层换成循环播放的视频
+        '<div class="wbs-video-block" id="wbs-video-block">' +
+        '<div class="wbs-video-head"><span class="wbs-video-title">视频壁纸</span><span class="wbs-video-tag">MP4 / WebM · 自动静音循环</span></div>' +
+        '<div class="wbs-bg-upload wbs-video-upload" id="wbs-video-upload" title="点击选择视频，或拖拽到此处"><span class="wbs-bg-upload-ico">▶</span><span>点击或拖拽上传视频</span><span class="wbs-bg-upload-hint">最大 128MB；选择图片壁纸会自动移除视频</span></div>' +
+        '<div class="wbs-video-current" id="wbs-video-current" hidden>' +
+        '<span class="wbs-video-name" id="wbs-video-name"></span>' +
+        '<button class="wbs-video-remove" type="button" id="wbs-video-remove">移除视频壁纸</button>' +
+        '</div>' +
+        '<input type="file" id="wbs-video-file" accept="video/mp4,video/webm" style="display:none">' +
+        '</div>' +
         '</div>' +
         '</div>' +
         '<div class="wbs-mask-row">' +
@@ -11688,6 +11700,10 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         }
         var up = t.closest ? t.closest('#wbs-bg-upload, #wbs-theme-upload') : null;
         if (up) { var f = themePane.querySelector('#wbs-theme-file'); if (f) f.click(); return; }
+        var vup = t.closest ? t.closest('#wbs-video-upload') : null;
+        if (vup) { var vf = themePane.querySelector('#wbs-video-file'); if (vf) vf.click(); return; }
+        var vdel = t.closest ? t.closest('#wbs-video-remove') : null;
+        if (vdel) { removeVideoWallpaper(); return; }
         var removeAvatar = t.closest ? t.closest('[data-avatar-delete]') : null;
         if (removeAvatar) {
           e.preventDefault();
@@ -11717,6 +11733,11 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
           reader.onload = function () { replaceThemeBg(reader.result); };
           reader.readAsDataURL(file);
           t.value = '';
+        }
+        if (t && t.id === 'wbs-video-file') {
+          var vfile = t.files && t.files[0];
+          t.value = '';
+          if (vfile) uploadVideoWallpaper(vfile);
         }
         if (t && t.id === 'wbs-avatar-file') {
           var f2 = t.files && t.files[0];
@@ -11819,6 +11840,21 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
           var reader = new FileReader();
           reader.onload = function () { replaceThemeBg(reader.result); };
           reader.readAsDataURL(f);
+        });
+      }
+      // 视频壁纸上传区：点击由上面的委托处理，这里只补拖拽
+      var videoUpload = themePane.querySelector('#wbs-video-upload');
+      if (videoUpload) {
+        videoUpload.addEventListener('dragover', function (e) {
+          e.preventDefault();
+          this.classList.add('drag');
+        });
+        videoUpload.addEventListener('dragleave', function () { this.classList.remove('drag'); });
+        videoUpload.addEventListener('drop', function (e) {
+          e.preventDefault();
+          this.classList.remove('drag');
+          var f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+          if (f) uploadVideoWallpaper(f);
         });
       }
     }
@@ -11976,6 +12012,26 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     }
     registerDisposer(releaseWallpaperPreviews);
     registerDisposer(function () { if (window.__wbsWallpaperRuntime) window.__wbsWallpaperRuntime.dispose(); });
+    // 视频壁纸状态只在「自定义壁纸」面板里显示一行「当前视频 · 大小」；
+    // 视频本身不进面板，避免再解码一路、也避免面板比客户端更耗电。
+    function renderVideoState(video) {
+      var box = root.querySelector('#wbs-video-current');
+      if (!box) return;
+      var nameEl = root.querySelector('#wbs-video-name');
+      var uploadEl = root.querySelector('#wbs-video-upload');
+      if (!video) {
+        box.hidden = true;
+        if (nameEl) nameEl.textContent = '';
+        if (uploadEl) uploadEl.classList.remove('has-video');
+        return;
+      }
+      var size = Number(video.size) || 0;
+      var label = size >= 1048576 ? (size / 1048576).toFixed(1) + ' MB'
+        : size >= 1024 ? Math.round(size / 1024) + ' KB' : size + ' B';
+      box.hidden = false;
+      if (uploadEl) uploadEl.classList.add('has-video');
+      if (nameEl) nameEl.textContent = '当前视频 · ' + label;
+    }
     function loadWallpapers(force) {
       var grid = root.querySelector('#wbs-wallpapers');
       var cgrid = root.querySelector('#wbs-custom-wallpapers');
@@ -12026,6 +12082,8 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         }
         // 面板高度固定为主题页高度：首进主题页壁纸渲染后锁定，防止切 tab 高度跳动
         lockPanelHeight();
+        // 视频壁纸状态（有视频时图片网格整体不再高亮，因为背景层被视频占用）
+        renderVideoState(d.currentVideo || null);
         // 逐张 fetch → blob → objectURL 预览（no-store 防 HTTP 缓存旧图——图库重建后同名文件内容会变）
         var allGrids = [grid, cgrid].filter(Boolean);
         allGrids.forEach(function (g) {
@@ -12678,6 +12736,45 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     avatarTimer = setBuildInterval(applyAvatar, 2000);
     setBuildTimeout(applyAvatar, 800);
 
+    // ===== 视频壁纸（毛玻璃主题的背景层）=====
+    // 图片壁纸是 base64 JSON，视频几十 MB 走不了 JSON，所以直接把 File 当请求体：
+    // 直连 transport 是普通 fetch(File)；CDP transport 由桥接自动切成 256KB 分片上传。
+    var VIDEO_MAX_MB = 128;
+    function uploadVideoWallpaper(file) {
+      if (!file) return;
+      if (!/^video\/(mp4|webm)$/i.test(file.type || '') && !/\.(mp4|webm)$/i.test(file.name || '')) {
+        toast('仅支持 MP4 / WebM 视频', true, root);
+        return;
+      }
+      if (file.size > VIDEO_MAX_MB * 1024 * 1024) {
+        toast('视频不能超过 ' + VIDEO_MAX_MB + 'MB', true, root);
+        return;
+      }
+      var target = themeSelectValue();
+      toast('正在上传视频壁纸…', false, root);
+      api('/api/theme-video/upload?id=' + encodeURIComponent(target), {
+        method: 'POST',
+        headers: { 'content-type': 'application/octet-stream' },
+        body: file,
+      }).then(function (r) {
+        if (!r || !r.ok) throw new Error((r && r.error) || '上传视频壁纸失败');
+        toast('视频壁纸已应用', false, root);
+        loadWallpapers(true);
+        if (typeof loadWallpaperRotation === 'function') loadWallpaperRotation();
+      }).catch(function (e) {
+        toast('上传视频壁纸失败: ' + ((e && e.message) || e), true, root);
+      });
+    }
+    function removeVideoWallpaper() {
+      var target = themeSelectValue();
+      api('/api/theme-video?id=' + encodeURIComponent(target), { method: 'DELETE' }).then(function (r) {
+        if (!r || !r.ok) throw new Error((r && r.error) || '移除视频壁纸失败');
+        toast('已移除视频壁纸', false, root);
+        loadWallpapers(true);
+      }).catch(function (e) {
+        toast('移除视频壁纸失败: ' + ((e && e.message) || e), true, root);
+      });
+    }
     // ===== 自定义图片生成皮肤（WBSS 方案：压缩 webp + HSL 取色 -> theme.json + 背景图）=====
     // 上传按钮/文件输入位于主题 pane（构建后由 wireThemePane 事件委托处理）
     // 替换当前主题背景图（保持主题配色不变，不再生成新主题——避免 reload 后被"切回最早背景图"）
@@ -18610,6 +18707,18 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '.wbs-bg-upload:hover,.wbs-bg-upload.drag{border-color:var(--wb-accent-blue,#4f86ff);color:var(--wb-color-text-primary,#1f1f1f);background:color-mix(in srgb,var(--wb-accent-blue,#4f86ff) 8%,transparent)}',
     '.wbs-bg-upload-ico{width:30px;height:30px;border-radius:50%;background:var(--wb-bg-hover,#e8e9eb);display:flex;align-items:center;justify-content:center;font-size:18px;line-height:1;font-weight:400}',
     '.wbs-bg-upload-hint{font-size:11px;color:var(--wb-icon-tertiary,#999);font-weight:400}',
+    /* 视频壁纸：上传区 + 当前视频一行 */
+    '.wbs-video-block{margin-top:14px;padding-top:12px;border-top:1px solid var(--wb-border-subtle,rgba(0,0,0,.08))}',
+    '.wbs-video-head{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:8px}',
+    '.wbs-video-title{font-size:12px;font-weight:600;color:var(--wb-color-text-primary,#1f1f1f)}',
+    '.wbs-video-tag{font-size:11px;font-weight:400;color:var(--wb-icon-tertiary,#999)}',
+    '.wbs-video-upload{padding:14px 12px;gap:4px}',
+    '.wbs-video-upload.has-video{border-style:solid}',
+    '.wbs-video-current{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:8px;padding:6px 10px;border-radius:8px;background:color-mix(in srgb,var(--wb-bg-tertiary,#f0f0f0) 45%,transparent);font-size:12px;color:var(--wb-color-text-primary,#1f1f1f)}',
+    '.wbs-video-current[hidden]{display:none}',
+    '.wbs-video-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+    '.wbs-video-remove{flex:0 0 auto;border:1px solid var(--wb-border-subtle,rgba(0,0,0,.12));background:transparent;color:var(--wb-color-text-muted,#666);font-size:11px;font-weight:600;padding:3px 9px;border-radius:7px;cursor:pointer;transition:color .15s,border-color .15s,background .15s}',
+    '.wbs-video-remove:hover{color:#e24b4a;border-color:rgba(226,75,74,.45);background:rgba(226,75,74,.08)}',
     '.wbs-bg-preview{display:none;width:100%;max-height:140px;object-fit:cover;border-radius:10px;margin-top:8px;border:1px solid var(--wb-border-subtle,#eee)}',
     '.wbs-avatar-option{position:relative;display:flex;flex-direction:column;align-items:center;gap:4px;cursor:pointer;font-size:10px;color:var(--wb-color-text-secondary)}.wbs-avatar-option input{position:absolute;opacity:0;width:1px;height:1px}.wbs-avatar-option img,.wbs-avatar-default-mark{box-sizing:border-box;width:42px;height:42px;padding:3px;object-fit:contain;border:1px solid var(--wb-border-subtle);border-radius:10px;background:var(--wb-bg-tertiary)}.wbs-avatar-option input:checked+img,.wbs-avatar-option input:checked+.wbs-avatar-default-mark{border-color:var(--wb-button-primary-bg);box-shadow:0 0 0 1px var(--wb-button-primary-bg)}.wbs-avatar-option input:focus-visible+img,.wbs-avatar-option input:focus-visible+.wbs-avatar-default-mark{outline:2px solid var(--wb-accent-blue);outline-offset:3px}.wbs-avatar-default-mark{display:flex;align-items:center;justify-content:center;color:var(--wb-icon-secondary);font-size:18px;font-weight:600;line-height:1}',
     /* 背景蒙版滑块（黑色半透明遮罩，0~100%） */

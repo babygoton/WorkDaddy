@@ -34,6 +34,11 @@ const {createCodeBuddyFiles} = require('./codebuddy-files.js');
 const { createAccountCreditCache } = require('./account-credit-cache.js');
 const { spawn, spawnSync, execFile } = require('child_process');
 const { createWallpaperRotation, updateWallpaperInRenderer, pickWallpaperDirectory } = require('./wallpaper-rotation');
+const {
+  VIDEO_MAX_BYTES, VIDEO_HEAD_BYTES, VIDEO_LAYER_CSS,
+  sniffVideo, resolveVideoFile, videoRootBackground,
+  updateVideoInRenderer, disposeVideoInRenderer,
+} = require('./wallpaper-video');
 const { readClientLaunchSettings, setClientLaunchSettings, getClientLaunchArgs } = require('./client-launch-settings.js');
 const { getWorkBuddyLaunchEnv } = require('./workbuddy-launch-env.js');
 const PROBE_CLIENT_RUNNING = process.argv.includes('--probe-client-running');
@@ -530,8 +535,9 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 // 1.2.65：兼容空会话同步、自定义模型和重定向备份目录，工作目录恢复退避重试。
 // 1.2.66：刷新凭据按原信封加密保存，同账号刷新去重，过期账号保留手动切换。
 // 1.2.67：Windows 重启 GUI 客户端时不再请求隐藏主窗口，与冷启动保持一致。
-const DAEMON_VERSION = '1.2.68';
-const DAEMON_BUILD_ID = 'release-1.2.68-login-page-persona-switch';
+// 1.2.69：毛玻璃主题支持视频壁纸（MP4 / WebM），与图片壁纸共用蒙版与背景毛玻璃。
+const DAEMON_VERSION = '1.2.69';
+const DAEMON_BUILD_ID = 'release-1.2.69-video-wallpaper';
 const usageReporter = createUsageReporter({ profile: PROFILE.id, version: DAEMON_VERSION });
 configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const automationDiscovery = createAutomationDiscovery({
@@ -8715,6 +8721,174 @@ function readBackgroundBlur() {
   return blur;
 }
 
+/** 当前挂载在页面里的视频壁纸标识（主题 + 文件名 + 大小 + 修改时间）。
+ *  空字符串表示「页面里没有视频层」，用来决定下一次应用要不要多跑一次清理。 */
+let lastVideoKey = '';
+
+/** 把视频壁纸装进渲染进程。key 命中时渲染进程直接复用已加载的 blob。 */
+async function applyVideoWallpaperByCdp(video, id) {
+  if (!cdp.connected) return false;
+  const key = [id, video.name, video.size, Math.round(video.mtime)].join(':');
+  try {
+    const r = await cdpSend('Runtime.evaluate', {
+      expression: '(' + updateVideoInRenderer.toString() + ')(' + JSON.stringify({
+        // v= 让 daemon 与浏览器缓存都以文件修改时间为准，换视频后不会放旧片
+        url: `http://${HOST}:${ACTUAL_PORT}/api/theme-video?id=${encodeURIComponent(id)}&v=${Math.round(video.mtime)}`,
+        token: API_TOKEN,
+        key,
+        // 视频层自带样式表，不随主题样式重写
+        css: VIDEO_LAYER_CSS,
+      }) + ')',
+      awaitPromise: true, returnByValue: true, timeout: 30000,
+    });
+    const ok = !!(r && r.result && r.result.value === true);
+    if (ok) lastVideoKey = key;
+    else log('[theme] 视频壁纸未能挂载: ' + key);
+    return ok;
+  } catch (e) {
+    log('[theme] 视频壁纸应用失败: ' + (e && e.message));
+    return false;
+  }
+}
+
+/** 摘掉视频层（切回图片壁纸 / 关闭接管 / 该主题没有视频）。 */
+async function disposeVideoWallpaperByCdp() {
+  lastVideoKey = '';
+  if (!cdp.connected) return false;
+  try {
+    await cdpSend('Runtime.evaluate', {
+      expression: '(' + disposeVideoInRenderer.toString() + ')()',
+      returnByValue: true, timeout: 5000,
+    });
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+/** 主题元数据文件位置：兼容 themes/<id>.json（扁平）与 themes/<id>/theme.json 两种布局。 */
+function themeMetaFile(rawId) {
+  const safeId = String(rawId || '').replace(/[^A-Za-z0-9_-]/g, '_');
+  if (!safeId) return null;
+  const dir = path.join(THEMES_DIR, safeId);
+  const flat = path.join(THEMES_DIR, safeId + '.json');
+  return { id: safeId, dir, file: fs.existsSync(flat) ? flat : path.join(dir, 'theme.json') };
+}
+
+/** 把请求体流式落盘（不整段进内存：视频可以有几十上百 MB）。返回文件头用于格式校验。 */
+function streamBodyToFile(req, dest, maxBytes) {
+  return new Promise((resolve, reject) => {
+    const headChunks = [];
+    let headBytes = 0;
+    let size = 0;
+    let failure = null;
+    let settled = false;
+    const finish = (fn, arg) => { if (!settled) { settled = true; fn(arg); } };
+    const stream = fs.createWriteStream(dest, { mode: 0o600 });
+    stream.on('error', (e) => { failure = failure || e; });
+    req.on('data', (chunk) => {
+      size += chunk.length;
+      if (size > maxBytes) {
+        failure = failure || new Error('视频不能超过 ' + Math.round(maxBytes / 1048576) + 'MB');
+        req.destroy();
+        stream.destroy();
+        return;
+      }
+      if (headBytes < VIDEO_HEAD_BYTES) {
+        const take = chunk.subarray(0, VIDEO_HEAD_BYTES - headBytes);
+        headChunks.push(take);
+        headBytes += take.length;
+      }
+      if (failure) return;
+      stream.write(chunk);
+    });
+    req.on('aborted', () => {
+      failure = failure || new Error('视频上传已中断');
+      stream.destroy();
+    });
+    req.on('error', (e) => { failure = failure || e; stream.destroy(); });
+    req.on('end', () => {
+      stream.end(() => {
+        if (failure) { fs.promises.rm(dest, { force: true }).catch(() => {}); return finish(reject, failure); }
+        finish(resolve, { size, head: Buffer.concat(headChunks) });
+      });
+    });
+    // req.destroy() 之后 end 不一定触发，用它兜住超限/中断的分支
+    stream.on('close', () => {
+      if (failure) { fs.promises.rm(dest, { force: true }).catch(() => {}); finish(reject, failure); }
+    });
+  });
+}
+
+async function handleThemeVideoUpload(req, res, url) {
+  const meta = themeMetaFile(url.searchParams.get('id'));
+  if (!meta) return json(res, 400, { ok: false, error: '缺少主题 id' });
+  if (['default', 'dark', 'light', 'system'].includes(meta.id)) {
+    return json(res, 400, { ok: false, error: '官方浅色/深色主题不支持壁纸，请先切到毛玻璃主题' });
+  }
+  const existing = getTheme(meta.id);
+  if (!existing || !existing.colors) return json(res, 400, { ok: false, error: '主题不存在: ' + meta.id });
+  const declared = Number(req.headers['content-length'] || 0);
+  if (!Number.isFinite(declared) || declared <= 0) return json(res, 411, { ok: false, error: '缺少 Content-Length' });
+  if (declared > VIDEO_MAX_BYTES) return json(res, 413, { ok: false, error: '视频不能超过 ' + Math.round(VIDEO_MAX_BYTES / 1048576) + 'MB' });
+
+  fs.mkdirSync(meta.dir, { recursive: true });
+  const tmp = path.join(meta.dir, 'upload-' + Date.now().toString(36) + '.part');
+  const { size, head } = await streamBodyToFile(req, tmp, VIDEO_MAX_BYTES);
+  // 格式只认文件头：前端给的文件名/类型都可以伪造，落盘扩展名必须由魔数决定
+  const format = sniffVideo(head);
+  if (!format) {
+    await fs.promises.rm(tmp, { force: true }).catch(() => {});
+    return json(res, 400, { ok: false, error: '仅支持 MP4 / WebM 视频' });
+  }
+  const fileName = 'background.' + format.ext;
+  for (const ext of ['mp4', 'webm']) {
+    const old = path.join(meta.dir, 'background.' + ext);
+    try { if (fs.existsSync(old)) fs.rmSync(old, { force: true }); } catch (_) {}
+  }
+  fs.renameSync(tmp, path.join(meta.dir, fileName));
+  writeThemeMeta(meta, { video: fileName }, existing);
+  try {
+    fs.writeFileSync(path.join(DATA_DIR, 'current-theme.json'), JSON.stringify({ id: meta.id, at: new Date().toISOString() }, null, 2));
+  } catch (_) {}
+  // 视频与图片随机轮换互斥：抢的是同一层背景
+  await wallpaperRotation.configure({ mode: 'manual' }).catch(() => {});
+  log(`[theme] 上传视频壁纸 -> ${meta.id}/${fileName} (${size}B)`);
+  const applied = await applyThemeByCdp(meta.id).then(() => true).catch(() => false);
+  return json(res, 200, { ok: true, video: fileName, size, mime: format.mime, applied, id: meta.id });
+}
+
+async function handleThemeVideoDelete(res, url) {
+  const meta = themeMetaFile(url.searchParams.get('id'));
+  if (!meta) return json(res, 400, { ok: false, error: '缺少主题 id' });
+  let removed = false;
+  for (const ext of ['mp4', 'webm']) {
+    const file = path.join(meta.dir, 'background.' + ext);
+    try { if (fs.existsSync(file)) { fs.rmSync(file, { force: true }); removed = true; } } catch (_) {}
+  }
+  try {
+    if (fs.existsSync(meta.file)) {
+      const theme = JSON.parse(fs.readFileSync(meta.file, 'utf8')) || {};
+      if (theme.video) { delete theme.video; fs.writeFileSync(meta.file, JSON.stringify(theme, null, 2)); removed = true; }
+    }
+  } catch (_) {}
+  if (removed) log('[theme] 移除视频壁纸 -> ' + meta.id);
+  const applied = await applyThemeByCdp(meta.id).then(() => true).catch(() => false);
+  return json(res, 200, { ok: true, removed, applied, id: meta.id });
+}
+
+function writeThemeMeta(meta, patch, fallback) {
+  let theme = null;
+  try { if (fs.existsSync(meta.file)) theme = JSON.parse(fs.readFileSync(meta.file, 'utf8')) || null; } catch (_) { theme = null; }
+  // 主题文件不存在时用 getTheme 的结果兜底（内置主题被显式改过的场景），
+  // 存在时只打补丁——不要把 getTheme 补出来的瞬态变量写回用户主题。
+  if (!theme) theme = { ...(fallback || {}) };
+  Object.assign(theme, patch);
+  fs.mkdirSync(path.dirname(meta.file), { recursive: true });
+  fs.writeFileSync(meta.file, JSON.stringify(theme, null, 2));
+  return theme;
+}
+
 async function applyThemeByCdp(id, options = {}) {
   const nativeOnly = options.nativeOnly === true || PROFILE.capabilities.nativeComposer === true;
   if (!PROFILE.capabilities.theme || (PROFILE.capabilities.themeTakeover === false && !nativeOnly)) throw new Error(`${PROFILE.name} 暂不支持毛玻璃主题`);
@@ -8742,7 +8916,7 @@ async function applyThemeByCdp(id, options = {}) {
   if (id === 'nebula' && takeoverEnabled) {
     // 分开两个 CDP 回合：释放自定义 CSS/守护，让官方深色真正渲染，再接管毛玻璃。
     // 不改持久化接管开关，避免中途失败或并发操作留下错误的用户设置。
-    await applyThemeByCdp('dark', { ...options, nativeOnly: true });
+    await applyThemeByCdp('dark', { ...options, nativeOnly: true, videoPreflight: true });
     if (applyGeneration !== themeApplyGeneration || readSessionState().themeTakeoverEnabled === false) return { applied: false, cancelled: true };
     // Electron 后台窗口会节流 setTimeout/暂停 rAF；由 daemon 等待，
     // 再同步检查官方底色，不能让开关响应依赖 renderer 的下一帧。
@@ -8780,70 +8954,91 @@ async function applyThemeByCdp(id, options = {}) {
   }
   const extrasCss = themeExtrasCss(id);
   const isDark = !!(theme && theme.dark);
-  // 背景图：主题 JSON 带 image 字段时，从 themes/<id>/<image> 读取转 data URL（WBSS 方案：#root 背景 + 容器透明化）
+  // 背景层：主题里带 video 且文件在时优先视频壁纸（#root 只留蒙版，画面交给 z-index:-1 的
+  // <video> 层，见 wallpaper-video.js）；否则沿用图片方案：#root 背景 = data URL + 容器透明化。
   let bgCssStr = '';
-  if (theme && theme.image) {
+  let themeVideo = null;
+  if (theme && theme.video) {
     try {
-      const safeId = String(theme.id || id).replace(/[^A-Za-z0-9_-]/g, '_');
-      const candidates = [
-        path.join(THEMES_DIR, safeId, String(theme.image).replace(/^\.\.?[/\\]/, '')),
-        path.join(THEMES_DIR, safeId, 'background.' + String(theme.image).split('.').pop()),
-        path.join(THEMES_DIR, String(theme.image).replace(/^\.\.?[/\\]/, '')),
-      ];
-      let imgPath = null;
-      for (const c of candidates) {
-        if (fs.existsSync(c)) { imgPath = c; break; }
+      const videoPath = resolveVideoFile(THEMES_DIR, theme.id || id, theme.video);
+      if (videoPath) {
+        const stat = fs.statSync(videoPath);
+        themeVideo = { path: videoPath, name: String(theme.video), size: stat.size, mtime: stat.mtimeMs };
+      } else {
+        log('[theme] 视频壁纸文件缺失，回落到图片背景: ' + theme.video);
       }
-      // 兜底：按文件名在 themes 所有子目录里搜索（兼容旧 build 上传时目录 id 与主题 id 不一致的情况）
-      if (!imgPath) {
-        try {
-          const wanted = String(theme.image).split('/').pop().split('\\').pop();
-          for (const sub of fs.readdirSync(THEMES_DIR)) {
-            const p = path.join(THEMES_DIR, sub, wanted);
-            if (fs.existsSync(p)) { imgPath = p; break; }
-          }
-        } catch (_) {}
-      }
-      if (imgPath) {
-        const buf = fs.readFileSync(imgPath);
-        const ext = path.extname(imgPath).toLowerCase().replace('.jpeg', '.jpg');
-        const mime = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
-        const dataUrl = 'data:' + mime + ';base64,' + buf.toString('base64');
-        // WBSS 背景图方案：背景图铺 #root，容器透明 + 半透明毛玻璃让底图透出
-        // 遮罩/半透明度调低（40%/34%/30%）：背景图偏暗时让图更透出，毛玻璃更可见
-        // 全局黑色蒙版（默认 0.3，面板主题页可调）：rgba(0,0,0,α) 压在最上层，让背景图更沉、文字更可读
-        // 注意：opacity=0 是合法的「关闭蒙版」，不能用 || 兜底（0 会被当成 falsy 变成 0.1）
-        const maskFile = path.join(DATA_DIR, 'mask.json');
-        let mask = 0.3;
-        try {
-          if (fs.existsSync(maskFile)) {
-            const v = parseFloat(JSON.parse(fs.readFileSync(maskFile, 'utf8')).opacity);
-            if (!Number.isNaN(v)) mask = Math.min(1, Math.max(0, v));
-          }
-        } catch (_) {}
-        const blur = readBackgroundBlur();
-        const blurPx = Math.round(blur * MAX_BACKGROUND_BLUR_PX * 10) / 10;
-        const blurCss = blurPx > 0
-          ? 'backdrop-filter:blur(' + blurPx + 'px);-webkit-backdrop-filter:blur(' + blurPx + 'px);'
-          : 'backdrop-filter:none;-webkit-backdrop-filter:none;';
-        bgCssStr = [
-          '#root{background:',
-          'linear-gradient(rgba(0,0,0,' + mask + '),rgba(0,0,0,' + mask + ')),',
-          'linear-gradient(90deg,color-mix(in srgb,var(--wb-bg-primary) 40%,transparent) 0 18%,transparent 42%),',
-          'linear-gradient(180deg,transparent 0 58%,color-mix(in srgb,var(--wb-bg-primary) 50%,transparent) 100%),',
-          'var(--wbs-wallpaper-image,url(' + dataUrl + ')) right center / cover no-repeat fixed !important;}',
-          'body[data-vscode-theme-name] .teams-container,body[data-vscode-theme-name] .teams-container.is-mac{background:transparent !important;' + blurCss + '}',
-          'body[data-vscode-theme-name] [data-view-id]{background:transparent !important}',
-          'body[data-vscode-theme-name] .main-content{background:transparent !important}',
-          // 左侧菜单（会话列表）透明（用户 08-30 00:46 要求去掉毛玻璃，连同子组件全透明，背景图直接透出）
-          'body[data-vscode-theme-name] .conversation-list,body[data-vscode-theme-name] [data-view-id=sidebar]{background:transparent !important;backdrop-filter:none !important;-webkit-backdrop-filter:none !important}',
-          // 输入框区域：毛玻璃背景（用户要求加回：半透明 + 模糊，背景图透出）
-          // 注意：聊天页 [class*="input-area-container"] 父容器改为透明（patch-40 处理），
-          // 主页 .wb-home-composer 也改为透明（patch-37），毛玻璃只保留在输入框主体 _mainArea（patch-40）。
-          'body[data-vscode-theme-name] [class*="chat-input"]{background:color-mix(in srgb,var(--wb-bg-primary) 40%,transparent) !important;backdrop-filter:blur(20px) saturate(1.15);-webkit-backdrop-filter:blur(20px) saturate(1.15)}',
-          // 主内容区底部渐变保证可读
-          'body[data-vscode-theme-name] [data-view-id=main-content]{background:linear-gradient(180deg,transparent 0 38%,color-mix(in srgb,var(--wb-bg-primary) 55%,transparent) 100%) !important}',
-        ].join('');
+    } catch (_) {}
+  }
+  if (themeVideo || (theme && theme.image)) {
+    try {
+      // 全局黑色蒙版（默认 0.3，面板主题页可调）：rgba(0,0,0,α) 压在最上层，让背景更沉、文字更可读
+      // 注意：opacity=0 是合法的「关闭蒙版」，不能用 || 兜底（0 会被当成 falsy 变成 0.1）
+      const maskFile = path.join(DATA_DIR, 'mask.json');
+      let mask = 0.3;
+      try {
+        if (fs.existsSync(maskFile)) {
+          const v = parseFloat(JSON.parse(fs.readFileSync(maskFile, 'utf8')).opacity);
+          if (!Number.isNaN(v)) mask = Math.min(1, Math.max(0, v));
+        }
+      } catch (_) {}
+      const blur = readBackgroundBlur();
+      const blurPx = Math.round(blur * MAX_BACKGROUND_BLUR_PX * 10) / 10;
+      const blurCss = blurPx > 0
+        ? 'backdrop-filter:blur(' + blurPx + 'px);-webkit-backdrop-filter:blur(' + blurPx + 'px);'
+        : 'backdrop-filter:none;-webkit-backdrop-filter:none;';
+      // 容器透明化对图片与视频完全一致：底层是什么都必须能透出来
+      const containerCss = [
+        'body[data-vscode-theme-name] .teams-container,body[data-vscode-theme-name] .teams-container.is-mac{background:transparent !important;' + blurCss + '}',
+        'body[data-vscode-theme-name] [data-view-id]{background:transparent !important}',
+        'body[data-vscode-theme-name] .main-content{background:transparent !important}',
+        // 左侧菜单（会话列表）透明（用户 08-30 00:46 要求去掉毛玻璃，连同子组件全透明，背景图直接透出）
+        'body[data-vscode-theme-name] .conversation-list,body[data-vscode-theme-name] [data-view-id=sidebar]{background:transparent !important;backdrop-filter:none !important;-webkit-backdrop-filter:none !important}',
+        // 输入框区域：毛玻璃背景（用户要求加回：半透明 + 模糊，背景图透出）
+        // 注意：聊天页 [class*="input-area-container"] 父容器改为透明（patch-40 处理），
+        // 主页 .wb-home-composer 也改为透明（patch-37），毛玻璃只保留在输入框主体 _mainArea（patch-40）。
+        'body[data-vscode-theme-name] [class*="chat-input"]{background:color-mix(in srgb,var(--wb-bg-primary) 40%,transparent) !important;backdrop-filter:blur(20px) saturate(1.15);-webkit-backdrop-filter:blur(20px) saturate(1.15)}',
+        // 主内容区底部渐变保证可读
+        'body[data-vscode-theme-name] [data-view-id=main-content]{background:linear-gradient(180deg,transparent 0 38%,color-mix(in srgb,var(--wb-bg-primary) 55%,transparent) 100%) !important}',
+      ].join('');
+      if (themeVideo) {
+        bgCssStr = videoRootBackground(mask) + containerCss;
+      } else {
+        const safeId = String(theme.id || id).replace(/[^A-Za-z0-9_-]/g, '_');
+        const candidates = [
+          path.join(THEMES_DIR, safeId, String(theme.image).replace(/^\.\.?[/\\]/, '')),
+          path.join(THEMES_DIR, safeId, 'background.' + String(theme.image).split('.').pop()),
+          path.join(THEMES_DIR, String(theme.image).replace(/^\.\.?[/\\]/, '')),
+        ];
+        let imgPath = null;
+        for (const c of candidates) {
+          if (fs.existsSync(c)) { imgPath = c; break; }
+        }
+        // 兜底：按文件名在 themes 所有子目录里搜索（兼容旧 build 上传时目录 id 与主题 id 不一致的情况）
+        if (!imgPath) {
+          try {
+            const wanted = String(theme.image).split('/').pop().split('\\').pop();
+            for (const sub of fs.readdirSync(THEMES_DIR)) {
+              const p = path.join(THEMES_DIR, sub, wanted);
+              if (fs.existsSync(p)) { imgPath = p; break; }
+            }
+          } catch (_) {}
+        }
+        if (imgPath) {
+          const buf = fs.readFileSync(imgPath);
+          const ext = path.extname(imgPath).toLowerCase().replace('.jpeg', '.jpg');
+          const mime = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
+          const dataUrl = 'data:' + mime + ';base64,' + buf.toString('base64');
+          // WBSS 背景图方案：背景图铺 #root，容器透明 + 半透明毛玻璃让底图透出
+          // 遮罩/半透明度调低（40%/34%/30%）：背景图偏暗时让图更透出，毛玻璃更可见
+          bgCssStr = [
+            '#root{background:',
+            'linear-gradient(rgba(0,0,0,' + mask + '),rgba(0,0,0,' + mask + ')),',
+            'linear-gradient(90deg,color-mix(in srgb,var(--wb-bg-primary) 40%,transparent) 0 18%,transparent 42%),',
+            'linear-gradient(180deg,transparent 0 58%,color-mix(in srgb,var(--wb-bg-primary) 50%,transparent) 100%),',
+            'var(--wbs-wallpaper-image,url(' + dataUrl + ')) right center / cover no-repeat fixed !important;}',
+            containerCss,
+          ].join('');
+        }
       }
     } catch (e) {
       log('[theme] 背景图加载失败: ' + e.message);
@@ -8851,6 +9046,11 @@ async function applyThemeByCdp(id, options = {}) {
   }
   const expr = `(function(){
     if (window.__wbsWallpaperRuntime) window.__wbsWallpaperRuntime.dispose();
+    // 主题里没有视频就顺手摘掉视频层：daemon 重启后 lastVideoKey 是空的，
+    // 靠这一步兜住"页面里还挂着上一版视频"的情况，不必依赖 daemon 的内存状态。
+    // nebula 的官方深色预置（videoPreflight）不能摘：紧跟着就会重新挂载，
+    // 提前摘掉会让几十 MB 的视频重下一遍。
+    ${themeVideo || options.videoPreflight ? '' : 'if (window.__wbsVideoRuntime) window.__wbsVideoRuntime.dispose();'}
     var h = document.documentElement, b = document.body;
     if (!h || !b) return { pending: true };
     try {
@@ -9198,7 +9398,15 @@ async function applyThemeByCdp(id, options = {}) {
     log('[theme] 应用主题失败: ' + detail);
     throw new Error('应用主题失败: ' + detail);
   }
-  if (id === 'nebula' && takeoverEnabled && wallpaperRotation.status().mode === 'random') {
+  // 视频壁纸层在主题 CSS 之后挂载/摘除：此刻 #root 已经只留蒙版，视频到位即可见。
+  // 同一个视频重复应用（拖蒙版、改毛玻璃）命中 key，不会重新拉流。
+  if (takeoverEnabled && themeVideo) {
+    await applyVideoWallpaperByCdp(themeVideo, id);
+  } else if (lastVideoKey && !options.videoPreflight) {
+    await disposeVideoWallpaperByCdp();
+  }
+  // 视频壁纸下不启用图片随机轮换：两者抢同一层背景。
+  if (!themeVideo && id === 'nebula' && takeoverEnabled && wallpaperRotation.status().mode === 'random') {
     wallpaperRotation.restore().catch(() => {});
   }
   // 浅色成功恢复官方样式时 applied=false（无自定义覆盖），仍须启动轮询并更新基线。
@@ -11416,6 +11624,70 @@ function handleApi(req, res) {
     }
   }
 
+  // 视频壁纸（毛玻璃主题的背景层，方案见 scripts/wallpaper-video.js）
+  // GET    /api/theme-video?id=<主题 id>[&v=<mtime>]  字节流；渲染进程 fetch 成 blob 交给 <video>
+  // POST   /api/theme-video/upload?id=<主题 id>      裸流上传，落盘 themes/<id>/background.<mp4|webm>
+  // DELETE /api/theme-video?id=<主题 id>             移除视频，自动回落到图片背景
+  if (p === '/api/theme-video' || p === '/api/theme-video/upload') {
+    if (!PROFILE.capabilities.theme || PROFILE.capabilities.themeTakeover === false) {
+      return json(res, 400, { ok: false, error: '当前客户端不支持视频壁纸' });
+    }
+  }
+  if (req.method === 'GET' && p === '/api/theme-video') {
+    try {
+      const themeId = String(url.searchParams.get('id') || readSavedThemeId() || '');
+      const theme = getTheme(themeId);
+      const file = theme && theme.video ? resolveVideoFile(THEMES_DIR, theme.id || themeId, theme.video) : null;
+      if (!file) return json(res, 404, { ok: false, error: '当前主题没有视频壁纸' });
+      const stat = fs.statSync(file);
+      const ext = path.extname(file).toLowerCase();
+      const mime = ext === '.webm' ? 'video/webm' : 'video/mp4';
+      const headers = {
+        'Content-Type': mime, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff',
+        'Accept-Ranges': 'bytes',
+      };
+      if (res.__wbsCorsOrigin) { headers['Access-Control-Allow-Origin'] = res.__wbsCorsOrigin; headers.Vary = 'Origin'; }
+      // Range：渲染进程目前整段 fetch，但保留分段能力，便于之后直接给 <video src> 用。
+      const range = /^bytes=(\d*)-(\d*)$/.exec(String(req.headers.range || ''));
+      let start = 0;
+      let end = stat.size - 1;
+      let status = 200;
+      if (range && stat.size > 0) {
+        const rawStart = range[1] === '' ? null : parseInt(range[1], 10);
+        const rawEnd = range[2] === '' ? null : parseInt(range[2], 10);
+        if (rawStart === null && rawEnd !== null) { start = Math.max(0, stat.size - rawEnd); }
+        else if (rawStart !== null) { start = rawStart; if (rawEnd !== null) end = Math.min(rawEnd, stat.size - 1); }
+        if (start > end || start >= stat.size) {
+          res.writeHead(416, { 'Content-Range': `bytes */${stat.size}` });
+          return res.end();
+        }
+        status = 206;
+        headers['Content-Range'] = `bytes ${start}-${end}/${stat.size}`;
+      }
+      headers['Content-Length'] = end - start + 1;
+      if (res.destroyed) return;
+      res.writeHead(status, headers);
+      const stream = fs.createReadStream(file, { start, end });
+      res.on('close', () => stream.destroy());
+      stream.on('error', () => res.destroy());
+      stream.pipe(res);
+      return;
+    } catch (e) {
+      if (!res.headersSent) return json(res, 500, { ok: false, error: e.message });
+      return;
+    }
+  }
+  if (req.method === 'POST' && p === '/api/theme-video/upload') {
+    return handleThemeVideoUpload(req, res, url).catch((e) => {
+      if (!res.headersSent) json(res, 500, { ok: false, error: e.message });
+    });
+  }
+  if (req.method === 'DELETE' && p === '/api/theme-video') {
+    return handleThemeVideoDelete(res, url).catch((e) => {
+      if (!res.headersSent) json(res, 500, { ok: false, error: e.message });
+    });
+  }
+
   // 官方背景图库列表（themes/wallpapers/*.webp），供面板「主题」页预览切换。
   // 附带 currentWallpaper：当前主题 background.webp 内容哈希匹配到的图库文件名（供面板高亮当前壁纸）
   // 附带 customWallpapers：用户上传的自定义壁纸（custom-*.webp），供面板分开展示
@@ -11428,15 +11700,23 @@ function handleApi(req, res) {
       const custom = files.filter((f) => /^custom-/i.test(f));
       // 当前背景 = 当前主题目录的 background.webp（哈希对比图库）
       let currentWallpaper = null;
+      // 视频壁纸在生效时占据整个背景层，图片选中态不再具有意义
+      let currentVideo = null;
       try {
         const cur = JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'current-theme.json'), 'utf8')).id || '';
-        const bg = path.join(THEMES_DIR, String(cur).replace(/[^A-Za-z0-9_-]/g, '_'), 'background.webp');
-        if (fs.existsSync(bg)) {
-          const crypto = require('crypto');
-          const want = crypto.createHash('md5').update(fs.readFileSync(bg)).digest('hex');
-          for (const f of files) {
-            const p2 = path.join(WALLPAPERS_DIR, f);
-            if (crypto.createHash('md5').update(fs.readFileSync(p2)).digest('hex') === want) { currentWallpaper = f; break; }
+        const curTheme = getTheme(cur);
+        const videoFile = curTheme && curTheme.video ? resolveVideoFile(THEMES_DIR, curTheme.id || cur, curTheme.video) : null;
+        if (videoFile) {
+          currentVideo = { name: path.basename(videoFile), title: path.basename(videoFile), size: fs.statSync(videoFile).size };
+        } else {
+          const bg = path.join(THEMES_DIR, String(cur).replace(/[^A-Za-z0-9_-]/g, '_'), 'background.webp');
+          if (fs.existsSync(bg)) {
+            const crypto = require('crypto');
+            const want = crypto.createHash('md5').update(fs.readFileSync(bg)).digest('hex');
+            for (const f of files) {
+              const p2 = path.join(WALLPAPERS_DIR, f);
+              if (crypto.createHash('md5').update(fs.readFileSync(p2)).digest('hex') === want) { currentWallpaper = f; break; }
+            }
           }
         }
       } catch (_) {}
@@ -11445,6 +11725,7 @@ function handleApi(req, res) {
         wallpapers: official.map((f) => ({ name: f, title: '官方壁纸 ' + String(f.replace(/\.webp$/i, '')).replace(/^wallpaper-?0*/, '') })),
         customWallpapers: custom.map((f) => ({ name: f, title: '自定义壁纸 ' + String(f.replace(/\.webp$/i, '')).replace(/^custom-/, '') })),
         currentWallpaper,
+        currentVideo,
       });
     } catch (e) {
       return json(res, 500, { ok: false, error: e.message });
@@ -12397,8 +12678,14 @@ function handleApi(req, res) {
           try {
             const t = JSON.parse(fs.readFileSync(tf, 'utf8'));
             t.image = 'background.webp';
+            // 选图片就说明不要视频了：video 字段留着会让视频层继续压住这张图
+            delete t.video;
             fs.writeFileSync(tf, JSON.stringify(t, null, 2));
           } catch (_) {}
+        }
+        // 顺手清掉视频文件，避免磁盘里留一份再也不会被引用的片子
+        for (const ext of ['mp4', 'webm']) {
+          try { fs.rmSync(path.join(dir, 'background.' + ext), { force: true }); } catch (_) {}
         }
         // 记录当前主题并应用（reload 后 1.5s 恢复的就是这张新图，不再"切回最早背景图"）
         try {
