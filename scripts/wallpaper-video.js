@@ -47,12 +47,17 @@ function resolveVideoFile(themesDir, themeId, videoName) {
   const safeId = String(themeId || '').replace(/[^A-Za-z0-9_-]/g, '_');
   const raw = String(videoName || '').replace(/^\.\.?[/\\]/, '');
   if (!safeId || !raw) return null;
-  const candidates = [
-    path.join(themesDir, safeId, raw),
-    path.join(themesDir, raw),
-  ];
+  const root = path.resolve(themesDir);
+  const candidates = [path.join(root, safeId, raw), path.join(root, raw)];
+  const isInside = (base, target) => target === base || target.startsWith(base + path.sep);
   for (const c of candidates) {
-    try { if (fs.existsSync(c) && fs.statSync(c).isFile()) return c; } catch (_) {}
+    try {
+      const resolved = path.resolve(c);
+      if (!isInside(root, resolved) || !fs.statSync(resolved).isFile()) continue;
+      // Reject symlinks that point outside the themes directory as well as lexical traversal.
+      if (!isInside(fs.realpathSync(root), fs.realpathSync(resolved))) continue;
+      return resolved;
+    } catch (_) {}
   }
   return null;
 }
@@ -67,11 +72,16 @@ function videoRootBackground(mask) {
   ].join(',') + ' !important;}';
 }
 
+// 视频层的定位：不能压在 z-index:-1 —— WorkBuddy 的 body 有不透明底色
+// （--vscode-editor-background），按 CSS 绘制顺序它画在负层级之上，视频会被整块盖住，
+// 表现出来就是「上传成功但界面一片黑」。所以视频停在第 0 层，由 #root 提到第 1 层，
+// 蒙版和渐变仍随 #root 的背景压在视频上方。
 const VIDEO_LAYER_CSS = [
-  '#wbs-video-wallpaper{position:fixed;inset:0;z-index:-1;overflow:hidden;pointer-events:none;background:transparent;opacity:0;transition:opacity .45s ease}',
+  '#wbs-video-wallpaper{position:fixed;inset:0;z-index:0;overflow:hidden;pointer-events:none;background:transparent;opacity:0;transition:opacity .45s ease}',
   '#wbs-video-wallpaper.wbs-video-ready{opacity:1}',
   '#wbs-video-wallpaper video{width:100%;height:100%;object-fit:cover;display:block;pointer-events:none;background:transparent}',
   '#wbs-video-wallpaper video::-webkit-media-controls,#wbs-video-wallpaper video::-webkit-media-controls-enclosure,#wbs-video-wallpaper video::-webkit-media-controls-panel{display:none!important}',
+  '#root{position:relative;z-index:1}',
 ].join('');
 
 const VIDEO_HOST_ID = 'wbs-video-wallpaper';
@@ -105,7 +115,7 @@ async function updateVideoInRenderer(options) {
   }
 
   var runtime = window.__wbsVideoRuntime;
-  if (runtime && runtime.key === key && runtime.host && runtime.host.isConnected) {
+  if (runtime && runtime.key === key && runtime.ready && runtime.host && runtime.host.isConnected) {
     ensureStyle();
     runtime.play();
     return true;
@@ -152,6 +162,7 @@ async function updateVideoInRenderer(options) {
     key: key,
     host: host,
     video: video,
+    ready: false,
     play: function () {
       if (document.hidden) return;
       try { var p = video.play(); if (p && p.catch) p.catch(function () {}); } catch (_) {}
@@ -185,6 +196,7 @@ async function updateVideoInRenderer(options) {
     var timer = setTimeout(function () { reject(new Error('视频加载超时')); }, 20000);
     video.addEventListener('loadeddata', function () {
       clearTimeout(timer);
+      rt.ready = true;
       if (!disposed && window.__wbsVideoRuntime === rt) host.classList.add('wbs-video-ready');
       resolve(true);
     }, { once: true });
@@ -221,8 +233,12 @@ async function updateVideoInRenderer(options) {
     };
     document.addEventListener('pointerdown', onGesture, true);
     try { video.load(); } catch (_) {}
-    return await loaded.then(function () { return true; }).catch(function () { return false; });
+    return await loaded.then(function () { return true; }).catch(function () {
+      if (window.__wbsVideoRuntime === rt) rt.dispose();
+      return false;
+    });
   } catch (_) {
+    if (window.__wbsVideoRuntime === rt) rt.dispose();
     return false;
   }
 }

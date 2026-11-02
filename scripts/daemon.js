@@ -543,6 +543,7 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 // 1.2.66：刷新凭据按原信封加密保存，同账号刷新去重，过期账号保留手动切换。
 // 1.2.67：Windows 重启 GUI 客户端时不再请求隐藏主窗口，与冷启动保持一致。
 // 1.2.69：毛玻璃主题支持视频壁纸（MP4 / WebM），与图片壁纸共用蒙版与背景毛玻璃。
+// 1.2.70：视频壁纸层夹在 body 底色与 #root 之间，毛玻璃主题下正常显示画面。
 // #507: explicit cleanup of old Windows client temp files, only before a verified cold launch.
 // 1.2.81：在共享目标分支加入视频壁纸及失败重试、主题路径边界修复。
 const DAEMON_VERSION = '1.2.81';
@@ -9075,8 +9076,13 @@ async function handleThemeVideoUpload(req, res, url) {
   // 视频与图片随机轮换互斥：抢的是同一层背景
   await wallpaperRotation.configure({ mode: 'manual' }).catch(() => {});
   log(`[theme] 上传视频壁纸 -> ${meta.id}/${fileName} (${size}B)`);
-  const applied = await applyThemeByCdp(meta.id).then(() => true).catch(() => false);
-  return json(res, 200, { ok: true, video: fileName, size, mime: format.mime, applied, id: meta.id });
+  const info = await applyThemeByCdp(meta.id).catch(() => null);
+  // mounted 反映渲染进程是否真的把视频挂上了：解码失败或客户端未连接时为 false，
+  // 让面板能提示"存下了但没显示"，而不是一律报成功。
+  return json(res, 200, {
+    ok: true, video: fileName, size, mime: format.mime,
+    applied: !!info, mounted: !!(info && info.video), id: meta.id,
+  });
 }
 
 async function handleThemeVideoDelete(res, url) {
@@ -9619,10 +9625,11 @@ async function applyThemeByCdp(id, options = {}) {
     log('[theme] 应用主题失败: ' + detail);
     throw new Error('应用主题失败: ' + detail);
   }
-  // 视频壁纸层在主题 CSS 之后挂载/摘除：此刻 #root 已经只留蒙版，视频到位即可见。
+  // 视频壁纸层在主题 CSS 之后挂载/摘除：此刻 #root 已经留出背景层，视频到位即可见。
   // 同一个视频重复应用（拖蒙版、改毛玻璃）命中 key，不会重新拉流。
+  let videoMounted = null;
   if (takeoverEnabled && themeVideo) {
-    await applyVideoWallpaperByCdp(themeVideo, id);
+    videoMounted = await applyVideoWallpaperByCdp(themeVideo, id);
   } else if (lastVideoKey && !options.videoPreflight) {
     await disposeVideoWallpaperByCdp();
   }
@@ -9636,6 +9643,7 @@ async function applyThemeByCdp(id, options = {}) {
     startSystemThemePolling();
   }
   return { ok: true, applied: v.applied, dark: v.dark, bg: v.bg, text: v.text,
+    ...(videoMounted === null ? {} : { video: videoMounted }),
     ...(systemMode ? { system: true, resolved: id } : {}) };
 }
 

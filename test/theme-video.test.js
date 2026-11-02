@@ -45,6 +45,12 @@ test('resolveVideoFile stays inside themes/ and falls back to the file name layo
   assert.equal(resolveVideoFile(dir, '../nebula', 'background.mp4'), null);
   // video 字段写成分散路径时只取文件名，仍落在该主题目录内
   assert.equal(resolveVideoFile(dir, 'nebula', '../background.mp4'), path.join(dir, 'nebula', 'background.mp4'));
+  fs.writeFileSync(path.join(dir, 'outside.mp4'), mp4());
+  assert.equal(resolveVideoFile(dir, 'nebula', '../../../outside.mp4'), null, 'multi-level traversal cannot leave themes/');
+  try {
+    fs.symlinkSync(path.join(dir, 'outside.mp4'), path.join(dir, 'nebula', 'linked.mp4'));
+    assert.equal(resolveVideoFile(dir, 'nebula', 'linked.mp4'), null, 'symlinks cannot expose files outside themes/');
+  } catch (_) {}
   assert.equal(resolveVideoFile(dir, 'nebula', 'missing.mp4'), null);
   assert.equal(resolveVideoFile(dir, '', 'background.mp4'), null);
 });
@@ -57,7 +63,10 @@ test('video background keeps the shared mask but drops the image layer', () => {
   assert.match(videoRootBackground(0), /rgba\(0,0,0,0\)/);
   assert.match(videoRootBackground(-1), /rgba\(0,0,0,0\)/);
   assert.match(videoRootBackground(9), /rgba\(0,0,0,1\)/);
-  assert.match(VIDEO_LAYER_CSS, /z-index:-1/);
+  // 视频层停在第 0 层、#root 提到第 1 层：body 的不透明底色画在负层级之上，
+  // 视频一旦沉到 z-index:-1 就会被整块盖住
+  assert.match(VIDEO_LAYER_CSS, /#wbs-video-wallpaper\{position:fixed;inset:0;z-index:0;/);
+  assert.match(VIDEO_LAYER_CSS, /#root\{position:relative;z-index:1\}/);
   assert.match(VIDEO_LAYER_CSS, /pointer-events:none/);
 });
 
@@ -203,6 +212,24 @@ test('renderer replaces the layer for a new key and dispose removes it completel
   assert.equal(dom.body.children.length, 0, 'no leftover node');
   assert.equal(dom.document.getElementById('wbs-video-style'), null, 'style element removed with the layer');
   assert.equal(dom.env.window.__wbsVideoRuntime, undefined);
+});
+
+test('renderer retries the same video after a failed request', async () => {
+  const dom = fakeWallpaperDom();
+  let attempts = 0;
+  dom.env.fetch = async () => {
+    attempts++;
+    if (attempts === 1) throw new Error('temporary network failure');
+    return { ok: true, blob: async () => ({ size: 1024 }) };
+  };
+  const options = { url: '/a', token: 'tok', key: 'same-video' };
+  assert.equal(await dom.env.update(options), false);
+  assert.equal(dom.env.window.__wbsVideoRuntime, undefined, 'failed runtime is disposed');
+  const retried = dom.env.update(options);
+  await settle();
+  assert.equal(await retried, true);
+  assert.equal(attempts, 2, 'retry fetches the video again');
+  dom.env.dispose();
 });
 
 test('video layer pauses while the window is hidden', async () => {
