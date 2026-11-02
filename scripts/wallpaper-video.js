@@ -67,11 +67,16 @@ function videoRootBackground(mask) {
   ].join(',') + ' !important;}';
 }
 
+// 视频层的定位：不能压在 z-index:-1 —— WorkBuddy 的 body 有不透明底色
+// （--vscode-editor-background），按 CSS 绘制顺序它画在负层级之上，视频会被整块盖住，
+// 表现出来就是「上传成功但界面一片黑」。所以视频停在第 0 层，由 #root 提到第 1 层，
+// 蒙版和渐变仍随 #root 的背景压在视频上方。
 const VIDEO_LAYER_CSS = [
-  '#wbs-video-wallpaper{position:fixed;inset:0;z-index:-1;overflow:hidden;pointer-events:none;background:transparent;opacity:0;transition:opacity .45s ease}',
+  '#wbs-video-wallpaper{position:fixed;inset:0;z-index:0;overflow:hidden;pointer-events:none;background:transparent;opacity:0;transition:opacity .45s ease}',
   '#wbs-video-wallpaper.wbs-video-ready{opacity:1}',
   '#wbs-video-wallpaper video{width:100%;height:100%;object-fit:cover;display:block;pointer-events:none;background:transparent}',
   '#wbs-video-wallpaper video::-webkit-media-controls,#wbs-video-wallpaper video::-webkit-media-controls-enclosure,#wbs-video-wallpaper video::-webkit-media-controls-panel{display:none!important}',
+  '#root{position:relative;z-index:1}',
 ].join('');
 
 const VIDEO_HOST_ID = 'wbs-video-wallpaper';

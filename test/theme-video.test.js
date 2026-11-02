@@ -57,7 +57,10 @@ test('video background keeps the shared mask but drops the image layer', () => {
   assert.match(videoRootBackground(0), /rgba\(0,0,0,0\)/);
   assert.match(videoRootBackground(-1), /rgba\(0,0,0,0\)/);
   assert.match(videoRootBackground(9), /rgba\(0,0,0,1\)/);
-  assert.match(VIDEO_LAYER_CSS, /z-index:-1/);
+  // 视频层停在第 0 层、#root 提到第 1 层：body 的不透明底色画在负层级之上，
+  // 视频一旦沉到 z-index:-1 就会被整块盖住
+  assert.match(VIDEO_LAYER_CSS, /#wbs-video-wallpaper\{position:fixed;inset:0;z-index:0;/);
+  assert.match(VIDEO_LAYER_CSS, /#root\{position:relative;z-index:1\}/);
   assert.match(VIDEO_LAYER_CSS, /pointer-events:none/);
 });
 
