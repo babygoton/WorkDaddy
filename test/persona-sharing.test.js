@@ -56,6 +56,25 @@ test('a not-yet-created backup root beneath a redirected parent can initialize s
   p.dismissPersonaNotice(nested);
   assert.equal(p.readPersonaSettings(path.join(actualRoot, 'new', 'profile')).noticeDismissed, true);
 });
+test('a redirected client root supports sharing, switching and rollback but rejects inner links', t => {
+  const f = fixture(t);
+  const actualRoot = f.options.dataRoot;
+  const alias = actualRoot + '-alias';
+  fs.symlinkSync(actualRoot, alias, process.platform === 'win32' ? 'junction' : 'dir');
+  f.options.dataRoot = alias;
+  f.enable();
+  f.write('a', 'USER.md', 'updated through redirected root');
+  const result = p.syncSharedPersonaForSwitch({ ...f.options, sourceUid: 'a', targetUid: 'b' });
+  assert.equal(fs.readFileSync(f.file('b', 'USER.md'), 'utf8'), 'updated through redirected root');
+  result.rollback();
+  assert.equal(fs.readFileSync(f.file('b', 'USER.md'), 'utf8'), 'bUSER.md');
+  const outside = path.join(path.dirname(actualRoot), 'outside-client');
+  fs.mkdirSync(outside);
+  fs.rmSync(path.join(actualRoot, 'user-b-personal'), { recursive: true });
+  fs.symlinkSync(outside, path.join(actualRoot, 'user-b-personal'), process.platform === 'win32' ? 'junction' : 'dir');
+  assert.throws(() => p.syncSharedPersonaForSwitch({ ...f.options, sourceUid: 'a', targetUid: 'b' }), /符号链接/);
+  assert.deepEqual(fs.readdirSync(outside), []);
+});
 test('shared A edits reach B; B edits and optional memory deletion reach A, preserving state', t => {
   const f=fixture(t); f.enable();
   f.write('a','MEMORY.md','new A memory');

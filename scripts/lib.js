@@ -1291,9 +1291,11 @@ function removeAutoCopySession(dataDir, uid, sessionId) {
 // 账号，切换回来时 auto-copy 会把它们原样复制回来（用户观察到的「删除后
 // 切走再切回、会话复活」现象）。无 lineage 的会话映射回自身。
 // 返回 [{ uid, id, lineageId }]；uid 可能为空（脏索引），id 必有值。
+// Copy guards consult provenance repeatedly. Rebuild its graph only after the
+// meta-file fingerprint changes, rather than scanning every account per guard.
+const lineageDeleteIndexes = new WeakMap();
 function collectLineageMembersForDelete(dataDir, sessionIds) {
-  const meta = readMeta(dataDir);
-  const config = ensureAutoCopyMeta(meta);
+  const config = readAutoCopyConfig(dataDir);
   const ids = new Set(
     (Array.isArray(sessionIds) ? sessionIds : [])
       .map((s) => String(s || '').trim())
@@ -1303,39 +1305,45 @@ function collectLineageMembersForDelete(dataDir, sessionIds) {
   // 成员表、反向索引及历史复制映射共同证明同源关系。只查成员表会漏掉
   // 旧版复制记录，以及 normalizeAutoCopyLineages 拆出的重复物理会话。
   // 不使用标题、工作目录或消息相似度推断，避免删除独立会话。
-  const membersByLineage = new Map();
-  const lineagesBySession = new Map();
-  const lineagesByOrigin = new Map();
-  const addLink = (lineageId, memberUid, memberId) => {
-    if (!config.sessions[lineageId]) return;
-    const uid = String(memberUid || '').trim();
-    const id = String(memberId || '').trim();
-    if (!id) return;
-    if (!membersByLineage.has(lineageId)) membersByLineage.set(lineageId, new Map());
-    membersByLineage.get(lineageId).set(id, { uid, id, lineageId });
-    if (!lineagesBySession.has(id)) lineagesBySession.set(id, new Set());
-    lineagesBySession.get(id).add(lineageId);
-  };
-  for (const [lineageId, lineage] of Object.entries(config.sessions)) {
-    if (!lineage) continue;
-    const origin = String(lineage.originLineageId || lineageId);
-    if (!lineagesByOrigin.has(origin)) lineagesByOrigin.set(origin, []);
-    lineagesByOrigin.get(origin).push(lineageId);
-    for (const member of (Array.isArray(lineage.members) ? lineage.members : [])) {
-      addLink(lineageId, member && member.uid, member && member.id);
-    }
-  }
-  for (const [uid, index] of Object.entries(config.sessionIndex)) {
-    for (const [id, lineageId] of Object.entries(index || {})) addLink(String(lineageId || ''), uid, id);
-  }
-  for (const [key, mapping] of Object.entries(config.copies)) {
-    try {
-      const parts = JSON.parse(key);
-      if (Array.isArray(parts) && parts.length === 2) {
-        addLink(String(parts[0] || ''), parts[1], mapping && mapping.targetId);
+  let indexes = lineageDeleteIndexes.get(config);
+  if (!indexes) {
+    const membersByLineage = new Map();
+    const lineagesBySession = new Map();
+    const lineagesByOrigin = new Map();
+    const addLink = (lineageId, memberUid, memberId) => {
+      if (!config.sessions[lineageId]) return;
+      const uid = String(memberUid || '').trim();
+      const id = String(memberId || '').trim();
+      if (!id) return;
+      if (!membersByLineage.has(lineageId)) membersByLineage.set(lineageId, new Map());
+      membersByLineage.get(lineageId).set(id, { uid, id, lineageId });
+      if (!lineagesBySession.has(id)) lineagesBySession.set(id, new Set());
+      lineagesBySession.get(id).add(lineageId);
+    };
+    for (const [lineageId, lineage] of Object.entries(config.sessions)) {
+      if (!lineage) continue;
+      const origin = String(lineage.originLineageId || lineageId);
+      if (!lineagesByOrigin.has(origin)) lineagesByOrigin.set(origin, []);
+      lineagesByOrigin.get(origin).push(lineageId);
+      for (const member of (Array.isArray(lineage.members) ? lineage.members : [])) {
+        addLink(lineageId, member && member.uid, member && member.id);
       }
-    } catch (_) { /* Malformed legacy keys cannot establish a copy relationship. */ }
+    }
+    for (const [uid, index] of Object.entries(config.sessionIndex)) {
+      for (const [id, lineageId] of Object.entries(index || {})) addLink(String(lineageId || ''), uid, id);
+    }
+    for (const [key, mapping] of Object.entries(config.copies)) {
+      try {
+        const parts = JSON.parse(key);
+        if (Array.isArray(parts) && parts.length === 2) {
+          addLink(String(parts[0] || ''), parts[1], mapping && mapping.targetId);
+        }
+      } catch (_) { /* Malformed legacy keys cannot establish a copy relationship. */ }
+    }
+    indexes = { membersByLineage, lineagesBySession, lineagesByOrigin };
+    lineageDeleteIndexes.set(config, indexes);
   }
+  const { membersByLineage, lineagesBySession, lineagesByOrigin } = indexes;
   const members = [];
   const seenIds = new Set();
   const seenLineages = new Set();

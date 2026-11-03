@@ -6,8 +6,27 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
+
+func TestStartupFailureMessagesPreserveFailureCategory(t *testing.T) {
+	for _, item := range []struct {
+		code int
+		text string
+	}{
+		{3, "调试端口"}, {11, "权限"}, {12, "身份"}, {13, "保留"},
+		{14, "异常退出"}, {15, "更新"}, {4, "启动失败"},
+	} {
+		message := startupFailureMessage(item.code)
+		if !strings.Contains(message, item.text) || !strings.Contains(message, "native-launcher.log") {
+			t.Fatalf("code %d lost category or log location: %s", item.code, message)
+		}
+		if strings.Contains(message, "管理员身份重试") {
+			t.Fatal("startup guidance must not request privilege escalation")
+		}
+	}
+}
 
 func TestProcessNameDiffersRequiresPositiveMismatch(t *testing.T) {
 	for _, test := range []struct {

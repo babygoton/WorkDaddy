@@ -14,7 +14,7 @@ const PERSONA_MODES = ['unset', 'shared', 'independent'];
 function validUid(uid) { return typeof uid === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(uid); }
 function personaDir(root, uid) {
   if (!validUid(uid)) throw new Error('账号格式无效');
-  return path.join(path.resolve(root), `user-${uid}-personal`);
+  return path.join(resolveTrustedRoot(root), `user-${uid}-personal`);
 }
 function assertSafePath(file) {
   let cursor = path.resolve(file);
@@ -57,6 +57,7 @@ function usableSource(files) {
     (!files['BOOTSTRAP.md'] || !!stateOf(files).onboardingCompletedAt);
 }
 function scopedLayout(root) {
+  root = resolveTrustedRoot(root);
   assertSafePath(root);
   const marker = path.join(root, 'storage/device/global/user-data-migration.json');
   assertSafePath(marker);
@@ -91,16 +92,16 @@ function inspectPersona(options) {
     const sourceFiles = snapshot(personaDir(dataRoot, uid));
     if (usableSource(sourceFiles)) sources.push({ uid, nickname: String(account.nickname || uid), files: IDENTITY_FILES.filter(name => nonempty(sourceFiles, name)) });
   }
-  const legacyFiles = snapshot(path.resolve(dataRoot));
+  const legacyFiles = snapshot(resolveTrustedRoot(dataRoot));
   if (usableSource(legacyFiles)) sources.push({ uid: 'legacy', nickname: '升级前共用的设置', files: IDENTITY_FILES.filter(name => nonempty(legacyFiles, name)) });
   return { uid: targetUid, status, eligible: ['missing', 'empty', 'bootstrap'].includes(status) && sources.length > 0, sources, revision };
 }
 
-// The configured backup root may be redirected (for example an AppData
-// Junction). Canonicalize that trusted root, including a not-yet-created suffix;
-// paths inside persona still pass through assertSafePath without following links.
-function resolveBackupRoot(backupRoot) {
-  let cursor = path.resolve(backupRoot);
+// Configured client/backup roots may be redirected (for example an AppData
+// junction). Resolve only the trusted root, including a not-yet-created suffix;
+// account directories and files inside it still reject links.
+function resolveTrustedRoot(root) {
+  let cursor = path.resolve(root);
   const missing = [];
   for (;;) {
     try { return path.join(fs.realpathSync(cursor), ...missing); }
@@ -113,7 +114,7 @@ function resolveBackupRoot(backupRoot) {
   }
 }
 function personaSettingsFile(backupRoot) {
-  const file = path.join(resolveBackupRoot(backupRoot), 'persona', 'settings.json');
+  const file = path.join(resolveTrustedRoot(backupRoot), 'persona', 'settings.json');
   assertSafePath(file);
   return file;
 }
@@ -143,7 +144,7 @@ function dismissPersonaNotice(backupRoot) {
   return writePersonaSettings(backupRoot, { ...readPersonaSettings(backupRoot), noticeDismissed: true });
 }
 function sharedPersonaDir(backupRoot) {
-  const dir = path.join(resolveBackupRoot(backupRoot), 'persona', 'shared');
+  const dir = path.join(resolveTrustedRoot(backupRoot), 'persona', 'shared');
   assertSafePath(dir);
   return dir;
 }
@@ -152,7 +153,7 @@ function listPersonaSources({ dataRoot, accounts = [] }) {
   for (const account of [...accounts.filter(a => a.uid !== 'legacy'), { uid: 'legacy', nickname: '升级前共用的设置' }]) {
     const uid = String(account.uid || '');
     if (!validUid(uid)) continue;
-    const files = snapshot(uid === 'legacy' ? path.resolve(dataRoot) : personaDir(dataRoot, uid));
+    const files = snapshot(uid === 'legacy' ? resolveTrustedRoot(dataRoot) : personaDir(dataRoot, uid));
     const available = usableSource(files);
     if (uid === 'legacy' && !available) continue;
     sources.push({ uid, nickname: String(account.nickname || uid), available,
@@ -162,7 +163,7 @@ function listPersonaSources({ dataRoot, accounts = [] }) {
   return sources;
 }
 function backupPersonaDirectory(backupRoot, label, original) {
-  const dir = path.join(resolveBackupRoot(backupRoot), 'persona', 'backups', label,
+  const dir = path.join(resolveTrustedRoot(backupRoot), 'persona', 'backups', label,
     `${Date.now()}-${crypto.randomBytes(6).toString('hex')}`);
   assertSafePath(dir);
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
@@ -239,7 +240,7 @@ function configurePersona(options) {
   const source = listPersonaSources(options).find(a => a.uid === options.sourceUid && a.available);
   if (!source) throw new Error('请选择可用的个性化设置来源');
   if (!options.revision || source.revision !== options.revision) throw new Error('来源个性化设置已变化，请重新选择');
-  const sourceDir = source.uid === 'legacy' ? path.resolve(options.dataRoot) : personaDir(options.dataRoot, source.uid);
+  const sourceDir = source.uid === 'legacy' ? resolveTrustedRoot(options.dataRoot) : personaDir(options.dataRoot, source.uid);
   const files = snapshot(sourceDir);
   if (fingerprint(files) !== options.revision) throw new Error('来源个性化设置已变化，请重新选择');
   const next = { mode: 'shared', noticeDismissed: true, activeUid: options.currentUid };
@@ -266,7 +267,7 @@ function copyPersona(options) {
   if (!options.revision || preview.revision !== options.revision) throw new Error('目标个性化设置已变化，请重新查看并确认');
   if (!preview.sources.some(source => source.uid === options.sourceUid)) throw new Error('个性化设置来源无效');
   const target = personaDir(options.dataRoot, options.targetUid);
-  const source = options.sourceUid === 'legacy' ? path.resolve(options.dataRoot) : personaDir(options.dataRoot, options.sourceUid);
+  const source = options.sourceUid === 'legacy' ? resolveTrustedRoot(options.dataRoot) : personaDir(options.dataRoot, options.sourceUid);
   const original = snapshot(target);
   const sourceFiles = snapshot(source);
   const state = { ...stateOf(original), version: stateOf(original).version || 1, onboardingCompletedAt: new Date().toISOString() };
@@ -274,7 +275,7 @@ function copyPersona(options) {
   const writes = {};
   for (const name of IDENTITY_FILES) if (nonempty(sourceFiles, name)) writes[name] = sourceFiles[name].text;
   writes['workspace-state.json'] = JSON.stringify(state, null, 2) + '\n';
-  const backupDir = path.join(resolveBackupRoot(options.backupRoot), 'persona', options.targetUid, `${Date.now()}-${crypto.randomBytes(6).toString('hex')}`);
+  const backupDir = path.join(resolveTrustedRoot(options.backupRoot), 'persona', options.targetUid, `${Date.now()}-${crypto.randomBytes(6).toString('hex')}`);
   assertSafePath(backupDir);
   fs.mkdirSync(backupDir, { recursive: true, mode: 0o700 });
   for (const name of Object.keys(original)) fs.writeFileSync(path.join(backupDir, name), original[name].text, { mode: 0o600, flag: 'wx' });

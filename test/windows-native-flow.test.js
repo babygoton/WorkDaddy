@@ -420,7 +420,7 @@ test('native startup precisely restarts a verified WorkBuddy without CDP', () =>
   const stop = launcher.slice(stopStart, stopEnd);
   assert.match(stop, /--terminate-workbuddy/);
   assert.match(stop, /--profile[\s\S]*PROFILE\.id/);
-  assert.match(stop, /result\.status !== 0[\s\S]*throw new Error/);
+  assert.match(stop, /result\.status !== 0[\s\S]*error\.exitCode = result\.status[\s\S]*throw error/);
 
   const nativeMainStart = launcher.indexOf('async function nativeStartupMain()');
   const nativeMainEnd = launcher.indexOf('\n// ---------- legacy script entry', nativeMainStart);

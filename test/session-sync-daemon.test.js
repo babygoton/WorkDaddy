@@ -11,7 +11,7 @@ const sessionSync = require('../scripts/session-sync.js');
 const { createDirtyIndex } = require('../scripts/session-dirty.js');
 const source = fs.readFileSync(path.join(__dirname, '../scripts/daemon.js'), 'utf8');
 const base = [{ type: 'message', role: 'user', content: [{ text: 'question' }] }, { type: 'message', role: 'assistant', content: [{ text: 'answer' }] }];
-function harness(t, withPlanner = false) {
+function harness(t, withPlanner = false, withDeletions = false) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wd-pair-daemon-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const rows = new Map();
@@ -33,10 +33,15 @@ function harness(t, withPlanner = false) {
     accountSwitchInProgress: false, SESSION_COPY_COLUMNS: ['id', 'user_id'], sessionCopyLocks: new Map(), yieldAutoCopyToRenderer: async () => {}, assertSessionSyncIdle: async () => {},
     getSessionSyncCache: () => syncCacheMap, scheduleSessionSyncCacheSave: () => {},
     getSessionDirtyIndex: () => dirtyIndex,
+    getSessionDeletionSync: () => null,
     setTimeout, clearTimeout,
     log: () => {}, sqliteQuery: async (_, params) => {
+      if (_.includes('WHERE deleted_at IS NOT NULL')) return [...rows.values()].filter(row => row.deleted_at != null);
+      if (_.startsWith('SELECT id, user_id, deleted_at FROM sessions')) {
+        return [...rows.values()].filter(row => params.some((id, i) => i % 2 === 0 && row.id === id && row.user_id === params[i + 1])).map(row => ({ ...row }));
+      }
       if (withPlanner && params.length === 1 && /FROM sessions WHERE deleted_at IS NULL.* user_id = \?/.test(_)) {
-        return [...rows.values()].filter(row => row.user_id === params[0]).map(row => ({ ...row }));
+        return [...rows.values()].filter(row => row.user_id === params[0] && row.deleted_at == null).map(row => ({ ...row }));
       }
       if (params.length >= 4) {
         return [...rows.values()].filter((candidate) => String(candidate.user_id) === String(params[0]) &&
@@ -44,18 +49,61 @@ function harness(t, withPlanner = false) {
           String(candidate.title || '') === String(params[2] || '') &&
           String(candidate.custom_title || '') === String(params[3] || '')).map((candidate) => ({ ...candidate }));
       }
-      const row = rows.get(params[0]); return row && (!params[1] || params[1] === row.user_id) ? [{ ...row }] : [];
+      const row = rows.get(params[0]); return row && (!params[1] || params[1] === row.user_id) && (!_.includes('deleted_at IS NULL') || row.deleted_at == null) ? [{ ...row }] : [];
     },
-    sqliteRun: async (_, params) => { const row = rows.get(params[5]); assert.ok(row); Object.assign(row, { title: params[0], custom_title: params[1], status: params[2], updated_at: params[3], last_activity_at: params[4] }); },
+    sqliteRun: async (_, params) => {
+      if (_.startsWith('UPDATE sessions SET deleted_at = ?')) {
+        let changes = 0;
+        for (let i = 2; i < params.length; i += 2) {
+          const row = rows.get(params[i]);
+          if (row && row.user_id === params[i + 1] && row.deleted_at == null) { row.deleted_at = params[0]; changes++; }
+        }
+        return { changes };
+      }
+      const row = rows.get(params[5]); assert.ok(row); Object.assign(row, { title: params[0], custom_title: params[1], status: params[2], updated_at: params[3], last_activity_at: params[4] });
+    },
     insertCopiedSession: async (src, uid, id) => {
       const row = { ...src, user_id: uid, id, updated_at: Date.now(), last_activity_at: Number(src.last_activity_at || src.updated_at || Date.now()) };
       rows.set(id, row);
       return row;
     },
   };
+  if (withDeletions) {
+    const deletionSync = require('../scripts/session-deletion-sync').createSessionDeletionSync({
+      query: ctx.sqliteQuery, run: ctx.sqliteRun, locks: ctx.sessionCopyLocks,
+      members: ids => lib.collectLineageMembersForDelete(root, ids),
+    });
+    ctx.getSessionDeletionSync = () => deletionSync;
+  }
   vm.runInNewContext(source.slice(source.indexOf('function sessionCopyContentRevision('), source.indexOf(withPlanner ? 'const autoCopyJobs' : 'async function buildAutoCopyPlan(')), ctx);
   return { root, rows, file, write, ctx, lineage, copy: () => ctx.copySessionRecord(rows.get('a'), 'two', { auto: true, lineageId: lineage }) };
 }
+test('official deletion blocks reverse copy and propagates before the next switch plan', async t => {
+  const h = harness(t, true, true);
+  const refreshed = [];
+  h.ctx.refreshWorkBuddySessionList = async uid => refreshed.push(uid);
+  await h.copy();
+  h.rows.get('a').deleted_at = 100;
+  const before = fs.readFileSync(h.file('b'));
+  const result = await h.ctx.copySessionRecord(h.rows.get('b'), 'one', { auto: true, lineageId: h.lineage });
+  assert.equal(result.status, 'skipped');
+  assert.equal(result.targetId, '', 'a deleted conversation must not be reopened after switching');
+  assert.equal(h.rows.size, 3, 'the deleted target must not be replaced with a new physical session');
+  assert.equal((await h.ctx.buildAutoCopyPlan('two', 'one')).length, 0);
+  assert.equal((await h.ctx.buildAutoCopyPlan('one', 'two')).length, 0);
+  assert.ok(h.rows.get('b').deleted_at && h.rows.get('c').deleted_at);
+  assert.deepEqual(refreshed, ['one'], 'an all-deleted plan still refreshes the destination list');
+  assert.deepEqual(fs.readFileSync(h.file('b')), before, 'soft deletion must preserve message files');
+});
+
+test('deletion during a copy guard aborts publication instead of recreating the target', async t => {
+  const h = harness(t, true, true);
+  lib.removeAutoCopySessionMember(h.root, h.lineage, 'two', 'b');
+  h.rows.delete('b'); fs.unlinkSync(h.file('b'));
+  h.ctx.assertSessionSyncIdle = async () => { h.rows.get('c').deleted_at = 100; };
+  await assert.rejects(h.copy(), /已删除/);
+  assert.equal([...h.rows.values()].filter(row => row.user_id === 'two').length, 0);
+});
 test('account two continuation updates account one and never account three', async t => {
   const h = harness(t); h.write('b', [...base, { type: 'message', role: 'user', content: [{ text: 'continued' }] }]);
   const third = fs.readFileSync(h.file('c'));
@@ -1002,4 +1050,26 @@ test('copy completion preserves timestamps of concurrent source and target dirty
   assert.equal(h.ctx.getSessionDirtyIndex().get('one', 'a').at, at);
   assert.equal(h.ctx.getSessionDirtyIndex().get('two', 'b').at, at + 1);
   assert.equal((await h.switchTo('two', 'three')).length, 1);
+});
+
+for (const duringCopy of [false, true]) test('deleting the active session never reopens its old mapping or blocks later automation: ' + duringCopy, async () => {
+  let attempts = 0;
+  const ctx = { codeBuddyFiles: null, crypto, DATA_DIR: 'fixture', PROFILE: { dataRoot: 'fixture' },
+    autoCopyJobs: new Map(), autoCopyQueue: [], Date,
+    yieldAutoCopyToRenderer: async () => {},
+    buildAutoCopyPlan: async () => duringCopy ? [{ id: 'a', lineageId: 'lineage' }] : [],
+    getSessionDeletionSync: () => ({ hasDeletion: async () => !duringCopy }),
+    resolveAutoCopyTargetId: () => 'deleted-target',
+    getAutoCopyMapping: () => ({ targetId: 'deleted-target' }),
+    copySessionRecord: async () => { attempts++; const e = Error('同源会话已删除，停止同步'); e.code = 'WBS_SESSION_DELETED'; throw e; },
+    log() {}, runAutoCopyQueue() {}, pruneAutoCopyJobs() {}, setTimeout,
+  };
+  const start = source.indexOf('function startAutoCopyJob(');
+  vm.runInNewContext(source.slice(start, source.indexOf('function activeAutoCopyJob(', start)), ctx);
+  const job = ctx.startAutoCopyJob('one', 'two', [], { openSessionId: 'a' });
+  await ctx.autoCopyQueue[0].run();
+  assert.equal(attempts, duringCopy ? 1 : 0, 'deletion is final, not a transient copy failure to retry');
+  assert.equal(job.status, 'done');
+  assert.equal(job.failed, 0);
+  assert.equal(ctx.publicAutoCopyJob(job).openSessionId, '');
 });

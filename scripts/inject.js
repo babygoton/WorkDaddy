@@ -961,13 +961,20 @@ function createSessionDirtyTracker(send, options) {
   function queue(update) {
     var id = String(update && update.id || '').trim();
     if (!id) return false;
-    pending[id] = { id: id, event: String(update.event || 'sessionUpdated').slice(0, 40) };
+    // Do not let a trailing lifecycle update overwrite an explicit deletion.
+    if (!pending[id] || pending[id].event !== 'sessionDeleted') {
+      pending[id] = { id: id, event: String(update.event || 'sessionUpdated').slice(0, 40) };
+    }
     if (timer == null) timer = setTimeout(flush, delay);
     return true;
   }
   function observe(update) {
     var id = String(update && update.id || '').trim();
     if (!id) return false;
+    if (update.event === 'sessionDeleted') {
+      delete seen[id];
+      return queue(update);
+    }
     var next = signature(update);
     if (seen[id] === undefined) {
       seen[id] = next;
@@ -4672,6 +4679,14 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
 
       function position() {
         if (!root || !surface || !surface.viewportElement || hidden) return;
+        // Narrow windows leave too little space beside the text for the rail.
+        // Keep the user's setting/store intact so widening restores it immediately.
+        if (window.innerWidth <= 1280) {
+          root.style.display = 'none';
+          if (dragPointerId != null) finishNavDrag({ pointerId: dragPointerId }, true);
+          hideTooltip(true);
+          return;
+        }
         var rect = surface.viewportElement.getBoundingClientRect();
         if (!rect || rect.width <= 0 || rect.height <= 0) {
           root.style.display = 'none';

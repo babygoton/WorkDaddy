@@ -10,6 +10,18 @@ const path = require('node:path');
 const injectSource = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'inject.js'), 'utf8');
 const { createDirtyIndex } = require('../scripts/session-dirty.js');
 
+test('explicit deletion is sent even without content changes or a baseline, and survives later lifecycle events', () => {
+  const sent = [];
+  const tracker = inject.createSessionDirtyTracker(payload => sent.push(payload), { delay: 0 });
+  tracker.baseline([{ id: 'a', title: 'A', updatedAt: 10 }]);
+  assert.equal(tracker.observe({ id: 'a', title: 'A', updatedAt: 10, event: 'sessionDeleted' }), true);
+  tracker.observe({ id: 'a', title: 'A', updatedAt: 11, event: 'sessionUpdated' });
+  assert.equal(tracker.observe({ id: 'b', event: 'sessionDeleted' }), true);
+  tracker.flush();
+  assert.deepEqual(sent[1], [{ id: 'a', event: 'sessionDeleted' }, { id: 'b', event: 'sessionDeleted' }]);
+  tracker.destroy();
+});
+
 test('session dirty index uses the renderer baseline and preserves concurrent changes', () => {
   const index = createDirtyIndex();
   assert.equal(index.shouldSync('account-a', 'session-a'), true, 'uninitialized accounts use the safe fallback');
