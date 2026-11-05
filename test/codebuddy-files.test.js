@@ -15,6 +15,14 @@ function fixture(t) {
   fs.writeFileSync(path.join(base,'source','messages','message.json'),JSON.stringify({id:'message',role:'user',message:'fixture',extra:{conversationId:'source'}}));
   return {root,files,base};
 }
+test('backup aliases resolve to official owners before native history paths are constructed',t=>{
+  const {root,base}=fixture(t);
+  const files=createCodeBuddyFiles({root,sync,resolveAccountUid:uid=>uid==='enterprise-backup'?'user-a':uid});
+  files.register({id:'source',user_id:'enterprise-backup',cwd:'/fixture'});
+  assert.equal(files.snapshot(null,'source').records.length,1);
+  assert.ok(files.collect('source').every(file=>file.source.startsWith(base)));
+  assert.equal(fs.existsSync(path.join(root,'enterprise-backup')),false);
+});
 test('native history copy uses the shared guarded transaction and publishes a complete workspace index',async t=>{
   const {root,files}=fixture(t);
   const source=files.snapshot(null,'source',['target']),target=files.snapshot(null,'target',['source']);

@@ -139,6 +139,16 @@ test('stores multiple model rate limits and removes expired reset times', async 
   assert.deepEqual(afterExpiry.u1, [{ modelId: 'gpt-5.6', modelName: 'GPT-5.6', resetAt: null, observedAt: 1100, source: 'renderer-error', reasonCode: 6004 }]);
 });
 
+test('model limit de-duplication keeps usage and frequency business codes distinct', async (t) => {
+  const tmp = tempStore();
+  t.after(() => fs.rmSync(tmp.dir, { recursive: true, force: true }));
+  await tmp.store.saveModelRateLimit({ uid: 'u1', modelId: 'model-x', modelName: 'Model X', resetAt: 5000, observedAt: 1000, reasonCode: 6004, source: 'renderer-error' });
+  assert.equal(await tmp.store.hasModelRateLimitElsewhere({ uid: 'u2', modelId: 'model-x', resetAt: 5000, reasonCode: 6004, now: 4000 }), true);
+  assert.equal(await tmp.store.hasModelRateLimitElsewhere({ uid: 'u2', modelId: 'model-x', resetAt: 5000, reasonCode: 6000, now: 4000 }), false);
+  await tmp.store.saveModelRateLimit({ uid: 'u1', modelId: 'usage-model', modelName: 'Usage Model', resetAt: null, observedAt: 1000, reasonCode: 6000, source: 'renderer-error' });
+  assert.equal((await tmp.store.listModelRateLimits(['u1'], 4000).then(rows => rows.u1)).find(row => row.modelId === 'usage-model').reasonCode, 6000);
+});
+
 test('detects an active matching model limit owned by another account', async (t) => {
   const tmp = tempStore();
   t.after(() => fs.rmSync(tmp.dir, { recursive: true, force: true }));

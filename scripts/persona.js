@@ -12,6 +12,11 @@ const MAX_FILE_SIZE = 20 * 1024 * 1024;
 const PERSONA_MODES = ['unset', 'shared', 'independent'];
 
 function validUid(uid) { return typeof uid === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(uid); }
+// Enterprise persona directory naming is owned by WorkBuddy. Never project a
+// WorkDaddy backup id into its filesystem or guess a personal directory.
+function scopedAccount(accounts = [], uid) {
+  return accounts.find(account => String(account.uid) === String(uid) && account.rawUid && account.rawUid !== account.uid);
+}
 function personaDir(root, uid) {
   if (!validUid(uid)) throw new Error('账号格式无效');
   return path.join(resolveTrustedRoot(root), `user-${uid}-personal`);
@@ -73,6 +78,7 @@ function scopedLayout(root) {
 }
 function inspectPersona(options) {
   const { dataRoot, targetUid, accounts = [] } = options;
+  if (scopedAccount(accounts, targetUid)) return { uid: targetUid, status: 'unsupported', eligible: false, sources: [] };
   const dir = personaDir(dataRoot, targetUid);
   if (!accounts.some(a => String(a.uid) === targetUid)) throw new Error('账号不存在');
   if (!scopedLayout(dataRoot)) return { uid: targetUid, status: 'legacy', eligible: false, sources: [] };
@@ -88,7 +94,7 @@ function inspectPersona(options) {
   const sources = [];
   for (const account of accounts) {
     const uid = String(account.uid);
-    if (!validUid(uid) || uid === targetUid || uid === 'legacy') continue;
+    if (!validUid(uid) || uid === targetUid || uid === 'legacy' || scopedAccount(accounts, uid)) continue;
     const sourceFiles = snapshot(personaDir(dataRoot, uid));
     if (usableSource(sourceFiles)) sources.push({ uid, nickname: String(account.nickname || uid), files: IDENTITY_FILES.filter(name => nonempty(sourceFiles, name)) });
   }
@@ -152,7 +158,7 @@ function listPersonaSources({ dataRoot, accounts = [] }) {
   const sources = [];
   for (const account of [...accounts.filter(a => a.uid !== 'legacy'), { uid: 'legacy', nickname: '升级前共用的设置' }]) {
     const uid = String(account.uid || '');
-    if (!validUid(uid)) continue;
+    if (!validUid(uid) || scopedAccount(accounts, uid)) continue;
     const files = snapshot(uid === 'legacy' ? resolveTrustedRoot(dataRoot) : personaDir(dataRoot, uid));
     const available = usableSource(files);
     if (uid === 'legacy' && !available) continue;
@@ -230,6 +236,7 @@ function applySharedPersona(options, sourceFiles, settings) {
 }
 function configurePersona(options) {
   const settings = readPersonaSettings(options.backupRoot);
+  if (options.mode === 'shared' && scopedAccount(options.accounts, options.currentUid)) throw new Error('企业身份的个性化目录尚未确认，暂不支持共享个性化');
   if (!['shared', 'independent'].includes(options.mode)) throw new Error('个性化模式无效');
   if (options.mode === 'independent' || (settings.mode === 'shared' && options.mode === 'shared' && !options.sourceUid)) {
     return { settings: writePersonaSettings(options.backupRoot, { ...settings, mode: options.mode, noticeDismissed: true,
@@ -253,6 +260,7 @@ function syncSharedPersonaForSwitch(options) {
   // The login page has no auth uid. Resume from the last shared projection so
   // edits made before logout survive, without adopting another logged-in user.
   const sourceUid = options.sourceUid || settings.activeUid;
+  if (scopedAccount(options.accounts, sourceUid) || scopedAccount(options.accounts, options.targetUid)) return { skipped: true };
   if (sourceUid === options.targetUid) return { skipped: true };
   if (settings.activeUid !== sourceUid) throw new Error('当前账号已变化，请在账号设置中重新选择共享来源');
   if (!options.accounts.some(a => String(a.uid) === options.targetUid)) throw new Error('目标账号不存在');

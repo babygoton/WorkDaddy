@@ -5,11 +5,13 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const lib = require('../scripts/lib');
+const resolver = require('../scripts/account-identity').createSessionAccountResolver([]);
+const sessionAccountAmbiguous = uid => { try { resolver.assertUnambiguous(uid); return false; } catch (_) { return true; } };
 const source = fs.readFileSync(path.join(__dirname, '../scripts/daemon.js'), 'utf8');
 
 function harness(rules, owner = 'source') {
   const jobs = [], events = [];
-  const ctx = vm.createContext({
+  const ctx = vm.createContext({ sessionAccountAmbiguous,
     DATA_DIR: 'fixture', log() {}, isAutoCopySessionSelected: lib.isAutoCopySessionSelected,
     isValidSessionId: id => !!id,
     readBody: async req => req.body,
@@ -88,7 +90,7 @@ const compat = require('../scripts/workbuddy-compat');
 
 function rendererCapture(profileId, adapter, window = {}) {
   const node = { __reactFiber$test: { memoizedProps: { adapter }, return: null } };
-  const context = vm.createContext({
+  const context = vm.createContext({ sessionAccountAmbiguous,
     PROFILE_ID: profileId, CAPS: { enhance: false }, window,
     WBS_COMPAT: compat, URL, location: { href: 'https://client.invalid/agentManager.html' },
     document: { querySelector: selector => selector === '.chat-container' ? node : null, querySelectorAll: () => [] },

@@ -6,6 +6,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const vm = require('node:vm');
+const { accountIdentity } = require('../scripts/account-identity');
 const test = require('node:test');
 const { normalizeTimestamp, shouldRefreshAccessToken, refreshAuthToken } = require('../scripts/token-refresh');
 const { PROFILES } = require('../scripts/profiles');
@@ -87,7 +88,7 @@ function daemonHarness(t, options = {}) {
     ? compat.wdCompatDecryptAuthJson(stored) : stored), { mode: 0o600 });
   let requests = 0;
   let failWrite = false;
-  const context = {
+  const context = { accountIdentity,
     ...compat, fs: { ...fs, writeFileSync(...args) {
       if (failWrite && String(args[0]).startsWith(file)) throw new Error('fixture write failure');
       return fs.writeFileSync(...args);

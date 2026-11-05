@@ -1,3 +1,4 @@
+const assertSessionAccountIdentity = require('../scripts/account-identity').createSessionAccountResolver([]).assertUnambiguous;
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -98,7 +99,7 @@ test('renderer deletion route rejects a stale account and reconciles missed dele
   const start = source.indexOf("  if (req.method === 'POST' && p === '/api/sessions/dirty')");
   const end = source.indexOf('\n  }', start) + 4;
   const calls = [];
-  const context = {
+  const context = { assertSessionAccountIdentity,
     readBody: async req => req.body, currentAccount: () => ({ uid: 'one' }),
     json: (_, status, body) => ({ status, body }), isValidSessionId: id => /^[a-z-]+$/.test(id),
     markSessionDirty: (...args) => calls.push(['dirty', ...args]), markSessionDirtyBaseline() {},

@@ -16,6 +16,18 @@ function fixture(t) {
   const enable = () => p.configurePersona({...options,mode:'shared',sourceUid:'a',revision:p.listPersonaSources(options)[0].revision});
   return {options,file,write,enable};
 }
+test('scoped enterprise identities never project backup ids into official personal directories', t => {
+  const f = fixture(t);
+  const uid = require('../scripts/account-identity').accountIdentity({uid:'a',enterpriseId:'company'});
+  f.options.accounts.push({uid,rawUid:'a'});
+  f.enable();
+  assert.equal(p.inspectPersona({...f.options,targetUid:uid}).eligible,false);
+  assert.equal(p.listPersonaSources(f.options).some(source=>source.uid===uid),false);
+  assert.equal(p.syncSharedPersonaForSwitch({...f.options,sourceUid:'a',targetUid:uid}).skipped,true);
+  assert.throws(()=>p.configurePersona({...f.options,currentUid:uid,mode:'shared'}),/企业身份/);
+  assert.equal(fs.existsSync(p.personaDir(f.options.dataRoot,uid)),false);
+  assert.equal(fs.readFileSync(f.file('a','USER.md'),'utf8'),'aUSER.md');
+});
 test('dismissal persists without selecting a mode and can later enable sharing', t => {
   const f=fixture(t);
   p.dismissPersonaNotice(f.options.backupRoot);

@@ -61,7 +61,7 @@ test('CodeBuddy does not preflight-block native session recovery', () => {
 test('CodeBuddy restores a lost native session from a validated backup', () => {
   assert.match(daemon, /recoverCodeBuddyNativeSession/);
   assert.match(daemon, /session = await recoverCodeBuddyNativeSession\(\)/);
-  assert.match(daemon, /writeCodeBuddyNativeState\(String\(session\.account\.uid\), false\)/);
+  assert.match(daemon, /writeCodeBuddyNativeState\(accountIdentity\(session\.account\), false\)/);
   assert.match(daemon, /writeCodeBuddyNativeState\(beforeLogout && beforeLogout\.uid \|\| '', true\)/);
 });
 test('CodeBuddy HTML compatibility keeps the official innerHTML sink unchanged', () => {
