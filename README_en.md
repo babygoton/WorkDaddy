@@ -1,6 +1,6 @@
 <h1><img src="docs/images/workdaddy-app-icon-rounded.svg" alt="" width="40" height="40" align="absmiddle">  WorkDaddy</h1>
 
-**Language:** [简体中文](README.md) · [English](README_en.md)
+**Language:** [简体中文](README.md) · [English](README_en.md) · [日本語](README_ja.md)
 
 > **WorkDaddy / CodeDaddy enhance WorkBuddy and CodeBuddy desktop clients with separate account backups, account switching, session migration, model management, and automations. WorkBuddy also supports quiet approvals, auto-continue, prompt stashing, quick phrases, and five themes. Accounts and configuration stay on your computer.**
 > Local loopback CDP injection · the official installation is never modified.
