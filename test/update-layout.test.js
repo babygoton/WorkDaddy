@@ -1324,7 +1324,7 @@ test('DevTools proxy uses the same persisted CDP port fallback as its URL endpoi
   const daemon = read('daemon.js');
   assert.match(daemon, /const upstreamPort = cdp\.port \|\| readCdpPortFile\(\) \|\| CDP_PORT_HINT \|\| 9222/);
   assert.match(daemon, /devtoolsPort = cdp\.port \|\| readCdpPortFile\(\) \|\| CDP_PORT_HINT \|\| 9222/);
-  assert.match(daemon, /uid\.length > 200.*\[\\\\\/\\0\]/);
+  assert.match(daemon, /\^\[A-Za-z0-9_\-\]\{1,128\}\$/);
 });
 
 test('automatic updates use the GitHub asset digest and fail closed without one', () => {
@@ -1354,7 +1354,7 @@ test('account export asks for a non-empty password and import supports an option
   assert.match(daemon, /version:\s*2/);
   assert.match(daemon, /EXPORT_PASSPHRASE/);
   assert.match(daemon, /const authRecord = parseAuthJson\(j\)/);
-  assert.match(daemon, /if \(!authRecord \|\| authRecord\.uid !== uid\) continue/);
+  assert.match(daemon, /suppliedUid !== authRecord\.uid && suppliedUid !== authRecord\.accountId/);
   assert.match(inject, /title:\s*'导出账号'[\s\S]*requirePassword:\s*true/);
   assert.match(inject, /旧版导出文件可留空/);
   assert.match(inject, /type="password"/);

@@ -27,6 +27,8 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const crypto = require('crypto');
+const { accountIdentity, createSessionAccountResolver } = require('./account-identity');
+const { sanitizeSessionCopyError } = require('./session-copy-error');
 const net = require('net');
 const { inspectPersona, copyPersona, readPersonaSettings, listPersonaSources, configurePersona, dismissPersonaNotice, syncSharedPersonaForSwitch } = require('./persona.js');
 let sessionSync = require('./session-sync.js');
@@ -86,6 +88,8 @@ const {
   parseAuthJson,
   backupCurrent,
   listAccounts,
+  migrateAccountIdentities,
+  knownAccountIdentities,
   switchTo,
   deleteAccount,
   wdCompatText, // [wd-compat]
@@ -173,6 +177,7 @@ const { createCodeBuddySessionStore } = require('./codebuddy-session-store.js');
 const { classifyTarget, looksLikeWbFamilyTarget, isTargetForProfile, selectPageTarget, selectIdeTargets } = require('./cdp-targets.js');
 const { createSessionDb, normalizeSessionIdBatch, parameterCount } = require('./session-db.js');
 const { createDirtyIndex } = require('./session-dirty.js');
+const { createSessionDeletionSync } = require('./session-deletion-sync.js');
 const {
   createEncryptedExport,
   openEncryptedExport,
@@ -237,7 +242,7 @@ const { runCompletionReport, probeAccountCompletion } = require('./completion-re
 const { createPrimaryAccountStore } = require('./primary-account.js');
 const PROFILE = getProfile();
 const DATA_DIR = defaultDataDir();
-const codeBuddyFiles = PROFILE.kind === 'codebuddy' ? createCodeBuddyFiles({root: PROFILE.historyRoot, sync:sessionSync}) : null;
+const codeBuddyFiles = PROFILE.kind === 'codebuddy' ? createCodeBuddyFiles({root: PROFILE.historyRoot, sync:sessionSync, resolveAccountUid: uid => assertSessionAccountIdentity(uid)}) : null;
 if (codeBuddyFiles) sessionSync = codeBuddyFiles.sync;
 
 // CN and international CodeBuddy share the history tree, but their WorkDaddy
@@ -530,8 +535,8 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 // 1.2.65：兼容空会话同步、自定义模型和重定向备份目录，工作目录恢复退避重试。
 // 1.2.66：刷新凭据按原信封加密保存，同账号刷新去重，过期账号保留手动切换。
 // 1.2.67：Windows 重启 GUI 客户端时不再请求隐藏主窗口，与冷启动保持一致。
-const DAEMON_VERSION = '1.2.68';
-const DAEMON_BUILD_ID = 'release-1.2.68-login-page-persona-switch';
+const DAEMON_VERSION = '1.2.74';
+const DAEMON_BUILD_ID = 'release-1.2.74-account-identity-sync-errors';
 const usageReporter = createUsageReporter({ profile: PROFILE.id, version: DAEMON_VERSION });
 configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const automationDiscovery = createAutomationDiscovery({
@@ -1419,9 +1424,10 @@ function scheduleOAuthStateCleanup(loginId) {
 
 // 把无感登录采集到的账号写入 accounts/<uid>.info 备份（不触碰当前登录文件）
 function saveSeamlessAccount(tokenData, accData) {
-  const uid = String(accData.uid || '');
-  if (!uid) throw new Error('官方接口未返回 uid，无法保存账号');
+  if (!String(accData.uid || '')) throw new Error('官方接口未返回 uid，无法保存账号');
+  const uid = accountIdentity(accData);
   ensureDirs(DATA_DIR);
+  migrateAccountIdentities(DATA_DIR);
   const session = buildSeamlessAuthFile(tokenData, accData);
   const dest = backupPath(DATA_DIR, uid);
   const tmp = dest + '.tmp';
@@ -1429,7 +1435,9 @@ function saveSeamlessAccount(tokenData, accData) {
   fs.renameSync(tmp, dest);
   fs.chmodSync(dest, 0o600);
   updateMeta(DATA_DIR, {
-    uid,
+    uid: String(accData.uid),
+    type: accData.type,
+    enterpriseId: accData.enterpriseId,
     nickname: accData.nickname || '',
     uin: accData.uin || '',
     phone: accData.phoneNumber || '',
@@ -1878,7 +1886,7 @@ function readCodeBuddyBackupSession(uid) {
   let session;
   try { session = wdCompatDecryptAuthJson(JSON.parse(fs.readFileSync(file, 'utf8'))); }
   catch (_) { throw new Error('账号备份无效'); }
-  if (!parseAuthJson(session, { strict: true }) || String(session.account?.uid || '') !== String(uid)) {
+  if (!parseAuthJson(session, { strict: true }) || accountIdentity(session.account) !== String(uid)) {
     throw new Error('账号备份无效或不属于当前地区');
   }
   if (!wdCompatAuthToken(session.auth)) throw new Error('账号备份中无可用 accessToken');
@@ -1922,7 +1930,7 @@ function syncCodeBuddyAuth() {
       fs.renameSync(temp, AUTH_FILE);
       fs.chmodSync(AUTH_FILE, 0o600);
     }
-    writeCodeBuddyNativeState(String(session.account.uid), false);
+    writeCodeBuddyNativeState(accountIdentity(session.account), false);
     return session;
   });
   nativeAuthSyncTail = work;
@@ -1940,15 +1948,15 @@ async function switchAccountForProfile(uid) {
   const file = accountBackupFile(uid);
   const session = JSON.parse(fs.readFileSync(file, 'utf8'));
   if (!parseAuthJson(session, {strict:true})) throw new Error('账号备份无效或不属于当前地区');
-  if (String(session.account && session.account.uid) !== String(uid)) throw new Error('账号备份标识不匹配');
+  if (accountIdentity(session.account) !== String(uid)) throw new Error('账号备份标识不匹配');
   if (!wdCompatAuthToken(session.auth)) {
     if (wdCompatContainsEncryptedFields(session)) throw new Error('账号备份中的加密凭据无法解密，请在 WorkBuddy 侧重新登录后再导出');
     throw new Error('账号备份中无 accessToken');
   }
   const result = await codeBuddyNative.replace(session);
-  if (!result || result.uid !== String(uid)) throw new Error('CodeBuddy 未确认账号切换');
+  if (!result || String(result.uid) !== String(session.account.uid)) throw new Error('CodeBuddy 未确认账号切换');
   const current = await syncCodeBuddyAuth();
-  if (!current || String(current.account.uid) !== String(uid)) throw new Error('CodeBuddy 账号复核失败');
+  if (!current || accountIdentity(current.account) !== String(uid)) throw new Error('CodeBuddy 账号复核失败');
   backupCurrent(DATA_DIR, log);
   return {uid:String(uid),nickname:wdCompatText(current.account.nickname),nativeSwitched:true};
 }
@@ -2960,11 +2968,11 @@ async function readRendererAccountSnapshot(expectedUid) {
     awaitPromise: true, returnByValue: true,
   });
   const profile = result && result.result && result.result.value;
-  if (!profile || profile.error || String(profile.uid || '') !== uid) throw new Error('切换后的 WorkBuddy 账号未就绪');
+  if (!profile || profile.error || accountIdentity(profile) !== uid) throw new Error('切换后的 WorkBuddy 账号未就绪');
   if (typeof profile.nickname !== 'string' || typeof profile.type !== 'string' || typeof profile.href !== 'string') {
     throw new Error('切换后的 WorkBuddy 账号资料不完整');
   }
-  const snapshot = { version: 1, uid, nickname: profile.nickname, type: profile.type, savedAt: Date.now() };
+  const snapshot = { version: 1, uid: String(profile.uid), nickname: profile.nickname, type: profile.type, savedAt: Date.now() };
   for (const key of ['editionType', 'enterpriseId', 'enterpriseName', 'enterpriseUserName', 'avatarUrl', 'isPro', 'isAdmin', 'oneidAccountId', 'enableArdotDesign', 'showDefaultPermission']) {
     if (profile[key] !== undefined && profile[key] !== null) snapshot[key] = profile[key];
   }
@@ -4850,7 +4858,7 @@ const officialAutomationSyncEngine = PROFILE.kind === 'workbuddy'
   ? createOfficialAutomationSync({
     dataDir: DATA_DIR,
     db: SESSION_DB,
-    getAccountUids: () => listAccounts(DATA_DIR).map(account => account.uid),
+    getAccountUids: () => listAccounts(DATA_DIR).map(account => assertSessionAccountIdentity(account.uid)),
   })
   : null;
 const CODEBUDDY_SESSIONS = PROFILE.kind === 'codebuddy' ? createCodeBuddySessionStore({
@@ -4865,8 +4873,45 @@ const CODEBUDDY_SESSIONS = PROFILE.kind === 'codebuddy' ? createCodeBuddySession
   },
 }) : null;
 
+let sessionAccountResolverCache = null;
+function sessionAccountResolver() {
+  let fingerprint = '';
+  for (const file of [path.join(DATA_DIR, 'accounts'), path.join(DATA_DIR, 'meta.json')]) {
+    try { const stat = fs.statSync(file); fingerprint += stat.mtimeMs + ':' + stat.ctimeMs + ':' + stat.size + ';'; } catch (_) { fingerprint += '-;'; }
+  }
+  if (!sessionAccountResolverCache || sessionAccountResolverCache.fingerprint !== fingerprint) {
+    const accounts = listAccounts(DATA_DIR);
+    // Deleting a backup cannot make an already ambiguous official UID safe.
+    for (const [rawUid, ids] of Object.entries(knownAccountIdentities(DATA_DIR))) {
+      if (Array.isArray(ids)) ids.forEach(uid => accounts.push({ uid, rawUid }));
+    }
+    sessionAccountResolverCache = { fingerprint, resolver: createSessionAccountResolver(accounts) };
+  }
+  return sessionAccountResolverCache.resolver;
+}
+function assertSessionAccountIdentity(uid) {
+  return sessionAccountResolver().assertUnambiguous(uid);
+}
+function sessionAccountAmbiguous(uid) {
+  try { assertSessionAccountIdentity(uid); return false; } catch (_) { return true; }
+}
+function sessionDatabaseParams(sql, params) {
+  const mapped = params.slice();
+  // Match owner parameters only. Titles, cwd, session ids, etc. are never aliases.
+  for (const match of sql.matchAll(/\buser_id\s*=\s*\?/gi)) {
+    const at = parameterCount(sql.slice(0, match.index));
+    mapped[at] = assertSessionAccountIdentity(params[at]);
+  }
+  const insert = sql.match(/INSERT\s+INTO\s+sessions\s*\(([^)]+)\)\s*VALUES\s*\(/i);
+  if (insert) {
+    const at = insert[1].split(',').map(column => column.trim()).indexOf('user_id');
+    if (at >= 0) mapped[at] = assertSessionAccountIdentity(params[at]);
+  }
+  return mapped;
+}
+
 function sqliteRun(sql, params = []) {
-  return (CODEBUDDY_SESSIONS || SESSION_DB).run(sql, params);
+  return (CODEBUDDY_SESSIONS || SESSION_DB).run(sql, sessionDatabaseParams(sql, params));
 }
 function sqlParamAt(textSql, params, questionIndex) {
   return params[parameterCount(textSql.slice(0, questionIndex + 1)) - 1];
@@ -4874,8 +4919,9 @@ function sqlParamAt(textSql, params, questionIndex) {
 async function sqliteQuery(sql, params = []) {
   const expectedParams = parameterCount(sql);
   if (expectedParams !== params.length) throw new Error(`sqlite 参数数量不匹配: SQL 需要 ${expectedParams} 个，实际收到 ${params.length} 个`);
-  const rows = await (CODEBUDDY_SESSIONS || SESSION_DB).all(sql, params);
-  return rows.map(row => Object.fromEntries(Object.entries(row).map(([key, value]) => [key, value == null ? '' : String(value).trim()])));
+  const rows = await (CODEBUDDY_SESSIONS || SESSION_DB).all(sql, sessionDatabaseParams(sql, params));
+  rows.forEach(row => { if (row.user_id) assertSessionAccountIdentity(row.user_id); });
+  return rows.map(row => Object.fromEntries(Object.entries(row).map(([key, value]) => [key, key === 'user_id' ? sessionAccountResolver().identity(value == null ? '' : String(value).trim()) : value == null ? '' : String(value).trim()])));
 }
 
 // WorkBuddy 将会话正文保存在 ~/.workbuddy*/projects 等系统目录，同时在 sessions.cwd
@@ -5482,6 +5528,19 @@ function sessionCopyRowRevision(row) {
   ]);
 }
 
+let sessionDeletionSync = null;
+function getSessionDeletionSync() {
+  if (PROFILE.kind !== 'workbuddy') return null;
+  if (sessionDeletionSync) return sessionDeletionSync;
+  sessionDeletionSync = createSessionDeletionSync({
+    query: sqliteQuery,
+    run: sqliteRun,
+    locks: sessionCopyLocks,
+    members: ids => collectLineageMembersForDelete(DATA_DIR, ids),
+  });
+  return sessionDeletionSync;
+}
+
 // The physical session id and account id intentionally differ between members
 // of one shared lineage. Keep the content portion separately so a mapping
 // created from another account can still prove that an unchanged member is a
@@ -5763,6 +5822,8 @@ async function copySessionRecord(src, targetUid, options = {}) {
   const sourceUid = String(options.sourceUid || src.user_id || '').trim();
   targetUid = String(targetUid || '').trim();
   if (!sourceUid || !targetUid || sourceUid === targetUid) return { status: 'skipped', sourceId: src.id, targetId: src.id };
+  assertSessionAccountIdentity(sourceUid);
+  assertSessionAccountIdentity(targetUid);
   // Provenance, not matching titles/timestamps, identifies an existing copy.
   const lineageId = options.lineageId || getAutoCopySession(DATA_DIR, sourceUid, src.id).lineageId ||
     ensureAutoCopySession(DATA_DIR, sourceUid, src.id, { enabled: false });
@@ -5776,6 +5837,17 @@ async function copySessionRecord(src, targetUid, options = {}) {
   };
   const perform = async () => {
     await yieldAutoCopyToRenderer();
+    const deletions = typeof getSessionDeletionSync === 'function' ? getSessionDeletionSync() : null;
+    const assertNotDeleted = async () => {
+      if (deletions && await deletions.hasDeletion(src.id, sourceUid)) {
+        const error = new Error('同源会话已删除，停止同步');
+        error.code = 'WBS_SESSION_DELETED';
+        throw error;
+      }
+    };
+    if (deletions && await deletions.hasDeletion(src.id, sourceUid)) {
+      return { status: 'skipped', sourceId: src.id, targetId: '', copiedBytes: 0, totalBytes: 0 };
+    }
     const readRow = async (id, uid) => (await sqliteQuery(
       'SELECT ' + SESSION_COPY_COLUMNS.join(',') + ' FROM sessions WHERE id = ? AND user_id = ? AND deleted_at IS NULL AND COALESCE(is_background_automation, 0) = 0 LIMIT 1;', [id, uid]
     ))[0];
@@ -5874,6 +5946,7 @@ async function copySessionRecord(src, targetUid, options = {}) {
       const row = id === sourceRow.id ? sourceRow : candidates.find(candidate => candidate.id === id);
       const guard = async () => {
         await assertSessionSyncIdle([id]);
+        await assertNotDeleted();
         if (row && JSON.stringify(await readRow(id, row.user_id)) !== JSON.stringify(row)) {
           throw new Error('会话记录正在变化，请稍后重试');
         }
@@ -5938,6 +6011,7 @@ async function copySessionRecord(src, targetUid, options = {}) {
       await yieldAutoCopyToRenderer();
       const verifyRows = async () => {
         await assertSessionSyncIdle([fromRow && fromRow.id, toRow && toRow.id]);
+        await assertNotDeleted();
         const freshSource = await readRow(fromRow.id, fromRow.user_id);
         const freshTarget = toRow ? await readRow(toRow.id, toRow.user_id) : null;
         if (JSON.stringify(freshSource) !== JSON.stringify(fromRow) || (toRow && JSON.stringify(freshTarget) !== JSON.stringify(toRow))) {
@@ -5947,6 +6021,7 @@ async function copySessionRecord(src, targetUid, options = {}) {
       const commit = async (verifyPublished) => {
         await verifyRows();
         await verifyPublished();
+        await assertNotDeleted();
         if (!toRow) {
           // Reserve provenance before the row becomes visible, so a crash
           // after insertion cannot create an untracked duplicate on retry.
@@ -6022,6 +6097,12 @@ async function buildAutoCopyPlan(sourceUid, targetUid, requestedSessionIds = [])
   const source = String(sourceUid || '').trim();
   const target = String(targetUid || '').trim();
   if (!source || !target || source === target) return [];
+  assertSessionAccountIdentity(source);
+  assertSessionAccountIdentity(target);
+  const deletions = typeof getSessionDeletionSync === 'function' ? getSessionDeletionSync() : null;
+  if (deletions && await deletions.reconcileAll() && typeof refreshWorkBuddySessionList === 'function') {
+    await refreshWorkBuddySessionList(target, 'sessions-deleted');
+  }
   normalizeAutoCopyLineages(DATA_DIR);
   const rules = getAutoCopyRules(DATA_DIR, source);
   const requested = new Set((Array.isArray(requestedSessionIds) ? requestedSessionIds : [])
@@ -6324,9 +6405,10 @@ function runAutoCopyQueue() {
     .catch((e) => {
       const job = item.job;
       job.status = 'error';
-      job.error = e.message;
+      job.error = sanitizeSessionCopyError(e);
+      job.taskFailed = true;
       job.finishedAt = Date.now();
-      log(`[sessions-auto-copy] 任务失败: ${e.message}`);
+      log(`[sessions-auto-copy] 任务失败: ${job.error}`);
       const cleanup = setTimeout(() => autoCopyJobs.delete(job.id), 30 * 60 * 1000);
       if (cleanup.unref) cleanup.unref();
       pruneAutoCopyJobs();
@@ -6383,6 +6465,11 @@ function startAutoCopyJob(sourceUid, targetUid, plan, labels) {
     job.copyStartedAt = Date.now();
     job.plan = await buildAutoCopyPlan(sourceUid, targetUid, job.openSessionId ? [job.openSessionId] : []);
     job.total = job.plan.length;
+    const deletions = typeof getSessionDeletionSync === 'function' ? getSessionDeletionSync() : null;
+    if (job.openSessionId && deletions && await deletions.hasDeletion(job.openSessionId, sourceUid)) {
+      job.openSessionId = '';
+      job.openSessionTargetId = '';
+    }
     if (job.openSessionId && !job.plan.some((row) => String(row && row.id || '') === job.openSessionId)) {
       job.openSessionTargetId = resolveAutoCopyTargetId(sourceUid, targetUid, job.openSessionId);
     }
@@ -6452,6 +6539,7 @@ function startAutoCopyJob(sourceUid, targetUid, plan, labels) {
               });
               break;
             } catch (error) {
+              if (error.code === 'WBS_SESSION_DELETED') throw error;
               if (!activeSession || copyAttempt >= activeSessionRetryDelays.length) throw error;
               const retryDelay = activeSessionRetryDelays[copyAttempt];
               copyAttempt++;
@@ -6483,9 +6571,14 @@ function startAutoCopyJob(sourceUid, targetUid, plan, labels) {
           else job.copied++;
           if (result.failedFiles) job.failed += result.failedFiles;
         } catch (e) {
-          recoverOpenSessionTarget(src);
+          const deleted = e.code === 'WBS_SESSION_DELETED';
+          if (!deleted) recoverOpenSessionTarget(src);
+          else if (job.openSessionId === String(src.id || '')) {
+            job.openSessionId = '';
+            job.openSessionTargetId = '';
+          }
           const errorText = String(e.message || e).slice(0, 240);
-          if (['会话消息文件没有消息，未同步', '会话消息文件为空，未同步'].includes(errorText)) {
+          if (deleted || ['会话消息文件没有消息，未同步', '会话消息文件为空，未同步'].includes(errorText)) {
             // Empty metadata-only sessions are normal transient WorkBuddy
             // rows (for example a newly opened draft), not sync failures.
             if (typeof getSessionDirtyIndex === 'function' && typeof clearSessionDirty === 'function') {
@@ -6592,6 +6685,7 @@ function publicAutoCopyJob(job) {
     warning: job.warning || '',
     conflicts: job.conflicts,
     details: Array.isArray(job.details) ? job.details.slice(0, 500) : [],
+    taskFailed: job.status === 'error',
     error: job.error,
     sourceUid: job.sourceUid,
     targetUid: job.targetUid,
@@ -7312,6 +7406,30 @@ function deleteQuickPhrases(ids) {
   writeSessionState(st);
   return readSessionState();
 }
+function reorderQuickPhrases(ids) {
+  if (!Array.isArray(ids)) throw new Error('快捷短语顺序无效');
+  const state = readSessionState();
+  if (ids.length !== state.phrases.length) throw new Error('快捷短语列表已变化，请刷新后重试');
+  const byId = new Map(state.phrases.map((item) => [String(item.id), item]));
+  const seen = new Set();
+  const ordered = ids.map((value) => {
+    const id = String(value || '').trim();
+    if (!id || seen.has(id) || !byId.has(id)) throw new Error('快捷短语顺序无效');
+    seen.add(id);
+    return byId.get(id);
+  });
+  state.phrases = ordered;
+  writeSessionState(state);
+  return readSessionState();
+}
+async function insertQuickPhraseIntoComposer(text) {
+  const value = String(text || '');
+  if (!value.trim()) throw new Error('短语不能为空');
+  if (value.length > 10000) throw new Error('快捷短语过长');
+  if (!cdp.connected) throw new Error('CDP 未连接');
+  await cdpSend('Input.insertText', { text: value });
+  return { inserted: true };
+}
 function normalizeQuickPhraseIds(ids) {
   if (!Array.isArray(ids)) throw new Error('快捷短语选择必须是数组');
   if (ids.length > 1000) throw new Error('单次最多处理 1000 条快捷短语');
@@ -7738,7 +7856,10 @@ function currentAccount() {
     const c = readAuthFile(resolution.file);
     const a = (c.raw && c.raw.auth) || {};
     return {
-      uid: c.uid,
+      uid: c.accountId || c.uid,
+      rawUid: c.uid,
+      type: c.type,
+      enterpriseId: c.enterpriseId,
       nickname: c.nickname,
       phone: c.phone,
       uin: c.uin,
@@ -7766,7 +7887,7 @@ function syncAccountAutomations(sourceUid, targetUid) {
 
 async function syncOfficialAccountAutomations(sourceUid, targetUid) {
   if (!officialAutomationSyncEngine) return { copied: 0, skipped: 0, total: 0 };
-  return officialAutomationSyncEngine(sourceUid, targetUid);
+  return officialAutomationSyncEngine(assertSessionAccountIdentity(sourceUid), assertSessionAccountIdentity(targetUid));
 }
 
 function accountBackupFile(uid) {
@@ -8437,7 +8558,7 @@ async function releaseThemeByCdp() {
 async function restoreNativeAppearanceByCdp() {
   if (!cdp.connected) return;
   let _accUid = null;
-  try { const _a = currentAccount(); _accUid = _a ? _a.uid : null; } catch (_) {}
+  try { const _a = currentAccount(); _accUid = _a ? (_a.rawUid || _a.uid) : null; } catch (_) {}
   const uid = (typeof _accUid === 'string' && _accUid) ? _accUid : null;
   if (!uid) return;
   try {
@@ -8764,7 +8885,7 @@ async function applyThemeByCdp(id, options = {}) {
     if (!settled || settled.exceptionDetails || !settled.result || !settled.result.value || !settled.result.value.ready) throw new Error('官方深色主题尚未就绪，请重试毛玻璃主题');
   }
   let _accUid = null;
-  try { const _a = currentAccount(); _accUid = _a ? _a.uid : null; } catch (_) {}
+  try { const _a = currentAccount(); _accUid = _a ? (_a.rawUid || _a.uid) : null; } catch (_) {}
   const uid = (typeof _accUid === 'string' && _accUid) ? _accUid : null;
   const theme = getTheme(id);
   const colors = (theme && theme.colors) || {};
@@ -10463,6 +10584,22 @@ function handleApi(req, res) {
       }
     });
   }
+  // 会话模块：POST /api/quick-phrase-reorder { ids: [...] }
+  if (req.method === 'POST' && p === '/api/quick-phrase-reorder') {
+    return readBody(req).then((body) => {
+      try {
+        return json(res, 200, { ok: true, ...reorderQuickPhrases(body && body.ids) });
+      } catch (e) {
+        return json(res, 400, { ok: false, error: e.message });
+      }
+    });
+  }
+  // 会话模块：POST /api/quick-phrase-insert { text }（在当前输入光标处插入，不发送）
+  if (req.method === 'POST' && p === '/api/quick-phrase-insert') {
+    return readBody(req).then((body) => insertQuickPhraseIntoComposer(body && body.text))
+      .then((result) => json(res, 200, { ok: true, ...result }))
+      .catch((e) => json(res, 400, { ok: false, error: e.message }));
+  }
   // 快捷短语加密导出：POST /api/quick-phrases/export { ids, password }
   if (req.method === 'POST' && p === '/api/quick-phrases/export') {
     return readBody(req).then((body) => {
@@ -10833,18 +10970,31 @@ function handleApi(req, res) {
       try {
         const uid = String(body && body.uid || '').trim();
         const modelId = String(body && body.modelId || '').trim();
-        if (!/^[A-Za-z0-9_-]{1,128}$/.test(uid)) return json(res, 400, { ok: false, error: 'uid 格式无效' });
-        if (!/^[^\x00-\x1F\x7F]{1,160}$/.test(modelId)) return json(res, 400, { ok: false, error: '模型 ID 无效' });
+        if (!/^[A-Za-z0-9_-]{1,128}$/.test(uid)) {
+          log('[model-rate-limit] WARN 拒绝上报: invalid-uid');
+          return json(res, 400, { ok: false, error: 'uid 格式无效' });
+        }
+        if (!/^[^\x00-\x1F\x7F]{1,160}$/.test(modelId)) {
+          log('[model-rate-limit] WARN 拒绝上报: invalid-model-id');
+          return json(res, 400, { ok: false, error: '模型 ID 无效' });
+        }
         const account = listAccounts(DATA_DIR).find((item) => String(item.uid) === uid);
-        if (!account) return json(res, 404, { ok: false, error: '账号不存在' });
+        if (!account) {
+          log('[model-rate-limit] WARN 拒绝上报: account-not-found');
+          return json(res, 404, { ok: false, error: '账号不存在' });
+        }
         const reasonCode = body && body.reasonCode === null ? null : Number(body && body.reasonCode);
-        if (reasonCode !== 6004) return json(res, 400, { ok: false, error: '仅记录模型限流 code 6004' });
+        if (![6000, 6004].includes(reasonCode)) {
+          log('[model-rate-limit] WARN 拒绝上报: unsupported-reason-code');
+          return json(res, 400, { ok: false, error: '仅记录模型用量限制 code 6000 和频率限制 code 6004' });
+        }
         const now = Date.now();
         const resetAt = body && body.resetAt === null ? null : Number(body && body.resetAt);
         if (resetAt !== null && (!Number.isSafeInteger(resetAt) || resetAt < now - 86400000 || resetAt > now + 90 * 86400000)) {
+          log('[model-rate-limit] WARN 拒绝上报: invalid-reset-time');
           return json(res, 400, { ok: false, error: '解封时间无效' });
         }
-        if (resetAt !== null && await CREDIT_USAGE_STORE.hasModelRateLimitElsewhere({ uid, modelId, resetAt, now })) {
+        if (resetAt !== null && await CREDIT_USAGE_STORE.hasModelRateLimitElsewhere({ uid, modelId, resetAt, reasonCode, now })) {
           return json(res, 200, { ok: true, skipped: 'duplicate-across-accounts' });
         }
         await CREDIT_USAGE_STORE.saveModelRateLimit({
@@ -10857,6 +11007,7 @@ function handleApi(req, res) {
         });
         return json(res, 200, { ok: true });
       } catch (error) {
+        log('[model-rate-limit] WARN 写入失败: storage-error');
         return json(res, 400, { ok: false, error: error.message });
       }
     });
@@ -11301,15 +11452,16 @@ function handleApi(req, res) {
           for (const candidate of candidates) {
             const normalizedImport = normalizeAccountImportJson(candidate);
             if (!normalizedImport) continue;
-            const { uid, normalized } = normalizedImport;
-            const acct = normalized.account;
+            const { normalized, authRecord } = normalizedImport;
+            const uid = authRecord.accountId;
+            migrateAccountIdentities(DATA_DIR);
             const dest = backupPath(DATA_DIR, uid);
             const tmp = dest + '.tmp';
             fs.writeFileSync(tmp, JSON.stringify(normalized), { mode: 0o600 });
             fs.renameSync(tmp, dest);
             try { fs.chmodSync(dest, 0o600); } catch (_) {}
             updateMeta(DATA_DIR, {
-              uid,
+              ...authRecord,
               nickname: wdCompatText(normalized.account.nickname),
               uin: typeof normalized.account.uin === 'string' || typeof normalized.account.uin === 'number' ? normalized.account.uin : '',
               phone: wdCompatText(normalized.account.phoneNumber),
@@ -11335,24 +11487,26 @@ function handleApi(req, res) {
         ensureDirs(DATA_DIR);
         const imported = [];
         for (const item of list) {
-          const uid = String(item && item.uid || '').trim();
+          const suppliedUid = String(item && item.uid || '').trim();
           const info = item && item.info;
           // 导出文件属于用户输入；UID 只能是账号文件名的一段，禁止路径分隔符和
           // 特殊目录名，避免导入请求把认证内容写到 accounts 目录之外。
-          if (!uid || uid.length > 200 || uid === '.' || uid === '..' || /[\\/\0]/.test(uid) || typeof info !== 'string') continue;
+          if (!/^[A-Za-z0-9_-]{1,128}$/.test(suppliedUid) || typeof info !== 'string') continue;
           let j;
           try { j = JSON.parse(info); } catch (_) { continue; }
           const acct = j.account || (Array.isArray(j.accounts) && j.accounts[0]);
-          if (!acct || !acct.uid || String(acct.uid) !== uid) continue; // 安全校验：uid 必须匹配
+          if (!acct || !acct.uid) continue;
           const authRecord = parseAuthJson(j);
-          if (!authRecord || authRecord.uid !== uid) continue;
+          if (!authRecord || (suppliedUid !== authRecord.uid && suppliedUid !== authRecord.accountId)) continue;
+          const uid = authRecord.accountId;
+          migrateAccountIdentities(DATA_DIR);
           const dest = backupPath(DATA_DIR, uid);
           const tmp = dest + '.tmp';
           fs.writeFileSync(tmp, info, { mode: 0o600 });
           fs.renameSync(tmp, dest);
           try { fs.chmodSync(dest, 0o600); } catch (_) {}
           updateMeta(DATA_DIR, {
-            uid,
+            ...authRecord,
             nickname: wdCompatText(acct.nickname),
             uin: typeof acct.uin === 'string' || typeof acct.uin === 'number' ? acct.uin : '',
             phone: wdCompatText(acct.phoneNumber),
@@ -11867,6 +12021,7 @@ function handleApi(req, res) {
           );
           if (!rows.length || String(rows[0].user_id || '') !== uid) return json(res, 404, { ok: false, error: '会话不存在或不属于该账号' });
         }
+        assertSessionAccountIdentity(uid);
         const rules = setAutoCopyRule(DATA_DIR, { uid, kind, key, enabled: body.enabled !== false });
         return json(res, 200, { ok: true, uid, kind, key: kind === 'workspace' ? canonicalWorkspace(key) : key, rules });
       } catch (e) {
@@ -11890,7 +12045,7 @@ function handleApi(req, res) {
   // deliberately limited to session ids and event names; message contents
   // never leave WorkBuddy and the local API token remains the only auth gate.
   if (req.method === 'POST' && p === '/api/sessions/dirty') {
-    return readBody(req).then((body) => {
+    return readBody(req).then(async (body) => {
       try {
         const currentUid = String((currentAccount() || {}).uid || '').trim();
         const claimedUid = String(body && body.uid || '').trim();
@@ -11904,15 +12059,26 @@ function handleApi(req, res) {
           (/^[A-Za-z0-9_-]{1,128}$/.test(claimedUid) && fs.existsSync(accountBackupFile(claimedUid)) ? claimedUid : '');
         if (!uid) return json(res, 409, { ok: false, error: '当前账号不可用' });
         if (!body || typeof body !== 'object' || Array.isArray(body)) return json(res, 400, { ok: false, error: '脏会话通知格式无效' });
+        assertSessionAccountIdentity(uid);
         if (body.ready === true) markSessionDirtyBaseline(uid);
         const events = Array.isArray(body.events) ? body.events : [];
         if (events.length > 500) return json(res, 400, { ok: false, error: '脏会话通知过多' });
         let marked = 0;
+        const deletedIds = [];
         for (const event of events) {
           const id = String(event && event.id || '').trim();
           if (!isValidSessionId(id)) continue;
+          if (event.event === 'sessionDeleted') deletedIds.push(id);
           markSessionDirty(uid, id, String(event.event || 'sessionUpdated'));
           marked++;
+        }
+        const deletions = getSessionDeletionSync();
+        if (deletions) {
+          let changed = deletedIds.length ? await deletions.observeDeleted(uid, deletedIds) : 0;
+          // A fresh renderer also reconciles durable deletions missed while
+          // disconnected, even if automatic copying is currently disabled.
+          if (body.ready === true) changed += await deletions.reconcileAll();
+          if (changed) await refreshWorkBuddySessionList(uid, 'sessions-deleted');
         }
         return json(res, 200, { ok: true, marked, initialized: getSessionDirtyIndex().isInitialized(uid) });
       } catch (e) {
@@ -12104,6 +12270,7 @@ function handleApi(req, res) {
           'SELECT id, user_id FROM sessions WHERE id IN (' + placeholders + ') AND deleted_at IS NULL AND COALESCE(is_background_automation, 0) = 0;',
           ids
         );
+        before.forEach(row => assertSessionAccountIdentity(row.user_id));
         await sqliteRun(
           "UPDATE sessions SET user_id = ?, updated_at = ? WHERE id IN (" + placeholders + ");",
           [targetUid, Date.now(), ...ids]
@@ -12161,6 +12328,7 @@ function handleApi(req, res) {
         if (!memberIds.length) return json(res, 404, { ok: false, error: '会话不存在或已删除' });
         const placeholders = sqlPlaceholders(memberIds);
         const before = await sqliteQuery('SELECT id, user_id FROM sessions WHERE id IN (' + placeholders + ') AND COALESCE(is_background_automation, 0) = 0;', memberIds);
+        before.forEach(row => assertSessionAccountIdentity(row.user_id));
         const matchedSet = new Set(before.map((row) => String(row.id || '')));
         const matchedIds = memberIds.filter((id) => matchedSet.has(String(id)));
         const matchedRows = before.filter((row) => matchedSet.has(String(row.id || '')));
@@ -12205,10 +12373,11 @@ function handleApi(req, res) {
       try { ids = normalizeSessionIdBatch(body && body.ids); }
       catch (e) { return json(res, 400, { ok: false, error: e.message }); }
       if (!ids.length) return json(res, 400, { ok: false, error: '未选择会话' });
-      return sqliteRun(
+      const deletions = getSessionDeletionSync();
+      return (deletions ? deletions.restore(ids) : sqliteRun(
         "UPDATE sessions SET deleted_at = NULL, updated_at = ? WHERE id IN (" + sqlPlaceholders(ids) + ");",
         [Date.now(), ...ids]
-      )
+      ))
         .then(() => json(res, 200, { ok: true, restored: ids.length }))
         .catch((e) => json(res, 500, { ok: false, error: e.message }));
     });
@@ -12713,7 +12882,7 @@ function handleApi(req, res) {
       const info = backupCurrent(DATA_DIR, log);
       return json(res, 200, {
         ok: true,
-        uid: info.uid,
+        uid: info.accountId || info.uid,
         nickname: info.nickname,
       });
     } catch (e) {
@@ -12739,7 +12908,7 @@ function handleApi(req, res) {
         // Renderer projection state can briefly retain the destination id from
         // the previous rotation. Never carry an id into the next account unless
         // the session index proves it belongs to the account being replaced.
-        if (currentConversationId && sourceUid) {
+        if (currentConversationId && sourceUid && !sessionAccountAmbiguous(sourceUid)) {
           const ownerRows = await sqliteQuery(
             'SELECT user_id, cwd FROM sessions WHERE id = ? AND deleted_at IS NULL LIMIT 1;',
             [currentConversationId]
@@ -12751,6 +12920,7 @@ function handleApi(req, res) {
             currentConversationRow = { ...ownerRows[0], id: currentConversationId };
           }
         }
+        if (sessionAccountAmbiguous(sourceUid)) currentConversationId = '';
         if (sourceUid !== uid) await preserveAccountSwitchTheme(uid);
         const acct = await switchAccountForProfile(uid);
         const hint = acct.nativeSwitched ? '原生登录态已切换，无需重启客户端' : '登录文件已切换，请刷新窗口使新账号生效';

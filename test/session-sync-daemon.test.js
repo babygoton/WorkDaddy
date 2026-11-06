@@ -9,9 +9,12 @@ const crypto = require('node:crypto');
 const lib = require('../scripts/lib.js');
 const sessionSync = require('../scripts/session-sync.js');
 const { createDirtyIndex } = require('../scripts/session-dirty.js');
+const { createSessionAccountResolver } = require('../scripts/account-identity');
+const { sanitizeSessionCopyError } = require('../scripts/session-copy-error');
+const assertSessionAccountIdentity = createSessionAccountResolver([]).assertUnambiguous;
 const source = fs.readFileSync(path.join(__dirname, '../scripts/daemon.js'), 'utf8');
 const base = [{ type: 'message', role: 'user', content: [{ text: 'question' }] }, { type: 'message', role: 'assistant', content: [{ text: 'answer' }] }];
-function harness(t, withPlanner = false) {
+function harness(t, withPlanner = false, withDeletions = false) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wd-pair-daemon-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const rows = new Map();
@@ -24,7 +27,7 @@ function harness(t, withPlanner = false) {
   }
   const syncCacheMap = new Map();
   const dirtyIndex = createDirtyIndex(); dirtyIndex.markBaseline('one');
-  const ctx = { codeBuddyFiles: null, ...lib, sessionSync, fs, path, crypto, DATA_DIR: root, PROFILE: { dataRoot: root, kind: 'workbuddy' }, createDirtyIndex,
+  const ctx = { codeBuddyFiles: null, assertSessionAccountIdentity, sanitizeSessionCopyError, ...lib, sessionSync, fs, path, crypto, DATA_DIR: root, PROFILE: { dataRoot: root, kind: 'workbuddy' }, createDirtyIndex,
     sessionCopyRowRevision: row => JSON.stringify([
       String(row && row.id || ''), String(row && row.user_id || ''),
       Number(row && row.updated_at || 0), Number(row && row.last_activity_at || 0),
@@ -33,10 +36,15 @@ function harness(t, withPlanner = false) {
     accountSwitchInProgress: false, SESSION_COPY_COLUMNS: ['id', 'user_id'], sessionCopyLocks: new Map(), yieldAutoCopyToRenderer: async () => {}, assertSessionSyncIdle: async () => {},
     getSessionSyncCache: () => syncCacheMap, scheduleSessionSyncCacheSave: () => {},
     getSessionDirtyIndex: () => dirtyIndex,
+    getSessionDeletionSync: () => null,
     setTimeout, clearTimeout,
     log: () => {}, sqliteQuery: async (_, params) => {
+      if (_.includes('WHERE deleted_at IS NOT NULL')) return [...rows.values()].filter(row => row.deleted_at != null);
+      if (_.startsWith('SELECT id, user_id, deleted_at FROM sessions')) {
+        return [...rows.values()].filter(row => params.some((id, i) => i % 2 === 0 && row.id === id && row.user_id === params[i + 1])).map(row => ({ ...row }));
+      }
       if (withPlanner && params.length === 1 && /FROM sessions WHERE deleted_at IS NULL.* user_id = \?/.test(_)) {
-        return [...rows.values()].filter(row => row.user_id === params[0]).map(row => ({ ...row }));
+        return [...rows.values()].filter(row => row.user_id === params[0] && row.deleted_at == null).map(row => ({ ...row }));
       }
       if (params.length >= 4) {
         return [...rows.values()].filter((candidate) => String(candidate.user_id) === String(params[0]) &&
@@ -44,18 +52,61 @@ function harness(t, withPlanner = false) {
           String(candidate.title || '') === String(params[2] || '') &&
           String(candidate.custom_title || '') === String(params[3] || '')).map((candidate) => ({ ...candidate }));
       }
-      const row = rows.get(params[0]); return row && (!params[1] || params[1] === row.user_id) ? [{ ...row }] : [];
+      const row = rows.get(params[0]); return row && (!params[1] || params[1] === row.user_id) && (!_.includes('deleted_at IS NULL') || row.deleted_at == null) ? [{ ...row }] : [];
     },
-    sqliteRun: async (_, params) => { const row = rows.get(params[5]); assert.ok(row); Object.assign(row, { title: params[0], custom_title: params[1], status: params[2], updated_at: params[3], last_activity_at: params[4] }); },
+    sqliteRun: async (_, params) => {
+      if (_.startsWith('UPDATE sessions SET deleted_at = ?')) {
+        let changes = 0;
+        for (let i = 2; i < params.length; i += 2) {
+          const row = rows.get(params[i]);
+          if (row && row.user_id === params[i + 1] && row.deleted_at == null) { row.deleted_at = params[0]; changes++; }
+        }
+        return { changes };
+      }
+      const row = rows.get(params[5]); assert.ok(row); Object.assign(row, { title: params[0], custom_title: params[1], status: params[2], updated_at: params[3], last_activity_at: params[4] });
+    },
     insertCopiedSession: async (src, uid, id) => {
       const row = { ...src, user_id: uid, id, updated_at: Date.now(), last_activity_at: Number(src.last_activity_at || src.updated_at || Date.now()) };
       rows.set(id, row);
       return row;
     },
   };
+  if (withDeletions) {
+    const deletionSync = require('../scripts/session-deletion-sync').createSessionDeletionSync({
+      query: ctx.sqliteQuery, run: ctx.sqliteRun, locks: ctx.sessionCopyLocks,
+      members: ids => lib.collectLineageMembersForDelete(root, ids),
+    });
+    ctx.getSessionDeletionSync = () => deletionSync;
+  }
   vm.runInNewContext(source.slice(source.indexOf('function sessionCopyContentRevision('), source.indexOf(withPlanner ? 'const autoCopyJobs' : 'async function buildAutoCopyPlan(')), ctx);
   return { root, rows, file, write, ctx, lineage, copy: () => ctx.copySessionRecord(rows.get('a'), 'two', { auto: true, lineageId: lineage }) };
 }
+test('official deletion blocks reverse copy and propagates before the next switch plan', async t => {
+  const h = harness(t, true, true);
+  const refreshed = [];
+  h.ctx.refreshWorkBuddySessionList = async uid => refreshed.push(uid);
+  await h.copy();
+  h.rows.get('a').deleted_at = 100;
+  const before = fs.readFileSync(h.file('b'));
+  const result = await h.ctx.copySessionRecord(h.rows.get('b'), 'one', { auto: true, lineageId: h.lineage });
+  assert.equal(result.status, 'skipped');
+  assert.equal(result.targetId, '', 'a deleted conversation must not be reopened after switching');
+  assert.equal(h.rows.size, 3, 'the deleted target must not be replaced with a new physical session');
+  assert.equal((await h.ctx.buildAutoCopyPlan('two', 'one')).length, 0);
+  assert.equal((await h.ctx.buildAutoCopyPlan('one', 'two')).length, 0);
+  assert.ok(h.rows.get('b').deleted_at && h.rows.get('c').deleted_at);
+  assert.deepEqual(refreshed, ['one'], 'an all-deleted plan still refreshes the destination list');
+  assert.deepEqual(fs.readFileSync(h.file('b')), before, 'soft deletion must preserve message files');
+});
+
+test('deletion during a copy guard aborts publication instead of recreating the target', async t => {
+  const h = harness(t, true, true);
+  lib.removeAutoCopySessionMember(h.root, h.lineage, 'two', 'b');
+  h.rows.delete('b'); fs.unlinkSync(h.file('b'));
+  h.ctx.assertSessionSyncIdle = async () => { h.rows.get('c').deleted_at = 100; };
+  await assert.rejects(h.copy(), /已删除/);
+  assert.equal([...h.rows.values()].filter(row => row.user_id === 'two').length, 0);
+});
 test('account two continuation updates account one and never account three', async t => {
   const h = harness(t); h.write('b', [...base, { type: 'message', role: 'user', content: [{ text: 'continued' }] }]);
   const third = fs.readFileSync(h.file('c'));
@@ -139,7 +190,7 @@ test('stale active-session lifecycle markers are cleared after an equal payload 
     sourceRevision: revision({ ...sourceRow, updated_at: 7, last_activity_at: 7 }),
     targetRevision: revision(targetRow),
   });
-  const ctx = { codeBuddyFiles: null,
+  const ctx = { codeBuddyFiles: null, assertSessionAccountIdentity, sanitizeSessionCopyError,
     ...lib, fs, path, DATA_DIR: root, PROFILE: { dataRoot: root }, sessionSync,
     createDirtyIndex, getSessionSyncCache: () => new Map(),
     setTimeout, clearTimeout,
@@ -234,7 +285,7 @@ test('automatic copy planning drops revision-stable mappings before workers', as
     targetId: 'b', fingerprintVersion: 3, sourceRevision: revision(sourceRow), targetRevision: revision(target),
   });
   let targetQueries = 0;
-  const makeContext = () => ({ ...lib, fs, path, DATA_DIR: root, createDirtyIndex, setTimeout, clearTimeout, SESSION_COPY_COLUMNS: ['id', 'user_id', 'cwd', 'title', 'custom_title', 'status', 'updated_at', 'last_activity_at'], sessionCopyRowRevision: revision,
+  const makeContext = () => ({ assertSessionAccountIdentity, ...lib, fs, path, DATA_DIR: root, createDirtyIndex, setTimeout, clearTimeout, SESSION_COPY_COLUMNS: ['id', 'user_id', 'cwd', 'title', 'custom_title', 'status', 'updated_at', 'last_activity_at'], sessionCopyRowRevision: revision,
     sqliteQuery: async (_, params) => { if (String(params[0]) === 'two') targetQueries++; return [String(params[0]) === 'one' ? { ...sourceRow } : { ...target }]; } });
   const start = source.indexOf('function sessionCopyContentRevision(');
   let ctx = makeContext();
@@ -282,7 +333,7 @@ test('initialized clean mappings ignore legacy source revision drift', async t =
     sourceRevision: revision({ ...sourceRow, updated_at: 7, last_activity_at: 7 }),
     targetRevision: revision(targetRow),
   });
-  const ctx = { codeBuddyFiles: null, ...lib, fs, path, DATA_DIR: root, createDirtyIndex,
+  const ctx = { codeBuddyFiles: null, assertSessionAccountIdentity, sanitizeSessionCopyError, ...lib, fs, path, DATA_DIR: root, createDirtyIndex,
     SESSION_COPY_COLUMNS: ['id', 'user_id', 'cwd', 'title', 'custom_title', 'status', 'updated_at', 'last_activity_at'],
     sessionCopyRowRevision: revision,
     sqliteQuery: async (_, params) => [String(params[0]) === 'one' ? { ...sourceRow } : { ...targetRow }],
@@ -309,7 +360,7 @@ test('automatic copy planning reuses a stable cross-account mapping without a wo
   lib.setAutoCopyMapping(root, lineage, 'two', {
     targetId: 'b', fingerprintVersion: 3, sourceRevision: revision(previousSource), targetRevision: revision(target),
   });
-  const ctx = { codeBuddyFiles: null, ...lib, DATA_DIR: root, setTimeout, clearTimeout, SESSION_COPY_COLUMNS: ['id', 'user_id', 'cwd', 'title', 'custom_title', 'status', 'updated_at', 'last_activity_at'], sessionCopyRowRevision: revision,
+  const ctx = { codeBuddyFiles: null, assertSessionAccountIdentity, sanitizeSessionCopyError, ...lib, DATA_DIR: root, setTimeout, clearTimeout, SESSION_COPY_COLUMNS: ['id', 'user_id', 'cwd', 'title', 'custom_title', 'status', 'updated_at', 'last_activity_at'], sessionCopyRowRevision: revision,
     sqliteQuery: async (_, params) => [String(params[0]) === 'one' ? { ...sourceRow } : { ...target }] };
   const start = source.indexOf('function sessionCopyContentRevision(');
   vm.runInNewContext(source.slice(start, source.indexOf('const autoCopyJobs', start)), ctx);
@@ -337,7 +388,7 @@ test('automatic copy planning ignores target activation lifecycle drift', async 
   lib.setAutoCopyMapping(root, lineage, 'two', {
     targetId: 'b', fingerprintVersion: 3, sourceRevision: revision(sourceRow), targetRevision: revision({ ...sourceRow, id: 'b', user_id: 'two' }),
   });
-  const ctx = { codeBuddyFiles: null, ...lib, fs, path, DATA_DIR: root, createDirtyIndex,
+  const ctx = { codeBuddyFiles: null, assertSessionAccountIdentity, sanitizeSessionCopyError, ...lib, fs, path, DATA_DIR: root, createDirtyIndex,
     SESSION_COPY_COLUMNS: ['id', 'user_id', 'cwd', 'title', 'custom_title', 'status', 'updated_at', 'last_activity_at'],
     sessionCopyRowRevision: revision,
     sqliteQuery: async (_, params) => [String(params[0]) === 'one' ? sourceRow : targetRow],
@@ -368,7 +419,7 @@ test('source activation-only updated_at drift clears dirty state without a snaps
     targetRevision: revision(targetRow),
   });
   let snapshotReads = 0;
-  const ctx = { codeBuddyFiles: null,
+  const ctx = { codeBuddyFiles: null, assertSessionAccountIdentity, sanitizeSessionCopyError,
     ...lib, fs, path, DATA_DIR: root, PROFILE: { dataRoot: root }, createDirtyIndex,
     setTimeout, clearTimeout, getSessionSyncCache: () => new Map(),
     SESSION_COPY_COLUMNS: ['id', 'user_id', 'cwd', 'title', 'custom_title', 'status', 'updated_at', 'last_activity_at'],
@@ -388,7 +439,7 @@ test('source activation-only updated_at drift clears dirty state without a snaps
 
 test('active sync status ignores a recent job for another target account', () => {
   const start = source.indexOf('function activeAutoCopyJob(');
-  const ctx = { codeBuddyFiles: null,
+  const ctx = { codeBuddyFiles: null, assertSessionAccountIdentity, sanitizeSessionCopyError,
     Date: { now: () => 10000 },
     autoCopyJobs: new Map([
       ['other', { id: 'other', targetUid: 'two', status: 'done', finishedAt: 9900, startedAt: 9000 }],
@@ -408,7 +459,7 @@ test('explicitly requested open session is planned without regular auto-copy rul
     custom_title: '', status: 'completed', created_at: 1, updated_at: 7, last_activity_at: 7,
   };
   const targetRow = { ...sourceRow, id: 'other-session', user_id: 'two' };
-  const ctx = { codeBuddyFiles: null,
+  const ctx = { codeBuddyFiles: null, assertSessionAccountIdentity, sanitizeSessionCopyError,
     ...lib, fs, path, DATA_DIR: root,
     SESSION_COPY_COLUMNS: ['id', 'user_id', 'cwd', 'title', 'custom_title', 'status', 'updated_at', 'last_activity_at'],
     sessionCopyRowRevision: row => JSON.stringify([
@@ -448,7 +499,7 @@ test('requested unchanged open session resolves its mapping without entering the
     sourceRevision: revision(sourceRow), targetRevision: revision(targetRow),
   });
   let targetQueries = 0;
-  const ctx = { codeBuddyFiles: null,
+  const ctx = { codeBuddyFiles: null, assertSessionAccountIdentity, sanitizeSessionCopyError,
     ...lib, fs, path, DATA_DIR: root, createDirtyIndex,
     SESSION_COPY_COLUMNS: ['id', 'user_id', 'cwd', 'title', 'custom_title', 'status', 'updated_at', 'last_activity_at'],
     sessionCopyRowRevision: revision,
@@ -474,7 +525,7 @@ test('stable mappings clear legacy lifecycle dirty markers before planning', asy
   const targetRow = { ...sourceRow, id: 'b', user_id: 'two' };
   const revision = row => JSON.stringify([String(row.id), String(row.user_id), Number(row.updated_at || 0), Number(row.last_activity_at || 0), String(row.status || ''), String(row.title || ''), String(row.custom_title || '')]);
   lib.setAutoCopyMapping(root, lineage, 'two', { targetId: 'b', fingerprintVersion: 3, sourceRevision: revision(sourceRow), targetRevision: revision(targetRow) });
-  const ctx = { codeBuddyFiles: null, ...lib, fs, path, DATA_DIR: root, createDirtyIndex, setTimeout, SESSION_COPY_COLUMNS: ['id', 'user_id', 'cwd', 'title', 'custom_title', 'status', 'updated_at', 'last_activity_at'], sessionCopyRowRevision: revision, sqliteQuery: async (_, params) => [String(params[0]) === 'one' ? { ...sourceRow } : { ...targetRow }] };
+  const ctx = { codeBuddyFiles: null, assertSessionAccountIdentity, sanitizeSessionCopyError, ...lib, fs, path, DATA_DIR: root, createDirtyIndex, setTimeout, SESSION_COPY_COLUMNS: ['id', 'user_id', 'cwd', 'title', 'custom_title', 'status', 'updated_at', 'last_activity_at'], sessionCopyRowRevision: revision, sqliteQuery: async (_, params) => [String(params[0]) === 'one' ? { ...sourceRow } : { ...targetRow }] };
   const start = source.indexOf('function sessionCopyContentRevision(');
   vm.runInNewContext(source.slice(start, source.indexOf('const autoCopyJobs', start)), ctx);
   assert.equal((await ctx.buildAutoCopyPlan('one', 'two')).length, 0);
@@ -530,7 +581,7 @@ test('manual and automatic switching bypass session activity while retaining ope
   const start = source.indexOf('async function assertSessionSyncIdle(');
   const end = source.indexOf('let automationAccountSwitchTail', start);
   assert.ok(start >= 0 && end > start);
-  const ctx = { codeBuddyFiles: null, accountSwitchInProgress: false, cdp: { connected: true }, PROFILE: { kind: 'workbuddy' }, autoCopyWorkerRunning: false, autoCopyQueue: [], sessionCopyLocks: new Map(),
+  const ctx = { codeBuddyFiles: null, assertSessionAccountIdentity, sanitizeSessionCopyError, accountSwitchInProgress: false, cdp: { connected: true }, PROFILE: { kind: 'workbuddy' }, autoCopyWorkerRunning: false, autoCopyQueue: [], sessionCopyLocks: new Map(),
     cdpSend: async () => ({ result: { value: true } }) };
   vm.runInNewContext(source.slice(start, end), ctx);
   await assert.rejects(ctx.assertSessionSyncIdle(['source', 'target']), /会话仍在运行/);
@@ -559,7 +610,7 @@ test('manual and automatic switching bypass session activity while retaining ope
 test('mixed sync jobs continue after divergence and report every result', async () => {
   const results = ['conflict', 'copied', 'skipped', 'error'];
   let sizeReads = 0;
-  const ctx = { codeBuddyFiles: null, crypto, PROFILE: { dataRoot: 'fixture-root' }, autoCopyJobs: new Map(), autoCopyQueue: [], Date,
+  const ctx = { codeBuddyFiles: null, assertSessionAccountIdentity, sanitizeSessionCopyError, crypto, PROFILE: { dataRoot: 'fixture-root' }, autoCopyJobs: new Map(), autoCopyQueue: [], Date,
     yieldAutoCopyToRenderer: async () => {}, buildAutoCopyPlan: async () => results.map((_, i) => ({ id: String(i) })),
     copySessionRecord: async row => { const status = results[Number(row.id)]; if (status === 'error') throw Error('fixture failure'); return { status, branched: status === 'copied', copiedBytes: status === 'copied' ? 123456 : 0, totalBytes: 123456, warning: status === 'copied' ? 'large session advisory' : '' }; },
     sessionSync: { readSessionSizes: async () => { sizeReads++; return new Map(); } },
@@ -591,7 +642,7 @@ test('mixed sync jobs continue after divergence and report every result', async 
 
 test('active session copy retries transient file races and preserves its target id', async () => {
   let attempts = 0;
-  const ctx = { codeBuddyFiles: null,
+  const ctx = { codeBuddyFiles: null, assertSessionAccountIdentity, sanitizeSessionCopyError,
     crypto,
     DATA_DIR: 'fixture-data',
     PROFILE: { dataRoot: 'fixture-root' },
@@ -618,7 +669,7 @@ test('active session copy retries transient file races and preserves its target 
 
 test('active session copy keeps waiting through a longer renderer flush', async () => {
   let attempts = 0;
-  const ctx = { codeBuddyFiles: null,
+  const ctx = { codeBuddyFiles: null, assertSessionAccountIdentity, sanitizeSessionCopyError,
     crypto,
     PROFILE: { dataRoot: 'fixture-root' },
     autoCopyJobs: new Map(), autoCopyQueue: [], Date,
@@ -645,7 +696,7 @@ test('active session copy keeps waiting through a longer renderer flush', async 
 
 test('unchanged requested session resolves its target without entering the copy worker', async () => {
   let copies = 0;
-  const ctx = { codeBuddyFiles: null,
+  const ctx = { codeBuddyFiles: null, assertSessionAccountIdentity, sanitizeSessionCopyError,
     crypto,
     PROFILE: { dataRoot: 'fixture-root' },
     autoCopyJobs: new Map(), autoCopyQueue: [], Date,
@@ -666,7 +717,7 @@ test('unchanged requested session resolves its target without entering the copy 
 
 for (const error of ['会话消息文件没有消息，未同步', '会话消息文件为空，未同步']) test('empty message sessions are skipped instead of shown as sync failures: ' + error, async () => {
   let cleared = 0;
-  const ctx = { codeBuddyFiles: null,
+  const ctx = { codeBuddyFiles: null, assertSessionAccountIdentity, sanitizeSessionCopyError,
     crypto,
     PROFILE: { dataRoot: 'fixture-root' },
     autoCopyJobs: new Map(), autoCopyQueue: [], Date,
@@ -691,7 +742,7 @@ for (const error of ['会话消息文件没有消息，未同步', '会话消息
 test('an empty automatic copy plan does not wait for renderer injection', async () => {
   const planningYields = [];
   let rendererWaits = 0;
-  const ctx = { codeBuddyFiles: null, crypto, PROFILE: { dataRoot: 'fixture-root' }, autoCopyJobs: new Map(), autoCopyQueue: [], Date,
+  const ctx = { codeBuddyFiles: null, assertSessionAccountIdentity, sanitizeSessionCopyError, crypto, PROFILE: { dataRoot: 'fixture-root' }, autoCopyJobs: new Map(), autoCopyQueue: [], Date,
     yieldAutoCopyToRenderer: async options => {
       planningYields.push(options);
       if (!options || options.waitForInjection !== false) rendererWaits++;
@@ -712,7 +763,7 @@ test('an empty automatic copy plan does not wait for renderer injection', async 
 test('automatic session sync uses a bounded worker pool', async () => {
   let running = 0;
   let peak = 0;
-  const ctx = { codeBuddyFiles: null, crypto, PROFILE: { dataRoot: 'fixture-root' }, autoCopyJobs: new Map(), autoCopyQueue: [], Date,
+  const ctx = { codeBuddyFiles: null, assertSessionAccountIdentity, sanitizeSessionCopyError, crypto, PROFILE: { dataRoot: 'fixture-root' }, autoCopyJobs: new Map(), autoCopyQueue: [], Date,
     yieldAutoCopyToRenderer: async () => {}, buildAutoCopyPlan: async () => Array.from({ length: 8 }, (_, id) => ({ id: String(id) })),
     copySessionRecord: async row => {
       running++;
@@ -734,7 +785,7 @@ test('automatic session sync uses a bounded worker pool', async () => {
 });
 
 test('automatic session sync aggregates copied bytes independently across workers', async () => {
-  const ctx = { codeBuddyFiles: null, crypto, PROFILE: { dataRoot: 'fixture-root' }, autoCopyJobs: new Map(), autoCopyQueue: [], Date,
+  const ctx = { codeBuddyFiles: null, assertSessionAccountIdentity, sanitizeSessionCopyError, crypto, PROFILE: { dataRoot: 'fixture-root' }, autoCopyJobs: new Map(), autoCopyQueue: [], Date,
     yieldAutoCopyToRenderer: async () => {}, buildAutoCopyPlan: async () => Array.from({ length: 8 }, (_, id) => ({ id: String(id) })),
     copySessionRecord: async () => {
       await new Promise(resolve => setTimeout(resolve, 2));
@@ -1002,4 +1053,26 @@ test('copy completion preserves timestamps of concurrent source and target dirty
   assert.equal(h.ctx.getSessionDirtyIndex().get('one', 'a').at, at);
   assert.equal(h.ctx.getSessionDirtyIndex().get('two', 'b').at, at + 1);
   assert.equal((await h.switchTo('two', 'three')).length, 1);
+});
+
+for (const duringCopy of [false, true]) test('deleting the active session never reopens its old mapping or blocks later automation: ' + duringCopy, async () => {
+  let attempts = 0;
+  const ctx = { codeBuddyFiles: null, assertSessionAccountIdentity, sanitizeSessionCopyError, crypto, DATA_DIR: 'fixture', PROFILE: { dataRoot: 'fixture' },
+    autoCopyJobs: new Map(), autoCopyQueue: [], Date,
+    yieldAutoCopyToRenderer: async () => {},
+    buildAutoCopyPlan: async () => duringCopy ? [{ id: 'a', lineageId: 'lineage' }] : [],
+    getSessionDeletionSync: () => ({ hasDeletion: async () => !duringCopy }),
+    resolveAutoCopyTargetId: () => 'deleted-target',
+    getAutoCopyMapping: () => ({ targetId: 'deleted-target' }),
+    copySessionRecord: async () => { attempts++; const e = Error('同源会话已删除，停止同步'); e.code = 'WBS_SESSION_DELETED'; throw e; },
+    log() {}, runAutoCopyQueue() {}, pruneAutoCopyJobs() {}, setTimeout,
+  };
+  const start = source.indexOf('function startAutoCopyJob(');
+  vm.runInNewContext(source.slice(start, source.indexOf('function activeAutoCopyJob(', start)), ctx);
+  const job = ctx.startAutoCopyJob('one', 'two', [], { openSessionId: 'a' });
+  await ctx.autoCopyQueue[0].run();
+  assert.equal(attempts, duringCopy ? 1 : 0, 'deletion is final, not a transient copy failure to retry');
+  assert.equal(job.status, 'done');
+  assert.equal(job.failed, 0);
+  assert.equal(ctx.publicAutoCopyJob(job).openSessionId, '');
 });

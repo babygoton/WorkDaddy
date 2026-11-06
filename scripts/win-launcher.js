@@ -14,6 +14,7 @@
 'use strict';
 
 const fs = require('fs');
+const { readWorkBuddyInstallation, waitForStableWorkBuddyInstallation } = require('./windows-startup-recovery');
 const path = require('path');
 const os = require('os');
 const net = require('net');
@@ -1369,7 +1370,9 @@ function stopNativeWorkBuddy() {
   const result = runNativeHelper(['--terminate-workbuddy', '--profile', PROFILE.id], { timeout: 60000 });
   if (result.status !== 0) {
     const detail = String(result.stderr || '').trim();
-    throw new Error('无法精确重启当前 WorkBuddy（错误码 ' + result.status + '）' + (detail ? ': ' + detail : ''));
+    const error = new Error('无法精确重启当前 WorkBuddy（错误码 ' + result.status + '）' + (detail ? ': ' + detail : ''));
+    error.exitCode = result.status;
+    throw error;
   }
 }
 
@@ -1649,8 +1652,13 @@ async function ensureDaemonNative(nodeBin) {
 
 async function waitForWorkBuddyCdpNative(binary) {
   let restartedAfterHandoff = false;
+  let retriedAfterUpdate = false;
+  let installationChanged = false;
+  let launchInstallation = null;
   let launchStartedAt = 0;
   const start = () => {
+    launchInstallation = readWorkBuddyInstallation(binary);
+    installationChanged = false;
     nativeLaunchState = launchWorkBuddy(binary);
     launchStartedAt = Date.now();
     log('WorkBuddy 启动请求已派发 method=' + nativeLaunchState.method + ' expectedPort=' + CDP_PORT +
@@ -1668,8 +1676,31 @@ async function waitForWorkBuddyCdpNative(binary) {
         return true;
       }
     }
+    const installation = readWorkBuddyInstallation(binary);
+    installationChanged = installationChanged || installation.signature !== launchInstallation.signature;
     if (nativeLaunchFailed(nativeLaunchState)) {
-      if (!restartedAfterHandoff && nativeWorkBuddyRunning()) {
+      if (installationChanged && !retriedAfterUpdate) {
+        retriedAfterUpdate = true;
+        // A changed executable/archive during this attempt is evidence of an
+        // installation write, not proof of the crash cause. Bound recovery by
+        // the original startup deadline and retain exact-process checks.
+        log('启动期间安装文件发生变化，等待稳定后重试一次');
+        await waitForStableWorkBuddyInstallation(binary, deadline);
+        // The official updater may have already restarted a usable instance.
+        // Reuse its verified CDP endpoint instead of stopping it again.
+        for (const port of cdpPortCandidates()) {
+          if (await isWorkBuddyCdpAt(port)) {
+            CDP_PORT = port;
+            process.env.WBSWITCH_CDP_PORT = String(port);
+            writeCdpPortFile(port);
+            return true;
+          }
+        }
+        if (nativeWorkBuddyRunning()) stopNativeWorkBuddy();
+        start();
+        continue;
+      }
+      if (!restartedAfterHandoff && !retriedAfterUpdate && nativeWorkBuddyRunning()) {
         restartedAfterHandoff = true;
         log('WorkBuddy 启动进程异常退出但同 profile 进程仍在运行，精确停止后重试一次');
         stopNativeWorkBuddy();
@@ -1678,7 +1709,8 @@ async function waitForWorkBuddyCdpNative(binary) {
         continue;
       }
       const error = new Error('WorkBuddy 启动进程异常退出' +
-        (nativeLaunchState.errorCode ? '（' + nativeLaunchState.errorCode + '）' : '（退出码 ' + nativeLaunchState.exitCode + '）'));
+        (nativeLaunchState.errorCode ? '（' + nativeLaunchState.errorCode + '）' : '（退出码 ' + nativeLaunchState.exitCode + ' / 0x' + (nativeLaunchState.exitCode >>> 0).toString(16).toUpperCase().padStart(8, '0') + '）'));
+      error.exitCode = 14;
       error.sentryStage = 'windows-native-launcher-workbuddy-exit';
       error.sentryExtra = {
         cdpPort: CDP_PORT,
@@ -1688,7 +1720,7 @@ async function waitForWorkBuddyCdpNative(binary) {
       };
       throw error;
     }
-    if (!restartedAfterHandoff && Number.isInteger(nativeLaunchState && nativeLaunchState.exitCode) &&
+    if (!restartedAfterHandoff && !retriedAfterUpdate && Number.isInteger(nativeLaunchState && nativeLaunchState.exitCode) &&
         Date.now() - launchStartedAt >= 5000 && nativeWorkBuddyRunning()) {
       restartedAfterHandoff = true;
       log('WorkBuddy 启动请求已被无 CDP 的单实例接管，精确停止后重试一次');
@@ -1705,6 +1737,10 @@ function nativeLaunchFailed(state) {
     state.errorCode ||
     (Number.isInteger(state.exitCode) && state.exitCode !== 0)
   ));
+}
+
+function nativeStartupExitCode(error) {
+  return error && [11, 12, 13, 14, 15].includes(error.exitCode) ? error.exitCode : 4;
 }
 
 async function nativeStartupMain() {
@@ -1773,7 +1809,7 @@ if (require.main === module && process.env.WBSWITCH_NATIVE_LAUNCHER === '1') {
       stage: error && error.sentryStage || 'windows-native-launcher-uncaught',
       extra: error && error.sentryExtra || {},
     })
-      .catch(() => {}).finally(() => process.exit(4));
+      .catch(() => {}).finally(() => process.exit(nativeStartupExitCode(error)));
   });
 } else if (require.main === module) (async () => {
   // 入口级 breadcrumb 必须先于 Node/PowerShell/进程探测写出，避免管理员启动时
@@ -1856,6 +1892,7 @@ if (require.main === module && process.env.WBSWITCH_NATIVE_LAUNCHER === '1') {
 
 module.exports = {
   nativeLaunchFailed,
+  nativeStartupExitCode,
   strictPowerShellLines,
   getWorkBuddyProcesses,
   workBuddyProcesses,

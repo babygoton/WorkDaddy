@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { accountIdentity } = require('../scripts/account-identity');
 const source = fs.readFileSync(path.join(__dirname, '../scripts/daemon.js'), 'utf8');
 const oldSnapshot = { version: 1, uid: 'old', nickname: '旧账号', type: 'enterprise', savedAt: 1, editionType: 'free', enterpriseId: 'old-company' };
 function harness(options = {}) {
@@ -26,7 +27,7 @@ function harness(options = {}) {
     const raw = new URL(location.href).searchParams.get('accountSnapshot');
     initialAccount = raw ? JSON.parse(decodeURIComponent(raw)) : null;
   };
-  const ctx = {
+  const ctx = { accountIdentity,
     PROFILE: { kind: options.kind || 'workbuddy' }, cdp: { connected: true },
     setTimeout, clearTimeout, URL, log: line => logs.push(line),
     armPendingReloadInjection: () => { armed = true; return { ready: options.ready || Promise.resolve(true) }; },

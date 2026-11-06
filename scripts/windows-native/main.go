@@ -1343,6 +1343,27 @@ func appendLog(dir string, args ...any) *os.File {
 	return file
 }
 
+func startupFailureMessage(code int) string {
+	var detail string
+	switch code {
+	case 3:
+		detail = "等待 WorkBuddy 调试端口超时。请确认官方更新已完成，并完全退出旧实例后从 WorkDaddy 重试。"
+	case exitAccessDenied:
+		detail = "无法以当前权限检查或关闭旧 WorkBuddy 实例。请手动退出旧实例，检查 WorkBuddy 的兼容性设置，取消“以管理员身份运行”后重试。"
+	case exitIdentityMismatch:
+		detail = "无法验证旧进程的路径、账号或会话身份，已停止操作。请手动退出旧实例后重试；若仍失败，请重新选择客户端安装路径。"
+	case exitPreserveLifecycle:
+		detail = "无法安全确认当前组件的归属，已保留现有进程。请手动退出当前客户端及其 WorkDaddy 后重试。"
+	case 14:
+		detail = "WorkBuddy 启动进程异常退出。请等待官方更新完成后重试；具体退出码（含十六进制）见日志。"
+	case 15:
+		detail = "WorkBuddy 安装文件仍在变化或尚不完整。请等待官方更新完成后重试。"
+	default:
+		detail = "启动失败。请查看日志中的具体原因。"
+	}
+	return fmt.Sprintf("%s\n\n错误码：%d\n详细信息已写入 native-launcher.log。", detail, code)
+}
+
 func runNodeLauncher(appDir, profile string) int {
 	dir, err := dataDir(profile)
 	if err != nil {
@@ -1391,7 +1412,7 @@ func runNodeLauncher(appDir, profile string) int {
 			return 0
 		}
 		if code != 0 {
-			messageBox(productName(profile), fmt.Sprintf("启动失败（错误码 %d）。\n\n详细信息已写入 native-launcher.log。", code), mbOK|mbIconError)
+			messageBox(productName(profile), startupFailureMessage(code), mbOK|mbIconError)
 		}
 		return code
 	}

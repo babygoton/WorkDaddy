@@ -17,6 +17,35 @@ function navigationFunction(name, context) {
   return context[name];
 }
 
+test('resizing a narrow window hides navigation, closes previews and cancels dragging; widening restores it', () => {
+  const style = { setProperty() {} };
+  let previewOpen = true, cancelled = false;
+  const context = {
+    root: { style }, surface: { viewportElement: { getBoundingClientRect: () => ({ left: 240, top: 40, width: 1000, height: 800 }) } },
+    hidden: false, window: { innerWidth: 1440 }, turns: [{ id: 'a' }, { id: 'b' }],
+    dragPointerId: 7, positionFlyouts() {},
+    hideTooltip(immediate) { assert.equal(immediate, true); previewOpen = false; },
+    finishNavDrag(event, cancel) { assert.equal(event.pointerId, 7); cancelled = cancel; context.dragPointerId = null; },
+  };
+  const position = navigationFunction('position', context);
+  position();
+  assert.equal(style.display, 'block');
+  context.window.innerWidth = 1280;
+  position();
+  assert.equal(style.display, 'none');
+  assert.equal(previewOpen, false);
+  assert.equal(cancelled, true);
+  assert.equal(context.hidden, false, 'responsive hiding must not disable the feature or lose its loaded turns');
+  context.window.innerWidth = 1281;
+  position();
+  assert.equal(style.display, 'block');
+  assert.equal(previewOpen, false, 'expanding the window must not reopen an old preview');
+  context.hidden = true;
+  style.display = 'none';
+  position();
+  assert.equal(style.display, 'none', 'resizing must not enable disabled or empty navigation');
+});
+
 test('navigation displays at most 20 evenly spaced markers while retaining both conversation ends', () => {
   const context = {};
   const indices = navigationFunction('markerTurnIndices', context);

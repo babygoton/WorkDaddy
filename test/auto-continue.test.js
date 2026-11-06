@@ -284,6 +284,10 @@ function acSupported(platform) {
     { trigger: false, reason: 'model-rate-limited' },
   );
   assert.deepStrictEqual(
+    classifyAutoContinueControllerSnapshot({ assistantId: 'req-a-assistant', error: true, errorCode: 6000, usageLimited: true }),
+    { trigger: false, reason: 'model-usage-limited' },
+  );
+  assert.deepStrictEqual(
     classifyAutoContinueControllerSnapshot({ assistantId: 'req-a-assistant', manualStop: true }),
     { trigger: false, reason: 'manual-stop' },
     '用户主动取消绝不自动续跑',
@@ -311,7 +315,10 @@ function acSupported(platform) {
   assert.ok(Number.isFinite(normalized.resetAt));
   assert.equal(Object.prototype.hasOwnProperty.call(normalized, 'message'), false);
   assert.deepStrictEqual(classifyAutoContinueError({ code: 14018 }), {
-    quotaExhausted: true, rateLimited: false, authFailure: false, nonRetryable: true, code: 14018,
+    quotaExhausted: true, usageLimited: false, rateLimited: false, authFailure: false, nonRetryable: true, code: 14018,
+  });
+  assert.deepStrictEqual(classifyAutoContinueError({ code: 6000 }), {
+    quotaExhausted: false, usageLimited: true, rateLimited: false, authFailure: false, nonRetryable: true, code: 6000,
   });
   console.log('✓ 官方 14018/6004 错误码停止自动继续，错误快照不保留原文');
 }
