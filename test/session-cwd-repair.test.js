@@ -13,7 +13,7 @@ assert.ok(start >= 0 && end > start, 'session cwd repair helpers must be present
 
 // Execute the real repair helpers with Windows paths and an in-memory filesystem
 // so missing drives and remounts can be exercised on every test host.
-function harness({ isWin = true, kind = 'workbuddy' } = {}) {
+function harness({ isWin = true, kind = 'workbuddy', repairEnabled = true } = {}) {
   const state = {
     rows: [
       { id: 'fixture-a', cwd: 'G:\\fixture\\project-a' },
@@ -43,6 +43,7 @@ function harness({ isWin = true, kind = 'workbuddy' } = {}) {
       },
       statSync: target => ({ isDirectory: () => state.directories.has(target) }),
     },
+    process: { env: repairEnabled ? { WORKDADDY_REPAIR_MISSING_SESSION_WORKSPACES: '1' } : {} },
     IS_WIN: isWin, PROFILE: { kind }, SESSIONS_DB: 'C:\\fixture\\sessions.db',
     sqliteQuery: async () => { state.queries++; return state.rows; },
     sessionPayloadExists: (_, id) => !state.missingPayloads.has(id),
@@ -182,4 +183,13 @@ test('non-Windows and CodeBuddy profiles never query or repair session cwd', asy
     assert.deepEqual(h.state.mkdir, []);
     assert.deepEqual(h.state.logs, []);
   }
+});
+
+test('workspace repair is disabled by default, including startup and later checks', async () => {
+  const h = harness({ repairEnabled: false });
+  h.state.roots.add('G:\\');
+  await h.tick();
+  await h.tick();
+  assert.equal(h.state.queries, 0);
+  assert.deepEqual(h.state.mkdir, []);
 });
