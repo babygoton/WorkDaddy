@@ -96,6 +96,10 @@ node scripts/workbuddy-target.js --configure --platform darwin \
   --data-dir "$HOME/Library/Application Support/WorkDaddy"
 ```
 
+### 会话工作目录恢复
+
+默认不会自动重建已删除的会话工作目录。旧会话需要原目录时，请手动恢复目录；如需启用 Windows 上的自动恢复，可在启动 WorkDaddy 前设置环境变量 `WORKDADDY_REPAIR_MISSING_SESSION_WORKSPACES=1`。启用后，缺失目录会被定期重建。
+
 ### Windows
 
 1. 在 [Releases](../../releases) 下载对应客户端的 `WorkDaddy-Setup-x.y.z.exe`、`WorkDaddy-AI-Setup-x.y.z.exe`、`CodeDaddy-CN-Setup-x.y.z.exe` 或 `CodeDaddy-Setup-x.y.z.exe`
