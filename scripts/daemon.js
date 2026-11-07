@@ -535,8 +535,8 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 // 1.2.65：兼容空会话同步、自定义模型和重定向备份目录，工作目录恢复退避重试。
 // 1.2.66：刷新凭据按原信封加密保存，同账号刷新去重，过期账号保留手动切换。
 // 1.2.67：Windows 重启 GUI 客户端时不再请求隐藏主窗口，与冷启动保持一致。
-const DAEMON_VERSION = '1.2.75';
-const DAEMON_BUILD_ID = 'release-1.2.75-opt-in-session-cwd-repair';
+const DAEMON_VERSION = '1.2.76';
+const DAEMON_BUILD_ID = 'release-1.2.76-fork-runtime-identity';
 const usageReporter = createUsageReporter({ profile: PROFILE.id, version: DAEMON_VERSION });
 configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const automationDiscovery = createAutomationDiscovery({
@@ -5387,8 +5387,15 @@ async function createForkSession(src, selection) {
 
   const id = crypto.randomUUID();
   const target = path.join(path.dirname(source), id + '.jsonl');
+  // Resume restores runtime identity from the records, not the new filename.
+  // Rebind only the source envelope; message IDs, payloads and child sessions
+  // must keep their original identities.
+  const text = plan.records.slice(0, plan.keptRecords).map(({ line, value }) => {
+    if (!value || value.sessionId !== src.id) return line;
+    return JSON.stringify(Object.assign({}, value, { sessionId: id }));
+  }).join('\n') + '\n';
   ensureArchiveParentNoFollow(root, target);
-  await fs.promises.writeFile(target, plan.text, { flag: 'wx', mode: 0o600 });
+  await fs.promises.writeFile(target, text, { flag: 'wx', mode: 0o600 });
   try {
     const now = Date.now();
     const title = forkedTitle(src.custom_title || src.title);

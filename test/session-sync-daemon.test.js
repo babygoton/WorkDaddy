@@ -120,6 +120,65 @@ test('account two continuation updates account one and never account three', asy
   assert.equal((await h.copy()).copiedBytes, 0);
 });
 
+test('fork and original keep separate runtime identities and continuations across workspace account switches', async t => {
+  const h = harness(t, true);
+  for (const [id, uid] of [['b', 'two'], ['c', 'three']]) {
+    lib.removeAutoCopySessionMember(h.root, h.lineage, uid, id);
+    h.rows.delete(id);
+    fs.unlinkSync(h.file(id));
+  }
+  const fork = require('../scripts/session-fork');
+  Object.assign(h.ctx, {
+    Buffer, forkedTitle: fork.forkedTitle, planForkAtMessage: fork.planForkAtMessage,
+    collectSessionArchiveFiles: (_root, id) => [{ path: 'projects/p/' + id + '.jsonl', source: h.file(id) }],
+    ensureArchiveParentNoFollow() {},
+  });
+  const start = source.indexOf('async function createForkSession(');
+  vm.runInNewContext(source.slice(start, source.indexOf('\nasync function prepareSessionExport(', start)), h.ctx);
+  const original = h.rows.get('a');
+  Object.assign(original, { cwd: '/fixture/workspace', status: 'completed', last_activity_at: 1 });
+  lib.setAutoCopyRule(h.root, { uid: 'one', kind: 'workspace', key: original.cwd, enabled: true });
+  const records = ['user', 'assistant', 'user', 'assistant'].map((role, index) => ({
+    type: 'message', role, sessionId: 'a', timestamp: 10000 + index * 1000,
+    content: [{ text: 'shared history ' + index }],
+  }));
+  h.write('a', records);
+  const branch = await h.ctx.createForkSession(original, { messageIndex: 1, roles: 'uaua', finishedAt: 11000 });
+  const read = id => fs.readFileSync(h.file(id), 'utf8').trim().split('\n').map(JSON.parse);
+  assert.ok(read(branch.id).every(record => record.sessionId === branch.id), 'fork must resume as itself before switching');
+  const continueSession = (id, label) => {
+    h.write(id, [...read(id), { type: 'message', role: 'user', sessionId: id, content: [{ text: label }] }]);
+    Object.assign(h.rows.get(id), { updated_at: Date.now(), last_activity_at: Date.now() });
+  };
+  continueSession(branch.id, 'branch continuation');
+  continueSession('a', 'original continuation');
+  const originalBefore = fs.readFileSync(h.file('a'));
+  const branchBefore = fs.readFileSync(h.file(branch.id));
+  const switchTo = async (from, to) => {
+    for (const row of await h.ctx.buildAutoCopyPlan(from, to)) {
+      await h.ctx.copySessionRecord(row, to, { auto: true, lineageId: row.lineageId });
+    }
+  };
+  await switchTo('one', 'two');
+  const branchLineage = lib.getAutoCopySession(h.root, 'one', branch.id).lineageId;
+  assert.notEqual(branchLineage, h.lineage);
+  const copies = [h.lineage, branchLineage].map(lineage => lib.getAutoCopyMapping(h.root, lineage, 'two').targetId);
+  assert.equal(new Set(copies).size, 2);
+  assert.equal([...h.rows.values()].filter(row => row.user_id === 'two' && row.deleted_at == null).length, 2);
+  for (const [index, id] of copies.entries()) {
+    assert.ok(read(id).every(record => record.sessionId === id));
+    assert.deepEqual(read(id), read(index === 0 ? 'a' : branch.id).map(record => ({ ...record, sessionId: id })));
+  }
+  continueSession(copies[1], 'branch on account two');
+  await switchTo('two', 'one');
+  assert.deepEqual(fs.readFileSync(h.file('a')), originalBefore, 'branch edits must never overwrite the original');
+  assert.notDeepEqual(fs.readFileSync(h.file(branch.id)), branchBefore);
+  assert.equal(read(branch.id).at(-1).content[0].text, 'branch on account two');
+  assert.ok(read(branch.id).every(record => record.sessionId === branch.id));
+  const rows = [...h.rows.values()].filter(row => row.user_id === 'one');
+  assert.equal(lib.dedupeAutoCopySessionRows(rows, { one: lib.getAutoCopyRules(h.root, 'one').allLineages }).length, 2);
+});
+
 test('legacy equal mappings repair runtime IDs once instead of taking the revision fast path', async t => {
   const h = harness(t);
   const records = base.map(row => ({ ...row, sessionId: 'a' }));
