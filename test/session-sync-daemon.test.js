@@ -14,7 +14,7 @@ const { sanitizeSessionCopyError } = require('../scripts/session-copy-error');
 const assertSessionAccountIdentity = createSessionAccountResolver([]).assertUnambiguous;
 const source = fs.readFileSync(path.join(__dirname, '../scripts/daemon.js'), 'utf8');
 const base = [{ type: 'message', role: 'user', content: [{ text: 'question' }] }, { type: 'message', role: 'assistant', content: [{ text: 'answer' }] }];
-function harness(t, withPlanner = false, withDeletions = false) {
+function harness(t, withPlanner = false) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wd-pair-daemon-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const rows = new Map();
@@ -36,7 +36,6 @@ function harness(t, withPlanner = false, withDeletions = false) {
     accountSwitchInProgress: false, SESSION_COPY_COLUMNS: ['id', 'user_id'], sessionCopyLocks: new Map(), yieldAutoCopyToRenderer: async () => {}, assertSessionSyncIdle: async () => {},
     getSessionSyncCache: () => syncCacheMap, scheduleSessionSyncCacheSave: () => {},
     getSessionDirtyIndex: () => dirtyIndex,
-    getSessionDeletionSync: () => null,
     setTimeout, clearTimeout,
     log: () => {}, sqliteQuery: async (_, params) => {
       if (_.includes('WHERE deleted_at IS NOT NULL')) return [...rows.values()].filter(row => row.deleted_at != null);
@@ -71,40 +70,33 @@ function harness(t, withPlanner = false, withDeletions = false) {
       return row;
     },
   };
-  if (withDeletions) {
-    const deletionSync = require('../scripts/session-deletion-sync').createSessionDeletionSync({
-      query: ctx.sqliteQuery, run: ctx.sqliteRun, locks: ctx.sessionCopyLocks,
-      members: ids => lib.collectLineageMembersForDelete(root, ids),
-    });
-    ctx.getSessionDeletionSync = () => deletionSync;
-  }
   vm.runInNewContext(source.slice(source.indexOf('function sessionCopyContentRevision('), source.indexOf(withPlanner ? 'const autoCopyJobs' : 'async function buildAutoCopyPlan(')), ctx);
   return { root, rows, file, write, ctx, lineage, copy: () => ctx.copySessionRecord(rows.get('a'), 'two', { auto: true, lineageId: lineage }) };
 }
-test('official deletion blocks reverse copy and propagates before the next switch plan', async t => {
-  const h = harness(t, true, true);
-  const refreshed = [];
-  h.ctx.refreshWorkBuddySessionList = async uid => refreshed.push(uid);
-  await h.copy();
+test('historical deletion on another account cannot delete or block live copies on switch', async t => {
+  const h = harness(t, true);
   h.rows.get('a').deleted_at = 100;
+  lib.setAutoCopyAllSessions(h.root, true);
   const before = fs.readFileSync(h.file('b'));
-  const result = await h.ctx.copySessionRecord(h.rows.get('b'), 'one', { auto: true, lineageId: h.lineage });
-  assert.equal(result.status, 'skipped');
-  assert.equal(result.targetId, '', 'a deleted conversation must not be reopened after switching');
-  assert.equal(h.rows.size, 3, 'the deleted target must not be replaced with a new physical session');
-  assert.equal((await h.ctx.buildAutoCopyPlan('two', 'one')).length, 0);
-  assert.equal((await h.ctx.buildAutoCopyPlan('one', 'two')).length, 0);
-  assert.ok(h.rows.get('b').deleted_at && h.rows.get('c').deleted_at);
-  assert.deepEqual(refreshed, ['one'], 'an all-deleted plan still refreshes the destination list');
-  assert.deepEqual(fs.readFileSync(h.file('b')), before, 'soft deletion must preserve message files');
+  const plan = await h.ctx.buildAutoCopyPlan('two', 'four');
+  assert.equal(plan.length, 1);
+  assert.equal(plan[0].id, 'b');
+  assert.equal(h.rows.get('b').deleted_at, undefined);
+  assert.equal(h.rows.get('c').deleted_at, undefined);
+  const result = await h.ctx.copySessionRecord(plan[0], 'four', { auto: true, lineageId: plan[0].lineageId });
+  assert.equal(result.status, 'copied');
+  assert.ok(result.targetId);
+  assert.deepEqual(fs.readFileSync(h.file(result.targetId)), before);
+  assert.deepEqual(fs.readFileSync(h.file('b')), before);
+  assert.equal(h.rows.get('a').deleted_at, 100, 'do not silently restore the old deletion either');
 });
 
 test('deletion during a copy guard aborts publication instead of recreating the target', async t => {
-  const h = harness(t, true, true);
+  const h = harness(t, true);
   lib.removeAutoCopySessionMember(h.root, h.lineage, 'two', 'b');
   h.rows.delete('b'); fs.unlinkSync(h.file('b'));
-  h.ctx.assertSessionSyncIdle = async () => { h.rows.get('c').deleted_at = 100; };
-  await assert.rejects(h.copy(), /已删除/);
+  h.ctx.assertSessionSyncIdle = async () => { h.rows.get('a').deleted_at = 100; };
+  await assert.rejects(h.copy(), /会话记录正在变化/);
   assert.equal([...h.rows.values()].filter(row => row.user_id === 'two').length, 0);
 });
 test('account two continuation updates account one and never account three', async t => {
@@ -118,6 +110,65 @@ test('account two continuation updates account one and never account three', asy
   assert.equal(result.totalBytes, fs.statSync(h.file('a')).size);
   assert.equal(result.copiedBytes, fs.statSync(h.file('a')).size);
   assert.equal((await h.copy()).copiedBytes, 0);
+});
+
+test('fork and original keep separate runtime identities and continuations across workspace account switches', async t => {
+  const h = harness(t, true);
+  for (const [id, uid] of [['b', 'two'], ['c', 'three']]) {
+    lib.removeAutoCopySessionMember(h.root, h.lineage, uid, id);
+    h.rows.delete(id);
+    fs.unlinkSync(h.file(id));
+  }
+  const fork = require('../scripts/session-fork');
+  Object.assign(h.ctx, {
+    Buffer, forkedTitle: fork.forkedTitle, planForkAtMessage: fork.planForkAtMessage,
+    collectSessionArchiveFiles: (_root, id) => [{ path: 'projects/p/' + id + '.jsonl', source: h.file(id) }],
+    ensureArchiveParentNoFollow() {},
+  });
+  const start = source.indexOf('async function createForkSession(');
+  vm.runInNewContext(source.slice(start, source.indexOf('\nasync function prepareSessionExport(', start)), h.ctx);
+  const original = h.rows.get('a');
+  Object.assign(original, { cwd: '/fixture/workspace', status: 'completed', last_activity_at: 1 });
+  lib.setAutoCopyRule(h.root, { uid: 'one', kind: 'workspace', key: original.cwd, enabled: true });
+  const records = ['user', 'assistant', 'user', 'assistant'].map((role, index) => ({
+    type: 'message', role, sessionId: 'a', timestamp: 10000 + index * 1000,
+    content: [{ text: 'shared history ' + index }],
+  }));
+  h.write('a', records);
+  const branch = await h.ctx.createForkSession(original, { messageIndex: 1, roles: 'uaua', finishedAt: 11000 });
+  const read = id => fs.readFileSync(h.file(id), 'utf8').trim().split('\n').map(JSON.parse);
+  assert.ok(read(branch.id).every(record => record.sessionId === branch.id), 'fork must resume as itself before switching');
+  const continueSession = (id, label) => {
+    h.write(id, [...read(id), { type: 'message', role: 'user', sessionId: id, content: [{ text: label }] }]);
+    Object.assign(h.rows.get(id), { updated_at: Date.now(), last_activity_at: Date.now() });
+  };
+  continueSession(branch.id, 'branch continuation');
+  continueSession('a', 'original continuation');
+  const originalBefore = fs.readFileSync(h.file('a'));
+  const branchBefore = fs.readFileSync(h.file(branch.id));
+  const switchTo = async (from, to) => {
+    for (const row of await h.ctx.buildAutoCopyPlan(from, to)) {
+      await h.ctx.copySessionRecord(row, to, { auto: true, lineageId: row.lineageId });
+    }
+  };
+  await switchTo('one', 'two');
+  const branchLineage = lib.getAutoCopySession(h.root, 'one', branch.id).lineageId;
+  assert.notEqual(branchLineage, h.lineage);
+  const copies = [h.lineage, branchLineage].map(lineage => lib.getAutoCopyMapping(h.root, lineage, 'two').targetId);
+  assert.equal(new Set(copies).size, 2);
+  assert.equal([...h.rows.values()].filter(row => row.user_id === 'two' && row.deleted_at == null).length, 2);
+  for (const [index, id] of copies.entries()) {
+    assert.ok(read(id).every(record => record.sessionId === id));
+    assert.deepEqual(read(id), read(index === 0 ? 'a' : branch.id).map(record => ({ ...record, sessionId: id })));
+  }
+  continueSession(copies[1], 'branch on account two');
+  await switchTo('two', 'one');
+  assert.deepEqual(fs.readFileSync(h.file('a')), originalBefore, 'branch edits must never overwrite the original');
+  assert.notDeepEqual(fs.readFileSync(h.file(branch.id)), branchBefore);
+  assert.equal(read(branch.id).at(-1).content[0].text, 'branch on account two');
+  assert.ok(read(branch.id).every(record => record.sessionId === branch.id));
+  const rows = [...h.rows.values()].filter(row => row.user_id === 'one');
+  assert.equal(lib.dedupeAutoCopySessionRows(rows, { one: lib.getAutoCopyRules(h.root, 'one').allLineages }).length, 2);
 });
 
 test('legacy equal mappings repair runtime IDs once instead of taking the revision fast path', async t => {
@@ -1053,26 +1104,4 @@ test('copy completion preserves timestamps of concurrent source and target dirty
   assert.equal(h.ctx.getSessionDirtyIndex().get('one', 'a').at, at);
   assert.equal(h.ctx.getSessionDirtyIndex().get('two', 'b').at, at + 1);
   assert.equal((await h.switchTo('two', 'three')).length, 1);
-});
-
-for (const duringCopy of [false, true]) test('deleting the active session never reopens its old mapping or blocks later automation: ' + duringCopy, async () => {
-  let attempts = 0;
-  const ctx = { codeBuddyFiles: null, assertSessionAccountIdentity, sanitizeSessionCopyError, crypto, DATA_DIR: 'fixture', PROFILE: { dataRoot: 'fixture' },
-    autoCopyJobs: new Map(), autoCopyQueue: [], Date,
-    yieldAutoCopyToRenderer: async () => {},
-    buildAutoCopyPlan: async () => duringCopy ? [{ id: 'a', lineageId: 'lineage' }] : [],
-    getSessionDeletionSync: () => ({ hasDeletion: async () => !duringCopy }),
-    resolveAutoCopyTargetId: () => 'deleted-target',
-    getAutoCopyMapping: () => ({ targetId: 'deleted-target' }),
-    copySessionRecord: async () => { attempts++; const e = Error('同源会话已删除，停止同步'); e.code = 'WBS_SESSION_DELETED'; throw e; },
-    log() {}, runAutoCopyQueue() {}, pruneAutoCopyJobs() {}, setTimeout,
-  };
-  const start = source.indexOf('function startAutoCopyJob(');
-  vm.runInNewContext(source.slice(start, source.indexOf('function activeAutoCopyJob(', start)), ctx);
-  const job = ctx.startAutoCopyJob('one', 'two', [], { openSessionId: 'a' });
-  await ctx.autoCopyQueue[0].run();
-  assert.equal(attempts, duringCopy ? 1 : 0, 'deletion is final, not a transient copy failure to retry');
-  assert.equal(job.status, 'done');
-  assert.equal(job.failed, 0);
-  assert.equal(ctx.publicAutoCopyJob(job).openSessionId, '');
 });

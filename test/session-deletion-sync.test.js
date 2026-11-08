@@ -1,122 +1,82 @@
-const assertSessionAccountIdentity = require('../scripts/account-identity').createSessionAccountResolver([]).assertUnambiguous;
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { createSessionDb } = require('../scripts/session-db');
+const vm = require('node:vm');
+const { createSessionDb, normalizeSessionIdBatch } = require('../scripts/session-db');
 const lib = require('../scripts/lib');
-const { createSessionDeletionSync } = require('../scripts/session-deletion-sync');
+const source = fs.readFileSync(path.join(__dirname, '../scripts/daemon.js'), 'utf8');
 
 async function fixture(t) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wd-deletion-sync-'));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wd-upgrade-deletion-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const db = createSessionDb({ dbPath: path.join(root, 'sessions.db') });
   await db.run('CREATE TABLE sessions (id TEXT PRIMARY KEY, user_id TEXT, deleted_at INTEGER, updated_at INTEGER, is_background_automation INTEGER DEFAULT 0)');
   const lineage = lib.ensureAutoCopySession(root, 'one', 'a');
-  for (const [id, uid] of [['a', 'one'], ['b', 'two'], ['c', 'three']]) {
+  for (const [id, uid, deletedAt] of [['a', 'one', 100], ['b', 'two', null], ['c', 'three', null]]) {
     lib.addAutoCopySessionMember(root, lineage, uid, id);
-    await db.run('INSERT INTO sessions (id, user_id, updated_at) VALUES (?, ?, 1)', [id, uid]);
+    await db.run('INSERT INTO sessions (id, user_id, deleted_at, updated_at) VALUES (?, ?, ?, 200)', [id, uid, deletedAt]);
+    fs.writeFileSync(path.join(root, id + '.jsonl'), JSON.stringify({ type: 'message', sessionId: id, content: 'synthetic' }) + '\n');
   }
-  await db.run('INSERT INTO sessions (id, user_id, updated_at) VALUES (?, ?, 1)', ['unrelated', 'one']);
-  const locks = new Map();
-  const make = () => createSessionDeletionSync({ query: db.all, run: db.run, locks,
-    members: ids => lib.collectLineageMembersForDelete(root, ids) });
-  const alive = async () => (await db.all('SELECT id FROM sessions WHERE deleted_at IS NULL ORDER BY id')).map(r => r.id);
-  return { root, db, locks, lineage, sync: make(), make, alive };
+  const calls = [];
+  const context = {
+    normalizeSessionIdBatch, assertSessionAccountIdentity: uid => uid,
+    readBody: async req => req.body, currentAccount: () => ({ uid: 'two' }),
+    json: (_, status, body) => ({ status, body }), isValidSessionId: id => /^[a-z-]+$/.test(id),
+    markSessionDirty: (...args) => calls.push(['dirty', ...args]),
+    markSessionDirtyBaseline: uid => calls.push(['baseline', uid]),
+    getSessionDirtyIndex: () => ({ isInitialized: () => true }),
+    // Notifications must remain an index update, not a deletion authority.
+    getSessionDeletionSync() { throw Error('unexpected deletion propagation'); },
+    sqliteRun: (sql, params) => db.run(sql, Array.from(params)),
+    sqlPlaceholders: ids => ids.map(() => '?').join(','),
+  };
+  for (const [name, route] of [['dirty', '/api/sessions/dirty'], ['restore', '/api/sessions/restore']]) {
+    const start = source.indexOf("  if (req.method === 'POST' && p === '" + route + "')");
+    const end = source.indexOf('\n  }', start) + 4;
+    assert.ok(start > 0 && end > start);
+    vm.runInNewContext('async function ' + name + '(req,res) { const p=' + JSON.stringify(route) + ';\n' + source.slice(start, end) + '\n}', context);
+  }
+  return { root, db, calls, context,
+    rows: () => db.all('SELECT * FROM sessions ORDER BY id'),
+    call: (name, body) => context[name]({ method: 'POST', body }, {}),
+  };
 }
 
-test('official soft deletion propagates across known copies and survives restart; restore is lineage-wide', async t => {
+for (const body of [
+  { uid: 'two', ready: true, events: [] },
+  { uid: 'two', events: [{ id: 'b', event: 'sessionUpdated' }] },
+  { uid: 'two', events: [{ id: 'b', event: 'sessionDeleted' }] },
+]) test('renderer notification cannot spread a historical deletion: ' + JSON.stringify(body), async t => {
   const f = await fixture(t);
-  await f.db.run('UPDATE sessions SET deleted_at = 100 WHERE id = ?', ['a']);
-  assert.equal(await f.sync.hasDeletion('b', 'two'), true);
-  await f.sync.reconcileAll();
-  assert.deepEqual(await f.alive(), ['unrelated']);
-  assert.equal(await f.make().hasDeletion('c', 'three'), true);
-  assert.equal(await f.make().reconcileAll(), 0, 'repeated reconciliation must not rewrite deleted records');
-  await f.sync.restore(['b']);
-  assert.deepEqual(await f.alive(), ['a', 'b', 'c', 'unrelated']);
-  assert.equal(await f.make().hasDeletion('a', 'one'), false);
+  const before = await f.rows();
+  const meta = fs.readFileSync(path.join(f.root, 'meta.json'));
+  const messages = ['a', 'b', 'c'].map(id => fs.readFileSync(path.join(f.root, id + '.jsonl')));
+  for (let reload = 0; reload < 2; reload++) {
+    const result = await f.call('dirty', body);
+    assert.equal(result.status, 200);
+    assert.deepEqual(await f.rows(), before, 'startup and lifecycle notifications must not change any deletion marker');
+  }
+  assert.deepEqual(fs.readFileSync(path.join(f.root, 'meta.json')), meta);
+  for (const [index, id] of ['a', 'b', 'c'].entries()) assert.deepEqual(fs.readFileSync(path.join(f.root, id + '.jsonl')), messages[index]);
+  assert.ok(f.calls.length > 0, 'incremental dirty indexing still receives notifications');
 });
 
-test('explicit hard deletion requires known owner; mere absence never means deletion', async t => {
+test('stale renderer account remains rejected before marking sessions dirty', async t => {
   const f = await fixture(t);
-  await f.db.run('DELETE FROM sessions WHERE id = ?', ['a']);
-  assert.equal(await f.sync.hasDeletion('b', 'two'), false);
-  await f.sync.reconcileAll();
-  assert.deepEqual(await f.alive(), ['b', 'c', 'unrelated']);
-  await f.sync.observeDeleted('foreign', ['a']);
-  assert.deepEqual(await f.alive(), ['b', 'c', 'unrelated']);
-  await f.sync.observeDeleted('one', ['a']);
-  assert.deepEqual(await f.alive(), ['unrelated']);
-  assert.equal(await f.make().hasDeletion('b', 'two'), true);
+  assert.equal((await f.call('dirty', { uid: 'one', events: [{ id: 'a', event: 'sessionDeleted' }] })).status, 409);
+  assert.deepEqual(f.calls, []);
 });
 
-test('live records, foreign owners and background automation cannot authorize cascade deletion', async t => {
+test('explicit restore only restores requested ids, preserving other intentional deletions', async t => {
   const f = await fixture(t);
-  await f.sync.observeDeleted('one', ['a']);
-  assert.deepEqual(await f.alive(), ['a', 'b', 'c', 'unrelated']);
-  await f.db.run('UPDATE sessions SET deleted_at = 100, user_id = ? WHERE id = ?', ['foreign', 'a']);
-  await f.sync.reconcileAll();
-  assert.deepEqual(await f.alive(), ['b', 'c', 'unrelated']);
-  await f.db.run('UPDATE sessions SET user_id = ?, is_background_automation = 1 WHERE id = ?', ['one', 'a']);
-  await f.sync.reconcileAll();
-  assert.deepEqual(await f.alive(), ['b', 'c', 'unrelated']);
-});
-
-test('deletion waits for in-flight copy, then includes the copy published before lock release', async t => {
-  const f = await fixture(t);
-  let release;
-  const inFlight = new Promise(resolve => { release = resolve; });
-  f.locks.set(f.lineage, inFlight);
-  await f.db.run('UPDATE sessions SET deleted_at = 100 WHERE id = ?', ['a']);
-  let finished = false;
-  const deletion = f.sync.observeDeleted('one', ['a']).then(() => { finished = true; });
-  await new Promise(resolve => setImmediate(resolve));
-  assert.equal(finished, false);
-  lib.addAutoCopySessionMember(f.root, f.lineage, 'four', 'd');
-  await f.db.run('INSERT INTO sessions (id, user_id, updated_at) VALUES (?, ?, 1)', ['d', 'four']);
-  release(); await deletion;
-  assert.deepEqual(await f.alive(), ['unrelated']);
-  assert.equal(f.locks.size, 0);
-});
-
-test('a failed database write leaves deletion evidence for a later retry', async t => {
-  const f = await fixture(t);
-  await f.db.run('UPDATE sessions SET deleted_at = 100 WHERE id = ?', ['a']);
-  const failing = createSessionDeletionSync({ query: f.db.all, run: async () => { throw Error('locked'); }, locks: f.locks,
-    members: ids => lib.collectLineageMembersForDelete(f.root, ids) });
-  await assert.rejects(failing.reconcileAll(), /locked/);
-  assert.equal(f.locks.size, 0);
-  await f.make().reconcileAll();
-  assert.deepEqual(await f.alive(), ['unrelated']);
-});
-
-test('renderer deletion route rejects a stale account and reconciles missed deletion on baseline', async () => {
-  const vm = require('node:vm');
-  const source = fs.readFileSync(path.join(__dirname, '../scripts/daemon.js'), 'utf8');
-  const start = source.indexOf("  if (req.method === 'POST' && p === '/api/sessions/dirty')");
-  const end = source.indexOf('\n  }', start) + 4;
-  const calls = [];
-  const context = { assertSessionAccountIdentity,
-    readBody: async req => req.body, currentAccount: () => ({ uid: 'one' }),
-    json: (_, status, body) => ({ status, body }), isValidSessionId: id => /^[a-z-]+$/.test(id),
-    markSessionDirty: (...args) => calls.push(['dirty', ...args]), markSessionDirtyBaseline() {},
-    getSessionDirtyIndex: () => ({ isInitialized: () => true }),
-    getSessionDeletionSync: () => ({
-      observeDeleted: async (uid, ids) => { calls.push(['deleted', uid, ...ids]); return 1; },
-      reconcileAll: async () => { calls.push(['reconcile']); return 1; },
-    }),
-    refreshWorkBuddySessionList: async uid => calls.push(['refresh', uid]),
-  };
-  vm.runInNewContext('async function route(req,res) { const p="/api/sessions/dirty";\n' + source.slice(start,end) + '\n}', context);
-  const call = body => context.route({ method: 'POST', body }, {});
-  assert.equal((await call({ uid: 'two', events: [{ id: 'a', event: 'sessionDeleted' }] })).status, 409);
-  assert.deepEqual(calls, []);
-  assert.equal((await call({ uid: 'one', events: [{ id: 'a', event: 'sessionDeleted' }] })).status, 200);
-  assert.deepEqual(calls, [['dirty', 'one', 'a', 'sessionDeleted'], ['deleted', 'one', 'a'], ['refresh', 'one']]);
-  calls.length = 0;
-  assert.equal((await call({ uid: 'one', ready: true })).status, 200);
-  assert.deepEqual(calls, [['reconcile'], ['refresh', 'one']]);
+  await f.db.run('UPDATE sessions SET deleted_at = 200 WHERE id = ?', ['b']);
+  const result = await f.call('restore', { ids: ['b'] });
+  assert.equal(result.status, 200);
+  const rows = await f.rows();
+  assert.equal(rows.find(row => row.id === 'a').deleted_at, 100);
+  assert.equal(rows.find(row => row.id === 'b').deleted_at, null);
+  assert.equal(rows.find(row => row.id === 'c').deleted_at, null);
 });
