@@ -177,7 +177,6 @@ const { createCodeBuddySessionStore } = require('./codebuddy-session-store.js');
 const { classifyTarget, looksLikeWbFamilyTarget, isTargetForProfile, selectPageTarget, selectIdeTargets } = require('./cdp-targets.js');
 const { createSessionDb, normalizeSessionIdBatch, parameterCount } = require('./session-db.js');
 const { createDirtyIndex } = require('./session-dirty.js');
-const { createSessionDeletionSync } = require('./session-deletion-sync.js');
 const {
   createEncryptedExport,
   openEncryptedExport,
@@ -535,8 +534,8 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 // 1.2.65：兼容空会话同步、自定义模型和重定向备份目录，工作目录恢复退避重试。
 // 1.2.66：刷新凭据按原信封加密保存，同账号刷新去重，过期账号保留手动切换。
 // 1.2.67：Windows 重启 GUI 客户端时不再请求隐藏主窗口，与冷启动保持一致。
-const DAEMON_VERSION = '1.2.77';
-const DAEMON_BUILD_ID = 'release-1.2.77-workspace-picker-hit-area';
+const DAEMON_VERSION = '1.2.78';
+const DAEMON_BUILD_ID = 'release-1.2.78-stop-historical-deletion-propagation';
 const usageReporter = createUsageReporter({ profile: PROFILE.id, version: DAEMON_VERSION });
 configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const automationDiscovery = createAutomationDiscovery({
@@ -5535,19 +5534,6 @@ function sessionCopyRowRevision(row) {
   ]);
 }
 
-let sessionDeletionSync = null;
-function getSessionDeletionSync() {
-  if (PROFILE.kind !== 'workbuddy') return null;
-  if (sessionDeletionSync) return sessionDeletionSync;
-  sessionDeletionSync = createSessionDeletionSync({
-    query: sqliteQuery,
-    run: sqliteRun,
-    locks: sessionCopyLocks,
-    members: ids => collectLineageMembersForDelete(DATA_DIR, ids),
-  });
-  return sessionDeletionSync;
-}
-
 // The physical session id and account id intentionally differ between members
 // of one shared lineage. Keep the content portion separately so a mapping
 // created from another account can still prove that an unchanged member is a
@@ -5844,17 +5830,6 @@ async function copySessionRecord(src, targetUid, options = {}) {
   };
   const perform = async () => {
     await yieldAutoCopyToRenderer();
-    const deletions = typeof getSessionDeletionSync === 'function' ? getSessionDeletionSync() : null;
-    const assertNotDeleted = async () => {
-      if (deletions && await deletions.hasDeletion(src.id, sourceUid)) {
-        const error = new Error('同源会话已删除，停止同步');
-        error.code = 'WBS_SESSION_DELETED';
-        throw error;
-      }
-    };
-    if (deletions && await deletions.hasDeletion(src.id, sourceUid)) {
-      return { status: 'skipped', sourceId: src.id, targetId: '', copiedBytes: 0, totalBytes: 0 };
-    }
     const readRow = async (id, uid) => (await sqliteQuery(
       'SELECT ' + SESSION_COPY_COLUMNS.join(',') + ' FROM sessions WHERE id = ? AND user_id = ? AND deleted_at IS NULL AND COALESCE(is_background_automation, 0) = 0 LIMIT 1;', [id, uid]
     ))[0];
@@ -5953,7 +5928,6 @@ async function copySessionRecord(src, targetUid, options = {}) {
       const row = id === sourceRow.id ? sourceRow : candidates.find(candidate => candidate.id === id);
       const guard = async () => {
         await assertSessionSyncIdle([id]);
-        await assertNotDeleted();
         if (row && JSON.stringify(await readRow(id, row.user_id)) !== JSON.stringify(row)) {
           throw new Error('会话记录正在变化，请稍后重试');
         }
@@ -6018,7 +5992,6 @@ async function copySessionRecord(src, targetUid, options = {}) {
       await yieldAutoCopyToRenderer();
       const verifyRows = async () => {
         await assertSessionSyncIdle([fromRow && fromRow.id, toRow && toRow.id]);
-        await assertNotDeleted();
         const freshSource = await readRow(fromRow.id, fromRow.user_id);
         const freshTarget = toRow ? await readRow(toRow.id, toRow.user_id) : null;
         if (JSON.stringify(freshSource) !== JSON.stringify(fromRow) || (toRow && JSON.stringify(freshTarget) !== JSON.stringify(toRow))) {
@@ -6028,7 +6001,6 @@ async function copySessionRecord(src, targetUid, options = {}) {
       const commit = async (verifyPublished) => {
         await verifyRows();
         await verifyPublished();
-        await assertNotDeleted();
         if (!toRow) {
           // Reserve provenance before the row becomes visible, so a crash
           // after insertion cannot create an untracked duplicate on retry.
@@ -6106,10 +6078,6 @@ async function buildAutoCopyPlan(sourceUid, targetUid, requestedSessionIds = [])
   if (!source || !target || source === target) return [];
   assertSessionAccountIdentity(source);
   assertSessionAccountIdentity(target);
-  const deletions = typeof getSessionDeletionSync === 'function' ? getSessionDeletionSync() : null;
-  if (deletions && await deletions.reconcileAll() && typeof refreshWorkBuddySessionList === 'function') {
-    await refreshWorkBuddySessionList(target, 'sessions-deleted');
-  }
   normalizeAutoCopyLineages(DATA_DIR);
   const rules = getAutoCopyRules(DATA_DIR, source);
   const requested = new Set((Array.isArray(requestedSessionIds) ? requestedSessionIds : [])
@@ -6472,11 +6440,6 @@ function startAutoCopyJob(sourceUid, targetUid, plan, labels) {
     job.copyStartedAt = Date.now();
     job.plan = await buildAutoCopyPlan(sourceUid, targetUid, job.openSessionId ? [job.openSessionId] : []);
     job.total = job.plan.length;
-    const deletions = typeof getSessionDeletionSync === 'function' ? getSessionDeletionSync() : null;
-    if (job.openSessionId && deletions && await deletions.hasDeletion(job.openSessionId, sourceUid)) {
-      job.openSessionId = '';
-      job.openSessionTargetId = '';
-    }
     if (job.openSessionId && !job.plan.some((row) => String(row && row.id || '') === job.openSessionId)) {
       job.openSessionTargetId = resolveAutoCopyTargetId(sourceUid, targetUid, job.openSessionId);
     }
@@ -6546,7 +6509,6 @@ function startAutoCopyJob(sourceUid, targetUid, plan, labels) {
               });
               break;
             } catch (error) {
-              if (error.code === 'WBS_SESSION_DELETED') throw error;
               if (!activeSession || copyAttempt >= activeSessionRetryDelays.length) throw error;
               const retryDelay = activeSessionRetryDelays[copyAttempt];
               copyAttempt++;
@@ -6578,14 +6540,9 @@ function startAutoCopyJob(sourceUid, targetUid, plan, labels) {
           else job.copied++;
           if (result.failedFiles) job.failed += result.failedFiles;
         } catch (e) {
-          const deleted = e.code === 'WBS_SESSION_DELETED';
-          if (!deleted) recoverOpenSessionTarget(src);
-          else if (job.openSessionId === String(src.id || '')) {
-            job.openSessionId = '';
-            job.openSessionTargetId = '';
-          }
+          recoverOpenSessionTarget(src);
           const errorText = String(e.message || e).slice(0, 240);
-          if (deleted || ['会话消息文件没有消息，未同步', '会话消息文件为空，未同步'].includes(errorText)) {
+          if (['会话消息文件没有消息，未同步', '会话消息文件为空，未同步'].includes(errorText)) {
             // Empty metadata-only sessions are normal transient WorkBuddy
             // rows (for example a newly opened draft), not sync failures.
             if (typeof getSessionDirtyIndex === 'function' && typeof clearSessionDirty === 'function') {
@@ -12071,22 +12028,15 @@ function handleApi(req, res) {
         const events = Array.isArray(body.events) ? body.events : [];
         if (events.length > 500) return json(res, 400, { ok: false, error: '脏会话通知过多' });
         let marked = 0;
-        const deletedIds = [];
         for (const event of events) {
           const id = String(event && event.id || '').trim();
           if (!isValidSessionId(id)) continue;
-          if (event.event === 'sessionDeleted') deletedIds.push(id);
           markSessionDirty(uid, id, String(event.event || 'sessionUpdated'));
           marked++;
         }
-        const deletions = getSessionDeletionSync();
-        if (deletions) {
-          let changed = deletedIds.length ? await deletions.observeDeleted(uid, deletedIds) : 0;
-          // A fresh renderer also reconciles durable deletions missed while
-          // disconnected, even if automatic copying is currently disabled.
-          if (body.ready === true) changed += await deletions.reconcileAll();
-          if (changed) await refreshWorkBuddySessionList(uid, 'sessions-deleted');
-        }
+        // Lifecycle notifications are indexing hints, not cross-account delete
+        // authority. Historical deleted_at values cannot establish new intent
+        // after an upgrade (#505); preserve the 1.2.18 behavior here.
         return json(res, 200, { ok: true, marked, initialized: getSessionDirtyIndex().isInitialized(uid) });
       } catch (e) {
         return json(res, 400, { ok: false, error: e.message });
@@ -12380,11 +12330,10 @@ function handleApi(req, res) {
       try { ids = normalizeSessionIdBatch(body && body.ids); }
       catch (e) { return json(res, 400, { ok: false, error: e.message }); }
       if (!ids.length) return json(res, 400, { ok: false, error: '未选择会话' });
-      const deletions = getSessionDeletionSync();
-      return (deletions ? deletions.restore(ids) : sqliteRun(
+      return sqliteRun(
         "UPDATE sessions SET deleted_at = NULL, updated_at = ? WHERE id IN (" + sqlPlaceholders(ids) + ");",
         [Date.now(), ...ids]
-      ))
+      )
         .then(() => json(res, 200, { ok: true, restored: ids.length }))
         .catch((e) => json(res, 500, { ok: false, error: e.message }));
     });
