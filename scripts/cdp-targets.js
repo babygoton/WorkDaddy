@@ -30,10 +30,9 @@ const APP_CBINTL = /\/CodeBuddy\.app(?:\/|$)/i;
 const APP_AI_LINUX = /\/workbuddy-ai\//i;
 const APP_CN_LINUX = /\/opt\/WorkBuddy\//i;
 // Windows 没有 .app 包，renderer URL 直接落在安装目录的 resources/app.asar 下。
-// 目录可能位于任意盘符，但官方 CN/AI 目录名仍可作为 profile 强信号。
+// AI 安装目录名可区分；通用 WorkBuddy 目录可能被 CN/AI 共用，不作强信号。
 const APP_AI_WIN = /\/WorkBuddy(?:%20| )?AI\/resources\/app\.asar(?:\/|$)/i;
 const APP_AI_WIN_COMPACT = /\/WorkBuddyAI\/resources\/app\.asar(?:\/|$)/i;
-const APP_CN_WIN = /\/WorkBuddy\/resources\/app\.asar(?:\/|$)/i;
 const DOMAIN_WB_AI = /https?:\/\/(?:[^/]+\.)?workbuddy\.ai(?:\/|$)/i;
 const DOMAIN_WB_CN = /https?:\/\/(?:[^/]+\.)?workbuddy\.cn(?:\/|$)/i;
 const DOMAIN_CB_CN = /https?:\/\/(?:[^/]+\.)?codebuddy\.cn(?:\/|$)/i;
@@ -52,7 +51,7 @@ function classifyTarget(url, title, description) {
   if (APP_AI_WIN.test(u) || APP_AI_WIN_COMPACT.test(u)) return 'workbuddy-ai';
   if (APP_CN.test(u)) return 'workbuddy-cn';
   if (APP_CN_LINUX.test(u)) return 'workbuddy-cn';
-  if (APP_CN_WIN.test(u)) return 'workbuddy-cn';
+  // The generic Windows WorkBuddy install path may be shared by CN and AI.
   if (APP_CBCN.test(u)) return 'codebuddy-cn';
   if (APP_CBINTL.test(u)) return 'codebuddy-intl';
   if (DOMAIN_WB_AI.test(u)) return 'workbuddy-ai';
@@ -113,14 +112,13 @@ function isTargetForProfile(target, profile) {
     }
   }
 
-  // Windows 官方安装目录的 app.asar 路径是比标题更可靠的归属证据，必须先于
-  // 标题兜底判断；自定义目标已先按所选安装目录判断。
+  // Windows AI 专属目录是可靠归属证据，必须先于标题兜底判断；通用 WorkBuddy
+  // 目录可能被 CN / AI 共用，由下方已绑定的 profile 判断。自定义目标先按所选目录判断。
   const cls = classifyTarget(url, title, desc);
   const normalizedUrl = normalizeTargetUrl(url);
   const windowsOfficialPath = /^file:\/\/\/[A-Za-z]:\//i.test(normalizedUrl) && (
     APP_AI_WIN.test(normalizedUrl)
     || APP_AI_WIN_COMPACT.test(normalizeTargetUrl(url))
-    || APP_CN_WIN.test(normalizedUrl)
   );
   if (windowsOfficialPath) return cls === profile.id;
 
