@@ -51,6 +51,7 @@ test('normal Windows startup and daemon relaunch both apply the persisted flags 
   const ctx = {
     PROFILE: { id: 'workbuddy-ai', dataRoot: path.join(dir, '.workbuddy-ai'), cdp: { mode: 'environment' } }, DATA_DIR: dir, CDP_PORT: 9223,
     process: { platform: 'win32', env: {} }, IS_WIN: true, IS_LINUX: false, path,
+    runPendingClientTempCleanup: async () => ({}),
     getClientLaunchArgs, getWorkBuddyLaunchEnv, log() {}, selectCdpPort: async () => 9223,
     resolveWorkBuddyBinary: () => 'C:\\WorkBuddyAI.exe', sleep: async () => {}, restoreWorkBuddyWindow: async () => {},
     spawn: (command, args, options) => {

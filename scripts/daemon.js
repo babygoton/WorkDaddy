@@ -38,6 +38,7 @@ const { spawn, spawnSync, execFile } = require('child_process');
 const { createWallpaperRotation, updateWallpaperInRenderer, pickWallpaperDirectory } = require('./wallpaper-rotation');
 const { readClientLaunchSettings, setClientLaunchSettings, getClientLaunchArgs } = require('./client-launch-settings.js');
 const { getWorkBuddyLaunchEnv } = require('./workbuddy-launch-env.js');
+const { inspectClientTemp, requestClientTempCleanup, runPendingClientTempCleanup } = require('./client-temp.js');
 const PROBE_CLIENT_RUNNING = process.argv.includes('--probe-client-running');
 const {
   assertSameProcessIdentity,
@@ -118,6 +119,8 @@ const {
   removeAutoCopySession,
   removeAutoCopyAccount,
   collectLineageMembersForDelete,
+  recordSessionDeletion,
+  isAutoCopyTargetExcluded,
   getAutoCopyMapping,
   getAutoCopyMappings,
   migrateAutoCopyTargetRevisions: migrateAutoCopyTargetRevisionsFromMeta,
@@ -534,8 +537,9 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 // 1.2.65：兼容空会话同步、自定义模型和重定向备份目录，工作目录恢复退避重试。
 // 1.2.66：刷新凭据按原信封加密保存，同账号刷新去重，过期账号保留手动切换。
 // 1.2.67：Windows 重启 GUI 客户端时不再请求隐藏主窗口，与冷启动保持一致。
-const DAEMON_VERSION = '1.2.78';
-const DAEMON_BUILD_ID = 'release-1.2.78-stop-historical-deletion-propagation';
+// #507: explicit cleanup of old Windows client temp files, only before a verified cold launch.
+const DAEMON_VERSION = '1.2.80';
+const DAEMON_BUILD_ID = 'release-1.2.80-session-sync-shared-windows-target';
 const usageReporter = createUsageReporter({ profile: PROFILE.id, version: DAEMON_VERSION });
 configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const automationDiscovery = createAutomationDiscovery({
@@ -3400,6 +3404,9 @@ function relaunchWorkBuddy() {
       }
       // 日志用 ASCII 标记（非用户可见文案，无需进 i18n 词典）
       log(`[logout] 以 ${environmentMode ? '环境变量' : '命令行参数'} CDP=${port} 重启 WorkBuddy: ${command}${viaLauncher ? ' [via launcher]' : ''}`);
+      if (IS_WIN) await runPendingClientTempCleanup(DATA_DIR, PROFILE, {
+        isStopped: () => verifiedWindowsWorkBuddyProcesses(command).length === 0,
+      });
       const childEnv = getWorkBuddyLaunchEnv(PROFILE, DATA_DIR, process.platform, process.env);
       if (environmentMode) childEnv.WORKBUDDY_REMOTE_DEBUGGING_PORT = String(port);
       if (viaLauncher) {
@@ -5545,6 +5552,80 @@ function sessionCopyContentRevision(row) {
   ]);
 }
 
+function sessionTitlePair(row) {
+  return JSON.stringify([String(row && row.title || ''), String(row && row.custom_title || '')]);
+}
+
+function mappingTitlePair(mapping, side, uid) {
+  if (!mapping) return null;
+  const revisions = side === 'source'
+    ? [mapping.sourceRevisions && mapping.sourceRevisions[uid], mapping.sourceRevision, mapping.sourceStateRevision]
+    : [mapping.targetRevision, mapping.targetStateRevision];
+  for (const revision of revisions) {
+    try {
+      const parsed = JSON.parse(revision);
+      if (Array.isArray(parsed) && [5, 7].includes(parsed.length)) return JSON.stringify(parsed.slice(-2));
+    } catch (_) {}
+  }
+  return null;
+}
+
+// Title baselines are pairwise: a later A→B copy must not acknowledge B's
+// new title on behalf of C. Keep the last equal title for each physical pair,
+// and consult the reverse mapping so switching direction keeps that baseline.
+function titleBaselineEntry(mapping, source, target) {
+  const key = JSON.stringify([String(source.user_id), String(source.id)]);
+  const entry = mapping && mapping.titleBaselines && mapping.titleBaselines[key];
+  return entry && entry.targetId === String(target.id) && typeof entry.title === 'string' ? entry : null;
+}
+
+function sharedTitleBaseline(mapping, reverse, source, target) {
+  const entries = [titleBaselineEntry(mapping, source, target), titleBaselineEntry(reverse, target, source)].filter(Boolean);
+  if (entries.length) {
+    entries.sort((a, b) => b.at - a.at);
+    if (entries.length === 2 && entries[0].at === entries[1].at && entries[0].title !== entries[1].title) return null;
+    return entries[0].title;
+  }
+  // Legacy mappings are safe only if they prove this exact pair last had the
+  // same title. An old unequal-title skip is not a synchronization baseline.
+  for (const [candidate, from, to] of [[mapping, source, target], [reverse, target, source]]) {
+    if (!candidate || candidate.targetId !== String(to.id)) continue;
+    try {
+      const revision = JSON.parse(candidate.sourceRevisions && candidate.sourceRevisions[from.user_id] || candidate.sourceRevision);
+      const targetRevision = JSON.parse(candidate.targetRevision);
+      if (revision[0] !== String(from.id) || revision[1] !== String(from.user_id) ||
+          targetRevision[0] !== String(to.id) || targetRevision[1] !== String(to.user_id)) continue;
+      const left = mappingTitlePair(candidate, 'source', from.user_id);
+      if (left !== null && left === mappingTitlePair(candidate, 'target', to.user_id)) return left;
+    } catch (_) {}
+  }
+  return null;
+}
+
+function mappingWithTitleBaseline(mapping, reverse, source, target) {
+  const titleBaselines = Object.assign({}, mapping && mapping.titleBaselines);
+  if (target && sessionTitlePair(source) === sessionTitlePair(target)) {
+    const previous = titleBaselineEntry(mapping, source, target);
+    const backwards = titleBaselineEntry(reverse, target, source);
+    titleBaselines[JSON.stringify([String(source.user_id), String(source.id)])] = {
+      targetId: String(target.id), title: sessionTitlePair(source),
+      at: Math.max(Date.now(), Number(previous && previous.at || 0) + 1, Number(backwards && backwards.at || 0) + 1),
+    };
+  }
+  return { titleBaselines };
+}
+
+function mappingHasUnequalTitles(mapping) {
+  const source = mappingTitlePair(mapping, 'source', mapping && mapping.sourceUid);
+  const target = mappingTitlePair(mapping, 'target');
+  return source !== null && target !== null && source !== target;
+}
+
+function mappingSourceTitleChanged(mapping, uid, row) {
+  const baseline = mappingTitlePair(mapping, 'source', uid);
+  return baseline !== null && baseline !== sessionTitlePair(row);
+}
+
 // WorkBuddy stores the context-window denominator on the session row and the
 // usage ring data in session_usage. Both are optional across client versions;
 // a missing column/table must not break account switching for older clients.
@@ -5771,6 +5852,7 @@ function mappingWithSourceRevision(mapping, sourceUid, sourceRow) {
     sourceContentRevision: sessionCopyContentRevision(sourceRow),
     sourceStateRevision: sessionCopyStableStateRevision(sourceRow),
     sourceRevisions,
+    ...(mapping && mapping.titleBaselines ? { titleBaselines: mapping.titleBaselines } : {}),
   };
 }
 
@@ -5861,6 +5943,7 @@ async function copySessionRecord(src, targetUid, options = {}) {
       }
     };
     const mapping = getAutoCopyMapping(DATA_DIR, lineageId, targetUid);
+    const reverseMapping = getAutoCopyMapping(DATA_DIR, lineageId, sourceUid);
     const ids = new Set(getAutoCopySessionMembers(DATA_DIR, lineageId, targetUid));
     if (mapping && mapping.targetId) ids.add(mapping.targetId);
     const candidates = [];
@@ -5868,6 +5951,8 @@ async function copySessionRecord(src, targetUid, options = {}) {
       const row = await readRow(id, targetUid);
       if (row) candidates.push(row);
     }
+    const targetExcluded = options.auto && isAutoCopyTargetExcluded(DATA_DIR, lineageId, targetUid);
+    if (targetExcluded && !candidates.length) return { status: 'skipped', sourceId: src.id, targetId: null };
     // A previous daemon could have created the target row and crashed before
     // persisting its lineage member/mapping. Repeated account switches must
     // recover that exact content instead of allocating another physical row.
@@ -5904,8 +5989,14 @@ async function copySessionRecord(src, targetUid, options = {}) {
     // revision persistence are revalidated once through the normal snapshot
     // comparison path.
     if (options.auto && existingMappingTarget && mapping.fingerprintVersion === 3 &&
+        sessionTitlePair(sourceRow) === sessionTitlePair(existingMappingTarget) &&
         mappingSourceRevisionMatches(mapping, sourceUid, sourceRow) &&
         mappingTargetRevisionMatches(mapping, existingMappingTarget)) {
+      if (!titleBaselineEntry(mapping, sourceRow, existingMappingTarget)) {
+        await withAutoCopyMetaWrite(() => setAutoCopyMapping(DATA_DIR, lineageId, targetUid, {
+          ...mapping, ...mappingWithTitleBaseline(mapping, reverseMapping, sourceRow, existingMappingTarget),
+        }));
+      }
       const sourceBytes = Number(mapping.sourceBytes);
       const totalBytes = Number(mapping.totalBytes);
       const warning = (Number.isFinite(sourceBytes) ? sourceBytes : 0) > 100 * 1024 * 1024
@@ -5949,29 +6040,65 @@ async function copySessionRecord(src, targetUid, options = {}) {
     // a new physical session in the same lineage, so later scans find it by
     // content and do not create another copy on every switch.
     const branched = selection.comparison.kind === 'conflict';
+    if (branched && targetExcluded) return { status: 'skipped', sourceId: src.id, targetId: null };
     const targetId = branched ? crypto.randomUUID() : selection.targetId;
     if (branched) {
       aliases.push(targetId);
       if (codeBuddyFiles) codeBuddyFiles.register({...sourceRow,id:targetId,user_id:targetUid});
     }
     const existing = candidates.find(row => row.id === targetId) || null;
-    // An equal selection needs no writes: the trimmed selection snapshot is
-    // enough to skip, and the next sync re-reads everything anyway. Avoid the
-    // extra full target snapshot on the hot all-skipped path.
+    // Equal message snapshots still need independent title synchronization.
+    // The trimmed selection is enough; no message file rewrite is needed.
     if (!branched && selection.comparison.kind === 'equal') {
+      let titleChanged = false;
+      if (existing && sessionTitlePair(sourceRow) !== sessionTitlePair(existing)) {
+        const baseline = sharedTitleBaseline(mapping, reverseMapping, sourceRow, existing);
+        const sourceChanged = baseline !== null && baseline !== sessionTitlePair(sourceRow);
+        const targetChanged = baseline !== null && baseline !== sessionTitlePair(existing);
+        // Activation timestamps do not prove which title was edited.
+        if (baseline === null || sourceChanged === targetChanged) {
+          return { status: 'conflict', sourceId: src.id, targetId, warning: '两端会话标题不同，已保留各自标题，请统一后重试' };
+        }
+        const from = sourceChanged ? sourceRow : existing;
+        const to = sourceChanged ? existing : sourceRow;
+        await assertSessionSyncIdle([sourceRow.id, existing.id]);
+        if (JSON.stringify(await readRow(sourceRow.id, sourceUid)) !== JSON.stringify(sourceRow) ||
+            JSON.stringify(await readRow(existing.id, targetUid)) !== JSON.stringify(existing)) {
+          throw new Error('会话记录正在变化，请稍后重试');
+        }
+        const updatedAt = Math.max(Number(to.updated_at || 0), Number(from.updated_at || 0));
+        const result = await sqliteRun(
+          "UPDATE sessions SET title = ?, custom_title = ?, updated_at = ? WHERE id = ? AND user_id = ? AND deleted_at IS NULL AND COALESCE(title, '') = ? AND COALESCE(custom_title, '') = ? AND COALESCE(updated_at, 0) = ? " +
+          "AND EXISTS (SELECT 1 FROM sessions AS source WHERE source.id = ? AND source.user_id = ? AND source.deleted_at IS NULL AND COALESCE(source.title, '') = ? AND COALESCE(source.custom_title, '') = ? AND COALESCE(source.updated_at, 0) = ?);",
+          [from.title || '', from.custom_title || '', updatedAt, to.id, to.user_id, to.title || '', to.custom_title || '', Number(to.updated_at || 0),
+            from.id, from.user_id, from.title || '', from.custom_title || '', Number(from.updated_at || 0)]
+        );
+        if (result && result.changes === 0) throw new Error('会话记录正在变化，请稍后重试');
+        // The sqlite3 CLI backend cannot report changes. Verify its result
+        // before acknowledging a title baseline after a conditional update.
+        if (!result || result.changes == null) {
+          const saved = await readRow(to.id, to.user_id);
+          const freshSource = await readRow(from.id, from.user_id);
+          if (!saved || sessionTitlePair(saved) !== sessionTitlePair(from) || Number(saved.updated_at || 0) !== updatedAt ||
+              JSON.stringify(freshSource) !== JSON.stringify(from)) throw new Error('会话记录正在变化，请稍后重试');
+        }
+        Object.assign(to, { title: from.title || '', custom_title: from.custom_title || '', updated_at: updatedAt });
+        titleChanged = true;
+      }
       await withAutoCopyMetaWrite(() => {
         if (!getAutoCopySessionMembers(DATA_DIR, lineageId, targetUid).includes(targetId)) addAutoCopySessionMember(DATA_DIR, lineageId, targetUid, targetId);
         setAutoCopyMapping(DATA_DIR, lineageId, targetUid, {
           targetId, status: 'copied', failedFiles: 0, fingerprintVersion: 3,
           ...mappingWithSourceRevision(mapping, sourceUid, sourceRow),
+          ...mappingWithTitleBaseline(mapping, reverseMapping, sourceRow, existing),
           targetRevision: sessionCopyRowRevision(existing || { ...sourceRow, id: targetId, user_id: targetUid }),
           targetStateRevision: sessionCopyStableStateRevision(existing || { ...sourceRow, id: targetId, user_id: targetUid }),
           sourceBytes: left.totalBytes, totalBytes: left.totalBytes,
         });
       });
       const warning = left.totalBytes > 100 * 1024 * 1024 ? '会话超过 100 MB，同步可能较慢' : '';
-      finishAutoDirty(targetId, runtimeRepairBytes > 0);
-      return { status: runtimeRepairBytes ? 'copied' : 'skipped', sourceId: src.id, targetId, branched: false, failedFiles: 0, warning, sourceBytes: left.totalBytes, totalBytes: left.totalBytes, copiedBytes: runtimeRepairBytes };
+      finishAutoDirty(targetId, titleChanged || runtimeRepairBytes > 0);
+      return { status: titleChanged || runtimeRepairBytes ? 'copied' : 'skipped', sourceId: src.id, targetId, branched: false, failedFiles: 0, warning, sourceBytes: left.totalBytes, totalBytes: left.totalBytes, copiedBytes: runtimeRepairBytes };
     }
     let right = await sessionSync.readSnapshotAsync(PROFILE.dataRoot, targetId, aliases, syncCache);
     // Size is advisory only; both manual and automatic sync keep all files.
@@ -6052,6 +6179,7 @@ async function copySessionRecord(src, targetUid, options = {}) {
       return setAutoCopyMapping(DATA_DIR, lineageId, targetUid, {
         targetId, status: 'copied', failedFiles: 0, fingerprintVersion: 3,
         ...mappingWithSourceRevision(mapping, sourceUid, sourceRow),
+        ...mappingWithTitleBaseline(mapping, reverseMapping, sourceRow, mappingTarget),
         targetRevision: sessionCopyRowRevision(mappingTarget),
         targetStateRevision: sessionCopyStableStateRevision(mappingTarget),
         sourceBytes: left.totalBytes, totalBytes,
@@ -6121,6 +6249,7 @@ async function buildAutoCopyPlan(sourceUid, targetUid, requestedSessionIds = [])
     return true;
   };
   const refreshStableMappedPayload = async (row, mapping, targetRow, lineageId) => {
+    if (mappingSourceTitleChanged(mapping, source, row) || sessionTitlePair(row) !== sessionTitlePair(targetRow)) return false;
     if (!mapping || !mapping.targetId || !targetRow || !lineageId ||
         typeof sessionSync === 'undefined' || typeof sessionSync.readSnapshotAsync !== 'function' ||
         typeof sessionSync.compareSnapshots !== 'function') return false;
@@ -6207,6 +6336,9 @@ async function buildAutoCopyPlan(sourceUid, targetUid, requestedSessionIds = [])
       const lineageId = (rules.allLineages && rules.allLineages[String(row.id)]) ||
         (typeof getAutoCopySession === 'function' && getAutoCopySession(DATA_DIR, source, row.id)?.lineageId);
       const mapping = lineageId ? mappings.get(String(lineageId)) : null;
+      if (mappingSourceTitleChanged(mapping, source, row) || mappingHasUnequalTitles(mapping) ||
+          (targetById && mapping && targetById.has(String(mapping.targetId)) &&
+           sessionTitlePair(row) !== sessionTitlePair(targetById.get(String(mapping.targetId))))) { dirtyRows.push(row); continue; }
       // The target mapping is enough to restore the active view. Only enter
       // the worker when it is missing, its row disappeared, or the renderer
       // explicitly marked the source session dirty.
@@ -6238,6 +6370,9 @@ async function buildAutoCopyPlan(sourceUid, targetUid, requestedSessionIds = [])
     }
     const lineageId = rules.allLineages && rules.allLineages[String(row.id)];
     const mapping = lineageId ? mappings.get(String(lineageId)) : null;
+    if (mappingSourceTitleChanged(mapping, source, row) || mappingHasUnequalTitles(mapping) ||
+          (targetById && mapping && targetById.has(String(mapping.targetId)) &&
+           sessionTitlePair(row) !== sessionTitlePair(targetById.get(String(mapping.targetId))))) { dirtyRows.push(row); continue; }
     if (mapping && mapping.fingerprintVersion !== 3) { dirtyRows.push(row); continue; }
     if (dirtyIndex.shouldSync(source, row.id)) {
       if (clearStableDirtyMarker(row, mapping)) continue;
@@ -6287,7 +6422,7 @@ async function buildAutoCopyPlan(sourceUid, targetUid, requestedSessionIds = [])
     const mapping = row.lineageId ? mappings.get(String(row.lineageId)) : null;
     if (!mapping || mapping.fingerprintVersion !== 3 || !mapping.targetId) return true;
     const targetRow = targetById.get(String(mapping.targetId));
-    return !targetRow || !mappingSourceRevisionMatches(mapping, source, row) ||
+    return !targetRow || sessionTitlePair(row) !== sessionTitlePair(targetRow) || !mappingSourceRevisionMatches(mapping, source, row) ||
       (!mappingTargetRevisionMatches(mapping, targetRow) &&
        !mappingTargetLifecycleRevisionMatches(mapping, targetRow));
   });
@@ -10857,6 +10992,22 @@ function handleApi(req, res) {
     });
   }
 
+  if (req.method === 'GET' && p === '/api/client-temp') {
+    return inspectClientTemp(DATA_DIR, PROFILE).then(data => json(res, 200, { ok: true, ...data }))
+      .catch(() => json(res, 500, { ok: false, error: '无法统计临时文件，请检查目录权限后重试' }));
+  }
+  if (req.method === 'POST' && p === '/api/client-temp') {
+    return readBody(req).then(body => {
+      if (!body || typeof body.pending !== 'boolean' || process.platform !== 'win32' || PROFILE.customTarget ||
+          !['workbuddy-cn', 'workbuddy-ai'].includes(PROFILE.id)) {
+        return json(res, 400, { ok: false, error: '当前客户端不支持此清理请求' });
+      }
+      try {
+        return json(res, 200, { ok: true, ...requestClientTempCleanup(DATA_DIR, PROFILE, body.pending) });
+      } catch (_) { return json(res, 500, { ok: false, error: '保存清理请求失败，请重试' }); }
+    });
+  }
+
   if (req.method === 'GET' && p === '/api/client-launch-settings') {
     return json(res, 200, { ok: true, ...readClientLaunchSettings(DATA_DIR, PROFILE.id, process.platform) });
   }
@@ -12260,7 +12411,7 @@ function handleApi(req, res) {
       }
     });
   }
-  // 删除会话（真实删除）：POST /api/sessions/delete { ids }——删除 DB 记录 + 该账号下全部会话文件（不可恢复）
+  // 删除会话：默认仅所选物理 ID；显式 lineage 范围须先预览并确认 previewToken。
   if (req.method === 'POST' && p === '/api/sessions/delete') {
     return readBody(req).then(async (body) => {
       let ids;
@@ -12268,6 +12419,10 @@ function handleApi(req, res) {
       catch (e) { return json(res, 400, { ok: false, error: e.message }); }
       if (!ids.length) return json(res, 400, { ok: false, error: '未选择会话' });
       if (!ids.every(isValidSessionId)) return json(res, 400, { ok: false, error: '包含无效的会话 ID' });
+      const scope = body.scope === undefined ? 'selected' : body.scope;
+      if (!['selected', 'lineage'].includes(scope) || (body.preview !== undefined && typeof body.preview !== 'boolean')) {
+        return json(res, 400, { ok: false, error: '无效的删除范围' });
+      }
       let releaseSessionSync = null;
       try {
         // A copy worker may have already read the source row and be about to
@@ -12277,10 +12432,9 @@ function handleApi(req, res) {
         if (typeof assertAccountSwitchIdle === 'function') {
           releaseSessionSync = await assertAccountSwitchIdle();
         }
-        // 展开目标会话所在的 lineage：其他账号自动复制出的同源副本一并级联删除，
-        // 避免删除后切走再切回时被 auto-copy 原样复制回来（会话「复活」）。
+        // #511: ordinary deletion is strictly local to the selected physical IDs.
         const requestedSet = new Set(ids.map(String));
-        const members = collectLineageMembersForDelete(DATA_DIR, ids);
+        const members = scope === 'lineage' ? collectLineageMembersForDelete(DATA_DIR, ids) : ids.map(id => ({ id }));
         const memberIds = Array.from(new Set(members.map((m) => m.id).filter((id) => isValidSessionId(id))));
         if (!memberIds.length) return json(res, 404, { ok: false, error: '会话不存在或已删除' });
         const placeholders = sqlPlaceholders(memberIds);
@@ -12289,20 +12443,25 @@ function handleApi(req, res) {
         const matchedSet = new Set(before.map((row) => String(row.id || '')));
         const matchedIds = memberIds.filter((id) => matchedSet.has(String(id)));
         const matchedRows = before.filter((row) => matchedSet.has(String(row.id || '')));
+        const cascaded = matchedIds.filter(id => !requestedSet.has(String(id))).length;
+        const previewToken = crypto.createHash('sha256').update(JSON.stringify([
+          scope, [...requestedSet].sort(), matchedRows.map(row => [String(row.id), String(row.user_id)]).sort((a, b) => a[0].localeCompare(b[0])),
+        ])).digest('hex');
+        if (body.preview === true) return json(res, 200, {
+          ok: true, scope, total: matchedIds.length, cascaded,
+          accounts: new Set(matchedRows.map(row => String(row.user_id))).size, previewToken,
+        });
+        if ((scope === 'lineage' || body.previewToken !== undefined) && body.previewToken !== previewToken) {
+          return json(res, 409, { ok: false, error: '删除范围已变化，请重新预览并确认' });
+        }
         // 1) 先完成可重试的文件与规则清理；失败时保留 DB 记录作为重试锚点。
         const wbHome = PROFILE.dataRoot;
         let filesRemoved = 0;
         if (codeBuddyFiles) await assertSessionSyncIdle(matchedIds);
         else for (const id of matchedIds) filesRemoved += deleteSessionFiles(wbHome, id);
-        let rulesRemoved = 0;
-        for (const row of matchedRows) {
-          try {
-            if (removeAutoCopySession(DATA_DIR, String(row.user_id || '').trim(), row.id)) rulesRemoved++;
-          } catch (e) {
-            log(`[sessions-auto-copy] 删除规则 ${row.id} 失败: ${e.message}`);
-            throw e;
-          }
-        }
+        // Persist the exclusion before removing DB retry anchors. File failures
+        // above leave the original relationship intact; later retries are safe.
+        const rulesRemoved = recordSessionDeletion(DATA_DIR, matchedRows, { preserveMembers: true });
         // 2) 最后真实删除 DB 记录（非软删）。若此步失败，重复请求可安全重试。
         if (matchedIds.length) {
           const removeRecords = () => sqliteRun(
@@ -12312,7 +12471,9 @@ function handleApi(req, res) {
           if (codeBuddyFiles) filesRemoved = await codeBuddyFiles.deleteSessions(matchedIds, removeRecords);
           else await removeRecords();
         }
-        const cascaded = matchedIds.filter((id) => !requestedSet.has(String(id))).length;
+        // Keep the family graph until DB deletion succeeds so a failed bulk
+        // delete can be previewed and retried with the same linked members.
+        recordSessionDeletion(DATA_DIR, matchedRows);
         log(`[sessions-delete] 已真实删除 ${matchedIds.length} 个会话（DB + ${filesRemoved} 项文件，级联副本 ${cascaded}）`);
         return json(res, 200, { ok: true, deleted: matchedIds.length, requested: ids.length, cascaded, filesRemoved, rulesRemoved });
       } catch (e) {

@@ -246,7 +246,10 @@ test('automation UI preloads discovery and exposes fuzzy task search and import'
   assert.match(source, /wbs-auto-discovery-search/);
   assert.match(source, /data-auto-discovery-import/);
   assert.match(source, /发现更多自动化任务/);
-  assert.match(source, /wbs-auto-discovery-pagination/);
+  assert.match(source, /matches\.forEach\(function \(task, index\)/);
+  assert.match(source, /wbs-auto-discovery-number/);
+  assert.match(source, /textContent = String\(index \+ 1\)/);
+  assert.doesNotMatch(source, /__wbsDiscoveryPage|data-auto-discovery-page|wbs-auto-discovery-pagination/);
   assert.match(source, /我也要出现在这里/);
   assert.match(source, /wbs-auto-discovery-head-actions \[data-auto-discovery-guide\]/);
   assert.match(source, /git clone https:\/\/github\.com\/babygoton\/workdaddy-official-plugin\.git/);

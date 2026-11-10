@@ -250,7 +250,7 @@ test('delete route validates before SQL and deletes the matched set only', () =>
   assert.match(route, /for \(const id of matchedIds\) filesRemoved \+= deleteSessionFiles\(wbHome, id\)/);
   assert.doesNotMatch(route, /for \(const id of ids\) filesRemoved/);
   const filesAt = route.indexOf('for (const id of matchedIds) filesRemoved += deleteSessionFiles');
-  const rulesAt = route.indexOf('for (const row of matchedRows)');
+  const rulesAt = route.indexOf('recordSessionDeletion(DATA_DIR, matchedRows, { preserveMembers: true })');
   const deleteAt = route.indexOf('DELETE FROM sessions WHERE id IN');
   assert.ok(filesAt >= 0 && filesAt < rulesAt && rulesAt < deleteAt,
     'filesystem and rule cleanup must succeed before the retry anchor is removed from the database');
@@ -293,7 +293,7 @@ test('delete route accepts more than 100 session IDs in one request', async (t) 
     ...loadSessionDeleteHelpers(),
     normalizeSessionIdBatch,
     collectLineageMembersForDelete: (_dataDir, requested) => requested.map((id) => ({ id })),
-    removeAutoCopySession: () => false,
+    recordSessionDeletion: () => 0, crypto: require('node:crypto'),
     DATA_DIR: root,
     PROFILE: { dataRoot: root },
     req: { method: 'POST' },
@@ -313,7 +313,7 @@ test('delete route accepts more than 100 session IDs in one request', async (t) 
   assert.deepEqual(await db.all('SELECT id FROM sessions'), []);
 });
 
-test('delete route removes recorded copies across accounts from both DB and files', async (t) => {
+for (const scope of ['selected', 'lineage']) test('#511 delete scope is explicit: ' + scope, async (t) => {
   const lib = require('../scripts/lib.js');
   const { createSessionDb, normalizeSessionIdBatch } = require('../scripts/session-db.js');
   const root = tempDir(t);
@@ -338,22 +338,50 @@ test('delete route removes recorded copies across accounts from both DB and file
     ...loadSessionDeleteHelpers(),
     normalizeSessionIdBatch,
     collectLineageMembersForDelete: lib.collectLineageMembersForDelete,
-    removeAutoCopySession: lib.removeAutoCopySession,
+    ...lib, crypto: require('node:crypto'),
     DATA_DIR: root, PROFILE: { dataRoot: root },
     req: { method: 'POST' }, res: {}, p: '/api/sessions/delete',
-    readBody: async () => ({ ids: ['copy-a'] }),
+    readBody: async () => ({ ids: ['copy-a'], scope, preview: true }),
     sqliteQuery: (sql, params) => db.all(sql, Array.from(params)),
     sqliteRun: (sql, params) => db.run(sql, Array.from(params)),
     sqlPlaceholders: ids => ids.map(() => '?').join(','),
     json: (_, status, body) => ({ status, body }), log() {},
   });
-  const result = await vm.runInContext('(async function () {\n' + source.slice(start, end) + '\n})()', ctx);
+  const run = () => vm.runInContext('(async function () {\n' + source.slice(start, end) + '\n})()', ctx);
+  const preview = await run();
+  assert.equal(preview.status, 200);
+  assert.equal(preview.body.total, scope === 'selected' ? 1 : 3);
+  assert.equal((await db.all('SELECT id FROM sessions')).length, 4, 'preview must not delete');
+  ctx.readBody = async () => ({ ids: ['copy-a'], scope });
+  if (scope === 'lineage') {
+    assert.equal((await run()).status, 409, 'cross-account delete requires preview confirmation');
+    await db.run('INSERT INTO sessions (id, user_id) VALUES (?, ?)', ['late-copy', 'fourth']);
+    lib.addAutoCopySessionMember(root, original, 'fourth', 'late-copy');
+    ctx.readBody = async () => ({ ids: ['copy-a'], scope, previewToken: preview.body.previewToken });
+    assert.equal((await run()).status, 409, 'a changed family requires another preview');
+    ctx.readBody = async () => ({ ids: ['copy-a'], scope, preview: true });
+    const updated = await run();
+    ctx.readBody = async () => ({ ids: ['copy-a'], scope, previewToken: updated.body.previewToken });
+  }
+  const retryBody = await ctx.readBody();
+  const write = ctx.sqliteRun;
+  ctx.sqliteRun = async () => { throw new Error('database locked'); };
+  assert.equal((await run()).status, 500);
+  ctx.sqliteRun = write;
+  ctx.readBody = async () => ({ ids: ['copy-a'], scope, preview: true });
+  const retryPreview = await run();
+  assert.equal(retryPreview.body.total, scope === 'selected' ? 1 : 4, 'DB failure preserves the family for retry');
+  ctx.readBody = async () => retryBody;
+  const result = await run();
   assert.equal(result.status, 200);
-  assert.equal(result.body.deleted, 3);
-  assert.equal(result.body.cascaded, 2);
-  assert.deepEqual(await db.all('SELECT id FROM sessions'), [{ id: 'unrelated' }]);
-  assert.deepEqual(fs.readdirSync(path.join(root, 'tasks')), ['unrelated']);
+  assert.equal(result.body.deleted, scope === 'selected' ? 1 : 4);
+  assert.equal(result.body.cascaded, scope === 'selected' ? 0 : 3);
+  const expected = scope === 'selected' ? ['copy-third', 'session-a', 'unrelated'] : ['unrelated'];
+  assert.deepEqual((await db.all('SELECT id FROM sessions ORDER BY id')).map(row => row.id), expected);
+  assert.deepEqual(fs.readdirSync(path.join(root, 'tasks')).sort(), expected);
   assert.equal(lib.getAutoCopySession(root, 'target', 'unrelated').enabled, true);
+  assert.equal(lib.isAutoCopyTargetExcluded(root, original, 'target'), true);
+  assert.equal(lib.isAutoCopyTargetExcluded(root, split, 'target'), true);
 });
 
 test('configured data root may be a directory junction while child links still fail closed', (t) => {

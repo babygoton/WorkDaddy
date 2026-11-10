@@ -49,6 +49,52 @@
     return findModernToolbar(doc) || findLegacyToolbar(doc);
   }
 
+  // Shared geometry for conversation-owned overlays. The shell can remain
+  // mounted at its old size behind a fullscreen artifact preview.
+  function findConversationArea(doc, preferred) {
+    if (!doc || typeof doc.querySelectorAll !== 'function') return null;
+    var win = doc.defaultView;
+    function visibleRect(node) {
+      if (!node || node.isConnected === false) return null;
+      for (var p = node; p && p !== doc; p = p.parentElement) {
+        var css = win && win.getComputedStyle ? win.getComputedStyle(p) : null;
+        if (css && (css.display === 'none' || css.visibility === 'hidden' ||
+            css.visibility === 'collapse' || css.opacity === '0')) return null;
+      }
+      var box = node.getBoundingClientRect();
+      if (!box || box.width <= 0 || box.height <= 0) return null;
+      var left = Math.max(0, box.left), top = Math.max(0, box.top);
+      var right = Math.min(win && win.innerWidth || box.right, box.right);
+      var bottom = Math.min(win && win.innerHeight || box.bottom, box.bottom);
+      return right > left && bottom > top ? { left:left, top:top, right:right, bottom:bottom,
+        width:right-left, height:bottom-top } : null;
+    }
+    var own = preferred && preferred.closest && preferred.closest('.conversation-shell');
+    var shells = own ? [own] : Array.from(doc.querySelectorAll('.conversation-shell'));
+    // Only old clients may use the legacy chat host. A missing modern shell
+    // must not fall back to the teams grid or the whole application window.
+    if (!shells.length && !doc.querySelector('.teams-container,.conversation-page-chrome')) {
+      shells = Array.from(doc.querySelectorAll('.chat-container'));
+    }
+    var previews = Array.from(doc.querySelectorAll('.detail-panel-container'));
+    var fallback = shells.length ? { element:shells[0], rect:null } : null;
+    for (var i = 0; i < shells.length; i++) {
+      var rect = visibleRect(shells[i]);
+      if (!rect) continue;
+      for (var j = 0; j < previews.length && rect; j++) {
+        var cover = visibleRect(previews[j]);
+        if (!cover || cover.top > rect.top || cover.bottom < rect.bottom ||
+            cover.right <= rect.left || cover.left >= rect.right) continue;
+        if (cover.left <= rect.left && cover.right >= rect.right) rect = null;
+        else if (cover.right >= rect.right) rect.right = cover.left;
+        else if (cover.left <= rect.left) rect.left = cover.right;
+        if (rect) rect.width = rect.right - rect.left;
+      }
+      if (rect) return { element:shells[i], rect:rect };
+    }
+    return fallback;
+  }
+
   function findMessageNavigationSurface(doc) {
     if (!doc || typeof doc.querySelector !== 'function') return null;
     try {
@@ -602,6 +648,7 @@
     draftStorageKey: draftStorageKey,
     collectMessageNavigationTurnsFromMessages: collectMessageNavigationTurnsFromMessages,
     findComposerToolbar: findComposerToolbar,
+    findConversationArea: findConversationArea,
     findCodeBuddySendButton: findCodeBuddySendButton,
     findLegacyQueueAdapter: findLegacyQueueAdapter,
     findModernQueueAdapter: findModernQueueAdapter,
