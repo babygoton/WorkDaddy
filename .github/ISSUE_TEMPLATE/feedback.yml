@@ -1,6 +1,13 @@
 name: Bug 反馈 / 功能建议
-description: 提交 WorkDaddy 问题或功能建议，请填写客户端、版本和系统信息。
+description: 反馈问题或提出功能建议。
 body:
+  - type: markdown
+    attributes:
+      value: |
+        ### 请尽量附上 WorkBuddy 的完整分析回复
+
+        由于维护精力有限，感谢你先使用 WorkBuddy 分析遇到的问题或功能建议，并将 AI 的完整回复内容粘贴到下方。这能帮助我更直接地判断问题是否确实存在，以及是否需要优先处理。
+
   - type: dropdown
     id: issue-type
     attributes:
@@ -14,27 +21,27 @@ body:
   - type: dropdown
     id: client
     attributes:
-      label: WorkBuddy 客户端
+      label: 客户端
       options:
         - WorkBuddy（国内版）
         - WorkBuddy AI（国际版）
+        - CodeBuddy CN（国内版）
+        - CodeBuddy（国际版）
     validations:
       required: true
 
   - type: input
     id: client-version
     attributes:
-      label: WorkBuddy / WorkBuddy AI 版本号
-      description: 请填写上方所选客户端的完整版本号，不要只写“最新版”。
-      placeholder: 请从客户端的“关于”或版本信息页面复制
+      label: 客户端版本号
+      placeholder: 请填写实际版本号
     validations:
       required: true
 
   - type: input
     id: workdaddy-version
     attributes:
-      label: WorkDaddy / WorkDaddy AI 版本号
-      description: 可在 WorkDaddy 面板的“关于”页查看，请填写实际使用的版本号。
+      label: WorkDaddy / WorkDaddy AI / CodeDaddy CN / CodeDaddy 版本号
       placeholder: 例如：1.2.8
     validations:
       required: true
@@ -50,18 +57,11 @@ body:
     validations:
       required: true
 
-  - type: input
-    id: os-version
-    attributes:
-      label: 系统版本（选填）
-      placeholder: 例如：Windows 11 24H2、macOS 15.6、Ubuntu 24.04
-
   - type: textarea
     id: description
     attributes:
       label: 问题或建议描述
-      description: Bug 请说明实际现象和预期行为；功能建议请说明使用场景和期望实现的效果。
-      placeholder: 请具体描述遇到的问题或希望增加的功能
+      description: 请说明实际现象、预期行为或使用场景。
     validations:
       required: true
 
@@ -69,30 +69,14 @@ body:
     id: reproduction
     attributes:
       label: 复现步骤 / 截图（选填）
-      description: Bug 请尽量提供复现步骤、错误提示或截图；功能建议可补充示例。
+      description: 请尽量提供复现步骤、错误提示或截图。
       placeholder: |
         1. 打开……
         2. 点击……
         3. 出现……
 
-  - type: dropdown
-    id: agent-solution
-    attributes:
-      label: 是否有 Agent 提供的解决方案
-      description: 指 AI 编程助手或其他 Agent 对该问题提供的分析、修复方案或实现建议。
-      options:
-        - 有
-        - 没有（已尝试，但未获得方案）
-        - 未尝试使用 Agent
-    validations:
-      required: true
-
   - type: textarea
-    id: agent-solution-details
+    id: workbuddy-response
     attributes:
-      label: Agent 方案及验证结果
-      description: 若上方选择“有”，请附上方案摘要、相关代码或补丁，并说明是否已尝试、是否有效；没有方案可留空。
-      placeholder: |
-        使用的 Agent：
-        方案摘要：
-        验证结果（未尝试 / 有效 / 无效）：
+      label: WorkBuddy 完整回复（选填）
+      placeholder: 请粘贴 WorkBuddy 的完整回复内容
