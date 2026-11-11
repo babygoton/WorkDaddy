@@ -10,6 +10,7 @@ const source = fs.readFileSync(path.join(__dirname, '../scripts/win-launcher.js'
 function harness({ changed = false, running = false, stable = true, recovered = true } = {}) {
   let now = 0, launches = 0, stops = 0, waits = 0;
   const context = {
+    DATA_DIR: '/fixture', runPendingClientTempCleanup: async () => ({}),
     PROFILE: { id: 'workbuddy-cn' }, nativeLaunchState: null, CDP_PORT: 9222, CDP_STARTUP_TIMEOUT_MS: 60000,
     Date: { now: () => now }, process: { env: {} }, log() {}, writeCdpPortFile() {},
     sleep: async ms => { now += ms; }, cdpPortCandidates: () => [9222],

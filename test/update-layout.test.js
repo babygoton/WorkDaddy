@@ -1101,7 +1101,9 @@ test('robot button anchors to the conversation area bottom-right and snaps right
   assert.match(script, /raw !== null && raw !== '' && isFinite\(value\)/);
   assert.match(script, /localStorage\.removeItem\(FAB_RETIRED_POSITION_KEYS\[i\]\)/);
   // The anchor is the conversation area, not the window.
-  assert.match(script, /'\.teams-container\.is-mac \.conversation-shell'/);
+  assert.match(script, /WBS_COMPAT\.findConversationArea\(document\)/);
+  assert.match(read('workbuddy-compat.js'), /querySelectorAll\('\.conversation-shell'\)/);
+  assert.match(script, /classList\.toggle\('is-area-hidden', areaHidden\)/);
   assert.match(script, /function readFabAnchorNode\(\)/);
   assert.match(script, /function fabAnchorOffsets\(\)/);
   assert.match(script, /window\.innerWidth - rect\.right\) \+ FAB_EDGE_GAP/);

@@ -55,6 +55,7 @@ const { replaceFileWithRetry } = require('./atomic-file-write.js');
 const { parseUiPortState, profileUiPortCandidates } = require('./ui-port.js');
 const { getClientLaunchArgs } = require('./client-launch-settings.js');
 const { getWorkBuddyLaunchEnv } = require('./workbuddy-launch-env.js');
+const { runPendingClientTempCleanup } = require('./client-temp.js');
 
 const SCRIPTS_DIR = __dirname;
 const WORKDADDY_APP_DIR = path.resolve(SCRIPTS_DIR, '..');
@@ -1188,6 +1189,9 @@ function launchWorkBuddy(wb) {
 }
 
 async function waitForWorkBuddyCdp(binary) {
+  await runPendingClientTempCleanup(DATA_DIR, PROFILE, {
+    isStopped: () => getWorkBuddyProcesses().length === 0,
+  });
   const deadline = Date.now() + CDP_STARTUP_TIMEOUT_MS;
   let retryWithoutCdpArg = false;
   let retryOnNextPort = false;
@@ -1651,6 +1655,11 @@ async function ensureDaemonNative(nodeBin) {
 }
 
 async function waitForWorkBuddyCdpNative(binary) {
+  await runPendingClientTempCleanup(DATA_DIR, PROFILE, {
+    // Cleanup is optional: if CIM cannot verify even a headless/prewarm process,
+    // defer it rather than relying only on the native installation-path filter.
+    isStopped: () => !nativeWorkBuddyRunning() && getWorkBuddyProcesses().length === 0,
+  });
   let restartedAfterHandoff = false;
   let retriedAfterUpdate = false;
   let installationChanged = false;

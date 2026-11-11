@@ -5,7 +5,7 @@ const vm = require('node:vm');
 const test = require('node:test');
 const source = fs.readFileSync(require('node:path').join(__dirname, '../scripts/inject.js'), 'utf8');
 
-function harness(enabled = true) {
+function harness(enabled = true, edge) {
   const start = source.indexOf('function createFabQuietMode(');
   assert.notEqual(start, -1);
   const end = source.indexOf('// Keep the decision logic', start);
@@ -30,7 +30,7 @@ function harness(enabled = true) {
   vm.runInContext(source.slice(start, end), context);
   const mode = context.createFabQuietMode({ fab, window: win, document: doc,
     storage, settingKey: 'dock-test',
-    isDragging: () => dragging,
+    isDragging: () => dragging, rightEdge: () => edge === undefined ? win.innerWidth : edge,
     listen: (target, type, fn) => listeners.push({ target, type, fn }),
   });
   return { mode, fab, doc, button, classes, timers, win, saved,
@@ -107,4 +107,20 @@ test('resize uses the new viewport and saved vertical position; disposal cancels
   assert.equal(h.timers.size, 0);
   h.tick();
   assert(!h.classes.has('is-quiet'));
+});
+
+test('quiet robot docks and wakes at the chat edge rather than the file preview edge', () => {
+  const h=harness(true,700);h.fab.style.right='322px';h.tick();
+  assert.equal(h.fab.style['--wbs-fab-quiet-shift'],'59px');
+  const scale=0.5, shift=parseFloat(h.fab.style['--wbs-fab-quiet-shift']);
+  const clip=parseFloat(h.fab.style['--wbs-fab-quiet-clip']);
+  const paintedRight=h.win.innerWidth-parseFloat(h.fab.style.right)+shift-clip*scale;
+  assert.equal(paintedRight,700,'docked robot must be clipped at the chat edge, before the file preview');
+  assert.match(source,/\.wbs-fab\.is-quiet\{[^}]*clip-path:inset\(-100px var\(--wbs-fab-quiet-clip,0px\) -100px -100px\)/);
+  h.fire(h.win,'pointermove',{clientX:990,clientY:658});
+  assert(h.classes.has('is-quiet'),'pointer over preview must not wake robot');
+  h.fire(h.win,'pointermove',{clientX:690,clientY:658});
+  assert(!h.classes.has('is-quiet'));
+  h.classes.add('is-area-hidden');h.mode.wake();
+  assert.equal(h.timers.size,0,'hidden chat cancels docking timer');
 });

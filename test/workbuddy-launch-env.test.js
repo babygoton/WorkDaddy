@@ -20,6 +20,7 @@ function launchContext(profile, dataDir, env, spawn) {
   const ctx = {
     PROFILE: profile, DATA_DIR: dataDir, CDP_PORT: 9223,
     process: { platform: 'win32', env }, IS_WIN: true, IS_LINUX: false, path,
+    runPendingClientTempCleanup: async () => ({}),
     getClientLaunchArgs,
     getWorkBuddyLaunchEnv,
     log() {}, selectCdpPort: async () => 9223,

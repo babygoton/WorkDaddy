@@ -34,9 +34,32 @@ test('classifyTarget 依据 app 包路径识别四客户端（含 %20 编码）'
 });
 
 test('classifyTarget 识别 Windows 安装目录中的 app.asar 页面', () => {
-  assert.equal(classifyTarget(WIN_CN_URL, 'WorkBuddy'), 'workbuddy-cn');
+  assert.equal(classifyTarget(WIN_CN_URL, 'WorkBuddy'), null);
   assert.equal(classifyTarget(WIN_AI_URL, 'WorkBuddy AI'), 'workbuddy-ai');
   assert.equal(classifyTarget('file:///E:/WorkBuddy%20AI/resources/app.asar/renderer/index.html', 'WorkBuddy'), 'workbuddy-ai');
+});
+
+test('Windows shared WorkBuddy path follows the bound profile and preserves AI isolation', () => {
+  const previous = process.env.WBSWITCH_PROFILE;
+  const shared = { type: 'page', url: WIN_CN_URL, title: 'WorkBuddy' };
+  const explicitAi = { type: 'page', url: WIN_AI_URL, title: 'WorkBuddy' };
+  const ai = PROFILES['workbuddy-ai'];
+  const cn = PROFILES['workbuddy-cn'];
+  try {
+    delete process.env.WBSWITCH_PROFILE;
+    assert.equal(isTargetForProfile(shared, ai), false);
+    process.env.WBSWITCH_PROFILE = 'workbuddy-ai';
+    assert.equal(isTargetForProfile(shared, ai), true);
+    assert.equal(selectPageTarget([shared], ai), shared);
+    assert.equal(isTargetForProfile(explicitAi, ai), true);
+    assert.equal(isTargetForProfile(explicitAi, cn), false);
+    process.env.WBSWITCH_PROFILE = 'workbuddy-cn';
+    assert.equal(isTargetForProfile(shared, cn), true);
+    assert.equal(selectPageTarget([shared], cn), shared);
+  } finally {
+    if (previous === undefined) delete process.env.WBSWITCH_PROFILE;
+    else process.env.WBSWITCH_PROFILE = previous;
+  }
 });
 
 test('Windows custom target 按所选安装目录认领页面，允许 AI profile 显式绑定国内版', () => {
@@ -54,8 +77,6 @@ test('Windows custom target 按所选安装目录认领页面，允许 AI profil
     'file://other-host/E:/WorkBuddy/resources/index.html']) {
     assert.equal(isTargetForProfile({ ...own, url }, profile), false, url);
   }
-  // 未配置 custom target 时，绑定端口也不能覆盖官方路径归属。
-  assert.equal(isTargetForProfile(own, PROFILES['workbuddy-ai']), false);
 });
 
 test('Windows custom target 正确处理编码、大小写、路径边界及非官方目录', () => {
@@ -134,6 +155,7 @@ test('isTargetForProfile 企业配置只接受自身域名或路径提示', () =
   const enterprise = {
     ...PROFILES['workbuddy-cn'],
     customTarget: true,
+    appPath: '',
     apiHost: 'https://api.ent.example.com',
     targetHints: ['workbuddy-ent'],
   };
@@ -163,6 +185,7 @@ test('isTargetForProfile Linux 双实例：CN 与 AI 互不认领（两端可执
   const aiProfile = {
     ...PROFILES['workbuddy-ai'],
     customTarget: true,
+    appPath: '',
     apiHost: 'https://www.workbuddy.ai',
     targetHints: ['/home/u/.local/share/workbuddy-ai/app', 'workbuddy-ai'],
   };
