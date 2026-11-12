@@ -14,6 +14,21 @@ CodeBuddy への対応は、VS Code のエディターのモードではなく�
 
 ---
 
+## 💖 スポンサー
+
+> ここに広告を掲載しませんか？**初回募集の広告枠は月額99人民元です。** お問い合わせ：[richdaddycashmany@163.com](mailto:richdaddycashmany@163.com)。
+
+<table>
+<tr>
+<td width="180" align="center" valign="middle">
+  <a href="https://nagora.ai/"><img src="docs/images/nagora.png" alt="Nagora" width="150"></a>
+</td>
+<td valign="middle"><a href="https://nagora.ai/">Nagora</a>は、開発者やチーム向けに設計されたマルチモデルAI APIゲートウェイです。1つのアカウントと1つのAPIキーだけで、26種類以上の主要なテキストモデルおよび画像モデルを一元的に利用できます。OpenAI、Anthropic、Geminiの各プロトコルに対応し、Claude Code、Codex、Gemini CLIなどの開発ツールにもシームレスに接続できます。 プラットフォームには、インテリジェントルーティング、自動フェイルオーバー、透明性の高い料金体系、請求の一元管理に加え、予算管理、レート制限、同時実行数の制御機能が備わっています。これにより、個人開発、チームでの共同作業、本番環境におけるAI APIの利用を、より安定的かつ柔軟に管理できます。 既存のアプリケーションを改修する必要はありません。Base URLとAPIキーを置き換えるだけで、最短1分で導入を完了できます。</td>
+</tr>
+</table>
+
+---
+
 ## クライアントと機能の範囲
 
 | 公式のクライアント | パッケージのブランド | プロファイル |
