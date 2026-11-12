@@ -122,3 +122,17 @@ test('generic dark popup text repair excludes the WorkDaddy status popover', () 
   assert.match(patch.css, /color:var\(--wb-color-text-primary\) !important/,
     'official tooltip/dropdown text still needs the dark-theme repair');
 });
+
+test('workspace picker reason hit area stays transparent without disabling its interactions', () => {
+  const patch = patches.find(item => item.id === 'patch-108');
+  assert.ok(patch, 'workspace names must not be covered by the absolute reason-tooltip hit area');
+  assert.equal(patch.themeId, undefined, 'all custom themes use the generic dropdown patches');
+  assert.match(patch.css, /html\[data-wbs-theme-id\] body\[data-vscode-theme-name\] \.wb-popover\.wb-dropdown\.cr-workspace-picker-dropdown \.wb-dropdown__item>\.wb-dropdown__item-reason-hit\{/);
+  assert.match(patch.css, /background:transparent !important/);
+  assert.match(patch.css, /box-shadow:none !important/);
+  assert.match(patch.css, /border-color:transparent !important/);
+  assert.doesNotMatch(patch.css, /pointer-events|display:|visibility:|opacity:|position:|z-index:|color:var/,
+    'fix the covering surface, not native hit testing, positioning, or text colors');
+  assert.ok(patches.indexOf(patch) > patches.findIndex(item => item.id === 'patch-44'),
+    'keep the hit-area repair after the generic popup and hover patches');
+});

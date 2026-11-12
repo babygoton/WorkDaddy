@@ -521,6 +521,11 @@ module.exports = [
     desc: '毛玻璃主题下新版 teams 输入工具条的语音、上下文用量和增强按钮触发器去掉背景色，避免右侧出现多余色块。',
     css: ':is(html.cb-dark,html[data-theme="dark"]) body[data-vscode-theme-name] .teams-container .cr-input-toolbar__right>span:is(.cr-voice-trigger-tooltip,.cr-context-usage-tooltip-trigger,.cr-enhance-button-tooltip),:is(html.cb-dark,html[data-theme="dark"]) body[data-vscode-theme-name] .teams-container .cr-input-toolbar__right>span.cr-voice-trigger-wrap>span.cr-voice-trigger-tooltip,body[data-vscode-theme-name="IDE Night"] .teams-container .cr-input-toolbar__right>span:is(.cr-voice-trigger-tooltip,.cr-context-usage-tooltip-trigger,.cr-enhance-button-tooltip),body[data-vscode-theme-name="IDE Night"] .teams-container .cr-input-toolbar__right>span.cr-voice-trigger-wrap>span.cr-voice-trigger-tooltip{background:transparent !important;background-color:transparent !important;box-shadow:none !important;backdrop-filter:none !important;-webkit-backdrop-filter:none !important;}',
   },
+  {
+    id: 'patch-108',
+    desc: '工作空间列表的 reason-hit 是覆盖整行的透明提示触发区；通用 dropdown 背景和悬浮规则会将它涂黑并遮住名称。仅清除该触发区的底色、边框色和阴影，保留原生提示、点击、键盘及列表状态。',
+    css: 'html[data-wbs-theme-id] body[data-vscode-theme-name] .wb-popover.wb-dropdown.cr-workspace-picker-dropdown .wb-dropdown__item>.wb-dropdown__item-reason-hit{background:transparent !important;border-color:transparent !important;box-shadow:none !important;}',
+  },
   /* 原 patch-82（AI 端快捷短语弹层 z-index 抬升）已移入 inject.js 常驻样式：
      theme-patches 仅在非默认主题时注入，默认浅色主题下会失效；层级修复不依赖主题，随注入脚本常驻更可靠。 */
 ];

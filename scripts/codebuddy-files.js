@@ -9,12 +9,13 @@ const validId = value => typeof value === 'string' && /^[A-Za-z0-9_-]{1,200}$/.t
 // CodeBuddy's extension owns per-account history trees. Expose their files in
 // the existing archive/snapshot vocabulary so panel and sync transactions stay
 // shared; never synthesize an empty WorkBuddy transcript for a native session.
-function createCodeBuddyFiles({root, sync}) {
+function createCodeBuddyFiles({root, sync, resolveAccountUid = uid => uid}) {
   const rows = new Map();
   function parseIndex(text) {
     try { return JSON.parse(text); } catch (_) { throw Error('CodeBuddy 会话索引格式不兼容'); }
   }
   function register(row) {
+    if (row) row = {...row, user_id: resolveAccountUid(row.user_id)};
     if (!row || !validId(row.id) || !validId(row.user_id) || typeof row.cwd !== 'string' || !path.isAbsolute(row.cwd)) throw Error('CodeBuddy 会话归属或工作区无效');
     rows.set(row.id, row);
   }

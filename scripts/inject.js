@@ -377,8 +377,8 @@ function classifyAutoContinueReply(snapshot) {
   if (s.serviceErrorFallback) {
     return { trigger: false, reason: 'service-error-fallback' };
   }
-  if (s.nonRetryableError || s.quotaExhausted || s.rateLimited || s.authFailure) {
-    return { trigger: false, reason: s.rateLimited ? 'model-rate-limited' : (s.quotaExhausted ? 'quota-exhausted' : 'non-retryable-error') };
+  if (s.nonRetryableError || s.quotaExhausted || s.usageLimited || s.rateLimited || s.authFailure) {
+    return { trigger: false, reason: s.rateLimited ? 'model-rate-limited' : (s.usageLimited ? 'model-usage-limited' : (s.quotaExhausted ? 'quota-exhausted' : 'non-retryable-error')) };
   }
   if (s.error || s.networkFailure) {
     return { trigger: true, reason: s.networkFailure ? 'network-failure' : 'error-ui' };
@@ -387,7 +387,7 @@ function classifyAutoContinueReply(snapshot) {
   return { trigger: false, reason: 'no-incomplete-evidence' };
 }
 
-var AUTO_CONTINUE_QUOTA_CODES = { 14012: true, 14014: true, 14018: true, 14019: true, 6004: true };
+var AUTO_CONTINUE_QUOTA_CODES = { 14012: true, 14014: true, 14018: true, 14019: true, 6000: true, 6004: true };
 
 function normalizeAutoContinueError(error) {
   if (!error || typeof error !== 'object') return null;
@@ -401,9 +401,10 @@ function normalizeAutoContinueError(error) {
     }
     return null;
   }
-  // The official cap banner gives terminal.bizCode=6004 precedence over the
-  // outer transport code (including 0/500), so statistics must do the same.
-  var code = Number(terminal.bizCode) === 6004 ? 6004 : numberValue(error.code, error.bizCode, terminal.bizCode, details.code);
+  // Official model limits use terminal.bizCode even when the outer request
+  // reports a transport error.
+  var code = Number(terminal.bizCode) === 6000 || Number(terminal.bizCode) === 6004
+    ? Number(terminal.bizCode) : numberValue(error.code, error.bizCode, terminal.bizCode, details.code);
   var statusCode = numberValue(error.statusCode, error.status, error.httpStatus);
   var requestModelId = String(error.requestModelId || error.modelId || details.requestModelId || '').slice(0, 160);
   var category = String(error.category || error.type || details.category || '').slice(0, 80).toLowerCase();
@@ -414,6 +415,7 @@ function normalizeAutoContinueError(error) {
     return typeof value === 'string';
   }).map(function (value) { return value.slice(0, 4096); }).join(' ');
   var rateLimited = code === 6004 || statusCode === 429 || /rate.?limit|频率|限流/i.test(category + ' ' + message);
+  var usageLimited = code === 6000;
   var quotaExhausted = code === 14018 || code === 14012 || code === 14014 || code === 14019 || /quota|credit|额度|积分|余额/i.test(category + ' ' + message);
   var authFailure = statusCode === 401 || statusCode === 403 || /auth|credential|登录|认证/i.test(category + ' ' + message);
   var resetAt = null;
@@ -441,9 +443,10 @@ function normalizeAutoContinueError(error) {
     requestModelId: requestModelId,
     resetAt: resetAt,
     rateLimited: rateLimited,
+    usageLimited: usageLimited,
     quotaExhausted: quotaExhausted,
     authFailure: authFailure,
-    nonRetryable: rateLimited || quotaExhausted || authFailure || AUTO_CONTINUE_QUOTA_CODES[code] === true,
+    nonRetryable: rateLimited || usageLimited || quotaExhausted || authFailure || AUTO_CONTINUE_QUOTA_CODES[code] === true,
     terminal: terminal === error.terminal || terminal.isTerminal === true,
   };
 }
@@ -459,14 +462,15 @@ function createModelRateLimitObserver(options) {
       var state = controller.sessionStore.getState() || {};
       [state.error, state.warning].forEach(function (error) {
         var normalized = normalizeAutoContinueError(error);
-        if (!normalized || normalized.code !== 6004) return;
+        if (!normalized || (normalized.code !== 6004 && normalized.code !== 6000)) return;
         var modelId = normalized.requestModelId || String(state.model || state.modelId || '');
         if (!modelId) return;
         binding.latest = {
           conversationId: String(controller.conversationId || ''),
           assistantId: String(error.requestId || ''),
-          rateLimited: true,
-          errorCode: 6004,
+          rateLimited: normalized.code === 6004,
+          limitType: normalized.code === 6000 ? 'usage' : 'frequency',
+          errorCode: normalized.code,
           errorRequestModelId: modelId,
           errorModelName: modelId,
           errorResetAt: normalized.resetAt,
@@ -514,6 +518,7 @@ function classifyAutoContinueError(error) {
   var normalized = normalizeAutoContinueError(error) || {};
   return {
     quotaExhausted: !!normalized.quotaExhausted,
+    usageLimited: !!normalized.usageLimited,
     rateLimited: !!normalized.rateLimited,
     authFailure: !!normalized.authFailure,
     nonRetryable: !!normalized.nonRetryable,
@@ -538,6 +543,7 @@ function classifyAutoContinueControllerSnapshot(snapshot) {
     terminal: !!s.terminal,
     serviceErrorFallback: !!s.serviceErrorFallback,
     quotaExhausted: !!s.quotaExhausted,
+    usageLimited: !!s.usageLimited,
     rateLimited: !!s.rateLimited,
     authFailure: !!s.authFailure,
     nonRetryableError: !!s.nonRetryableError,
@@ -572,6 +578,7 @@ function controllerAutoContinueDecision(snapshot) {
     completionMarker: s.completionMarker,
     serviceErrorFallback: s.serviceErrorFallback,
     quotaExhausted: s.quotaExhausted,
+    usageLimited: s.usageLimited,
     rateLimited: s.rateLimited,
     authFailure: s.authFailure,
     nonRetryableError: s.nonRetryableError,
@@ -820,10 +827,10 @@ function isSessionMonitorInProgress(snapshot) {
 function isSessionMonitorInterrupted(snapshot) {
   var s = snapshot || {};
   if (!s || s.busy || s.blocked || s.hydrating) return false; // 运行/等决策/恢复中：交给 in-progress 分支
-  // 额度/限频错误通常同时带有 terminal=true 和 serviceErrorFallback=true。
+  // 限额错误通常同时带有 terminal=true 和 serviceErrorFallback=true。
   // 它们必须进入一次监控判定，先落盘模型限频记录并刷新账号标签；
   // controllerAutoContinueDecision 仍会因终局证据返回 trigger=false，因此不会自动重试。
-  if (s.rateLimited || s.quotaExhausted) return true;
+  if (s.rateLimited || s.usageLimited || s.quotaExhausted) return true;
   return controllerAutoContinueDecision(s).trigger === true;
 }
 
@@ -961,13 +968,20 @@ function createSessionDirtyTracker(send, options) {
   function queue(update) {
     var id = String(update && update.id || '').trim();
     if (!id) return false;
-    pending[id] = { id: id, event: String(update.event || 'sessionUpdated').slice(0, 40) };
+    // Do not let a trailing lifecycle update overwrite an explicit deletion.
+    if (!pending[id] || pending[id].event !== 'sessionDeleted') {
+      pending[id] = { id: id, event: String(update.event || 'sessionUpdated').slice(0, 40) };
+    }
     if (timer == null) timer = setTimeout(flush, delay);
     return true;
   }
   function observe(update) {
     var id = String(update && update.id || '').trim();
     if (!id) return false;
+    if (update.event === 'sessionDeleted') {
+      delete seen[id];
+      return queue(update);
+    }
     var next = signature(update);
     if (seen[id] === undefined) {
       seen[id] = next;
@@ -1158,7 +1172,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     var n;
     if ((n = document.querySelector('.wbs-root'))) n.remove();
     if ((n = document.getElementById('wbs-window-logo'))) n.remove();
-    var st = document.querySelectorAll('.wbs-stash-inline, .wbs-stash-btn, .wbs-explore-inline, .wbs-explore-pop, .wbs-fork-button');
+    var st = document.querySelectorAll('.wbs-stash-inline, .wbs-stash-btn, .wbs-explore-inline, .wbs-explore-pop, #wbs-qp-insert-tooltip, .wbs-fork-button');
     for (var i = 0; i < st.length; i++) st[i].remove();
     var nav = document.querySelectorAll('.wbs-message-nav-root');
     for (var ni = 0; ni < nav.length; ni++) nav[ni].remove();
@@ -1499,6 +1513,20 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
   var WBS_ACCOUNT_NOTE_HOVER_KEY = 'workdaddy.account.noteHover.' + PROFILE_ID;
   var WBS_GROWTH_PLAN_HOVER_KEY = 'workdaddy.account.growthPlanHover.' + PROFILE_ID;
   var WBS_I18N_EN = {
+    '个人版与企业版共用官方会话 UID，无法可靠区分会话归属，已停止同步；账号备份和切换仍可使用': 'Personal and enterprise accounts share an official session UID. Sync stopped because ownership is ambiguous; account backup and switching remain available',
+    '会话数据库正被占用，请稍后重新同步': 'Session database is busy. Please retry later',
+    '没有读取或写入会话文件的权限，请检查文件权限后重新同步': 'Cannot access session files. Check permissions and retry',
+    '会话数据库或文件不存在，请确认 WorkBuddy 已正常启动后重新同步': 'Session database or file is missing. Start WorkBuddy and retry',
+    '磁盘空间不足，请释放空间后重新同步': 'Disk is full. Free space and retry',
+    '会话数据库无法读取，请先检查 WorkBuddy 是否能正常打开会话': 'Session database is unreadable. Check whether WorkBuddy can open sessions',
+    '会话数据库结构不兼容，请更新 WorkDaddy 后重新同步': 'Session database schema is incompatible. Update WorkDaddy and retry',
+    '同步任务异常中断，请稍后重新同步；若仍失败，请反馈客户端版本及同步阶段': 'Sync task interrupted. Retry later; if it persists, report the client version and sync stage',
+
+    '任务失败': 'Task failed',
+    '同步任务': 'Sync task',
+    '请查看明细': 'Please view details',
+    '同步任务异常中断，请稍后重新同步': 'Sync task interrupted. Please retry later',
+    '企业身份的个性化目录尚未确认，暂不支持共享个性化': 'Enterprise personalization directory is unverified; sharing is unavailable',
     "同步个性化": "Sync personalization",
     "不再提醒": "Don't remind me again",
     "了解同步个性化": "About personalization sync",
@@ -1722,7 +1750,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '停止运行': 'Stop running',
     '账号': 'Accounts', '主题': 'Theme', '会话': 'Sessions', '模型': 'Models', '增强': 'Enhance', '自动化': 'Automation', '电脑': 'Computer', '关于': 'About', '设置': 'Settings',
     '导出': 'Export', '导入': 'Import', '删除': 'Delete', '编辑': 'Edit', '保存': 'Save', '内置': 'Built-in', '取消': 'Cancel', '确定': 'Confirm', '确认': 'Confirm', '复制': 'Copy', '切换': 'Switch', '启用': 'Enable', '停用': 'Disable', '停止': 'Stop', '立即运行': 'Run now', '新建任务': 'New task', '刷新': 'Refresh', '步骤 JSON': 'Steps JSON', '任务说明': 'Task description', '任务名称': 'Task name', '调度': 'Schedule', '手动运行': 'Manual', '手动': 'Manual', '每小时': 'Hourly', '每天': 'Daily', '选择任务': 'Select tasks', '查看接口': 'View capabilities', '拾取元素': 'Pick element', '复制 XPath': 'Copy XPath', '运行中': 'Running', '已成功': 'Succeeded', '失败': 'Failed', '未运行': 'Not run', '页面加载完成': 'Page loaded', '账号切换完成': 'Account switched', '新自动化任务': 'New automation task', '任务已保存': 'Task saved', '任务已开始运行': 'Task started', '步骤 JSON 格式无效': 'Invalid steps JSON', '步骤 JSON 必须是数组': 'Steps JSON must be an array', '查看接口说明': 'View interface docs', '自动化接口协议': 'Automation interface protocol', '复制全部': 'Copy all', '接口协议已复制': 'Interface protocol copied', '暂无自动化任务': 'No automations yet', '编辑任务': 'Edit task', '触发方式': 'Trigger', '插入点击步骤': 'Insert click step', 'XPath 已复制': 'XPath copied', '点击步骤已插入': 'Click step inserted', '请先拾取元素': 'Pick an element first', '加载自动化失败': 'Failed to load automations', '读取接口失败': 'Failed to read interfaces', '批量操作失败': 'Batch operation failed', '删除失败': 'Delete failed', '确认删除该任务？': 'Delete this task?', '执行': 'Apply', '已拾取': 'Picked', '运行失败': 'Run failed', '（副本）': ' (copy)', '查看提示词': 'View prompt', '交给 WorkBuddy 创建': 'Ask WorkBuddy to create', '正在打开新任务…': 'Opening a new task…', '已创建新会话，WorkBuddy 完成后任务会自动出现': 'New session created. The task will appear after WorkBuddy finishes.', 'WorkBuddy 创建失败': 'WorkBuddy creation failed', '加载示例失败': 'Failed to load examples', '暂无示例': 'No examples available', '运行日志': 'Run logs', '暂无运行日志': 'No run logs yet', '开始时间': 'Started', '结束时间': 'Finished', '捕获错误': 'Caught error', '暂无执行日志': 'No execution log entries', '执行日志': 'Execution log', '尚未结束': 'Still running',
-    '暂存提示词': 'Stash prompt', '暂存': 'Stashed', '引用文本': 'Quote text', '快捷短语': 'Quick phrases', '点击后发送': 'Send on click', '编辑 →': 'Edit →', '新增': 'Add', '批量操作': 'Batch actions', '批量管理': 'Batch manage', '全选': 'Select all', '取消全选': 'Deselect all', '已选 0': 'Selected 0',
+    '暂存提示词': 'Stash prompt', '暂存': 'Stashed', '引用文本': 'Quote text', '快捷短语': 'Quick phrases', '点击后发送': 'Send on click', '仅插入到对话框': 'Insert into dialog only', '拖动排序': 'Drag to reorder', '排序失败:': 'Reorder failed:', '插入失败:': 'Insert failed:', '编辑 →': 'Edit →', '新增': 'Add', '批量操作': 'Batch actions', '批量管理': 'Batch manage', '全选': 'Select all', '取消全选': 'Deselect all', '已选 0': 'Selected 0',
     '分支到新会话': 'Start a new conversation here', '从这里开始新会话': 'Start a new conversation here', '复制到这条回复为止的聊天内容，在当前工作区继续聊；原会话不变。': 'Copy the conversation up to this reply into a new conversation in the current workspace. The original stays unchanged.', '正在创建分支会话…': 'Creating branch session…', '分支会话已创建，正在打开…': 'Branch created. Opening…', '分支会话已创建，但无法自动打开，请在会话列表中查找。': 'Branch created but could not open automatically. Check the sessions list.', '新会话未出现在列表中，请在会话列表中查找。': 'The new session is not listed yet. Check the sessions list.', '无法确认所选消息的分支位置，请稍后重试': 'Cannot confirm this reply position. Try again shortly.', '分支失败: ': 'Branch failed: ',
     '账号汇总': 'Account summary', '账号数': 'Accounts', '总积分': 'Total credits', '手机': 'Phone', '有效期至': 'Expires', '当前使用中': 'Currently active', '隐藏敏感信息': 'Mask sensitive info', '显示明文': 'Show plaintext', '登录新账号': 'Log in a new account', '没有可导出的账号备份': 'No account backups to export', '还没有备份账号。打开/登录一次 WorkBuddy 后会自动备份，稍后再来查看。': 'No account backups yet. Open or log in to WorkBuddy once and check again later.',
     '软件渲染（闪屏兼容）': 'Software rendering (flicker workaround)',
@@ -1937,8 +1965,8 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '开启后 WorkBuddy 需要你决策时会用弹窗提问（写入全局自定义指令，所有会话生效）': 'When enabled, WorkBuddy asks with a dialog when your decision is needed (written to the global custom prompt; affects all sessions)',
     '当前没有进行中的会话，无法开启「所有会话结束允许休眠」': 'No active sessions; cannot enable “Allow sleep when all sessions end”',
     '进行中的会话': 'active session(s)', '预计剩余': 'Estimated remaining', ' 秒': ' seconds', ' 分': ' minutes',
-    '预计解封：': 'Reset estimate: ', '预计解封：时间未知': 'Reset estimate: unknown', '预计解封': 'Reset estimate', '时间未知': 'Time unknown', '模型限流': 'Model rate limited', '模型限流·': 'Model rate limited ·', '模型频率限制': 'Model rate limit', '账号状态': 'Account status', '当前没有有效的模型限流记录': 'No active model rate-limit records',
-    '当前模型已触发频率限制，已停止自动发送': 'This model is rate limited; automatic sending stopped', '当前账号积分已耗尽': 'This account has no credits left', '模型：': 'Model: ',
+    '预计解封：': 'Reset estimate: ', '预计解封：时间未知': 'Reset estimate: unknown', '预计解封': 'Reset estimate', '预计恢复：': 'Recovery estimate: ', '预计恢复：时间未知': 'Recovery estimate: unknown', '预计恢复': 'Recovery estimate', '时间未知': 'Time unknown', '模型限流': 'Model rate limited', '模型限流·': 'Model rate limited ·', '模型限制': 'Model limit', '模型限制·': 'Model limit ·', '模型频率限制': 'Model rate limit', '频率限制': 'Frequency limit', '用量限制': 'Usage limit', '账号状态': 'Account status', '当前没有有效的模型限制记录': 'No active model limit records',
+    '当前模型已触发频率限制，已停止自动发送': 'This model is rate limited; automatic sending stopped', '当前模型用量已达限制，已停止自动发送': 'This model has reached its usage limit; automatic sending stopped', '当前账号积分已耗尽': 'This account has no credits left', '模型：': 'Model: ',
     '无法打开安装程序': 'Could not open the installer',
     '安装程序已打开，请按提示退出 WorkBuddy 并完成安装。': 'The installer is open. Please quit WorkBuddy as prompted and finish installing.',
     '安装程序已打开，请到任务栏选择安装窗口；按提示退出 WorkBuddy 后完成安装。': 'The installer is open. Select its window from the taskbar, then quit WorkBuddy as prompted to finish installing.',
@@ -3695,7 +3723,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     }
     function applyInjectedI18n() {
       applyI18n(root);
-      var nodes = document.querySelectorAll('.wbs-stash-inline,.wbs-queue-tag,.wbs-message-nav-root,.wbs-fork-button,#wbs-fork-tooltip,#wbs-auto-inspector,#wbs-auto-inspect-tip');
+      var nodes = document.querySelectorAll('.wbs-stash-inline,.wbs-queue-tag,.wbs-message-nav-root,.wbs-fork-button,#wbs-fork-tooltip,#wbs-qp-insert-tooltip,#wbs-auto-inspector,#wbs-auto-inspect-tip');
       for (var i = 0; i < nodes.length; i++) applyI18n(nodes[i]);
     }
     window.__wbsSetLanguage = setLanguage;
@@ -3862,7 +3890,9 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       '</div>';
     applyI18n(exploreBtn);
     var explorePopover = exploreBtn.querySelector('.wbs-explore-pop');
-    var exploreMenu = mountExplorePopover(exploreBtn, explorePopover);
+    var qpInsertTooltip = mountQuickPhraseInsertTooltip(explorePopover);
+    registerDisposer(qpInsertTooltip.destroy);
+    var exploreMenu = mountExplorePopover(exploreBtn, explorePopover, qpInsertTooltip.hide);
     registerDisposer(exploreMenu.destroy);
     var exploreSendTxt = explorePopover.querySelector('.wbs-explore-send-txt');
     if (exploreSendTxt) {
@@ -3913,7 +3943,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     }
     // Only the popup leaves the official toolbar. Its body-level stacking context
     // keeps it above the usage summary even when the composer creates its own layer.
-    function mountExplorePopover(button, popup) {
+    function mountExplorePopover(button, popup, onClose) {
       if (CAPS.enhance === false) return { close: function () {}, open: function () {}, destroy: function () {} };
       mountPersistentOverlay(popup);
       var timer = null;
@@ -3923,7 +3953,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         listeners.push(function () { target.removeEventListener(name, handler, options); });
       }
       function cancelClose() { if (timer) { clearTimeout(timer); timer = null; } }
-      function close() { cancelClose(); popup.classList.remove('is-open'); button.setAttribute('aria-expanded', 'false'); }
+      function close() { cancelClose(); popup.classList.remove('is-open'); button.setAttribute('aria-expanded', 'false'); if (onClose) onClose(); }
       function open() {
         cancelClose();
         var rect = button.getBoundingClientRect();
@@ -3956,6 +3986,37 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       listen(document, 'scroll', function (event) { if (!popup.contains(event.target)) close(); }, true);
       listen(document, 'pointerdown', function (event) { if (!button.contains(event.target) && !popup.contains(event.target)) close(); }, true);
       return { close: close, open: open, destroy: function () { close(); listeners.forEach(function (remove) { remove(); }); popup.remove(); } };
+    }
+    function mountQuickPhraseInsertTooltip(popup) {
+      var tooltip = el('span', 'wbs-telemetry-tooltip wbs-qp-insert-tooltip', '仅插入到对话框');
+      tooltip.id = 'wbs-qp-insert-tooltip';
+      tooltip.setAttribute('role', 'tooltip');
+      mountPersistentOverlay(tooltip);
+      applyI18n(tooltip);
+      var listeners = [];
+      function listen(target, name, handler, options) {
+        target.addEventListener(name, handler, options);
+        listeners.push(function () { target.removeEventListener(name, handler, options); });
+      }
+      function hide() { tooltip.classList.remove('is-visible'); popup.classList.remove('wbs-explore-action-tip'); }
+      function buttonAt(target) { return target && target.closest && target.closest('[data-qp-insert]'); }
+      function show(event) {
+        var button = buttonAt(event.target);
+        if (!button || !popup.contains(button) || !popup.classList.contains('is-open')) return;
+        var rect = button.getBoundingClientRect();
+        tooltip.classList.add('is-visible'); popup.classList.add('wbs-explore-action-tip');
+        var width = tooltip.offsetWidth, height = tooltip.offsetHeight;
+        tooltip.style.left = Math.round(Math.max(8, Math.min(window.innerWidth - width - 8, rect.left + rect.width / 2 - width / 2))) + 'px';
+        tooltip.style.top = Math.round(Math.max(8, Math.min(window.innerHeight - height - 8, rect.bottom + height + 10 < window.innerHeight ? rect.bottom + 7 : rect.top - height - 7))) + 'px';
+      }
+      listen(popup, 'pointerover', show);
+      listen(popup, 'focusin', show);
+      listen(popup, 'pointerout', function (event) { var button = buttonAt(event.target); if (button && !button.contains(event.relatedTarget)) hide(); });
+      listen(popup, 'focusout', hide);
+      listen(popup, 'click', hide, true);
+      listen(window, 'resize', hide);
+      listen(document, 'scroll', hide, true);
+      return { hide: hide, destroy: function () { hide(); listeners.forEach(function (remove) { remove(); }); tooltip.remove(); } };
     }
     function acMenuClose() {
       qpDiag('menu:close:before', { menuClass: exploreBtn.className });
@@ -3996,6 +4057,8 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     };
     var sessLastExploreSig = ''; // 面板选项渲染签名（内容未变不重建保留 tooltip 状态）
     var sessLastQpSig = ''; // 增强页列表渲染签名（内容/批量模式/选中集未变不重建）
+    var qpSortCleanup = null;
+    registerDisposer(function () { if (qpSortCleanup) qpSortCleanup(); qpSortCleanup = null; });
     function applySessionModule(d) {
       if (!d || !d.ok) return;
       sessState.stash = !!d.stashEnabled;
@@ -4047,6 +4110,100 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       }).finally(function () { el.disabled = false; });
     }
 
+    // Preview by moving the existing rows (and their listeners); persist only
+    // on drop. Layout offsets ignore FLIP transforms, avoiding hover jitter.
+    function createQuickPhraseSorter(list, commit, reportError) {
+      var dragging = null, original = [], saving = false, disposed = false;
+      var listeners = [], animations = new Map(), scrollFrame = null, pointerY = 0;
+      function listen(target, name, handler, options) {
+        target.addEventListener(name, handler, options);
+        listeners.push(function () { target.removeEventListener(name, handler, options); });
+      }
+      function rows() { return Array.from(list.querySelectorAll('.wbs-qp-row')); }
+      function cancelAnimations() { animations.forEach(function (a) { a.cancel(); }); animations.clear(); }
+      function move(change) {
+        var items = rows(), tops = items.map(function (row) { return row.getBoundingClientRect().top; });
+        cancelAnimations();
+        var scrollTop = list.scrollTop;
+        change();
+        list.scrollTop = scrollTop;
+        if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+        items.forEach(function (row, index) {
+          var delta = tops[index] - row.getBoundingClientRect().top;
+          if (row === dragging || !delta || !row.animate) return;
+          var animation = row.animate([{ transform: 'translateY(' + delta + 'px)' }, { transform: 'translateY(0)' }], { duration: 160, easing: 'cubic-bezier(.2,.8,.2,1)' });
+          animations.set(row, animation);
+          animation.onfinish = function () { if (animations.get(row) === animation) animations.delete(row); };
+        });
+      }
+      function preview(y) {
+        if (!dragging) return;
+        var localY = y - list.getBoundingClientRect().top - list.clientTop + list.scrollTop;
+        var before = rows().find(function (row) { return row !== dragging && localY < row.offsetTop + row.offsetHeight / 2; }) || null;
+        if (dragging.nextElementSibling === before) return;
+        move(function () { list.insertBefore(dragging, before); });
+      }
+      function stopScroll() { if (scrollFrame !== null) cancelAnimationFrame(scrollFrame); scrollFrame = null; }
+      function scrollStep() {
+        scrollFrame = null;
+        if (!dragging) return;
+        var rect = list.getBoundingClientRect(), edge = Math.min(28, rect.height / 4);
+        var speed = pointerY < rect.top + edge ? -6 : pointerY > rect.bottom - edge ? 6 : 0;
+        if (!speed || pointerY < rect.top || pointerY > rect.bottom) return;
+        var previous = list.scrollTop;
+        list.scrollTop = Math.max(0, Math.min(list.scrollHeight - list.clientHeight, previous + speed));
+        if (list.scrollTop !== previous) { preview(pointerY); scrollFrame = requestAnimationFrame(scrollStep); }
+      }
+      function finish() {
+        stopScroll();
+        if (dragging) dragging.classList.remove('wbs-qp-dragging');
+        dragging = null;
+      }
+      function restore(order) { move(function () { order.forEach(function (row) { list.appendChild(row); }); }); }
+      function cancel() { if (!dragging) return; finish(); restore(original); }
+      rows().forEach(function (row) {
+        var handle = row.querySelector('[data-qp-drag]');
+        if (!handle) return;
+        listen(handle, 'dragstart', function (event) {
+          event.stopPropagation();
+          if (saving || disposed) { event.preventDefault(); return; }
+          cancelAnimations();
+          original = rows(); dragging = row;
+          event.dataTransfer.setData('text/plain', row.getAttribute('data-id'));
+          event.dataTransfer.effectAllowed = 'move';
+          var rect = row.getBoundingClientRect();
+          if (event.dataTransfer.setDragImage) event.dataTransfer.setDragImage(row, event.clientX - rect.left, event.clientY - rect.top);
+          row.classList.add('wbs-qp-dragging');
+        });
+        listen(handle, 'dragend', function (event) { event.stopPropagation(); cancel(); });
+      });
+      listen(list, 'dragover', function (event) {
+        if (!dragging) return;
+        event.preventDefault(); event.stopPropagation(); event.dataTransfer.dropEffect = 'move';
+        pointerY = event.clientY; preview(pointerY);
+        if (scrollFrame === null) scrollFrame = requestAnimationFrame(scrollStep);
+      });
+      listen(list, 'dragleave', function (event) { if (!list.contains(event.relatedTarget)) stopScroll(); });
+      listen(list, 'drop', function (event) {
+        if (!dragging) return;
+        event.preventDefault(); event.stopPropagation(); preview(event.clientY);
+        var ordered = rows(), previous = original.slice();
+        finish();
+        if (ordered.every(function (row, i) { return row === previous[i]; })) return;
+        saving = true; list.setAttribute('aria-busy', 'true');
+        Promise.resolve().then(function () { return commit(ordered.map(function (row) { return row.getAttribute('data-id'); })); })
+          .catch(function (error) { if (!disposed) { restore(previous); reportError(error); } })
+          .finally(function () { saving = false; if (!disposed) list.removeAttribute('aria-busy'); });
+      });
+      listen(document, 'keydown', function (event) {
+        if (dragging && event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); cancel(); }
+      }, true);
+      listen(window, 'blur', cancel);
+      return function () {
+        disposed = true; finish(); cancelAnimations(); list.removeAttribute('aria-busy');
+        listeners.forEach(function (remove) { remove(); });
+      };
+    }
     /** 增强页快捷短语列表渲染（含批量模式） */
     function renderQpList() {
       var pane1 = enhancePane;
@@ -4059,6 +4216,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         (phrases.length ? phrases.map(function (p) { return p.id + ':' + p.text; }).join('|') : 'empty');
       if (sig === sessLastQpSig) return;
       sessLastQpSig = sig;
+      if (qpSortCleanup) { qpSortCleanup(); qpSortCleanup = null; }
       var barEl = pane1.querySelector('#wbs-qp-batchbar');
       var countEl = pane1.querySelector('#wbs-qp-batch-count');
       var batchBtn = pane1.querySelector('#wbs-qp-batch');
@@ -4086,7 +4244,8 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         var checked = sessState.qpSel[ph.id] ? ' checked' : '';
         var cb = sessState.qpBatch ? '<input type="checkbox" class="wbs-qp-check" data-id="' + escAttr(ph.id) + '"' + checked + '>' : '';
         html +=
-          '<div class="wbs-qp-row" data-id="' + escAttr(ph.id) + '">' +
+          '<div class="wbs-qp-row" data-id="' + escAttr(ph.id) + '" draggable="false">' +
+          (sessState.qpBatch ? '' : '<button type="button" class="wbs-qp-drag" draggable="true" data-qp-drag="' + escAttr(ph.id) + '" title="拖动排序" aria-label="拖动排序"><svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><circle cx="5" cy="4" r="1"/><circle cx="11" cy="4" r="1"/><circle cx="5" cy="8" r="1"/><circle cx="11" cy="8" r="1"/><circle cx="5" cy="12" r="1"/><circle cx="11" cy="12" r="1"/></svg></button>') +
           cb +
           '<span class="wbs-qp-text" title="' + escAttr(ph.text) + '">' + esc(ph.text) + '</span>' +
           '<span class="wbs-qp-actions">' +
@@ -4095,7 +4254,15 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
           '</span>' +
           '</div>';
       }
+      var listScrollTop = listEl.scrollTop;
       listEl.innerHTML = html;
+      listEl.scrollTop = listScrollTop;
+      if (!sessState.qpBatch) {
+        qpSortCleanup = createQuickPhraseSorter(listEl, function (ordered) {
+          return api('/api/quick-phrase-reorder', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ids: ordered }) })
+            .then(function (d) { if (!d || !d.ok) throw new Error((d && d.error) || 'daemon 未确认'); applySessionModule(d); });
+        }, function (error) { toast('排序失败: ' + (error.message || error), true, root); syncSessionModule(); });
+      }
       var checks = listEl.querySelectorAll('.wbs-qp-check');
       for (var c = 0; c < checks.length; c++) {
         checks[c].addEventListener('change', function () {
@@ -4123,6 +4290,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       var sig = phrases.length ? phrases.map(function (p) { return p.id + ':' + p.text; }).join('|') : 'empty';
       if (sig === sessLastExploreSig) return;
       sessLastExploreSig = sig;
+      qpInsertTooltip.hide();
       if (!phrases.length) {
         listHost.innerHTML = '<div class="wbs-qp-empty wbs-qp-empty-menu">暂无快捷短语</div>';
         return;
@@ -4130,8 +4298,9 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       var html = '';
       for (var i = 0; i < phrases.length; i++) {
         var ph = phrases[i];
-        html += '<div class="wbs-explore-item" data-qp-send="' + escAttr(ph.id) + '">' +
-          '<span class="wbs-explore-it">' + esc(ph.text) + '</span>' +
+        html += '<div class="wbs-explore-item" data-qp-send="' + escAttr(ph.id) + '" role="listitem">' +
+          '<span class="wbs-explore-it" role="button" tabindex="0">' + esc(ph.text) + '</span>' +
+          '<button type="button" class="wbs-explore-insert" data-qp-insert="' + escAttr(ph.id) + '" aria-describedby="wbs-qp-insert-tooltip" aria-label="仅插入到对话框"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3.5h10a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H8l-3 2v-2H3a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1z"/><path d="M5 6h6M5 8.5h4"/></svg></button>' +
           '<span class="wbs-explore-tip"><span class="wbs-explore-tip-body">' + esc(ph.text) + '</span></span>' +
           '</div>';
       }
@@ -4163,6 +4332,27 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
             tipK.addEventListener('mouseenter', function () { if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; } });
             tipK.addEventListener('mouseleave', hideTipDelayed);
           }
+          var insertK = itemK.querySelector('[data-qp-insert]');
+          if (insertK) insertK.addEventListener('click', function (ev) {
+            ev.preventDefault(); ev.stopPropagation();
+            var insertPhrase = sessState.phrases.find(function (p) { return p.id === this.getAttribute('data-qp-insert'); }, this);
+            if (!insertPhrase) return;
+            var editor = findComposer();
+            if (!editor) { toast('未找到输入框', true, root); return; }
+            editor.focus();
+            api('/api/quick-phrase-insert', {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ text: insertPhrase.text }),
+            }).then(function (result) {
+              if (!result || !result.ok) throw new Error((result && result.error) || 'daemon 未确认');
+              acMenuClose();
+            }).catch(function (error) { toast('插入失败: ' + (error.message || error), true, root); });
+          });
+          var sendKeyTarget = itemK.querySelector('.wbs-explore-it');
+          if (sendKeyTarget) sendKeyTarget.addEventListener('keydown', function (ev) {
+            if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); itemK.click(); }
+          });
           itemK.addEventListener('click', function (eve) {
             qpDiag('click:start', { phraseId: itemK.getAttribute('data-qp-send'), target: eve.target && eve.target.className || '' });
             eve.stopPropagation();
@@ -4674,6 +4864,14 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
 
       function position() {
         if (!root || !surface || !surface.viewportElement || hidden) return;
+        // Narrow windows leave too little space beside the text for the rail.
+        // Keep the user's setting/store intact so widening restores it immediately.
+        if (window.innerWidth <= 1280) {
+          root.style.display = 'none';
+          if (dragPointerId != null) finishNavDrag({ pointerId: dragPointerId }, true);
+          hideTooltip(true);
+          return;
+        }
         var rect = surface.viewportElement.getBoundingClientRect();
         if (!rect || rect.width <= 0 || rect.height <= 0) {
           root.style.display = 'none';
@@ -6718,7 +6916,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         '<span class="wbs-acct-stat-divider"></span>' +
         '<div class="wbs-acct-stat"><span>总积分</span><strong id="wbs-acct-total">-</strong></div>' +
         '<button class="wbs-acct-eye" type="button" data-act="credit-summary" title="汇总" aria-label="积分汇总" aria-expanded="false">' + CREDIT_SUMMARY_ICON + '</button>' +
-        '<button class="wbs-acct-eye" type="button" data-act="model-rate-limit-summary" title="模型限流" aria-label="模型限流" aria-expanded="false">' + MODEL_RATE_LIMIT_ICON + '</button>' +
+        '<button class="wbs-acct-eye" type="button" data-act="model-rate-limit-summary" title="模型限制" aria-label="模型限制" aria-expanded="false">' + MODEL_RATE_LIMIT_ICON + '</button>' +
         '</div>' +
         '<div class="wbs-acct-actions">' +
         '<button class="wbs-acct-io wbs-acct-icon" type="button" data-act="token-stats" title="用量统计" aria-label="用量统计">' + TOKEN_STATS_ICON + '</button>' +
@@ -9311,7 +9509,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       else if (job.status === 'done') detail += ' · 新同步 ' + (Number(job.copied) || 0) + '，已存在 ' + (Number(job.skipped) || 0);
       else if (job.status === 'conflict') detail += ' · ' + (Number(job.conflicts) || 1) + ' 个会话已分叉，已保留双方内容';
       else if (job.status === 'partial') detail += ' · 有 ' + ((Number(job.failed) || 0) + (Number(job.partial) || 0)) + ' 项需要留意';
-      else if (job.status === 'error') detail += ' · 请稍后重试';
+      else if (job.status === 'error') detail += ' · ' + (job.error || '同步任务异常中断，请稍后重新同步');
       if (job.warning) detail += ' · ' + job.warning;
       box.className = 'wbs-sess-copy-progress is-' + String(job.status || 'running');
       box.querySelector('.wbs-sess-copy-title').textContent = title;
@@ -13442,20 +13640,20 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     }
 
     function acNotifyLimit(snapshot) {
-      if (!snapshot || (!snapshot.rateLimited && !snapshot.quotaExhausted)) return;
-      var reason = snapshot.rateLimited ? 'model-rate-limited' : 'quota-exhausted';
+      if (!snapshot || (!snapshot.rateLimited && !snapshot.usageLimited && !snapshot.quotaExhausted)) return;
+      var reason = snapshot.rateLimited ? 'model-rate-limited' : (snapshot.usageLimited ? 'model-usage-limited' : 'quota-exhausted');
       var key = [snapshot.conversationId || '', snapshot.assistantId || '', reason, snapshot.errorResetAt || ''].join('|');
       if (acLimitToastSeen[key]) return;
       acLimitToastSeen[key] = true;
       var message = wbsTranslateString(
-        snapshot.rateLimited ? '当前模型已触发频率限制，已停止自动发送' : '当前账号积分已耗尽',
+        snapshot.rateLimited ? '当前模型已触发频率限制，已停止自动发送' : (snapshot.usageLimited ? '当前模型用量已达限制，已停止自动发送' : '当前账号积分已耗尽'),
         WBS_LANGUAGE
       );
-      if (snapshot.rateLimited) {
+      if (snapshot.rateLimited || snapshot.usageLimited) {
         var model = String(snapshot.errorModelName || snapshot.errorRequestModelId || '').trim();
         if (model) message += '，' + wbsTranslateString('模型：', WBS_LANGUAGE) + model;
         if (snapshot.errorResetAt) {
-          message += '，' + wbsTranslateString('预计解封：', WBS_LANGUAGE) + fmtDateTime(snapshot.errorResetAt);
+          message += '，' + wbsTranslateString(snapshot.usageLimited ? '预计恢复：' : '预计解封：', WBS_LANGUAGE) + fmtDateTime(snapshot.errorResetAt);
         }
       }
       toast(message, true, root);
@@ -13924,9 +14122,11 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     }
 
     function acRecordModelRateLimit(snapshot) {
-      if (!snapshot || !snapshot.rateLimited || Number(snapshot.errorCode) !== 6004) return;
-      var modelId = String(snapshot.errorRequestModelId || 'unknown-model').slice(0, 160);
+      if (!snapshot) return;
       var code = Number(snapshot.errorCode);
+      if ((code !== 6000 && code !== 6004) || (code === 6004 && !snapshot.rateLimited) ||
+          (code === 6000 && snapshot.limitType !== 'usage')) return;
+      var modelId = String(snapshot.errorRequestModelId || 'unknown-model').slice(0, 160);
       var signature = [snapshot.conversationId, snapshot.assistantId, modelId, code, snapshot.errorResetAt || ''].join('|');
       if (acRateLimitRecorded[signature]) return;
       acRateLimitRecorded[signature] = 'pending';
@@ -13944,7 +14144,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
             modelId: modelId,
             modelName: snapshot.errorModelName || modelId,
             resetAt: snapshot.errorResetAt || null,
-            reasonCode: 6004,
+            reasonCode: code,
             source: 'renderer-error',
           }),
         }).then(function () {
@@ -13995,6 +14195,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
           errorModelName: modelId,
           errorResetAt: normalizedError && normalizedError.resetAt,
           quotaExhausted: !!(normalizedError && normalizedError.quotaExhausted),
+          usageLimited: !!(normalizedError && normalizedError.usageLimited),
           rateLimited: !!(normalizedError && normalizedError.rateLimited),
           authFailure: !!(normalizedError && normalizedError.authFailure),
           nonRetryableError: !!(normalizedError && normalizedError.nonRetryable),
@@ -15969,13 +16170,24 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       return tag ? '<span class="wbs-checkin-slot">' + tag + '</span>' : '';
     }
 
+    function modelLimitKind(record) {
+      return Number(record && record.reasonCode) === 6000
+        ? wbsTranslateString('用量限制', WBS_LANGUAGE)
+        : wbsTranslateString('频率限制', WBS_LANGUAGE);
+    }
+
+    function modelLimitResetLabel(record, unknown) {
+      var key = Number(record && record.reasonCode) === 6000 ? '预计恢复' : '预计解封';
+      return wbsTranslateString(key + (unknown ? '：时间未知' : '：'), WBS_LANGUAGE);
+    }
+
     function modelRateLimitTip(record) {
       var name = String(record && (record.modelName || record.modelId) || '未知模型');
       var reset = record && record.resetAt ? Number(record.resetAt) : 0;
       var line = reset && isFinite(reset)
-        ? wbsTranslateString('预计解封：', WBS_LANGUAGE) + fmtDateTimeSeconds(reset) + '（' + wbsTranslateString(fmtCreditExpiry(reset), WBS_LANGUAGE) + '）'
-        : wbsTranslateString('预计解封：时间未知', WBS_LANGUAGE);
-      return name + '\n' + line;
+        ? modelLimitResetLabel(record, false) + fmtDateTimeSeconds(reset) + '（' + wbsTranslateString(fmtCreditExpiry(reset), WBS_LANGUAGE) + '）'
+        : modelLimitResetLabel(record, true);
+      return name + '\n' + modelLimitKind(record) + '\n' + line;
     }
 
     function modelRateLimitBadgeHtml(a) {
@@ -15984,7 +16196,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       }) : [];
       if (!records.length) return '';
       var details = records.map(modelRateLimitTip).join('\n\n');
-      var label = records.length === 1 ? wbsTranslateString('模型限流', WBS_LANGUAGE) : wbsTranslateString('模型限流·', WBS_LANGUAGE) + records.length;
+      var label = records.length === 1 ? wbsTranslateString('模型限制', WBS_LANGUAGE) : wbsTranslateString('模型限制·', WBS_LANGUAGE) + records.length;
       var attr = esc(details).replace(/"/g, '&quot;');
       var uid = escAttr(a && a.uid || '');
       return '<span class="wbs-model-rate-limit-slot"><button type="button" class="wbs-model-rate-limit wbs-ck wbs-checkin-tag ok" data-uid="' + uid + '" aria-label="' + attr + '" aria-controls="wbs-status-popover" aria-expanded="false">' + esc(label) + '</button></span>';
@@ -16000,11 +16212,11 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         var resetText = reset && isFinite(reset) ? fmtDateTimeSeconds(reset) : wbsTranslateString('时间未知', WBS_LANGUAGE);
         var remaining = reset && isFinite(reset) ? '（' + wbsTranslateString(fmtCreditExpiry(reset), WBS_LANGUAGE) + '）' : '';
         return '<div class="wbs-daily-detail wbs-model-rate-limit-detail"><i class="rate-limit"></i>' +
-          '<span>' + wbsTranslateString('模型限流', WBS_LANGUAGE) + '</span><b class="wbs-model-rate-limit-model">' + esc(name) + '</b>' +
-          '<span>' + wbsTranslateString('预计解封', WBS_LANGUAGE) + '</span><b class="wbs-model-rate-limit-reset">' + esc(resetText + remaining) + '</b></div>';
+          '<span>' + modelLimitKind(record) + '</span><b class="wbs-model-rate-limit-model">' + esc(name) + '</b>' +
+          '<span>' + modelLimitResetLabel(record, !reset) + '</span><b class="wbs-model-rate-limit-reset">' + esc(reset ? resetText + remaining : wbsTranslateString('时间未知', WBS_LANGUAGE)) + '</b></div>';
       }).join('');
-      return '<div class="wbs-daily-popover-head"><strong>' + wbsTranslateString('模型频率限制', WBS_LANGUAGE) + '</strong><span>' + wbsTranslateString('账号状态', WBS_LANGUAGE) + '</span></div>' +
-        (rows || '<div class="wbs-daily-popover-empty">' + wbsTranslateString('当前没有有效的模型限流记录', WBS_LANGUAGE) + '</div>');
+      return '<div class="wbs-daily-popover-head"><strong>' + wbsTranslateString('模型限制', WBS_LANGUAGE) + '</strong><span>' + wbsTranslateString('账号状态', WBS_LANGUAGE) + '</span></div>' +
+        (rows || '<div class="wbs-daily-popover-empty">' + wbsTranslateString('当前没有有效的模型限制记录', WBS_LANGUAGE) + '</div>');
     }
 
     function modelRateLimitSummaryPopoverHtml(accounts) {
@@ -16018,14 +16230,15 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         var rows = records.map(function (record) {
           var name = String(record.modelName || record.modelId || '未知模型');
           var reset = record.resetAt ? Number(record.resetAt) : 0;
+          var hasReset = !!reset && isFinite(reset);
           var resetText = reset && isFinite(reset) ? fmtDateTimeSeconds(reset) : wbsTranslateString('时间未知', WBS_LANGUAGE);
           var remaining = reset && isFinite(reset) ? '（' + wbsTranslateString(fmtCreditExpiry(reset), WBS_LANGUAGE) + '）' : '';
-          return '<div class="wbs-model-rate-limit-summary-row"><b class="wbs-model-rate-limit-model">' + esc(name) + '</b><span class="wbs-model-rate-limit-reset-label">' + wbsTranslateString('预计解封', WBS_LANGUAGE) + '</span><b class="wbs-model-rate-limit-reset">' + esc(resetText + remaining) + '</b></div>';
+          return '<div class="wbs-model-rate-limit-summary-row"><b class="wbs-model-rate-limit-model">' + esc(name) + '</b><span>' + modelLimitKind(record) + '</span><span class="wbs-model-rate-limit-reset-label">' + modelLimitResetLabel(record, false) + '</span><b class="wbs-model-rate-limit-reset">' + esc(hasReset ? resetText + remaining : wbsTranslateString('时间未知', WBS_LANGUAGE)) + '</b></div>';
         }).join('');
         groups.push('<section class="wbs-model-rate-limit-account-group"><div class="wbs-model-rate-limit-account-head"><strong>' + esc(accountName) + '</strong><span>' + records.length + wbsTranslateString(' 个模型', WBS_LANGUAGE) + '</span></div>' + rows + '</section>');
       });
-      return '<div class="wbs-daily-popover-head"><strong>' + wbsTranslateString('模型频率限制', WBS_LANGUAGE) + '</strong><span>' + wbsTranslateString('{n} 个账号', WBS_LANGUAGE).replace('{n}', groups.length) + '</span></div>' +
-        (groups.join('') || '<div class="wbs-daily-popover-empty">' + wbsTranslateString('当前没有有效的模型限流记录', WBS_LANGUAGE) + '</div>');
+      return '<div class="wbs-daily-popover-head"><strong>' + wbsTranslateString('模型限制', WBS_LANGUAGE) + '</strong><span>' + wbsTranslateString('{n} 个账号', WBS_LANGUAGE).replace('{n}', groups.length) + '</span></div>' +
+        (groups.join('') || '<div class="wbs-daily-popover-empty">' + wbsTranslateString('当前没有有效的模型限制记录', WBS_LANGUAGE) + '</div>');
     }
 
     function creditBlockHtml(credits, segments, account) {
@@ -16442,7 +16655,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
 
     function sessionCopySummaryText(job) {
       return '同步 ' + (Number(job && job.copied) || 0) +
-        ' · 失败 ' + (sessionCopyFailedItems(job) + (Number(job && job.conflicts) || 0)) +
+        (job && job.status === 'error' ? ' · 任务失败' : ' · 失败 ' + (sessionCopyFailedItems(job) + (Number(job && job.conflicts) || 0))) +
         (job && job.warning ? ' · ' + job.warning : '');
     }
 
@@ -16452,7 +16665,8 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     }
 
     function sessionCopyNoticeGroups(job) {
-      var details = Array.isArray(job && job.details) ? job.details : [];
+      var details = Array.isArray(job && job.details) ? job.details.slice() : [];
+      if (job && job.status === 'error') details.push({ status: 'failed', label: '同步任务', error: job.error || '同步任务异常中断，请稍后重新同步', taskFailure: true });
       return {
         copied: details.filter(function (item) {
           return String(item && item.status || '') === 'copied';
@@ -16517,7 +16731,8 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       var mask = document.createElement('div');
       mask.className = 'wbs-modal-mask wbs-session-copy-details-modal';
       mask.setAttribute('role', 'presentation');
-      var details = Array.isArray(job.details) ? job.details : [];
+      var groups = sessionCopyNoticeGroups(job);
+      var details = groups.copied.concat(groups.failed);
       var statusLabels = { copied: '已同步', skipped: '已跳过', partial: '部分失败', failed: '失败', conflict: '未同步', running: '处理中' };
       var tabDefs = [
         { id: 'copied', label: '成功', count: details.filter(function (item) { return item && item.status === 'copied'; }).length },
@@ -16558,7 +16773,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
           tab.setAttribute('aria-selected', active ? 'true' : 'false');
         });
       };
-      renderTab('copied');
+      renderTab(job.status === 'error' ? 'failed' : 'copied');
       mask.querySelectorAll('[data-session-copy-tab]').forEach(function (tab) {
         tab.addEventListener('click', function () { renderTab(tab.getAttribute('data-session-copy-tab')); });
       });
@@ -16627,7 +16842,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       var sourceLabel = sessionCopyAccountLabel(job.sourceUid, job.sourceName);
       var targetLabel = accountName || sessionCopyAccountLabel(job.targetUid, job.targetName);
       var status = active ? '正在把已标记的会话从「' + sourceLabel + '」同步到「' + targetLabel + '」' :
-        job.status === 'error' ? '同步任务未完成，请稍后重试' : '';
+        job.status === 'error' ? (job.error || '同步任务异常中断，请稍后重新同步') : '';
       node.className = 'wbs-session-copy-notice is-' + String(job.status || 'running');
       node.querySelector('.wbs-session-copy-title').textContent = title;
       node.querySelector('.wbs-session-copy-route').textContent = sourceLabel + ' → ' + targetLabel;
@@ -16653,7 +16868,8 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       track.setAttribute('aria-valuetext', title + '，' + processed + '/' + total);
       node.querySelector('.wbs-session-copy-fill').style.width = percent + '%';
       placeSessionCopyNotice();
-      if (!active && !notice.closeScheduled) {
+      if (job.status === 'error') node.querySelector('.wbs-session-copy-countdown').textContent = '请查看明细';
+      if (!active && job.status !== 'error' && !notice.closeScheduled) {
         notice.closeScheduled = true;
         var copiedCount = Math.max(0, Number(job && job.copied) || 0);
         var failedCount = sessionCopyFailedItems(job) + (Number(job && job.conflicts) || 0);
@@ -18137,7 +18353,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     ':is(html.cb-dark,html[data-theme="dark"],html[data-wbs-theme-id="dark"],html[data-wbs-theme-id="cyber-purple"],html[data-wbs-theme-id="nebula"],body[data-vscode-theme-name*="dark" i]) .wbs-daily-rings:not(:where([data-wbs-appearance="light"] *,.wbs-panel-light *)),:is(html.cb-dark,html[data-theme="dark"],html[data-wbs-theme-id="dark"],html[data-wbs-theme-id="cyber-purple"],html[data-wbs-theme-id="nebula"],body[data-vscode-theme-name*="dark" i]) .wbs-checkin-tag.ok:not(:where([data-wbs-appearance="light"] *,.wbs-panel-light *)){--wbs-badge-bg:rgba(255,255,255,.085);--wbs-badge-fg:var(--wb-color-text-primary,#f6f5ff);background:var(--wbs-badge-bg);border:1px solid rgba(255,255,255,.12);color:var(--wbs-badge-fg);box-shadow:inset 0 1px 0 rgba(255,255,255,.08);backdrop-filter:blur(12px) saturate(1.08);-webkit-backdrop-filter:blur(12px) saturate(1.08)}:is(html.cb-dark,html[data-theme="dark"],html[data-wbs-theme-id="dark"],html[data-wbs-theme-id="cyber-purple"],html[data-wbs-theme-id="nebula"],body[data-vscode-theme-name*="dark" i]) .wbs-daily-rings:not(:where([data-wbs-appearance="light"] *,.wbs-panel-light *)){--wbs-liquid-bg:rgba(255,255,255,.12);--wbs-liquid-ink:#f6f5ff}:is(html.cb-dark,html[data-theme="dark"],html[data-wbs-theme-id="dark"],html[data-wbs-theme-id="cyber-purple"],html[data-wbs-theme-id="nebula"],body[data-vscode-theme-name*="dark" i]) .wbs-daily-rings:not(:where([data-wbs-appearance="light"] *,.wbs-panel-light *)):hover,:is(html.cb-dark,html[data-theme="dark"],html[data-wbs-theme-id="dark"],html[data-wbs-theme-id="cyber-purple"],html[data-wbs-theme-id="nebula"],body[data-vscode-theme-name*="dark" i]) .wbs-daily-rings:not(:where([data-wbs-appearance="light"] *,.wbs-panel-light *))[aria-expanded="true"]{background:rgba(255,255,255,.14);box-shadow:inset 0 1px 0 rgba(255,255,255,.1),0 3px 10px rgba(0,0,0,.12)}',
     '.wbs-checkin-tag.fail{background:rgba(239,68,68,.1);color:#dc2626}',
     '.wbs-model-rate-limit-slot{display:inline-flex;align-items:center;min-width:0}.wbs-model-rate-limit{appearance:none;-webkit-appearance:none;font:inherit;cursor:pointer;transition:background-color .15s,box-shadow .15s,color .15s}.wbs-model-rate-limit:hover,.wbs-model-rate-limit[aria-expanded="true"]{background:color-mix(in srgb,var(--wbs-badge-bg) 84%,white);box-shadow:0 2px 8px rgba(0,0,0,.14)}.wbs-model-rate-limit:focus-visible{outline:2px solid color-mix(in srgb,var(--wbs-badge-bg) 45%,transparent);outline-offset:2px}',
-    '.wbs-status-popover.is-rate-limit{width:500px;max-width:calc(100vw - 16px);overflow-x:auto}.wbs-status-popover.is-rate-limit-summary{width:360px;max-width:calc(100vw - 16px);overflow-x:auto}.wbs-model-rate-limit-detail{grid-template-columns:8px auto minmax(0,1fr) auto auto;gap:7px}.wbs-model-rate-limit-detail b{white-space:nowrap;overflow-wrap:normal}.wbs-model-rate-limit-detail .wbs-model-rate-limit-model{text-align:left}.wbs-model-rate-limit-detail i.rate-limit{color:var(--wb-color-text-primary,#1f1f1f)}.wbs-model-rate-limit-account-group{padding:7px 0 2px;border-top:1px solid var(--wb-border-subtle,rgba(20,24,32,.1))}.wbs-model-rate-limit-account-group:first-of-type{padding-top:0;border-top:0}.wbs-model-rate-limit-account-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:0 2px 2px}.wbs-model-rate-limit-account-head strong{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px}.wbs-model-rate-limit-account-head span{flex:0 0 auto;color:var(--wb-icon-tertiary,#7c818b);font-size:10px;white-space:nowrap}.wbs-model-rate-limit-summary-row{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,auto);align-items:center;gap:7px;min-height:28px;margin-top:4px;padding:0 8px;border:1px solid var(--wb-border-subtle,rgba(20,24,32,.1));border-radius:8px;background:color-mix(in srgb,var(--wb-bg-secondary,#f6f7f8) 72%,transparent)}.wbs-model-rate-limit-summary-row>span{color:var(--wb-color-text-secondary,#5f6368);white-space:nowrap}.wbs-model-rate-limit-summary-row>b{min-width:0;font-size:11px;font-weight:650;white-space:nowrap;overflow-wrap:normal}.wbs-model-rate-limit-summary-row .wbs-model-rate-limit-model{text-align:left}.wbs-model-rate-limit-summary-row .wbs-model-rate-limit-reset{text-align:right}',
+    '.wbs-status-popover.is-rate-limit{width:500px;max-width:calc(100vw - 16px);overflow-x:auto}.wbs-status-popover.is-rate-limit-summary{width:360px;max-width:calc(100vw - 16px);overflow-x:auto}.wbs-model-rate-limit-detail{grid-template-columns:8px auto minmax(0,1fr) auto auto;gap:7px}.wbs-model-rate-limit-detail b{white-space:nowrap;overflow-wrap:normal}.wbs-model-rate-limit-detail .wbs-model-rate-limit-model{text-align:left}.wbs-model-rate-limit-detail i.rate-limit{color:var(--wb-color-text-primary,#1f1f1f)}.wbs-model-rate-limit-account-group{padding:7px 0 2px;border-top:1px solid var(--wb-border-subtle,rgba(20,24,32,.1))}.wbs-model-rate-limit-account-group:first-of-type{padding-top:0;border-top:0}.wbs-model-rate-limit-account-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:0 2px 2px}.wbs-model-rate-limit-account-head strong{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px}.wbs-model-rate-limit-account-head span{flex:0 0 auto;color:var(--wb-icon-tertiary,#7c818b);font-size:10px;white-space:nowrap}.wbs-model-rate-limit-summary-row{display:grid;grid-template-columns:minmax(0,1fr) auto auto minmax(0,auto);align-items:center;gap:7px;min-height:28px;margin-top:4px;padding:0 8px;border:1px solid var(--wb-border-subtle,rgba(20,24,32,.1));border-radius:8px;background:color-mix(in srgb,var(--wb-bg-secondary,#f6f7f8) 72%,transparent)}.wbs-model-rate-limit-summary-row>span{color:var(--wb-color-text-secondary,#5f6368);white-space:nowrap}.wbs-model-rate-limit-summary-row>b{min-width:0;font-size:11px;font-weight:650;white-space:nowrap;overflow-wrap:normal}.wbs-model-rate-limit-summary-row .wbs-model-rate-limit-model{text-align:left}.wbs-model-rate-limit-summary-row .wbs-model-rate-limit-reset{text-align:right}',
     ':is(html.cb-dark,html[data-theme="dark"],body[data-vscode-theme-name*="dark" i]) .wbs-model-rate-limit:hover,:is(html.cb-dark,html[data-theme="dark"],body[data-vscode-theme-name*="dark" i]) .wbs-model-rate-limit[aria-expanded="true"]{background:rgba(255,255,255,.14);box-shadow:inset 0 1px 0 rgba(255,255,255,.1),0 3px 10px rgba(0,0,0,.12)}',
     '.wbs-ck.pending{color:var(--wb-icon-tertiary,#999)}',
     '.wbs-ck.fail{color:#f53f3f}',
@@ -18233,7 +18449,11 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '.wbs-explore-card{position:relative;padding:8px;border-radius:12px;background:color-mix(in srgb,var(--wb-bg-popover,#fff) 62%,transparent);backdrop-filter:blur(18px) saturate(1.3);-webkit-backdrop-filter:blur(18px) saturate(1.3);border:1px solid var(--wb-border-subtle,#ececec);box-shadow:0 12px 32px rgba(0,0,0,.18);color:var(--wb-color-text-primary,#1f1f1f);cursor:default}',
     'html[data-wbs-theme-id="nebula"] .wbs-explore-card{background:color-mix(in srgb,var(--wb-bg-popover,#1a1729) 88%,transparent);background-color:color-mix(in srgb,var(--wb-bg-popover,#1a1729) 88%,transparent);box-shadow:0 14px 36px rgba(0,0,0,.38)}',
     '.wbs-explore-item{position:relative;display:flex;align-items:center;gap:8px;padding:9px 10px;border-radius:8px;font-size:12px;color:var(--wb-color-text-primary,#1f1f1f);line-height:1.4;cursor:pointer}',
-    '.wbs-explore-it{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+    '.wbs-explore-insert{display:flex;align-items:center;justify-content:center;position:absolute;right:7px;top:50%;transform:translateY(-50%);width:26px;height:26px;border:1px solid var(--wb-border-subtle,#ddd);border-radius:6px;background:var(--wb-bg-primary,#fff);color:var(--wb-icon-secondary,#666);opacity:0;pointer-events:none;cursor:pointer}',
+    '.wbs-explore-item:hover .wbs-explore-insert,.wbs-explore-item:focus-within .wbs-explore-insert{opacity:1;pointer-events:auto}',
+    '.wbs-explore-it:focus-visible,.wbs-explore-insert:focus-visible{outline:2px solid var(--wb-accent-color,var(--wb-button-primary-bg,#555));outline-offset:1px}',
+    '.wbs-explore-insert:hover{color:var(--wb-color-text-primary,#222);background:var(--wb-bg-hover,#f3f3f3)}',
+    '.wbs-explore-it{flex:1;min-width:0;padding-right:34px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
     '.wbs-explore-item:hover{background:color-mix(in srgb,var(--wb-bg-hover,#f3f3f3) 76%,transparent)}',
     /* 选项 hover：antd 风格 tooltip（半透明毛玻璃小气泡，出现在选项左侧，完全展示文字） */
     '.wbs-explore-tip{position:absolute;right:calc(100% + 10px);top:50%;transform:translateY(-50%);display:block;width:max-content;padding:5px 11px;border-radius:8px;font-size:11px;line-height:1.35;white-space:normal;word-break:break-word;max-width:240px;color:var(--wb-color-text-primary,#1f1f1f);background:var(--wb-bg-popover,#fff);border:1px solid color-mix(in srgb,var(--wb-border-subtle,#ececec) 65%,transparent);box-shadow:0 6px 20px rgba(0,0,0,.16);opacity:0;visibility:hidden;transition:opacity .15s ease;pointer-events:none;z-index:2}',
@@ -18260,8 +18480,10 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '.wbs-qp-batchbar{display:inline-flex;align-items:center;gap:6px;margin-right:8px}',
     '.wbs-qp-batch-count{font-size:11px;color:var(--wb-color-text-secondary,#666)}',
     '.wbs-qp-batch-action{color:#d64545}',
-    '.wbs-qp-list{display:flex;flex-direction:column;max-height:220px;overflow-y:auto}',
+    '.wbs-qp-list{position:relative;display:flex;flex-direction:column;max-height:220px;overflow-y:auto;overflow-anchor:none}',
     '.wbs-qp-row{display:flex;align-items:center;gap:8px;padding:5px 8px;border-bottom:1px solid var(--wb-border-subtle,#eee)}',
+    '.wbs-qp-drag{display:flex;align-items:center;justify-content:center;width:22px;height:24px;padding:0;border:0;border-radius:5px;background:transparent;color:var(--wb-icon-secondary,#777);cursor:grab;flex:0 0 auto}',
+    '.wbs-qp-drag:active{cursor:grabbing}.wbs-qp-row.wbs-qp-dragging{opacity:.45;background:var(--wb-bg-hover,#f3f3f3);outline:1px dashed var(--wb-border-default,#ccc);outline-offset:-2px}.wbs-qp-list[aria-busy="true"] .wbs-qp-drag{cursor:wait}',
     '.wbs-qp-row:hover{background:color-mix(in srgb,var(--wb-bg-hover,#f3f3f3) 45%,transparent)}',
     '.wbs-qp-check{margin:0;width:14px;height:14px;flex:0 0 auto;accent-color:var(--wb-button-primary-bg,#1f1f1f)}',
     '.wbs-qp-text{flex:1;font-size:12px;line-height:1.5;color:var(--wb-color-text-primary,#1f1f1f);overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical;white-space:nowrap;word-break:break-all}',
@@ -18375,7 +18597,9 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '.wbs-sess-copy-progress{box-sizing:border-box;margin:0 0 8px;padding:9px 10px;border:1px solid var(--wb-border-default,#e5e5e5);border-radius:9px;background:color-mix(in srgb,var(--wb-bg-secondary,#fff) 82%,transparent);box-shadow:0 2px 8px rgba(0,0,0,.04)}',
     '.wbs-sess-copy-progress[hidden]{display:none!important}.wbs-sess-copy-head{display:flex;align-items:center;gap:6px;min-width:0}.wbs-sess-copy-icon{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;flex:0 0 20px;border-radius:6px;background:color-mix(in srgb,var(--wb-button-primary-bg,#1f1f1f) 9%,transparent);color:var(--wb-button-primary-bg,#1f1f1f)}.wbs-sess-copy-title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11.5px;font-weight:650;color:var(--wb-color-text-primary,#1f1f1f)}',
     '.wbs-sess-copy-detail{margin:4px 0 6px 26px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10.5px;line-height:1.35;color:var(--wb-icon-tertiary,#8a8f98)}.wbs-sess-copy-track{height:4px;margin-left:26px;overflow:hidden;border-radius:999px;background:var(--wb-bg-tertiary,#e9eaed)}.wbs-sess-copy-fill{display:block;height:100%;width:0;border-radius:inherit;background:var(--wb-accent-blue,var(--wb-button-primary-bg,#1f1f1f));transition:width .2s ease}.wbs-sess-copy-progress.is-done .wbs-sess-copy-fill{background:#2f9e63}.wbs-sess-copy-progress.is-partial .wbs-sess-copy-fill{background:#d48a19}.wbs-sess-copy-progress.is-error .wbs-sess-copy-fill{background:#d84a4a}',
+    '.wbs-sess-copy-progress.is-error .wbs-sess-copy-detail{white-space:normal;overflow-wrap:anywhere}',
     'html.cb-dark .wbs-sess-copy-progress,html[data-theme="dark"] .wbs-sess-copy-progress,body[data-vscode-theme-name*="dark" i] .wbs-sess-copy-progress{border-color:var(--wb-border-default,rgba(255,255,255,.14));background:color-mix(in srgb,var(--wb-bg-secondary,#25262a) 88%,transparent);box-shadow:0 3px 12px rgba(0,0,0,.18)}',
+    ':is(html.cb-dark,html[data-theme="dark"],body[data-vscode-theme-name*="dark" i]) .wbs-sess-copy-title{color:var(--wb-color-text-primary,#f2f3f5)}',
     '.wbs-sess-refresh{display:flex;align-items:center;justify-content:center;flex-shrink:0;padding:7px;border:1px solid var(--wb-border-default,#e5e5e5);border-radius:9px;background:var(--wb-bg-popover,#fff);color:var(--wb-icon-secondary,#555);font-size:12px;cursor:pointer;line-height:1;transition:all .15s}',
     '.wbs-sess-refresh:hover{background:var(--wb-bg-hover,#f5f5f5);color:var(--wb-color-text-primary,#1f1f1f)}',
     '.wbs-sess-bbtn{display:inline-flex;align-items:center;justify-content:center;gap:4px;padding:7px 12px;border:1px solid var(--wb-border-default,#e5e5e5);border-radius:9px;background:var(--wb-bg-popover,#fff);color:var(--wb-icon-secondary,#555);font-size:12px;cursor:pointer;line-height:1;transition:all .15s}',
@@ -18625,6 +18849,9 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '.wbs-telemetry-help:hover,.wbs-telemetry-help:focus{color:var(--wb-color-text-primary,#1f1f1f)}',
     '.wbs-telemetry-tooltip{position:absolute;z-index:20;left:0;top:calc(100% + 7px);width:245px;padding:7px 9px;border:1px solid var(--wb-border-default,rgba(0,0,0,.14));border-radius:7px;background:var(--wb-bg-primary,#fff);box-shadow:0 6px 18px rgba(0,0,0,.14);color:var(--wb-color-text-primary,#1f1f1f);font-size:11px;font-weight:400;line-height:1.5;white-space:normal;opacity:0;visibility:hidden;pointer-events:none;transform:translateY(-2px);transition:opacity .12s,transform .12s,visibility .12s}',
     '.wbs-telemetry-help:hover .wbs-telemetry-tooltip,.wbs-telemetry-help:focus .wbs-telemetry-tooltip{opacity:1;visibility:visible;transform:translateY(0)}',
+    '.wbs-qp-insert-tooltip{position:fixed;z-index:2147483647;box-sizing:border-box;width:max-content;max-width:calc(100vw - 16px);transform:none;overflow-wrap:anywhere}.wbs-qp-insert-tooltip.is-visible{opacity:1;visibility:visible;transform:none}',
+    '.wbs-explore-action-tip .wbs-explore-tip{opacity:0!important;visibility:hidden!important;pointer-events:none!important}',
+    'html.cb-dark .wbs-qp-insert-tooltip,html[data-theme="dark"] .wbs-qp-insert-tooltip,body[data-vscode-theme-name*="dark" i] .wbs-qp-insert-tooltip{background:var(--wb-bg-popover,#202126);color:var(--wb-color-text-primary,#f2f3f5);border-color:var(--wb-border-default,rgba(255,255,255,.16));box-shadow:0 6px 18px rgba(0,0,0,.4)}',
     '.wbs-fork-tooltip{position:fixed;z-index:2147483647;box-sizing:border-box;width:max-content;max-width:min(255px,calc(100vw - 16px));transform:none;overflow-wrap:anywhere;white-space:normal}.wbs-fork-tooltip.is-visible{opacity:1;visibility:visible;transform:none}',
     '.wbs-fork-tooltip-title{display:block;font-size:14px;font-weight:600;line-height:1.35}.wbs-fork-tooltip-description{display:block;margin-top:3px;font-size:11px;line-height:1.5}',
     'html.cb-dark .wbs-fork-tooltip,html[data-theme="dark"] .wbs-fork-tooltip,body[data-vscode-theme-name*="dark" i] .wbs-fork-tooltip{background:var(--wb-bg-popover,#202126);color:var(--wb-color-text-primary,#f2f3f5);border-color:var(--wb-border-default,rgba(255,255,255,.16));box-shadow:0 6px 18px rgba(0,0,0,.4)}',

@@ -512,3 +512,59 @@ test('soft logout can be retried after the login file was removed and login was 
     assert.equal(unknown.file, null);
   } finally { fs.rmSync(f.root, { recursive: true, force: true }); }
 });
+
+
+test('personal and enterprise backups sharing an official uid survive switching and deletion independently', () => {
+  const f = fixture();
+  try {
+    const file = path.join(f.authDir, 'workbuddy-desktop.info');
+    const personal = auth('same-user', 'https://www.workbuddy.cn', true);
+    personal.account.type = 'personal';
+    const enterprise = structuredClone(personal);
+    Object.assign(enterprise.account, { type: 'ultimate', enterpriseId: 'company-one', enterpriseName: '公司一' });
+    fs.writeFileSync(file, JSON.stringify(personal));
+    run(f.root, f.dataDir, 'lib.backupCurrent(process.env.WBSWITCH_DATA_DIR)');
+    fs.writeFileSync(file, JSON.stringify(enterprise));
+    const accounts = run(f.root, f.dataDir, 'lib.backupCurrent(process.env.WBSWITCH_DATA_DIR); process.stdout.write(JSON.stringify(lib.listAccounts(process.env.WBSWITCH_DATA_DIR)))');
+    assert.equal(accounts.length, 2);
+    const company = accounts.find(a => a.enterpriseId === 'company-one');
+    assert.ok(company);
+    assert.notEqual(company.uid, 'same-user');
+    assert.equal(company.rawUid, 'same-user');
+    const switched = run(f.root, f.dataDir, 'process.stdout.write(JSON.stringify(lib.switchTo(process.env.WBSWITCH_DATA_DIR,"same-user")))');
+    assert.equal(switched.uid, 'same-user');
+    assert.equal(JSON.parse(fs.readFileSync(file)).account.type, 'personal');
+    run(f.root, f.dataDir, `lib.switchTo(process.env.WBSWITCH_DATA_DIR,${JSON.stringify(company.uid)})`);
+    assert.equal(JSON.parse(fs.readFileSync(file)).account.enterpriseId, 'company-one');
+    run(f.root, f.dataDir, 'lib.deleteAccount(process.env.WBSWITCH_DATA_DIR,"same-user")');
+    assert.equal(JSON.parse(fs.readFileSync(file)).account.enterpriseId, 'company-one');
+    assert.equal(run(f.root, f.dataDir, 'process.stdout.write(JSON.stringify(lib.listAccounts(process.env.WBSWITCH_DATA_DIR)))').length, 1);
+    const known = run(f.root, f.dataDir, 'process.stdout.write(JSON.stringify(lib.knownAccountIdentities(process.env.WBSWITCH_DATA_DIR)))');
+    assert.deepEqual(known['same-user'].sort(), ['same-user', company.uid].sort(), 'removing a backup must retain the known ownership ambiguity');
+  } finally { fs.rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test('legacy enterprise backups migrate without changing auth bytes, preserving notes and independent rules', () => {
+  const f = fixture();
+  try {
+    fs.mkdirSync(path.join(f.dataDir, 'accounts'), { recursive: true });
+    const enterprise = auth('legacy-company', 'https://www.workbuddy.cn');
+    Object.assign(enterprise.account, { type: 'ultimate', enterpriseId: 'company-one' });
+    const original = JSON.stringify(enterprise, null, 2);
+    fs.writeFileSync(path.join(f.dataDir, 'accounts', 'legacy-company.info'), original);
+    fs.writeFileSync(path.join(f.dataDir, 'meta.json'), JSON.stringify({ accounts: { 'legacy-company': { note: '保留备注', sort: 2 } } }));
+    const result = run(f.root, f.dataDir, `
+      const d=process.env.WBSWITCH_DATA_DIR;
+      lib.setAutoCopyRule(d,{uid:'legacy-company',kind:'session',key:'shared-session',enabled:true});
+      const accounts=lib.listAccounts(d); const company=accounts[0];
+      process.stdout.write(JSON.stringify({company, rules:lib.getAutoCopyRules(d,company.uid), again:lib.listAccounts(d)}));
+    `);
+    assert.equal(result.company.rawUid, 'legacy-company');
+    assert.notEqual(result.company.uid, 'legacy-company');
+    assert.equal(result.company.note, '保留备注');
+    assert.equal(result.company.sort, 2);
+    assert.deepEqual(result.rules.sessionIds, [], 'ambiguous uid-only sync rules must not be inherited by enterprise identity');
+    assert.equal(result.again.length, 1);
+    assert.equal(fs.readFileSync(path.join(f.dataDir, 'accounts', result.company.uid + '.info'), 'utf8'), original);
+  } finally { fs.rmSync(f.root, { recursive: true, force: true }); }
+});

@@ -11,16 +11,17 @@ const compat = require('../scripts/workbuddy-compat.js');
 const daemonSource = fs.readFileSync(path.join(__dirname, '../scripts/daemon.js'), 'utf8');
 const injectSource = fs.readFileSync(path.join(__dirname, '../scripts/inject.js'), 'utf8');
 
-function fixture(t, insertCopiedSession) {
+function fixture(t, insertCopiedSession, makeRecords) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wd-fork-integration-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const directory = path.join(root, 'projects', 'workspace-a');
   fs.mkdirSync(directory, { recursive: true });
   const row = { id: crypto.randomUUID(), user_id: 'account-a', cwd: '/workspace/a', title: '原会话', created_at: 1 };
   const source = path.join(directory, row.id + '.jsonl');
-  const messages = ['user', 'assistant', 'user', 'assistant'].map((role, index) =>
-    JSON.stringify({ type: 'message', role, timestamp: 10000 + index * 1000,
-      content: [{ type: 'text', text: 'message ' + index }] })).join('\n') + '\n';
+  const records = makeRecords ? makeRecords(row) : ['user', 'assistant', 'user', 'assistant'].map((role, index) =>
+    ({ type: 'message', role, sessionId: row.id, timestamp: 10000 + index * 1000,
+      content: [{ type: 'text', text: 'message ' + index }] }));
+  const messages = records.map(record => JSON.stringify(record)).join('\n') + '\n';
   fs.writeFileSync(source, messages);
   const context = {
     fs, path, crypto, Buffer, PROFILE: { dataRoot: root }, forkedTitle: fork.forkedTitle,
@@ -47,7 +48,37 @@ test('fork creates a new local session in the same workspace without changing th
   assert.match(copied[0].title, /分支/);
   assert.equal(fs.readFileSync(source, 'utf8'), messages);
   const branch = path.join(root, 'projects', 'workspace-a', result.id + '.jsonl');
-  assert.deepEqual(fs.readFileSync(branch, 'utf8').split('\n').filter(Boolean).length, 2);
+  const records = fs.readFileSync(branch, 'utf8').trim().split('\n').map(JSON.parse);
+  assert.equal(records.length, 2);
+  assert.ok(records.every(record => record.sessionId === result.id), 'resume must use the fork runtime identity');
+});
+
+test('fork rebinds only the source envelope before publishing the row', async t => {
+  let published = false;
+  const f = fixture(t, async (_row, _uid, id) => {
+    const file = path.join(f.root, 'projects', 'workspace-a', id + '.jsonl');
+    const records = fs.readFileSync(file, 'utf8').trim().split('\n').map(JSON.parse);
+    assert.deepEqual(records, original.slice(0, -2).map(record => record.sessionId === f.row.id
+      ? { ...record, sessionId: id } : record));
+    published = true;
+  }, row => [
+    { type: 'session-meta', sessionId: row.id, id: 'activation' },
+    { type: 'message', role: 'user', sessionId: row.id, id: row.id, timestamp: 10000,
+      content: [{ type: 'text', text: 'literal ' + row.id }] },
+    { type: 'message', role: 'assistant', sessionId: row.id, id: 'reply', timestamp: 11000,
+      content: [{ type: 'text', text: 'answer' }] },
+    { type: 'function_call', sessionId: row.id, id: 'tool', name: 'AskUserQuestion',
+      arguments: { sessionId: row.id, question: row.id } },
+    { type: 'function_call_result', sessionId: row.id, call_id: 'tool', output: { sessionId: row.id } },
+    { type: 'reasoning', sessionId: 'unrelated-child', payload: { sessionId: row.id } },
+    { type: 'file-history-snapshot', snapshot: { sessionId: row.id } },
+    { type: 'message', role: 'user', sessionId: row.id, timestamp: 12000, content: [{ type: 'text', text: 'next' }] },
+    { type: 'message', role: 'assistant', sessionId: row.id, timestamp: 13000, content: [{ type: 'text', text: 'later' }] },
+  ]);
+  const original = f.messages.trim().split('\n').map(JSON.parse);
+  await f.createForkSession(f.row, { messageIndex: 1, roles: 'uaua', finishedAt: 11000 });
+  assert.equal(published, true);
+  assert.equal(fs.readFileSync(f.source, 'utf8'), f.messages);
 });
 
 test('failed session insert removes only the newly written fork file', async (t) => {

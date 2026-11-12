@@ -52,6 +52,7 @@ test('safety review route resolves the stored task and the row button uses it wi
   assert.match(daemon, /createSafetyReviewTask\(DATA_DIR, id\)/);
   assert.match(inject, /data-auto-review=/);
   assert.match(inject, /\/api\/automations\/safety-review/);
-  const row = inject.slice(inject.indexOf("row.innerHTML = '<div class=\"wbs-auto-row-head\">'"), inject.indexOf('list.appendChild(row);'));
+  const rowStart = inject.indexOf("row.innerHTML = '<div class=\"wbs-auto-row-head\">'");
+  const row = inject.slice(rowStart, inject.indexOf('list.appendChild(row);', rowStart));
   assert.ok(row.indexOf('data-auto-review=') < row.indexOf('data-auto-enabled='));
 });

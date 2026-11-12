@@ -1,6 +1,6 @@
 <h1><img src="docs/images/workdaddy-app-icon-rounded.svg" alt="" width="40" height="40" align="absmiddle">  WorkDaddy</h1>
 
-**语言：** [简体中文](README.md) · [English](README_en.md)
+**语言：** [简体中文](README.md) · [English](README_en.md) · [日本語](README_ja.md)
 
 > **WorkDaddy 是 WorkBuddy 和 CodeBuddy 桌面端增强助手：多账号独立备份、点切即用，跨账号会话迁移、模型管理与自动化任务。WorkBuddy 还支持免打扰、异常中断自动续接、暂存/快捷提示词和五种主题。账号与配置全部留在本机。**
 > 本机回环 CDP 注入 · 不改官方安装包。
@@ -95,6 +95,10 @@ node scripts/workbuddy-target.js --configure --platform darwin \
   --binary "/Applications/企业客户端.app/Contents/MacOS/Electron" \
   --data-dir "$HOME/Library/Application Support/WorkDaddy"
 ```
+
+### 会话工作目录恢复
+
+默认不会自动重建已删除的会话工作目录。旧会话需要原目录时，请手动恢复目录；如需启用 Windows 上的自动恢复，可在启动 WorkDaddy 前设置环境变量 `WORKDADDY_REPAIR_MISSING_SESSION_WORKSPACES=1`。启用后，缺失目录会被定期重建。
 
 ### Windows
 

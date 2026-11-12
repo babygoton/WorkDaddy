@@ -1,3 +1,4 @@
+const assertSessionAccountIdentity = require('../scripts/account-identity').createSessionAccountResolver([]).assertUnambiguous;
 'use strict';
 
 const test = require('node:test');
@@ -15,7 +16,7 @@ function loadSessionDeleteHelpers(fsImpl = fs) {
   const end = source.indexOf('\nfunction json(', start);
   assert.notEqual(start, -1, 'daemon must define the session ID validation boundary');
   assert.notEqual(end, -1, 'session deletion helpers must remain before json()');
-  const context = { codeBuddyFiles: null, fs: fsImpl, path, log() {} };
+  const context = { assertSessionAccountIdentity, codeBuddyFiles: null, fs: fsImpl, path, log() {} };
   vm.runInNewContext(
     source.slice(start, end) +
       '\nthis.helpers = { isValidSessionId, matchedSessionIds, resolveManagedSessionTarget, deleteSessionFiles };',
@@ -261,7 +262,7 @@ test('delete route refuses while account switching or session copy holds the ope
   const source = fs.readFileSync(daemonPath, 'utf8');
   const start = source.indexOf("  if (req.method === 'POST' && p === '/api/sessions/delete')");
   const end = source.indexOf('  // 恢复会话：', start);
-  const ctx = vm.createContext({
+  const ctx = vm.createContext({ assertSessionAccountIdentity,
     codeBuddyFiles: null,
     req: { method: 'POST' },
     p: '/api/sessions/delete',
@@ -288,7 +289,7 @@ test('delete route accepts more than 100 session IDs in one request', async (t) 
   const source = fs.readFileSync(daemonPath, 'utf8');
   const start = source.indexOf("  if (req.method === 'POST' && p === '/api/sessions/delete')");
   const end = source.indexOf('  // 恢复会话：', start);
-  const ctx = vm.createContext({codeBuddyFiles:null,
+  const ctx = vm.createContext({ assertSessionAccountIdentity,codeBuddyFiles:null,
     ...loadSessionDeleteHelpers(),
     normalizeSessionIdBatch,
     collectLineageMembersForDelete: (_dataDir, requested) => requested.map((id) => ({ id })),
@@ -333,7 +334,7 @@ test('delete route removes recorded copies across accounts from both DB and file
   const source = fs.readFileSync(daemonPath, 'utf8');
   const start = source.indexOf("  if (req.method === 'POST' && p === '/api/sessions/delete')");
   const end = source.indexOf('  // 恢复会话：', start);
-  const ctx = vm.createContext({codeBuddyFiles:null,
+  const ctx = vm.createContext({ assertSessionAccountIdentity,codeBuddyFiles:null,
     ...loadSessionDeleteHelpers(),
     normalizeSessionIdBatch,
     collectLineageMembersForDelete: lib.collectLineageMembersForDelete,

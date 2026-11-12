@@ -114,10 +114,11 @@ test('panel refresh exposes an explicit current-account check-in reconciliation 
   assert.match(ui, /current\.checkin = \{ ok: !!result\.ok/);
 });
 
-test('model rate limit route and account snapshots expose only structured 6004 records', () => {
+test('model rate limit route accepts only supported structured business codes', () => {
   assert.match(source, /p === '\/api\/model-rate-limit'/);
   const route = source.slice(source.indexOf("p === '/api/model-rate-limit'"), source.indexOf("if (req.method === 'GET' && p === '/api/accounts')"));
-  assert.match(route, /reasonCode !== 6004/);
+  assert.match(route, /\[6000, 6004\]\.includes\(reasonCode\)/);
+  assert.match(route, /\[model-rate-limit\] WARN/);
   assert.match(route, /modelName/);
   assert.doesNotMatch(route, /body\.message|body\.response|body\.raw/);
   const accounts = source.slice(source.indexOf("if (req.method === 'GET' && p === '/api/accounts')"), source.indexOf('// 查询指定账号的剩余积分'));
@@ -127,7 +128,7 @@ test('model rate limit route and account snapshots expose only structured 6004 r
 
 test('model rate limit reports are deduplicated across accounts by model and reset time', () => {
   const route = source.slice(source.indexOf("p === '/api/model-rate-limit'"), source.indexOf("if (req.method === 'GET' && p === '/api/accounts')"));
-  assert.match(route, /hasModelRateLimitElsewhere\(\{ uid, modelId, resetAt, now \}\)/);
+  assert.match(route, /hasModelRateLimitElsewhere\(\{ uid, modelId, resetAt, reasonCode, now \}\)/);
   assert.match(route, /skipped: 'duplicate-across-accounts'/);
   assert.match(route, /resetAt !== null/);
 });
