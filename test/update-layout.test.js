@@ -1053,8 +1053,8 @@ test('account cards sort by credit expiry without pinning the current account', 
   assert.doesNotMatch(script, /state\.accounts\.sort\(function \(left, right\) \{[\s\S]*left\.uid === state\.current\.uid[\s\S]*right\.uid === state\.current\.uid[\s\S]*return leftIsCurrent \? -1 : 1;[\s\S]*\}\);/);
   assert.match(script, /function render\(data\) \{[\s\S]*if \(!previous\.length \|\| !state\.open \|\| currentChanged\) sortAccountsByCreditExpiry\(\);/);
   // sortAccountsByCreditExpiry：去掉当前账号置顶，仅按到期时间 + 稳定序
-  assert.match(script, /function sortAccountsByCreditExpiry\(\) \{[\s\S]*isCurrent:[\s\S]*a\.expiresAt !== b\.expiresAt[\s\S]*a\.expiresAt - b\.expiresAt[\s\S]*a\.index - b\.index/);
-  assert.doesNotMatch(script, /function sortAccountsByCreditExpiry\(\) \{[\s\S]*if \(a\.isCurrent !== b\.isCurrent\) return a\.isCurrent \? -1 : 1;/);
+  assert.match(script, /function sortAccountsByCreditExpiry\(preserveOrder\) \{[\s\S]*isCurrent:[\s\S]*a\.expiresAt !== b\.expiresAt[\s\S]*a\.expiresAt - b\.expiresAt[\s\S]*a\.index - b\.index/);
+  assert.doesNotMatch(script, /function sortAccountsByCreditExpiry\(preserveOrder\) \{[\s\S]*if \(a\.isCurrent !== b\.isCurrent\) return a\.isCurrent \? -1 : 1;/);
 });
 
 test('quick-phrase layering does not reposition WorkBuddy native chat toolbar', () => {
@@ -1115,7 +1115,8 @@ test('robot button anchors to the conversation area bottom-right and snaps right
   assert.match(script, /fabDrag\.startRight - deltaX/);
   assert.match(script, /fabDrag\.startBottom - deltaY/);
   assert.match(script, /applyFabPosition\(fab, fabAnchorOffsets\(\)\.right, bottom\)/);
-  assert.match(script, /localStorage\.setItem\(FAB_POSITION_KEY/);
+  assert.match(script, /area && area\.kind === 'new-task' \? FAB_POSITION_KEY \+ '-new-task' : FAB_POSITION_KEY/);
+  assert.match(script, /localStorage\.setItem\(fabPositionKey\(\), String\(Math\.round\(bottom\)\)\)/);
   assert.match(script, /touchAction = 'none'/);
   assert.match(script, /is-snapping/);
   assert.match(script, /cubic-bezier\(\.22,1\.35,\.36,1\)/);

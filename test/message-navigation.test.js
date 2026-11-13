@@ -73,6 +73,30 @@ test('moving between a marker, prompt list and detail keeps the hover surface op
   assert.equal(closes, 2);
 });
 
+test('window-level scroll and resize targets bypass Node.contains and still refresh navigation', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../scripts/inject.js'), 'utf8');
+  const start = source.indexOf('      function onWindowChange(event) {');
+  const end = source.indexOf('\n      }', start) + 8;
+  assert.ok(start >= 0 && end > start);
+  let positions = 0, scheduled = 0, flyouts = 0;
+  class NodeLike {}
+  const root = { contains(target) {
+    assert.ok(target instanceof NodeLike, 'contains only receives a DOM Node');
+    return true;
+  } };
+  const context = { Node: NodeLike, root, position: () => { positions++; },
+    scheduleActive: () => { scheduled++; }, positionFlyouts: () => { flyouts++; } };
+  vm.runInNewContext(source.slice(start, end), context);
+
+  context.onWindowChange({ target: {} });
+  context.onWindowChange({ target: null });
+  assert.deepEqual([positions, scheduled, flyouts], [2, 2, 0]);
+
+  const node = new NodeLike();
+  context.onWindowChange({ target: node });
+  assert.deepEqual([positions, scheduled, flyouts], [2, 2, 1]);
+});
+
 test('every prompt remains reachable when the rail is capped, including unsampled turns', () => {
   const element = (tag, className, textContent = '') => ({
     tag, className, textContent, children: [], attributes: {},

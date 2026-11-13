@@ -79,19 +79,28 @@ test('reinjection stops the old activity queue after its in-flight requests fini
 test('activity refresh reads the official today record independently of the streak and clears failed reads', async () => {
   const h = harness({ manualToday: true });
   h.ctx.state.accounts = [{ uid: 'a', checkin: { ok: true } }];
+  const classes = new Set();
+  const button = { classList: { toggle(name, on) { if (on) classes.add(name); else classes.delete(name); } } };
+  h.ctx.accountsPane.querySelectorAll = () => [{ getAttribute: () => 'a', querySelector: selector => selector === '.wbs-daily-rings' ? button : null }];
+  const todayStart = source.indexOf('  function isGrowthActiveToday(');
+  vm.runInContext(source.slice(todayStart, source.indexOf('  function activityStreakHtml(', todayStart)), h.ctx);
+  h.ctx.dailyRingsSvg = () => '';
   h.ctx.fetchActivityForAccounts();
   h.requests[0].resolve({ activityStreak: { days: 5, status: 'ready' } }); await tick();
   assert.equal(h.todayRequests.length, 1);
   h.todayRequests[0].resolve({ ok: true, date: '1970-01-01', is_active: false }); await tick();
   assert.equal(h.ctx.state.accounts[0].growthTodayActive.is_active, false);
+  assert.equal(classes.has('is-login-today'), false);
   h.ctx.fetchActivityForAccounts();
   h.requests[1].reject(new Error('streak unavailable')); await tick();
   h.todayRequests[1].resolve({ ok: true, date: '1970-01-01', is_active: true }); await tick();
   assert.equal(h.ctx.state.accounts[0].growthTodayActive.is_active, true);
+  assert.equal(classes.has('is-login-today'), true);
   h.ctx.fetchActivityForAccounts();
   h.requests[2].resolve({ activityStreak: { days: 5, status: 'ready' } }); await tick();
   h.todayRequests[2].reject(new Error('today unavailable')); await tick();
   assert.equal(h.ctx.state.accounts[0].growthTodayActive, null);
+  assert.equal(classes.has('is-login-today'), false);
 });
 
 test('closing during the today query discards the late result and stops the queue', async () => {

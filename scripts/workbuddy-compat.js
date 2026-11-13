@@ -71,6 +71,22 @@
     }
     var own = preferred && preferred.closest && preferred.closest('.conversation-shell');
     var shells = own ? [own] : Array.from(doc.querySelectorAll('.conversation-shell'));
+    // The teams New Task page has no conversation shell until its first
+    // message is sent. Anchor to the route body; the tab is in the left sidebar
+    // and the composer is only a small part of the page.
+    if (!shells.length && doc.querySelector) {
+      var tabs = Array.from(doc.querySelectorAll('button.conversation-list-tab-button'));
+      for (var t = 0; t < tabs.length; t++) {
+        var tab = tabs[t];
+        var label = (tab.innerText || tab.textContent || tab.getAttribute('aria-label') || '').trim();
+        var selected = tab.getAttribute('aria-selected') === 'true' ||
+          /(^|\s)active(\s|$)/.test(String(tab.className || ''));
+        if (!selected || !/^(新建任务|New Task)$/i.test(label)) continue;
+        var homeBody = doc.querySelector('main.wb-home-route > .wb-home-route__body');
+        var homeBodyRect = visibleRect(homeBody);
+        if (homeBodyRect) return { element:homeBody, rect:homeBodyRect, kind:'new-task' };
+      }
+    }
     // Only old clients may use the legacy chat host. A missing modern shell
     // must not fall back to the teams grid or the whole application window.
     if (!shells.length && !doc.querySelector('.teams-container,.conversation-page-chrome')) {

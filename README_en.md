@@ -67,7 +67,7 @@ CodeBuddy support targets its **Electron agent window**, not the VS Code editor 
 - **Automation tasks:** discover and import tasks from public GitHub and Gitee repositories, or describe what you need and let WorkBuddy create a task. Supports manual, event, and scheduled triggers, run logs, stopping tasks, and JSON / ZIP export.
 - **Quiet approval mode:** automatically handle supported permission prompts while you are away.
 - **Stash prompts:** send drafts to WorkBuddy's pending message queue while preserving images, files, and quotes for later use.
-- **Themes:** WorkBuddy’s Manage theme switch offers Follow system, Light, Dark, Eye-care green, Cyber purple, and Frosted glass. “Follow system” tracks the operating system’s dark/light mode and switches automatically. Frosted glass supports preset and custom wallpapers; turning management off restores the client’s native appearance.
+- **Themes:** WorkBuddy’s Manage theme switch offers Follow system, Light, Dark, Eye-care green, Cyber purple, and Frosted glass. “Follow system” tracks the operating system’s dark/light mode and switches automatically. Frosted glass supports preset wallpapers, custom image wallpapers, and video wallpapers (MP4 / WebM, muted loop, paused while the window is in the background); turning management off restores the client’s native appearance.
 - **Session migration:** copy sessions between accounts automatically or manually and continue working where you left off.
 - **Session branching:** once enabled under Enhance, any reply can start a new conversation that keeps the chat up to that reply, while the original conversation stays untouched.
 - **Model tools:** manage and switch models more easily, including multiple configurations with the same model name.

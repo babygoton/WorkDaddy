@@ -17,6 +17,7 @@ function harness(t, profile = 'workbuddy-cn') {
   fs.writeFileSync(path.join(dataRoot, 'user-b-personal/BOOTSTRAP.md'), 'fixture onboarding');
   let reloads = 0, locked = false;
   const context = vm.createContext({
+    captureSessionPins: async () => {},
     PROFILE: { kind: profile.startsWith('workbuddy') ? 'workbuddy' : 'codebuddy', dataRoot, capabilities: { accounts: true } },
     DATA_DIR: path.join(root, 'WorkDaddy'), URL, ...persona,
     currentAccount: () => ({ uid: 'b' }), listAccounts: () => [{ uid: 'a' }],

@@ -88,7 +88,7 @@ function daemonHarness(t, options = {}) {
     ? compat.wdCompatDecryptAuthJson(stored) : stored), { mode: 0o600 });
   let requests = 0;
   let failWrite = false;
-  const context = { accountIdentity,
+  const context = { accountIdentity, captureSessionPins: async () => {},
     ...compat, fs: { ...fs, writeFileSync(...args) {
       if (failWrite && String(args[0]).startsWith(file)) throw new Error('fixture write failure');
       return fs.writeFileSync(...args);

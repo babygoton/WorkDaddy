@@ -27,9 +27,9 @@ test('host dark edition and growth badge overrides respect the panel appearance'
 test('forced light growth badges retain the light credit color in any host theme', () => {
   const fill = '--wbs-liquid-fill:var(--wbs-credit-theme-color,var(--wbs-primary))';
   const rule = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].find(([, selector, body]) =>
-    selector.includes('[data-wbs-appearance="light"] .wbs-daily-rings') && body.includes(fill));
+    selector.includes('[data-wbs-appearance="light"] :is(.wbs-daily-rings,.wbs-daily-cat-status-icon)') && body.includes(fill));
   assert.ok(rule, 'explicit light appearance gets the same liquid highlight as the default light theme');
-  assert.ok(rule[1].includes('.wbs-panel-light .wbs-daily-rings'));
+  assert.ok(rule[1].includes('.wbs-panel-light :is(.wbs-daily-rings,.wbs-daily-cat-status-icon)'));
   assert.match(css, /\.wbs-badge\{[^}]*color:var\(--wb-color-text-secondary/);
   assert.match(css, /\.wbs-daily-cat-mark\{[^}]*background:var\(--wbs-liquid-ink\)/);
 });

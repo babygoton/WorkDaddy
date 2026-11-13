@@ -8,7 +8,7 @@ const path = require('node:path');
 const inject = fs.readFileSync(path.join(__dirname, '../scripts/inject.js'), 'utf8');
 const daemon = fs.readFileSync(path.join(__dirname, '../scripts/daemon.js'), 'utf8');
 
-test('account cards render today check-in as a full or empty cat liquid badge', () => {
+test('account cards render travel as a full or empty cat liquid badge', () => {
   assert.match(inject, /wbs-daily-rings/);
   assert.match(inject, /wbs-daily-vessel/);
   assert.match(inject, /wbs-daily-liquid/);
@@ -43,32 +43,52 @@ test('account cards render today check-in as a full or empty cat liquid badge', 
   assert.doesNotMatch(hoverRule[0], /border(?:-color)?:/);
 });
 
-test('cat water requires the official growth record for today, not credit check-in or streak totals', () => {
+test('cat highlight follows travel while the button background independently follows today login', () => {
   const start = inject.indexOf('    function dailyRingsSvg(account)');
-  const end = inject.indexOf('\n    function dailyRingsHtml', start);
+  const end = inject.indexOf('    function formatDailyTravelCountdown', start);
   const vm = require('node:vm');
   const context = {
-    WORKBUDDY_CAT_MARK: '__WBS_BUDDY_MARK__',
+    WORKBUDDY_CAT_MARK: '__WBS_BUDDY_MARK__', CAPS: { growthDaily: true }, WBS_PROFILE_IS_AI: false,
+    escAttr: String, activityStreakHtml: () => '<span>连续登录 5 天</span>', dailyProgressLabel: () => '',
     Date: class extends Date { static now() { return Date.parse('2026-09-30T02:00:00Z'); } },
   };
   const checkedStart = inject.indexOf('  function isCheckedInToday(');
   vm.runInNewContext(inject.slice(checkedStart, inject.indexOf('  function activityStreakHtml(', checkedStart)), context);
   vm.runInNewContext(inject.slice(start, end), context);
+  const refreshStart = inject.indexOf('    function updateDailyProgressCells()');
+  vm.runInNewContext(inject.slice(refreshStart, inject.indexOf('    function refreshDailyProgressAccount(', refreshStart)), context);
+  const classes = new Set();
+  const button = { setAttribute() {}, classList: { toggle(name, on) { if (on) classes.add(name); else classes.delete(name); } } };
+  context.accountsPane = { querySelectorAll: () => [{ getAttribute: () => 'a', querySelector: selector => selector === '.wbs-daily-rings' ? button : null }] };
   const record = (is_active, date = '2026-09-30') => ({ ok: true, is_active, date });
+  for (const login of [false, true]) {
+    for (const sent of [false, true]) {
+      const account = { uid: 'a', growthTodayActive: record(login), dailyProgress: { cat: { state: sent ? 'traveling' : 'idle' } } };
+      const html = context.dailyRingsHtml(account);
+      assert.equal(/class="wbs-daily-rings is-login-today"/.test(html), login);
+      assert.equal(/wbs-daily-vessel is-checked-in/.test(html), sent);
+      context.state = { accounts: [account] };
+      context.updateDailyProgressCells();
+      assert.equal(classes.has('is-login-today'), login, 'existing button refreshes its background');
+      assert.equal(/wbs-daily-vessel is-checked-in/.test(button.innerHTML), sent, 'existing button refreshes its cat');
+    }
+  }
   for (const account of [
     { checkin: { ok: true } },
-    { checkin: { ok: true }, growthTodayActive: record(false) },
-    { checkin: { ok: true }, growthTodayActive: record(true, '2026-09-29') },
+    { growthTodayActive: record(true) },
     { activityStreak: { days: 5, status: 'ready' }, dailyProgress: { growth: { ratio: 1 } } },
-    { growthTodayActive: { ok: false, is_active: true, date: '2026-09-30' } },
-    { growthTodayActive: record('true') },
     {}, null,
-  ]) assert.match(context.dailyRingsSvg(account), /is-empty/, JSON.stringify(account));
-  const completed = { checkin: { ok: false }, growthTodayActive: record(true) };
-  assert.match(context.dailyRingsSvg(completed), /is-checked-in/);
-  assert.match(context.dailyRingsSvg(completed), /--wbs-liquid-level:100\.00%/);
+  ]) assert.match(context.dailyRingsSvg(account), /is-empty/);
+  for (const cat of [{ state: 'traveling' }, { state: 'arrived' }, { state: 'idle', dailyLimitReached: true }]) {
+    assert.match(context.dailyRingsSvg({ dailyProgress: { cat } }), /is-checked-in/);
+  }
+  for (const growthTodayActive of [record(false), record(true, '2026-09-29'), { ...record(true), ok: false }, record('true')]) {
+    assert.doesNotMatch(context.dailyRingsHtml({ uid: 'a', growthTodayActive }), /is-login-today/);
+  }
+  const completed = { uid: 'a', growthTodayActive: record(true) };
+  assert.match(context.dailyRingsHtml(completed), /is-login-today/);
   context.Date = class extends Date { static now() { return Date.parse('2026-09-30T16:00:00Z'); } };
-  assert.match(context.dailyRingsSvg(completed), /is-empty/, 'yesterday must become empty at Beijing midnight');
+  assert.doesNotMatch(context.dailyRingsHtml(completed), /is-login-today/, 'yesterday login resets at Beijing midnight');
 });
 
 test('daily activity and credit nodes reuse one theme-aware colored popover', () => {
@@ -342,7 +362,7 @@ test('daily labels share a black light treatment and one glass dark treatment', 
 });
 
 test('cat water follows the credit or button palette for the selected theme', () => {
-  const badgeRules = [...inject.matchAll(/\.wbs-daily-rings\{([^}]+)\}/g)]
+  const badgeRules = [...inject.matchAll(/:is\(\.wbs-daily-rings,\.wbs-daily-cat-status-icon\)\{([^}]+)\}/g)]
     .map(match => match[1]).filter(rule => rule.includes('--wbs-liquid-fill:'));
   assert.ok(badgeRules.length);
   for (const rule of badgeRules) {
@@ -397,10 +417,10 @@ test('growth plan primary actions use WorkBuddy button theme tokens', () => {
 
 test('full water remains visibly brighter than the empty vessel in monochrome themes', () => {
   assert.match(inject, /--wbs-liquid-fill:color-mix\(in srgb,var\(--wb-button-primary-bg\) 55%,var\(--wb-button-primary-fg\)\)/);
-  assert.match(inject, /@supports \(color:oklch\(from black l c h\)\)\{\.wbs-daily-rings\{--wbs-liquid-fill:oklch\(from var\(--wb-button-primary-bg\) max\(l,\.62\) c h \/ 1\)/);
+  assert.match(inject, /@supports \(color:oklch\(from black l c h\)\)\{:is\(\.wbs-daily-rings,\.wbs-daily-cat-status-icon\)\{--wbs-liquid-fill:oklch\(from var\(--wb-button-primary-bg\) max\(l,\.62\) c h \/ 1\)/);
 });
 
 
 test('default light cat highlight shares the credit progress color and excludes dark themes', () => {
-  assert.ok(inject.includes('html:not(.cb-dark):not([data-theme="dark"]):is([data-wbs-theme-id="default"],:not([data-wbs-theme-id])) body:not([data-vscode-theme-name*="dark" i]) .wbs-daily-rings{--wbs-liquid-fill:var(--wbs-credit-theme-color,var(--wbs-primary))}'));
+  assert.ok(inject.includes('html:not(.cb-dark):not([data-theme="dark"]):is([data-wbs-theme-id="default"],:not([data-wbs-theme-id])) body:not([data-vscode-theme-name*="dark" i]) :is(.wbs-daily-rings,.wbs-daily-cat-status-icon){--wbs-liquid-fill:var(--wbs-credit-theme-color,var(--wbs-primary))}'));
 });

@@ -34,6 +34,7 @@ test('a reward refresh updates one credit cell and ignores older batch results',
   const context = vm.createContext({
     state: { accounts, open: true, creditRunId: 1, creditRefreshGeneration: {}, creditRemaining: 0 },
     alive: true,
+    isIdentityExpired: () => false,
     setTimeout: () => 1, clearTimeout() {},
     api(route, options) {
       return new Promise((resolve, reject) => calls.push({ route, uid: JSON.parse(options.body).uid, resolve, reject }));
@@ -63,6 +64,7 @@ test('a pending batch cannot overwrite the result of a completed reward refresh'
   const context = vm.createContext({
     state: { accounts: [account], open: true, creditRunId: 0, creditRefreshGeneration: {}, creditRemaining: 0 },
     alive: true,
+    isIdentityExpired: () => false,
     setTimeout: () => 1, clearTimeout() {}, setBuildTimeout: fn => fn(),
     api(route, options) {
       return new Promise((resolve, reject) => calls.push({ route, uid: JSON.parse(options.body).uid, resolve, reject }));
@@ -87,7 +89,7 @@ test('a temporary reward credit refresh failure preserves cached credits', async
   let rejectRequest;
   const context = vm.createContext({
     state: { accounts: [account], open: true, creditRunId: 0, creditRefreshGeneration: {}, creditRemaining: 0 },
-    alive: true, setTimeout: () => 1, clearTimeout() {},
+    alive: true, isIdentityExpired: () => false, setTimeout: () => 1, clearTimeout() {},
     api() { return new Promise((resolve, reject) => { rejectRequest = reject; }); },
     updateCreditCell() { throw new Error('cached value should be left alone'); },
     updateAccountSummary() {},

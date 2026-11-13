@@ -667,7 +667,7 @@ test('manual and automatic switching bypass session activity while retaining ope
 test('mixed sync jobs continue after divergence and report every result', async () => {
   const results = ['conflict', 'copied', 'skipped', 'error'];
   let sizeReads = 0;
-  const ctx = { codeBuddyFiles: null, assertSessionAccountIdentity, sanitizeSessionCopyError, crypto, PROFILE: { dataRoot: 'fixture-root' }, autoCopyJobs: new Map(), autoCopyQueue: [], Date,
+  const ctx = { syncSessionPins: async () => {}, codeBuddyFiles: null, assertSessionAccountIdentity, sanitizeSessionCopyError, crypto, PROFILE: { dataRoot: 'fixture-root' }, autoCopyJobs: new Map(), autoCopyQueue: [], Date,
     yieldAutoCopyToRenderer: async () => {}, buildAutoCopyPlan: async () => results.map((_, i) => ({ id: String(i) })),
     copySessionRecord: async row => { const status = results[Number(row.id)]; if (status === 'error') throw Error('fixture failure'); return { status, branched: status === 'copied', copiedBytes: status === 'copied' ? 123456 : 0, totalBytes: 123456, warning: status === 'copied' ? 'large session advisory' : '' }; },
     sessionSync: { readSessionSizes: async () => { sizeReads++; return new Map(); } },
@@ -699,7 +699,7 @@ test('mixed sync jobs continue after divergence and report every result', async 
 
 test('active session copy retries transient file races and preserves its target id', async () => {
   let attempts = 0;
-  const ctx = { codeBuddyFiles: null, assertSessionAccountIdentity, sanitizeSessionCopyError,
+  const ctx = { syncSessionPins: async () => {}, codeBuddyFiles: null, assertSessionAccountIdentity, sanitizeSessionCopyError,
     crypto,
     DATA_DIR: 'fixture-data',
     PROFILE: { dataRoot: 'fixture-root' },
@@ -726,7 +726,7 @@ test('active session copy retries transient file races and preserves its target 
 
 test('active session copy keeps waiting through a longer renderer flush', async () => {
   let attempts = 0;
-  const ctx = { codeBuddyFiles: null, assertSessionAccountIdentity, sanitizeSessionCopyError,
+  const ctx = { syncSessionPins: async () => {}, codeBuddyFiles: null, assertSessionAccountIdentity, sanitizeSessionCopyError,
     crypto,
     PROFILE: { dataRoot: 'fixture-root' },
     autoCopyJobs: new Map(), autoCopyQueue: [], Date,
@@ -753,7 +753,7 @@ test('active session copy keeps waiting through a longer renderer flush', async 
 
 test('unchanged requested session resolves its target without entering the copy worker', async () => {
   let copies = 0;
-  const ctx = { codeBuddyFiles: null, assertSessionAccountIdentity, sanitizeSessionCopyError,
+  const ctx = { syncSessionPins: async () => {}, codeBuddyFiles: null, assertSessionAccountIdentity, sanitizeSessionCopyError,
     crypto,
     PROFILE: { dataRoot: 'fixture-root' },
     autoCopyJobs: new Map(), autoCopyQueue: [], Date,
@@ -774,7 +774,7 @@ test('unchanged requested session resolves its target without entering the copy 
 
 for (const error of ['会话消息文件没有消息，未同步', '会话消息文件为空，未同步']) test('empty message sessions are skipped instead of shown as sync failures: ' + error, async () => {
   let cleared = 0;
-  const ctx = { codeBuddyFiles: null, assertSessionAccountIdentity, sanitizeSessionCopyError,
+  const ctx = { syncSessionPins: async () => {}, codeBuddyFiles: null, assertSessionAccountIdentity, sanitizeSessionCopyError,
     crypto,
     PROFILE: { dataRoot: 'fixture-root' },
     autoCopyJobs: new Map(), autoCopyQueue: [], Date,
@@ -799,7 +799,7 @@ for (const error of ['会话消息文件没有消息，未同步', '会话消息
 test('an empty automatic copy plan does not wait for renderer injection', async () => {
   const planningYields = [];
   let rendererWaits = 0;
-  const ctx = { codeBuddyFiles: null, assertSessionAccountIdentity, sanitizeSessionCopyError, crypto, PROFILE: { dataRoot: 'fixture-root' }, autoCopyJobs: new Map(), autoCopyQueue: [], Date,
+  const ctx = { syncSessionPins: async () => {}, codeBuddyFiles: null, assertSessionAccountIdentity, sanitizeSessionCopyError, crypto, PROFILE: { dataRoot: 'fixture-root' }, autoCopyJobs: new Map(), autoCopyQueue: [], Date,
     yieldAutoCopyToRenderer: async options => {
       planningYields.push(options);
       if (!options || options.waitForInjection !== false) rendererWaits++;
@@ -820,7 +820,7 @@ test('an empty automatic copy plan does not wait for renderer injection', async 
 test('automatic session sync uses a bounded worker pool', async () => {
   let running = 0;
   let peak = 0;
-  const ctx = { codeBuddyFiles: null, assertSessionAccountIdentity, sanitizeSessionCopyError, crypto, PROFILE: { dataRoot: 'fixture-root' }, autoCopyJobs: new Map(), autoCopyQueue: [], Date,
+  const ctx = { syncSessionPins: async () => {}, codeBuddyFiles: null, assertSessionAccountIdentity, sanitizeSessionCopyError, crypto, PROFILE: { dataRoot: 'fixture-root' }, autoCopyJobs: new Map(), autoCopyQueue: [], Date,
     yieldAutoCopyToRenderer: async () => {}, buildAutoCopyPlan: async () => Array.from({ length: 8 }, (_, id) => ({ id: String(id) })),
     copySessionRecord: async row => {
       running++;
@@ -842,7 +842,7 @@ test('automatic session sync uses a bounded worker pool', async () => {
 });
 
 test('automatic session sync aggregates copied bytes independently across workers', async () => {
-  const ctx = { codeBuddyFiles: null, assertSessionAccountIdentity, sanitizeSessionCopyError, crypto, PROFILE: { dataRoot: 'fixture-root' }, autoCopyJobs: new Map(), autoCopyQueue: [], Date,
+  const ctx = { syncSessionPins: async () => {}, codeBuddyFiles: null, assertSessionAccountIdentity, sanitizeSessionCopyError, crypto, PROFILE: { dataRoot: 'fixture-root' }, autoCopyJobs: new Map(), autoCopyQueue: [], Date,
     yieldAutoCopyToRenderer: async () => {}, buildAutoCopyPlan: async () => Array.from({ length: 8 }, (_, id) => ({ id: String(id) })),
     copySessionRecord: async () => {
       await new Promise(resolve => setTimeout(resolve, 2));
