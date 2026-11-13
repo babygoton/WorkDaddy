@@ -1665,6 +1665,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '会话文件校验失败': 'Session file verification failed',
     '收起': 'Collapse',
     '输入框仍有内容，未确认发送；不会自动重发': 'The composer still contains text, so sending was not confirmed. It will not be retried automatically',
+    '今日已派猫': 'Buddy sent today', '今日未派猫': 'Buddy not sent today',
     '派猫猫旅行': 'Send Buddy traveling',
     '自动选择已拥有的 Buddy，派出旅行并领取旅行礼物。未领养 Buddy 的账号需先在官网同意协议并解锁，此任务会跳过。需要 WorkDaddy 1.2.66 或更新版本。': 'Select an owned Buddy, send it traveling, and claim travel gifts. Accounts without an adopted Buddy are skipped until the agreement is accepted and Buddy is unlocked on the official site. Requires WorkDaddy 1.2.66 or later.',
     '账号 {account}：开始检查猫猫旅行': 'Account {account}: Checking Buddy travel', '当前 Buddy 查询失败': 'Could not load current Buddy', 'Buddy 列表查询失败': 'Could not load Buddy list',
@@ -16216,6 +16217,27 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       return tag ? '<span class="wbs-checkin-slot">' + tag + '</span>' : '';
     }
 
+    // 「今日是否已派猫」只取官方 /travel/status 的当日配额与行程状态。
+    // 领取可能跨天，「今天领过奖」与「今天派过猫」不是同一个问题，这里不做领取日推断。
+    // 数据来自 fetchDailyProgressForAccounts() 已有的批量快照，本函数不发起任何请求。
+    function isTodayBeijing(ts) {
+      var value = Number(ts);
+      if (!isFinite(value) || value <= 0) return false;
+      var offset = 8 * 3600000;
+      return new Date(value + offset).toISOString().slice(0, 10) === new Date(Date.now() + offset).toISOString().slice(0, 10);
+    }
+
+    function travelBadgeHtml(a) {
+      if (WBS_PROFILE_IS_AI || CAPS.growthDaily === false) return '';
+      var progress = a && a.dailyProgress;
+      if (!progress || progress.status !== 'ready' || !isTodayBeijing(progress.fetchedAt)) return '';
+      var cat = progress.cat || {};
+      if (cat.available === false || cat.state === 'locked' || cat.state === 'unknown') return '';
+      var sent = cat.dailyLimitReached === true || cat.state === 'traveling' || cat.state === 'arrived';
+      var label = wbsTranslateString(sent ? '今日已派猫' : '今日未派猫', WBS_LANGUAGE);
+      return '<span class="wbs-travel-slot"><span class="wbs-ck wbs-checkin-tag ' + (sent ? 'ok' : 'pending') + '" title="' + escAttr(label) + '">' + esc(label) + '</span></span>';
+    }
+
     function modelLimitKind(record) {
       return Number(record && record.reasonCode) === 6000
         ? wbsTranslateString('用量限制', WBS_LANGUAGE)
@@ -16585,16 +16607,27 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         var uid = cards[i].getAttribute('data-uid');
         var account = state.accounts.filter(function (item) { return String(item.uid) === String(uid); })[0];
         if (!account) continue;
+        var nameGroup = cards[i].querySelector('.wbs-name-group');
         var existing = cards[i].querySelector('.wbs-daily-rings');
         if (existing) {
           existing.setAttribute('aria-label', dailyProgressLabel(account.dailyProgress));
           existing.innerHTML = dailyRingsSvg(account) + activityStreakHtml(account);
         }
-        else {
-          var nameGroup = cards[i].querySelector('.wbs-name-group');
-          var checkinSlot = nameGroup && nameGroup.querySelector('.wbs-checkin-slot');
+        else if (nameGroup) {
+          var checkinSlot = nameGroup.querySelector('.wbs-checkin-slot');
           if (checkinSlot) checkinSlot.insertAdjacentHTML('beforebegin', dailyRingsHtml(account));
-          else if (nameGroup) nameGroup.insertAdjacentHTML('beforeend', dailyRingsHtml(account));
+          else nameGroup.insertAdjacentHTML('beforeend', dailyRingsHtml(account));
+        }
+        // 派猫徽章依赖异步到达的 dailyProgress，随成长数据一起局部刷新。
+        var travelSlot = nameGroup && nameGroup.querySelector('.wbs-travel-slot');
+        var travelBadge = typeof travelBadgeHtml === 'function' ? travelBadgeHtml(account) : '';
+        if (travelSlot) {
+          if (travelBadge) travelSlot.outerHTML = travelBadge;
+          else travelSlot.remove();
+        } else if (travelBadge && nameGroup) {
+          var checkinSlotAfter = nameGroup.querySelector('.wbs-checkin-slot');
+          if (checkinSlotAfter) checkinSlotAfter.insertAdjacentHTML('afterend', travelBadge);
+          else nameGroup.insertAdjacentHTML('beforeend', travelBadge);
         }
       }
     }
@@ -17183,6 +17216,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         var editionBadge = a.type === 'personal' ? '个人版' : (a.enterpriseName ? a.enterpriseName : (a.type ? '企业' : ''));
         var badge = editionBadge ? '<span class="wbs-badge">' + esc(editionBadge) + '</span>' : '';
         var checkinBadge = checkinBadgeHtml(a);
+        var travelBadge = typeof travelBadgeHtml === 'function' ? travelBadgeHtml(a) : '';
         var modelRateLimitBadge = typeof modelRateLimitBadgeHtml === 'function' ? modelRateLimitBadgeHtml(a) : '';
         var invalidAuthBadge = a.authValid === false ? '<span class="wbs-badge wbs-auth-invalid">认证数据无效</span>' : '';
         // 过期账号仍可手动切换检查登录状态；仅损坏的认证备份禁止切换。
@@ -17202,7 +17236,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         var idVal = accountDisplayId(a, state.mask);
         card.innerHTML =
           '<div class="wbs-info">' +
-          '<div class="wbs-row1"><div class="wbs-name-group"><button type="button" class="wbs-account-name" data-uid="' + escAttr(a.uid) + '" aria-label="查看或编辑账号备注" aria-haspopup="dialog" aria-controls="wbs-account-note-popover" aria-expanded="false"><span class="wbs-name">' + esc(nameVal) + '</span><span class="wbs-account-name-edit" aria-hidden="true">' + MODEL_EDIT_SVG + '</span></button>' + badge + dailyRingsHtml(a) + checkinBadge + modelRateLimitBadge + invalidAuthBadge + '</div>' + ops + '</div>' +
+          '<div class="wbs-row1"><div class="wbs-name-group"><button type="button" class="wbs-account-name" data-uid="' + escAttr(a.uid) + '" aria-label="查看或编辑账号备注" aria-haspopup="dialog" aria-controls="wbs-account-note-popover" aria-expanded="false"><span class="wbs-name">' + esc(nameVal) + '</span><span class="wbs-account-name-edit" aria-hidden="true">' + MODEL_EDIT_SVG + '</span></button>' + badge + dailyRingsHtml(a) + checkinBadge + travelBadge + modelRateLimitBadge + invalidAuthBadge + '</div>' + ops + '</div>' +
           '<div class="wbs-meta wbs-secondary-row">' +
           '<div class="wbs-mi wbs-phone-cell' + (isUinMode ? ' wbs-uin-cell' : '') + '"><span class="wbs-lbl">' + idLbl + '</span><span class="wbs-val">' + esc(idVal) + '</span></div>' +
           '<div class="wbs-mi wbs-token-cell"><span class="wbs-lbl">有效期至</span><span class="wbs-val' + (ts.warn ? ' wbs-warn' : '') + '">' + esc(ts.label) + '</span></div>' +
@@ -18313,7 +18347,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '.wbs-ava{width:34px;height:34px;border-radius:50%;background:var(--wb-bg-tertiary,#f0f0f0);color:var(--wb-icon-secondary,#555);display:flex;align-items:center;justify-content:center;font-weight:600;flex-shrink:0;font-size:14px}',
     '.wbs-info{min-width:0}',
     '.wbs-row1{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:7px;min-height:26px}',
-    '.wbs-name-group{display:flex;align-items:center;flex-wrap:wrap;gap:6px;min-width:0}.wbs-checkin-slot{display:inline-flex;align-items:center;flex-wrap:wrap;gap:5px}',
+    '.wbs-name-group{display:flex;align-items:center;flex-wrap:wrap;gap:6px;min-width:0}.wbs-checkin-slot,.wbs-travel-slot{display:inline-flex;align-items:center;flex-wrap:wrap;gap:5px}',
     '.wbs-name{font-size:14px;font-weight:600;color:var(--wb-color-text-primary,#1f1f1f)}',
     '.wbs-account-name{position:relative;display:inline-flex;align-items:center;min-width:0;max-width:100%;margin:0;padding:0;border:0;background:transparent;font:inherit;text-align:left;cursor:pointer;isolation:isolate}.wbs-account-name .wbs-name{position:relative;z-index:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.wbs-account-name:before{content:"";position:absolute;inset:-4px -5px;border:1px solid var(--wb-border-subtle,#e5e7eb);border-radius:7px;background:var(--wb-bg-popover,#fff);box-shadow:0 2px 7px rgba(0,0,0,.08);opacity:0;transition:opacity 200ms ease;pointer-events:none}.wbs-account-name-edit{position:absolute;right:0;top:50%;z-index:2;display:flex;align-items:center;justify-content:center;width:20px;max-width:100%;height:20px;border-radius:3px;background:var(--wb-bg-popover,#fff);color:var(--wb-icon-secondary,#666);opacity:0;transform:translateY(-50%);transition:opacity 200ms ease;pointer-events:none}.wbs-account-name-edit svg{width:13px;height:13px}.wbs-account-name:hover,.wbs-account-name:focus-visible,.wbs-account-name[aria-expanded="true"]{z-index:2}.wbs-account-name:hover:before,.wbs-account-name:focus-visible:before,.wbs-account-name[aria-expanded="true"]:before{opacity:1}.wbs-account-name:hover .wbs-account-name-edit,.wbs-account-name:focus-visible .wbs-account-name-edit,.wbs-account-name[aria-expanded="true"] .wbs-account-name-edit{opacity:1;pointer-events:auto}.wbs-account-name-edit:hover{color:var(--wb-color-text-primary,#1f1f1f)}.wbs-root.wbs-acct-note-hover-off .wbs-account-name:hover:not(:focus-visible):not([aria-expanded="true"]) .wbs-account-name-edit{opacity:0;pointer-events:none}.wbs-root.wbs-acct-note-hover-off .wbs-account-name:hover:not(:focus-visible):not([aria-expanded="true"]):before{opacity:0}.wbs-account-name:focus-visible{outline:2px solid var(--wb-accent-primary,var(--wb-color-text-primary,#1f1f1f));outline-offset:4px;border-radius:4px}',
     '.wbs-account-note-popover{position:fixed;z-index:2147483647;box-sizing:border-box;width:280px;max-width:calc(100vw - 16px);max-height:calc(100vh - 16px);overflow:auto;padding:10px;border:1px solid var(--wb-border-subtle,#e5e7eb);border-radius:12px;background:color-mix(in srgb,var(--wb-bg-popover,#fff) 94%,transparent);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);box-shadow:0 10px 30px rgba(0,0,0,.16);color:var(--wb-color-text-primary,#1f1f1f);font:12px/1.5 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;overscroll-behavior:contain}.wbs-account-note-popover[hidden]{display:none}.wbs-account-note-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:7px;font-weight:600}.wbs-account-note-head .wbs-icon-btn{width:22px;height:22px}.wbs-account-note-popover textarea{display:block;box-sizing:border-box;width:100%;min-height:86px;max-height:180px;resize:vertical;padding:8px;border:1px solid var(--wb-border-default,#ddd);border-radius:8px;background:var(--wb-bg-secondary,#f7f8fa);color:inherit;font:inherit;line-height:1.6;overflow-wrap:anywhere;user-select:text}.wbs-account-note-popover textarea::placeholder{color:var(--wb-color-text-secondary,#777)}.wbs-account-note-popover textarea:focus-visible,.wbs-account-note-popover button:focus-visible{outline:2px solid var(--wb-accent-primary,var(--wb-color-text-primary,#1f1f1f));outline-offset:2px}.wbs-account-note-footer{display:flex;align-items:center;gap:6px;margin-top:9px}.wbs-account-note-footer [role="status"]{flex:1;min-width:0;overflow-wrap:anywhere;font-size:11px;color:var(--wb-color-text-secondary,#666)}.wbs-account-note-footer .wbs-modal-btn{flex:none;padding:4px 9px;font-size:11px}.wbs-account-note-footer .primary{background:var(--wb-button-primary-bg,#1f1f1f);border-color:var(--wb-button-primary-bg,#1f1f1f);color:var(--wb-button-primary-fg,#fff)}.wbs-account-note-footer .primary:hover:not(:disabled){background:var(--wb-button-primary-bg-hover,var(--wb-button-primary-bg,#333))}.wbs-account-note-footer button:disabled{opacity:.45;cursor:default}',
