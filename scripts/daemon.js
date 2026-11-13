@@ -546,8 +546,8 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 // 1.2.70：视频壁纸层夹在 body 底色与 #root 之间，毛玻璃主题下正常显示画面。
 // #507: explicit cleanup of old Windows client temp files, only before a verified cold launch.
 // 1.2.81：在共享目标分支加入视频壁纸及失败重试、主题路径边界修复。
-const DAEMON_VERSION = '1.2.81';
-const DAEMON_BUILD_ID = 'release-1.2.81-video-wallpaper';
+const DAEMON_VERSION = '1.2.82';
+const DAEMON_BUILD_ID = 'release-1.2.82-expired-credit-filter';
 const usageReporter = createUsageReporter({ profile: PROFILE.id, version: DAEMON_VERSION });
 configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const automationDiscovery = createAutomationDiscovery({
@@ -1318,6 +1318,12 @@ function normTs(v) {
   if (!isFinite(ts) || ts <= 0) return null;
   if (ts < 1e10) ts *= 1000; // 秒 → 毫秒
   return Math.round(ts);
+}
+
+function isAccountIdentityExpired(account, now = Date.now()) {
+  const raw = account && account.tokenExpiresAt;
+  const expiresAt = typeof raw === 'string' && Number.isNaN(Number(raw)) ? Date.parse(raw) : normTs(raw);
+  return expiresAt !== null && expiresAt <= now;
 }
 
 // 带超时的 JSON 请求（返回解析后的 JSON；解析失败回退 {code,message}）
@@ -11443,7 +11449,8 @@ function handleApi(req, res) {
           const checked = c && c.ok && (c.verified === true || classifyCheckinResult({ httpOk: true, code: c.code, message: c.message }).ok)
             ? c
             : null;
-          return Object.assign({}, a, { creditSegments: [] }, accountCreditCache.get(a.uid), {
+          const cachedCredit = isAccountIdentityExpired(a) ? null : accountCreditCache.get(a.uid);
+          return Object.assign({}, a, { creditSegments: [] }, cachedCredit || {}, {
             checkin: checkinDisplayValue(checked, today),
             activityStreak: growthStreakCache.peek(a.uid),
           });
@@ -11479,6 +11486,8 @@ function handleApi(req, res) {
         const file = accountBackupFile(uid);
         if (!fs.existsSync(file)) return json(res, 404, { ok: false, error: '账号备份不存在' });
         const j = wdCompatDecryptAuthJson(JSON.parse(fs.readFileSync(file, 'utf8'))); // [wd-compat]
+        const accountMeta = listAccounts(DATA_DIR).find(account => account.uid === uid);
+        if (isAccountIdentityExpired(accountMeta)) return json(res, 401, { ok: false, expired: true, error: '登录身份过期' });
         const tk = wdCompatAuthToken(j.auth);
         if (!tk) return json(res, 400, { ok: false, error: '备份中无 accessToken' });
         const current = currentAccount();
@@ -11598,12 +11607,14 @@ function handleApi(req, res) {
         try {
       const range = historyRange(url.searchParams.get('days') || 7);
       const accounts = listAccounts(DATA_DIR);
+      const activeAccounts = accounts.filter(account => !isAccountIdentityExpired(account));
       const uid = url.searchParams.get('account') || '';
-      const selected = uid ? accounts.filter(a => a.uid === uid) : accounts;
+      const selected = uid ? activeAccounts.filter(a => a.uid === uid) : activeAccounts;
       if (uid && !selected.length) return json(res, 400, { ok: false, error: '账号选择无效' });
+      if (!selected.length) return json(res, 400, { ok: false, error: '没有可查询积分的有效账号' });
       creditHistorySync.start({ accounts: selected, days: range.days });
       return creditHistorySync.wait().then(result => json(res, 200, { ok: true, ...result,
-        accounts: accounts.map(a => ({ uid: a.uid, nickname: a.nickname || '' })) }));
+        accounts: activeAccounts.map(a => ({ uid: a.uid, nickname: a.nickname || '' })) }));
     } catch (error) { return json(res, error.status || 400, { ok: false, error: error.message }); }
   }
   if (req.method === 'GET' && p === '/api/credit-stats/sync') {
@@ -11618,10 +11629,11 @@ function handleApi(req, res) {
         typeof uid !== 'string' || !accounts.some(account => account.uid === uid)))) {
         return json(res, 400, { ok: false, error: '账号选择无效' });
       }
-      const selected = requested === undefined ? accounts : accounts.filter(account => requested.includes(account.uid));
+      const activeAccounts = accounts.filter(account => !isAccountIdentityExpired(account));
+      const selected = requested === undefined ? activeAccounts : activeAccounts.filter(account => requested.includes(account.uid));
       if (!selected.length) return json(res, 400, { ok: false, error: '请先选择账号' });
       return json(res, 202, { ok: true, job: creditHistorySync.start({ accounts: selected, days: range.days }),
-        accounts: accounts.map(a => ({ uid: a.uid, nickname: a.nickname || '' })) });
+        accounts: activeAccounts.map(a => ({ uid: a.uid, nickname: a.nickname || '' })) });
     }).catch(error => json(res, error.status || 400, { ok: false,
       error: error.status === 409 ? '另一个积分查询正在进行，请稍后重试' : '查询参数无效，请选择近 7、30 或 90 天' }));
   }

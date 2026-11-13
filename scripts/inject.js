@@ -16456,14 +16456,36 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
 
     function mergeAccountSnapshot(previous, incoming) {
       var byUid = new Map();
-      (incoming || []).forEach(function (account) { byUid.set(account.uid, Object.assign({}, account)); });
+      (incoming || []).forEach(function (account) {
+        account = Object.assign({}, account);
+        if (isIdentityExpired(account) || account.creditExpired === true) {
+          account.credits = null;
+          account.creditSegments = [];
+          account.creditUnlimited = false;
+          account.creditExpired = true;
+        }
+        byUid.set(account.uid, account);
+      });
       var merged = [];
       previous.forEach(function (cached) {
         var account = byUid.get(cached.uid);
         if (!account) return; // 删除的账号不能被缓存复活。
-        ['credits', 'creditSegments', 'creditUnlimited', 'creditExpired', 'dailyProgress', 'growthTodayActive'].forEach(function (key) {
+        var identityExpired = isIdentityExpired(account);
+        var creditExpired = account.creditExpired === true;
+        ['credits', 'creditSegments', 'creditUnlimited', 'dailyProgress', 'growthTodayActive'].forEach(function (key) {
           if (account[key] === undefined && cached[key] !== undefined) account[key] = cached[key];
         });
+        // An expired identity must never inherit a previous balance. The
+        // creditExpired marker is only carried by an explicit fresh response;
+        // otherwise a later metadata refresh may retry a recovered account.
+        if (identityExpired || creditExpired) {
+          account.credits = null;
+          account.creditSegments = [];
+          account.creditUnlimited = false;
+          account.creditExpired = true;
+        } else if (account.creditExpired === undefined) {
+          account.creditExpired = false;
+        }
         if (!isKnownActivityStreak(account.activityStreak) && isKnownActivityStreak(cached.activityStreak)) {
           account.activityStreak = cached.activityStreak;
         }
@@ -17869,7 +17891,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     function updateCreditSummaryFromAccounts() {
       var sum = 0;
       state.accounts.forEach(function (account) {
-        if (typeof account.credits === 'number' && isFinite(account.credits)) sum += account.credits;
+        if (!isIdentityExpired(account) && !account.creditExpired && typeof account.credits === 'number' && isFinite(account.credits)) sum += account.credits;
       });
       state.creditSummaryValue = sum;
       updateAccountSummary();
@@ -17877,9 +17899,19 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
 
     function refreshCreditForAccount(uid) {
       uid = String(uid || '').trim();
-      if (!uid || !alive || !state.accounts.some(function (account) { return account.uid === uid; })) return Promise.resolve();
+      var account = state.accounts.find(function (item) { return item.uid === uid; });
+      if (!uid || !alive || !account) return Promise.resolve();
       var generation = (state.creditRefreshGeneration[uid] || 0) + 1;
       state.creditRefreshGeneration[uid] = generation;
+      if (isIdentityExpired(account) || account.creditExpired) {
+        account.credits = null;
+        account.creditSegments = [];
+        account.creditUnlimited = false;
+        account.creditExpired = true;
+        updateCreditCell(uid, null, []);
+        updateCreditSummaryFromAccounts();
+        return Promise.resolve();
+      }
       return requestCredit(uid).then(function (result) {
         if (!alive || generation !== state.creditRefreshGeneration[uid]) return;
         var account = state.accounts.find(function (item) { return item.uid === uid; });
@@ -17925,6 +17957,21 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       function queryAccount(a) {
         if (runId !== state.creditRunId || !state.open) return;
         var generation = state.creditRefreshGeneration[a.uid] || 0;
+        if (isIdentityExpired(a) || a.creditExpired) {
+          for (var i = 0; i < state.accounts.length; i++) {
+            if (state.accounts[i].uid === a.uid) {
+              state.accounts[i].credits = null;
+              state.accounts[i].creditSegments = [];
+              state.accounts[i].creditUnlimited = false;
+              state.accounts[i].creditExpired = true;
+              break;
+            }
+          }
+          updateCreditCell(a.uid, null, []);
+          state.creditRemaining = Math.max(0, state.creditRemaining - 1);
+          settleBatch();
+          return;
+        }
         // 无论成功、HTTP 错误、身份过期还是超时，都必须进入 finally。
         Promise.resolve().then(function () { return requestCredit(a.uid); })
           .then(function (r) {

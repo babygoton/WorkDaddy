@@ -128,6 +128,14 @@ test('both credit statistics entry points are remote queries, not local database
   assert.match(routes,/creditHistorySync\.wait/);
 });
 
+test('credit statistics routes exclude accounts whose identity token has expired', () => {
+  const source = fs.readFileSync(require('node:path').join(__dirname, '../scripts/daemon.js'), 'utf8');
+  const routes = source.slice(source.indexOf("if (req.method === 'GET' && p === '/api/credit-stats')"), source.indexOf('// Read-only per-account continuous activity'));
+  assert.match(routes, /isAccountIdentityExpired/);
+  assert.match(routes, /accounts\.filter\(account => !isAccountIdentityExpired\(account\)\)/);
+  assert.match(routes, /requested === undefined \? activeAccounts : activeAccounts\.filter/);
+});
+
 test('durable daily cache fills only gaps, including zero-use days, and survives restart', async t => {
   const fs=require('node:fs'),os=require('node:os'),path=require('node:path');
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'wbs-credit-cache-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));

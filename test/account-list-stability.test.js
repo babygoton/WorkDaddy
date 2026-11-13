@@ -137,6 +137,22 @@ test('temporary credit failures retain the cached value but expired identity cle
   assert.equal(h.ctx.state.accounts.find(a => a.uid === 'expired').creditExpired, true);
 });
 
+test('expired identities are cleared from cached totals and skipped by credit refresh', async () => {
+  const h = harness();
+  h.ctx.render({ accounts: [
+    { ...account('expired', 100), identityExpired: true },
+    account('live', 200),
+  ] });
+  assert.equal(h.ctx.state.accounts.find(a => a.uid === 'expired').credits, null);
+  h.ctx.fetchCreditsForAccounts(); await tick();
+  assert.deepEqual(h.requests.map(request => JSON.parse(request.options.body).uid), ['live']);
+  h.requests[0].resolve({ credits: 7, segments: [{ remaining: 7, expiresAt: 200 }] }); await tick();
+  assert.equal(h.ctx.state.creditSummaryValue, 7);
+  assert.equal(h.ctx.state.accounts.find(a => a.uid === 'expired').credits, null);
+  await h.ctx.refreshCreditForAccount('expired');
+  assert.deepEqual(h.requests.map(request => JSON.parse(request.options.body).uid), ['live']);
+});
+
 test('account refresh errors retain the cached list', async () => {
   const h = harness(); h.ctx.render({ accounts: [account('a', 100)] });
   const before = h.cards()[0];
@@ -175,9 +191,9 @@ test('fresh current-account and identity changes update card controls', () => {
   const h = harness(); h.ctx.render({ accounts: [account('a', 100), account('b', 200)] });
   const before = h.cards();
   h.ctx.render({ current: { uid: 'b' }, accounts: [{ ...account('a', 100), identityExpired: true }, account('b', 200)] });
-  assert.deepEqual(h.order(), ['a', 'b']);
+  assert.deepEqual(h.order(), ['b', 'a']);
   assert.notEqual(h.cards()[0], before[0]);
-  assert.equal(h.cards()[1].className, 'wbs-card cur');
+  assert.equal(h.cards().find(card => card.getAttribute('data-uid') === 'b').className, 'wbs-card cur');
 });
 
 test('expired identities retain a manual switch while malformed backups remain blocked', () => {
@@ -186,9 +202,11 @@ test('expired identities retain a manual switch while malformed backups remain b
     { ...account('expired', 100), identityExpired: true },
     { ...account('invalid', 200), authValid: false },
   ] });
-  assert.match(h.cards()[0].innerHTML, /wbs-acc-switch/);
-  assert.match(h.cards()[0].innerHTML, /可能需要重新登录/);
-  assert.doesNotMatch(h.cards()[1].innerHTML, /wbs-acc-switch/);
+  const expiredCard = h.cards().find(card => card.getAttribute('data-uid') === 'expired');
+  const invalidCard = h.cards().find(card => card.getAttribute('data-uid') === 'invalid');
+  assert.match(expiredCard.innerHTML, /wbs-acc-switch/);
+  assert.match(expiredCard.innerHTML, /可能需要重新登录/);
+  assert.doesNotMatch(invalidCard.innerHTML, /wbs-acc-switch/);
 });
 
 test('a background credit expiry response does not hide the manual switch', () => {
