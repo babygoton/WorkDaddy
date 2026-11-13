@@ -5772,7 +5772,10 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       if (!fab) return;
       ensureFabAnchorObserver();
       var area = WBS_COMPAT.findConversationArea(document);
-      var areaHidden = area ? !area.rect : !CAPS.nativeComposer;
+      // 只有「会话区已挂载、却被整块遮住」（全屏文件/产物预览）才隐藏机器人。
+      // 1.2.21 把「没有会话区」也算成遮挡，于是首页（.wb-home-page）、设置、登录页
+      // 一律不显示机器人，必须切进任务才出现；更新前是常显的（issue #524）。
+      var areaHidden = !isWelcomePage() && !!(area && !area.rect);
       var changed = fab.classList.contains('is-area-hidden') !== areaHidden;
       fab.classList.toggle('is-area-hidden', areaHidden);
       if (messageNavigation) messageNavigation.updateLayout();
