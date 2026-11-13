@@ -25,7 +25,7 @@ function harness(accounts) {
   const document = { body, head, createElement: tag => new Element(tag), getElementById: id => body.querySelector('#' + id), addEventListener() {}, removeEventListener() {} };
   const window = {};
   const context = { document, window, CAPS: {}, PROFILE_ID: 'codebuddy-cn', WBS_BRAND: 'WorkDaddy', WBS_LANGUAGE: 'zh',
-    wbsTranslateString: s => s, api: (path, opts) => {
+    wbsTranslateString: s => s, isIdentityExpired: account => !!account.expired, api: (path, opts) => {
       calls.push(path);
       if (path === '/api/accounts') return Promise.resolve({ accounts: accounts.map(a => ({ ...a })), current: { uid: 'a' } });
       return new Promise((resolve, reject) => pending.push({ uid: JSON.parse(opts.body).uid, resolve, reject }));
@@ -45,6 +45,17 @@ test('unknown credits do not become zero; opening queries fresh balances includi
   h.pending[1].resolve({ credits: 0, segments: [], unlimited: true }); await tick();
   assert.match(h.credits()[0], /积分 0/); assert.doesNotMatch(h.credits()[0], /上次查询/);
   assert.match(h.credits()[1], /无限/);
+});
+
+test('IDE skips expired identities and does not show their cached balance', async () => {
+  const h = harness([
+    { uid: 'expired', credits: 90, creditSegments: [], expired: true },
+    { uid: 'valid', credits: 50, creditSegments: [] },
+  ]);
+  await h.open();
+  assert.equal(h.pending.length, 1);
+  assert.match(h.credits()[0], /登录身份过期/);
+  assert.doesNotMatch(h.credits()[0], /90/);
 });
 test('failed refresh retains labeled cache and manual refresh retries', async () => {
   const h = harness([{ uid: 'a', credits: 50, creditSegments: [] }]); await h.open();

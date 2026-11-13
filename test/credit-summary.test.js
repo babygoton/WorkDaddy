@@ -21,6 +21,31 @@ test('zero, expired, malformed and stale oversized segments cannot inflate the t
   assert.equal(ctx.summarizeCreditDays([], 1).rows.length, 0);
 });
 
+test('expired unlimited accounts are excluded from the summary counters', () => {
+  const result = ctx.summarizeCreditDays([
+    { credits: 0, creditUnlimited: true, expired: true },
+    { credits: 0, creditUnlimited: true },
+  ], 1);
+  assert.equal(result.unlimited, 1);
+  assert.equal(result.unavailable, 1);
+});
+
+test('credit totals exclude expired identities even when they have cached balances', () => {
+  const start = source.indexOf('    function updateCreditSummaryFromAccounts()');
+  const end = source.indexOf('    function refreshCreditForAccount(', start);
+  const context = {
+    state: { accounts: [
+      { uid: 'expired', credits: 100, identityExpired: true },
+      { uid: 'valid', credits: 20 },
+    ], creditSummaryValue: null },
+    isIdentityExpired: account => !!account.identityExpired,
+    updateAccountSummary() {},
+  };
+  vm.runInNewContext(source.slice(start, end), context);
+  context.updateCreditSummaryFromAccounts();
+  assert.equal(context.state.creditSummaryValue, 20);
+});
+
 test('summary scrollbars appear only while scrolling and reset on close or reinjection', () => {
   const listeners = new Map(), timers = new Map(); let serial = 0;
   const element = () => { const classes = new Set(); return { hidden: true, classes,
