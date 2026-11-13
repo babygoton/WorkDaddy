@@ -829,7 +829,7 @@ func inspectExactProcess(pid int, expectedPath string, label string) (bool, int,
 				if !present {
 					return false, 0, nil
 				}
-				return false, exitAccessDenied, fmt.Errorf("PID %d cannot be inspected at standard privilege", pid)
+				return false, exitAccessDenied, fmt.Errorf("PID %d cannot be inspected with the current launcher permissions: %w", pid, err)
 			}
 			return false, exitFailure, err
 		}
@@ -860,7 +860,7 @@ func terminateExactProcess(pid int, expectedPath string, label string) (bool, in
 	handle, err := openProcess(uint32(pid), processTerminate|synchronize|processQueryLimitedInformation)
 	if err != nil {
 		if errors.Is(err, syscall.ERROR_ACCESS_DENIED) {
-			return false, exitAccessDenied, fmt.Errorf("PID %d %s cannot be terminated at standard privilege", pid, label)
+			return false, exitAccessDenied, fmt.Errorf("PID %d %s cannot be terminated with the current launcher permissions: %w", pid, label, err)
 		}
 		return false, exitFailure, err
 	}
@@ -871,7 +871,7 @@ func terminateExactProcess(pid int, expectedPath string, label string) (bool, in
 	result, _, callErr := procTerminateProcess.Call(uintptr(handle), 0)
 	if result == 0 {
 		if errors.Is(callErr, syscall.ERROR_ACCESS_DENIED) {
-			return false, exitAccessDenied, fmt.Errorf("PID %d %s cannot be terminated at standard privilege", pid, label)
+			return false, exitAccessDenied, fmt.Errorf("PID %d %s cannot be terminated with the current launcher permissions: %w", pid, label, callErr)
 		}
 		return false, exitFailure, callErr
 	}

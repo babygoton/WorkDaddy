@@ -11,7 +11,7 @@ const inject = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'inject.js'
 
 test('account list sorts by credit expiry without pinning the current account', () => {
   // sortAccountsByCreditExpiry：置顶条件必须移除，只保留到期时间 + 稳定序
-  const start = inject.indexOf('function sortAccountsByCreditExpiry()');
+  const start = inject.indexOf('function sortAccountsByCreditExpiry(preserveOrder)');
   assert.ok(start >= 0, 'sortAccountsByCreditExpiry must exist');
   const body = inject.slice(start, inject.indexOf('function reorderAccountCards', start));
   assert.ok(body.indexOf('a.isCurrent ? -1 : 1') === -1,

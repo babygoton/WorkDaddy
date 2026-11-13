@@ -151,6 +151,8 @@ test('expired identities are cleared from cached totals and skipped by credit re
   assert.equal(h.ctx.state.accounts.find(a => a.uid === 'expired').credits, null);
   await h.ctx.refreshCreditForAccount('expired');
   assert.deepEqual(h.requests.map(request => JSON.parse(request.options.body).uid), ['live']);
+
+
 });
 
 test('account refresh errors retain the cached list', async () => {
@@ -194,6 +196,7 @@ test('fresh current-account and identity changes update card controls', () => {
   assert.deepEqual(h.order(), ['b', 'a']);
   assert.notEqual(h.cards()[0], before[0]);
   assert.equal(h.cards().find(card => card.getAttribute('data-uid') === 'b').className, 'wbs-card cur');
+
 });
 
 test('expired identities retain a manual switch while malformed backups remain blocked', () => {
@@ -207,6 +210,7 @@ test('expired identities retain a manual switch while malformed backups remain b
   assert.match(expiredCard.innerHTML, /wbs-acc-switch/);
   assert.match(expiredCard.innerHTML, /可能需要重新登录/);
   assert.doesNotMatch(invalidCard.innerHTML, /wbs-acc-switch/);
+
 });
 
 test('a background credit expiry response does not hide the manual switch', () => {
@@ -248,4 +252,37 @@ test('fixed sort remains stable through credit refresh and appends new accounts 
   h.ctx.render({ accountOrder: { mode: 'fixed' }, accounts: [a,b,account('c', 1),account('d', 0)] });
   h.ctx.sortAccountsByCreditExpiry();
   assert.deepEqual(h.order(), ['b','a','c','d']);
+});
+
+for (const mode of ['expiry', 'fixed']) {
+  test(mode + ' order puts all expired identities last, including the current account', () => {
+    const h = harness();
+    h.ctx.render({ accountOrder: { mode }, current: { uid: 'expired' }, accounts: [
+      { ...account('expired', 1), identityExpired: true, sort: 1 },
+      { ...account('credit-expired', 2), creditExpired: true, sort: 2 },
+      { ...account('valid-later', 20), sort: 4 },
+      { ...account('valid-soon', 10), sort: 3 },
+    ] });
+    assert.deepEqual(h.order(), ['valid-soon', 'valid-later', 'expired', 'credit-expired']);
+  });
+}
+
+test('visible metadata refresh moves expired accounts behind new valid accounts', () => {
+  const h = harness();
+  h.ctx.render({ accounts: [account('a', 100), account('b', 200)] });
+  h.ctx.render({ accounts: [{ ...account('a', 100), identityExpired: true }, account('b', 200), account('new', 1)] });
+  assert.deepEqual(h.order(), ['b', 'new', 'a']);
+});
+
+test('background expiry detection moves the existing card once the batch settles', async () => {
+  const h = harness();
+  h.ctx.render({ accounts: [account('a', 100), account('b', 200), account('c', 300)] });
+  const before = h.cards();
+  h.ctx.fetchCreditsForAccounts(); await tick();
+  h.requests[0].reject({ payload: { expired: true } }); await tick();
+  assert.deepEqual(h.order(), ['a', 'b', 'c']);
+  h.requests[1].resolve({ credits: 10, segments: [{ remaining: 10, expiresAt: 500 }] });
+  h.requests[2].resolve({ credits: 10, segments: [{ remaining: 10, expiresAt: 1 }] }); await tick();
+  assert.deepEqual(h.order(), ['b', 'c', 'a']);
+  assert.equal(h.cards()[2], before[0]);
 });

@@ -197,6 +197,13 @@ test('Windows native entry point enforces standard privilege and exposes daemon 
   assert.doesNotMatch(readmeSource, /右键以管理员身份运行 WorkDaddy/);
 });
 
+test('access-denied diagnostics do not infer that the native helper has standard privilege', () => {
+  const start = nativeSource.indexOf('func inspectExactProcess(');
+  const end = nativeSource.indexOf('\nfunc terminateExactNode(', start);
+  assert.ok(start >= 0 && end > start);
+  assert.doesNotMatch(nativeSource.slice(start, end), /at standard privilege/);
+});
+
 test('Windows installer stops the verified profile lifecycle before replacing or launching files', () => {
   const stopIndex = installerSource.indexOf('Stop-VerifiedWorkDaddyLifecycle');
   const copyIndex = installerSource.indexOf('& robocopy @copyArgs');

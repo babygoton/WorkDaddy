@@ -1687,28 +1687,32 @@ async function waitForWorkBuddyCdpNative(binary) {
     }
     const installation = readWorkBuddyInstallation(binary);
     installationChanged = installationChanged || installation.signature !== launchInstallation.signature;
-    if (nativeLaunchFailed(nativeLaunchState)) {
-      if (installationChanged && !retriedAfterUpdate) {
-        retriedAfterUpdate = true;
-        // A changed executable/archive during this attempt is evidence of an
-        // installation write, not proof of the crash cause. Bound recovery by
-        // the original startup deadline and retain exact-process checks.
-        log('启动期间安装文件发生变化，等待稳定后重试一次');
-        await waitForStableWorkBuddyInstallation(binary, deadline);
-        // The official updater may have already restarted a usable instance.
-        // Reuse its verified CDP endpoint instead of stopping it again.
-        for (const port of cdpPortCandidates()) {
-          if (await isWorkBuddyCdpAt(port)) {
-            CDP_PORT = port;
-            process.env.WBSWITCH_CDP_PORT = String(port);
-            writeCdpPortFile(port);
-            return true;
-          }
+    const launchFailed = nativeLaunchFailed(nativeLaunchState);
+    const handoffExited = Number.isInteger(nativeLaunchState && nativeLaunchState.exitCode) &&
+      Date.now() - launchStartedAt >= 5000;
+    if (installationChanged && !retriedAfterUpdate && (launchFailed || handoffExited)) {
+      retriedAfterUpdate = true;
+      // A changed executable/archive during this attempt is evidence of an
+      // installation write, even when the launching child exits successfully
+      // after a single-instance handoff. Keep the original startup deadline
+      // and exact-process checks for both exit paths.
+      log('启动期间安装文件发生变化，等待稳定后重试一次');
+      await waitForStableWorkBuddyInstallation(binary, deadline);
+      // The official updater may have already restarted a usable instance.
+      // Reuse its verified CDP endpoint instead of stopping it again.
+      for (const port of cdpPortCandidates()) {
+        if (await isWorkBuddyCdpAt(port)) {
+          CDP_PORT = port;
+          process.env.WBSWITCH_CDP_PORT = String(port);
+          writeCdpPortFile(port);
+          return true;
         }
-        if (nativeWorkBuddyRunning()) stopNativeWorkBuddy();
-        start();
-        continue;
       }
+      if (nativeWorkBuddyRunning()) stopNativeWorkBuddy();
+      start();
+      continue;
+    }
+    if (launchFailed) {
       if (!restartedAfterHandoff && !retriedAfterUpdate && nativeWorkBuddyRunning()) {
         restartedAfterHandoff = true;
         log('WorkBuddy 启动进程异常退出但同 profile 进程仍在运行，精确停止后重试一次');
@@ -1729,8 +1733,7 @@ async function waitForWorkBuddyCdpNative(binary) {
       };
       throw error;
     }
-    if (!restartedAfterHandoff && !retriedAfterUpdate && Number.isInteger(nativeLaunchState && nativeLaunchState.exitCode) &&
-        Date.now() - launchStartedAt >= 5000 && nativeWorkBuddyRunning()) {
+    if (!restartedAfterHandoff && !retriedAfterUpdate && handoffExited && nativeWorkBuddyRunning()) {
       restartedAfterHandoff = true;
       log('WorkBuddy 启动请求已被无 CDP 的单实例接管，精确停止后重试一次');
       stopNativeWorkBuddy();

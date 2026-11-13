@@ -7,7 +7,7 @@ const os = require('node:os');
 const vm = require('node:vm');
 const source = fs.readFileSync(path.join(__dirname, '../scripts/win-launcher.js'), 'utf8');
 
-function harness({ changed = false, running = false, stable = true, recovered = true } = {}) {
+function harness({ changed = false, running = false, stable = true, recovered = true, exitCode = 3221226505 } = {}) {
   let now = 0, launches = 0, stops = 0, waits = 0;
   const context = {
     DATA_DIR: '/fixture', runPendingClientTempCleanup: async () => ({}),
@@ -15,7 +15,7 @@ function harness({ changed = false, running = false, stable = true, recovered = 
     Date: { now: () => now }, process: { env: {} }, log() {}, writeCdpPortFile() {},
     sleep: async ms => { now += ms; }, cdpPortCandidates: () => [9222],
     isWorkBuddyCdpAt: async () => launches > 1 && recovered,
-    launchWorkBuddy: () => { launches++; return { exitCode: 3221226505 }; },
+    launchWorkBuddy: () => { launches++; return { exitCode }; },
     nativeWorkBuddyRunning: () => running, stopNativeWorkBuddy: () => { stops++; },
     nativeWorkBuddyProcessSummary: () => ({}), nativeWorkBuddyDiscoverySummary: () => ({}),
     readWorkBuddyInstallation: () => ({ signature: changed && launches ? 'new' : 'old', ready: true }),
@@ -29,6 +29,30 @@ test('installation changed during a failed launch: wait for stability then retry
   const h = harness({ changed: true });
   assert.equal(await h.run(), true);
   assert.deepEqual(h.counts(), { launches: 2, stops: 0, waits: 1 });
+});
+test('update handoff with a successful child exit still waits for installation stability before restarting', async () => {
+  const h = harness({ changed: true, running: true, exitCode: 0 });
+  assert.equal(await h.run(), true);
+  assert.deepEqual(h.counts(), { launches: 2, stops: 1, waits: 1 });
+});
+test('successful update handoff does not stop or respawn while installation remains unstable', async () => {
+  const h = harness({ changed: true, running: true, stable: false, exitCode: 0 });
+  await assert.rejects(h.run(), error => error.exitCode === 15);
+  assert.deepEqual(h.counts(), { launches: 1, stops: 0, waits: 1 });
+});
+test('successful update handoff preserves termination denial without another launch', async () => {
+  const h = harness({ changed: true, running: true, exitCode: 0 });
+  h.context.stopNativeWorkBuddy = () => { const e = Error('boundary'); e.exitCode = 11; throw e; };
+  await assert.rejects(h.run(), error => error.exitCode === 11);
+  assert.deepEqual(h.counts(), { launches: 1, stops: 0, waits: 1 });
+});
+test('successful update handoff reuses CDP that becomes ready during the stability wait', async () => {
+  const h = harness({ changed: true, running: true, exitCode: 0 });
+  let ready = false;
+  h.context.waitForStableWorkBuddyInstallation = async () => { ready = true; };
+  h.context.isWorkBuddyCdpAt = async () => ready;
+  assert.equal(await h.run(), true);
+  assert.deepEqual(h.counts(), { launches: 1, stops: 0, waits: 0 });
 });
 test('an unexplained crash fails without retry and keeps decimal/hex exit details', async () => {
   const h = harness();
