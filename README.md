@@ -14,6 +14,21 @@ CodeBuddy 支持范围为 **Electron 智能体窗口**，不包含 VS Code 编�
 
 ---
 
+## 💖 赞助商
+
+> 想出现在这里？**首批广告位 99 元/月**，欢迎联系 [richdaddycashmany@163.com](mailto:richdaddycashmany@163.com)。
+
+<table>
+<tr>
+<td width="180" align="center" valign="middle">
+  <a href="https://nagora.ai/"><img src="docs/images/nagora.png" alt="Nagora" width="150"></a>
+</td>
+<td valign="middle"><a href="https://nagora.ai/">Nagora</a> 是专为开发者和团队打造的多模型 AI API 网关。通过一个账户和一枚 API Key，即可统一调用 26+ 款主流文本与图像模型，兼容 OpenAI、Anthropic 与 Gemini 协议，并可无缝接入 Claude Code、Codex、Gemini CLI 等开发工具。平台提供智能路由、自动故障转移、透明计费与统一账单，同时支持预算、限速、并发控制，让个人开发、团队协作和生产环境中的 AI 调用更稳定、更可控。无需改造现有应用，只需替换 Base URL 与 API Key，最快 1 分钟即可完成接入。</td>
+</tr>
+</table>
+
+---
+
 #### 它能做什么
 
 - **方便切换账号**：每个客户端的账号独立备份，点一下就切，再也不用每次扫码。

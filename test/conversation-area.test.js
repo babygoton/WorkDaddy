@@ -59,17 +59,23 @@ test('message navigation selects its own shell when several conversations are mo
   h.doc.querySelectorAll=selector=>selector==='.conversation-shell'?[other,h.shell]:[];
   assert.equal(compat.findConversationArea(h.doc,viewport).element,h.shell);
 });
-test('robot hides with absent chat without overriding panel-open state, then restores', () => {
+test('robot stays on pages without a chat shell and hides only a covered chat', () => {
   const classes=new Set(), fab={classList:{contains:x=>classes.has(x),toggle:(x,on)=>on?classes.add(x):classes.delete(x)}};
-  let area=null, positions=0;
-  const ctx={CAPS:{},root:{querySelector:()=>fab},document:{querySelector:()=>({})},WBS_COMPAT:{findConversationArea:()=>area},
-    ensureFabAnchorObserver(){},fabDrag:null,fabQuietMode:{wake(){}},messageNavigation:{updateLayout(){}},
+  let area=null, positions=0, home=true;
+  const ctx={CAPS:{},root:{querySelector:()=>fab},document:{querySelector:()=>null},WBS_COMPAT:{findConversationArea:()=>area},
+    isWelcomePage:()=>home,ensureFabAnchorObserver(){},fabDrag:null,fabQuietMode:{wake(){}},messageNavigation:{updateLayout(){}},
     readFabBottom:()=>null,fabAnchorOffsets:()=>({right:22,bottom:22}),applyFabPosition:()=>positions++};
   const start=source.indexOf('    function positionFab()');
   vm.runInNewContext(source.slice(start,source.indexOf('    setBuildTimeout(scheduleFabPos',start)),ctx);
-  ctx.positionFab(); assert.equal(classes.has('is-area-hidden'),true); assert.equal(positions,0);
+  ctx.positionFab(); assert.equal(classes.has('is-area-hidden'),false,'首页没有会话区时必须显示机器人');
+  assert.equal(positions,1);
+  area={element:{},rect:null}; ctx.positionFab();
+  assert.equal(classes.has('is-area-hidden'),false,'首页残留的隐藏会话壳不得藏起机器人');
+  home=false; positions=0; ctx.positionFab();
+  assert.equal(classes.has('is-area-hidden'),true,'全屏预览遮住会话区时隐藏');
+  assert.equal(positions,0);
   area={element:{},rect:element(0,0,1000,800).rect}; classes.add('hidden');
   ctx.positionFab(); assert.equal(classes.has('is-area-hidden'),false);assert.equal(classes.has('hidden'),true);assert.equal(positions,0);
   classes.delete('hidden');ctx.positionFab();assert.equal(positions,1);
-  area=null;ctx.CAPS.nativeComposer=true;ctx.positionFab();assert.equal(classes.has('is-area-hidden'),false,'native IDE clients retain their existing fallback');
+  area=null;ctx.positionFab();assert.equal(classes.has('is-area-hidden'),false,'无会话壳的页面沿用旧版常显');
 });

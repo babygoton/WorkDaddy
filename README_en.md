@@ -14,6 +14,21 @@ CodeBuddy support targets its **Electron agent window**, not the VS Code editor 
 
 ---
 
+## 💖 Sponsors
+
+> Want to be featured here? **Early sponsor slots are CNY 99/month.** Contact [richdaddycashmany@163.com](mailto:richdaddycashmany@163.com).
+
+<table>
+<tr>
+<td width="180" align="center" valign="middle">
+  <a href="https://nagora.ai/"><img src="docs/images/nagora.png" alt="Nagora" width="150"></a>
+</td>
+<td valign="middle"><a href="https://nagora.ai/">Nagora</a> is a multi-model AI API gateway built for developers and teams. With a single account and API key, you can access more than 26 leading text and image models through one unified interface. It is compatible with OpenAI, Anthropic, and Gemini protocols and integrates seamlessly with development tools such as Claude Code, Codex, and Gemini CLI. The platform provides intelligent routing, automatic failover, transparent pricing, and consolidated billing, along with budget management, rate limiting, and concurrency controls. This makes AI usage more reliable and manageable across individual development, team collaboration, and production environments. No changes to your existing application are required. Simply replace the Base URL and API key to complete the integration in as little as one minute.</td>
+</tr>
+</table>
+
+---
+
 ## Clients and feature scope
 
 | Official client | Package brand | Profile |
