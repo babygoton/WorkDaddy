@@ -32,6 +32,7 @@ const { sanitizeSessionCopyError } = require('./session-copy-error');
 const net = require('net');
 const { inspectPersona, copyPersona, readPersonaSettings, listPersonaSources, configurePersona, dismissPersonaNotice, syncSharedPersonaForSwitch } = require('./persona.js');
 let sessionSync = require('./session-sync.js');
+const { createSessionPinSync, readPinsInRenderer, applyPinsInRenderer } = require('./session-pin-sync');
 const {createCodeBuddyFiles} = require('./codebuddy-files.js');
 const { createAccountCreditCache } = require('./account-credit-cache.js');
 const { spawn, spawnSync, execFile } = require('child_process');
@@ -546,8 +547,8 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 // 1.2.70：视频壁纸层夹在 body 底色与 #root 之间，毛玻璃主题下正常显示画面。
 // #507: explicit cleanup of old Windows client temp files, only before a verified cold launch.
 // 1.2.81：在共享目标分支加入视频壁纸及失败重试、主题路径边界修复。
-const DAEMON_VERSION = '1.2.82';
-const DAEMON_BUILD_ID = 'release-1.2.82-expired-credit-filter';
+const DAEMON_VERSION = '1.2.84';
+const DAEMON_BUILD_ID = 'release-1.2.84-session-pin-capture';
 const usageReporter = createUsageReporter({ profile: PROFILE.id, version: DAEMON_VERSION });
 configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const automationDiscovery = createAutomationDiscovery({
@@ -1954,6 +1955,7 @@ function syncCodeBuddyAuth() {
   return work;
 }
 async function switchAccountForProfile(uid) {
+  await captureSessionPins();
   if (!codeBuddyNative) {
     const sharing = PROFILE.kind === 'workbuddy' ? syncSharedPersonaForSwitch({ dataRoot: PROFILE.dataRoot,
       backupRoot: DATA_DIR, accounts: listAccounts(DATA_DIR), sourceUid: String((currentAccount() || {}).uid || ''), targetUid: String(uid) }) : null;
@@ -4688,6 +4690,7 @@ async function injectWidget(reason, executionContextId) {
     // Reinjection and daemon replacement must reflect the current input lease,
     // including a reset after an interrupted run. Reply-waiting never locks UI.
     .then(async (r) => { await automationPanelSetInputActive(automationInputActive); return r; })
+    .then(async (r) => { if (!r?.exceptionDetails) await flushSessionPins(); return r; })
     // 注入脚本若在页面抛错，CDP 协议不报错（无 protocol error），会被误判为"已注入"；
     // 显式检查 exceptionDetails 让失败可见、留痕，便于定位 WorkBuddy 版本差异导致的挂载失败。
     .then((r) => {
@@ -6505,6 +6508,67 @@ function pruneAutoCopyJobs() {
   }
 }
 
+// Official pin state is scoped to the signed-in account. Capture before auth
+// replacement, then deliver only proven mapped copies after the copy queue.
+// Never use source IDs in the target list or modify WorkBuddy's React state.
+let sessionPinSync = null;
+function getSessionPinSync() {
+  if (!sessionPinSync) sessionPinSync = createSessionPinSync({
+    file: path.join(DATA_DIR, 'session-pin-sync-' + PROFILE.id + '.json'),
+    read: (uid) => evaluateSessionPins(readPinsInRenderer, uid),
+    apply: (uid, ids) => evaluateSessionPins(applyPinsInRenderer, uid, ids),
+    resolve: async (sourceUid, targetUid, ids) => {
+      if (sessionAccountAmbiguous(sourceUid) || sessionAccountAmbiguous(targetUid)) return [];
+      const candidates = ids.map(sourceId => ({ sourceId, targetId: resolveAutoCopyTargetId(sourceUid, targetUid, sourceId) }))
+        .filter(item => isValidSessionId(item.sourceId) && isValidSessionId(item.targetId));
+      if (!candidates.length) return [];
+      const allIds = [...new Set(candidates.flatMap(item => [item.sourceId, item.targetId]))];
+      const rows = await sqliteQuery('SELECT id, user_id FROM sessions WHERE id IN (' + sqlPlaceholders(allIds) + ") AND deleted_at IS NULL AND COALESCE(status, '') != 'archived';", allIds);
+      const owners = new Map(rows.map(row => [String(row.id), String(row.user_id)]));
+      return candidates.filter(item => owners.get(item.sourceId) === sourceUid && owners.get(item.targetId) === targetUid);
+    },
+  });
+  return sessionPinSync;
+}
+async function evaluateSessionPins(fn, uid, ids) {
+  const account = currentAccount();
+  if (!cdp.connected || !account || String(account.uid) !== String(uid)) return null;
+  const expected = { uid: String(account.rawUid || account.uid), type: account.type || '', enterpriseId: account.enterpriseId || '' };
+  let timer;
+  try {
+    const result = await Promise.race([
+      cdpSend('Runtime.evaluate', {
+        expression: '(' + fn.toString() + ')(' + JSON.stringify(expected) + ',' + JSON.stringify(ids || []) + ')',
+        awaitPromise: true, returnByValue: true,
+      }),
+      new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('同步会话置顶超时')), 3000); }),
+    ]);
+    if (result?.exceptionDetails) return null;
+    return result?.result?.value;
+  } finally { clearTimeout(timer); }
+}
+async function captureSessionPins() {
+  if (PROFILE.kind !== 'workbuddy') return;
+  const uid = String((currentAccount() || {}).uid || '');
+  if (!uid || sessionAccountAmbiguous(uid)) return;
+  try {
+    await getSessionPinSync().flush(uid);
+    await getSessionPinSync().capture(uid);
+  } catch (_) { log('[sessions-pins] 暂时无法读取置顶，保留原记录'); }
+}
+async function syncSessionPins(sourceUid, targetUid) {
+  if (PROFILE.kind !== 'workbuddy' || accountSwitchInProgress) return;
+  try { await getSessionPinSync().sync(sourceUid, targetUid); }
+  catch (_) { log('[sessions-pins] 置顶同步未确认，保留待处理记录'); }
+}
+async function flushSessionPins() {
+  if (PROFILE.kind !== 'workbuddy' || accountSwitchInProgress) return;
+  const uid = String((currentAccount() || {}).uid || '');
+  if (!uid || sessionAccountAmbiguous(uid)) return;
+  try { await getSessionPinSync().flush(uid); }
+  catch (_) { log('[sessions-pins] 置顶恢复未确认，稍后重试'); }
+}
+
 function resolveAutoCopyTargetId(sourceUid, targetUid, sessionId) {
   const source = String(sourceUid || '').trim();
   const target = String(targetUid || '').trim();
@@ -6773,6 +6837,7 @@ async function refreshWorkBuddySessionList(targetUid, reason = 'sessions') {
 }
 
 async function refreshCopiedSessionList(job) {
+  if (job) await syncSessionPins(job.sourceUid, job.targetUid);
   if (!job || !(job.copied || job.partial || job.conflicts || job.openSessionId)) return false;
   return refreshWorkBuddySessionList(job.targetUid, 'sessions-auto-copy');
 }
@@ -12634,6 +12699,7 @@ function handleApi(req, res) {
       const copyOperation = Symbol('manual-session-copy');
       sessionCopyLocks.set(copyOperation, true);
       try {
+        await captureSessionPins();
         // 1) 取出源会话（含 cwd 用于定位消息文件）
         const srcRows = await sqliteQuery(
           "SELECT id, cwd, user_id, title, custom_title, status, created_at, updated_at, last_activity_at, is_playground, source_mode, is_background_automation, mode, model, expert_id, expert_locale, expert_runtime_identity, expert_marketplace, permission_mode, use_sandbox_cli, project_id FROM sessions WHERE id IN (" + sqlPlaceholders(ids) + ") AND deleted_at IS NULL AND COALESCE(is_background_automation, 0) = 0;",
@@ -12649,6 +12715,7 @@ function handleApi(req, res) {
           else if (result.status === 'skipped') skipped++;
           else copied++;
         }
+        for (const sourceUid of new Set(srcRows.map(row => String(row.user_id || '')))) await syncSessionPins(sourceUid, targetUid);
         // [CodeBuddy 会话同步] 同步到当前账号时刷新 IDE workbench：扩展宿主的
         // indexCache 不因外部写 index.json 失效，侧边栏要等 TTL/重启才显示（详见
         // reloadIdeWorkbenchWindows 注释）。同步到其他账号无需刷新——切号时

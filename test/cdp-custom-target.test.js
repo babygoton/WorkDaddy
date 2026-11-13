@@ -41,7 +41,7 @@ function harness({ targets = [own], unavailable = false, activeProfile = profile
       evaluations.push({ method, ...params });
       return { result: { value: { root: true, widget: true, url: cdp.targetUrl } } };
     },
-    automationPanelSetInputActive: async () => {}, automationInputActive: false,
+    flushSessionPins: async () => {}, automationPanelSetInputActive: async () => {}, automationInputActive: false,
     wallpaperRotation: { status: () => ({ mode: 'fixed' }) },
   });
   for (const [start, end] of [

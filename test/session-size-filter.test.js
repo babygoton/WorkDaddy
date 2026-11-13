@@ -21,7 +21,6 @@ function harness() {
   });
   vm.runInContext([
     section('    function filteredSessions()', '    // 按空间分组渲染'),
-    section('    var rememberedSessionsKey =', '    // 按空间分组渲染'),
     section('    function renderSessions()', '    function updateAutoCopyAllButton()'),
     section('    function bindSessEvents(', '    function updateSessCount()'),
     section('    function updateSessCount()', '    // 人性化时间'),

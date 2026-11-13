@@ -57,8 +57,8 @@ test('session and account selectors escape every text and attribute sink', () =>
   const sessions = sourceBetween('function renderSessions()', 'function activeAutoCopyCount()');
   assert.equal((sessions.match(/escAttr\(key\)/g) || []).length, 1);
   assert.equal((sessions.match(/escAttr\(uid\)/g) || []).length, 1);
-  // 2 处勾选框 + 同步按钮 + 置顶备忘按钮，均经 escAttr
-  assert.equal((sessions.match(/escAttr\(s\.id\)/g) || []).length, 4);
+  // 2 处勾选框 + 同步按钮，均经 escAttr
+  assert.equal((sessions.match(/escAttr\(s\.id\)/g) || []).length, 3);
   assert.equal((sessions.match(/esc\(title\)/g) || []).length, 2);
   assert.equal((sessions.match(/esc\(fmtHumanTime\(/g) || []).length, 2);
   assert.match(sessions, /title="' \+ escAttr\(group\.cwd\)/);

@@ -1857,7 +1857,6 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '会话同步完成': 'Session sync complete', '会话同步完成，已保留分叉': 'Session sync complete with conflicts', '会话同步完成，部分项目失败': 'Session sync complete with some failures', '会话同步等待中': 'Session sync waiting', '正在同步会话': 'Syncing session', '会话同步失败': 'Session sync failed', '同步等待中': 'Sync waiting', '同步失败': 'Sync failed', '同步': 'Sync', '已同步': 'Synced', ' · 新同步': ' · Newly synced ', ' · 有': ' · ', ' 项需要留意': ' item(s) need attention', ' · 请稍后重试': ' · Try again later', '会话同步进度': 'Session sync progress', ' 个会话已分叉，已保留双方内容': ' session(s) were changed on both sides; neither side was overwritten', '其他账号': 'Other account', '同步完成': 'Sync complete', '同步完成，已保留分叉': 'Sync complete with conflicts', '同步完成，部分失败': 'Sync complete with some failures', '正在把已标记的会话同步到「': 'Syncing marked sessions to “', ' 个未变化会话': ' unchanged session(s)', '同步任务未完成，请稍后重试': 'Sync did not finish. Try again later',
     ' · 跳过': ' · Skipped', ' · 分叉': ' · Conflicts', '成功': 'Succeeded', '跳过': 'Skipped', '已跳过': 'Skipped', '部分失败': 'Partial failure', '分叉': 'Conflict', '处理中': 'Processing', '会话已分叉，已保留双方内容': 'Changed on both sides; neither side was overwritten', '部分文件失败': 'Some files failed', '当前任务未记录逐项明细。': 'No per-session details were recorded for this task.', '会话同步明细': 'Session sync details', '会话同步结果筛选': 'Filter session sync results', '当前分类没有会话。': 'No sessions in this category.', '正在把已标记的会话从「': 'Syncing marked sessions from “', '」同步到「': '” to “', '查看明细': 'View details', ' 个候选会话': ' candidate session(s)', ' 秒后自动关闭': ' seconds until automatic close',
     '收录 GitHub 和 Gitee 公开仓库。参考 ': 'Public GitHub and Gitee repositories are indexed. See ', '。': '.', '克隆示例仓库：': 'Clone the example repository: ', '删除 ': 'Delete ', ' 目录中不需要的示例任务。': ' directory tasks you do not need.', '把你的自动化任务 JSON 放进 ': 'Put your automation task JSON in ', ' 目录。': ' directory.', '提交改动并推送到 GitHub 或 Gitee。': 'Commit and push changes to GitHub or Gitee.', '在仓库简介中加入关键词 ': 'Add the keyword ',
-    '移除置顶备忘': 'Remove pinned reminder', '记住置顶会话': 'Remember pinned session',
     '导出账号': 'Export accounts', '导入账号': 'Import accounts', '导出会话': 'Export sessions', '导入会话': 'Import sessions', '导出快捷短语': 'Export quick phrases', '导入快捷短语': 'Import quick phrases', '同步选中到其他账号': 'Sync selected to another account', '删除选中': 'Delete selected', '操作会话': 'Session actions', '连通测试': 'Test connection', '编辑模型': 'Edit model', '模型已保存': 'Model saved', '模型已启用': 'Model enabled', '模型已复制': 'Model copied', '模型配置已共用': 'Model configuration shared', '与 {name} 共用模型配置': 'Model configuration shared with {name}', '当前模型': 'Current model', '备选模型': 'Backup models', '模型加载失败：': 'Failed to load models: ', '保存模型失败：': 'Failed to save model: ', '删除当前模型失败：': 'Failed to delete current model: ', '启用模型失败：': 'Failed to enable model: ', '连通测试失败：': 'Connection test failed: ',
     '请选择壁纸文件夹': 'Choose a wallpaper folder', '壁纸模式': 'Wallpaper mode', '手动应用': 'Manual', '文件夹随机': 'Shuffle folder', '壁纸文件夹': 'Wallpaper folder', '选择或填写文件夹路径': 'Choose or enter a folder path', '选择文件夹': 'Choose folder', '切换间隔': 'Change every', '1 分钟': '1 minute', '3 分钟': '3 minutes', '5 分钟': '5 minutes', '10 分钟': '10 minutes', '30 分钟': '30 minutes', '1 小时': '1 hour', '自定义': 'Custom', '分钟': 'minutes', '自定义切换间隔（分钟）': 'Custom interval (minutes)', '立即换一张': 'Next wallpaper', '已暂停，恢复毛玻璃主题后继续': 'Paused until the frosted theme resumes', '当前：': 'Current: ', '等待应用壁纸': 'Waiting to apply wallpaper', '壁纸设置保存失败': 'Could not save wallpaper settings', '仅读取此文件夹内的 PNG / JPG / WebP，不复制或修改原文件；自动跳过超过 20MB 或 1600 万像素的图片。': 'Reads PNG / JPG / WebP from this folder without copying or modifying originals. Images over 20MB or 16 megapixels are skipped.',
     '选择要查看的账号': 'Choose an account to view', '选择账号并输入密码后导出备份': 'Choose accounts and enter a password to export backups', '从加密导出文件导入账号备份': 'Import account backups from an encrypted export', '使用密码导出选中会话': 'Export selected sessions with a password', '使用密码导出选中快捷短语': 'Export selected quick phrases with a password', '从加密文件导入会话': 'Import sessions from an encrypted file', '从加密文件导入快捷短语': 'Import quick phrases from an encrypted file', '仅支持 PNG / JPG / WebP': 'PNG / JPG / WebP only', '点击或拖拽上传壁纸': 'Click or drag to upload a wallpaper', '点击选择图片，或拖拽到此处': 'Click to choose an image, or drag it here', '支持 PNG / JPG / WebP，自动压缩；可添加多张': 'PNG / JPG / WebP supported; images are compressed automatically',
@@ -9853,30 +9852,6 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       });
     }
 
-    var rememberedSessionsKey = 'wbs-remembered-sessions-' + (typeof PROFILE_ID === 'undefined' ? 'workbuddy-cn' : PROFILE_ID);
-    function rememberedSessions() {
-      try {
-        var value = JSON.parse(localStorage.getItem(rememberedSessionsKey) || '{}');
-        return value && typeof value === 'object' ? value : {};
-      } catch (_) { return {}; }
-    }
-    function isSessionRemembered(session) {
-      var uid = String(session && session.user_id || sessionsState.uid || sessionsState.currentUid || '');
-      var records = rememberedSessions()[uid];
-      return !!(uid && Array.isArray(records) && records.some(function (item) { return item && String(item.id) === String(session.id); }));
-    }
-    function toggleRememberedSession(session) {
-      var uid = String(session && session.user_id || sessionsState.uid || sessionsState.currentUid || '');
-      if (!uid || !session || !session.id) return;
-      var recordsByUid = rememberedSessions();
-      var records = Array.isArray(recordsByUid[uid]) ? recordsByUid[uid].slice() : [];
-      var existing = records.findIndex(function (item) { return item && String(item.id) === String(session.id); });
-      if (existing >= 0) records.splice(existing, 1);
-      else records.unshift({ id:String(session.id), title:String(session.custom_title || session.title || '(无标题)'), savedAt:Date.now() });
-      recordsByUid[uid] = records.slice(0, 500);
-      try { localStorage.setItem(rememberedSessionsKey, JSON.stringify(recordsByUid)); } catch (_) {}
-    }
-
     // 按空间分组渲染：每个空间默认显示 INIT 条，可一次展开全部。
     function renderSessions() {
       var listEl = sessionsPane.querySelector('#wbs-sess-list');
@@ -9895,11 +9870,6 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       function sessSyncButton(s) {
         return '<button class="wbs-sess-sync" type="button" data-id="' + escAttr(s.id) + '" title="同步到其他账号" aria-label="同步到其他账号">' +
           '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 3l4 4-4 4"/><path d="M20 7H8"/><path d="M8 21l-4-4 4-4"/><path d="M4 17h12"/></svg></button>';
-      }
-      function rememberSessionButton(s) {
-        var remembered = isSessionRemembered(s);
-        var title = remembered ? '移除置顶备忘' : '记住置顶会话';
-        return '<button class="wbs-sess-remember' + (remembered ? ' active' : '') + '" type="button" data-id="' + escAttr(s.id) + '" aria-label="' + title + '" title="' + title + '" aria-pressed="' + (remembered ? 'true' : 'false') + '"><svg viewBox="0 0 24 24" width="16" height="16" fill="' + (remembered ? 'currentColor' : 'none') + '" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3 2.7 5.5 6.1.9-4.4 4.3 1 6.1-5.4-2.9-5.4 2.9 1-6.1-4.4-4.3 6.1-.9L12 3z"/></svg></button>';
       }
       function autoCopyButton(kind, key, uid, enabled, inherited) {
         if (sessionsState.autoCopyAll || !canEditAutoCopy(uid)) return '';
@@ -9941,7 +9911,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
             (batch ? '<input type="checkbox" class="wbs-sess-check" data-id="' + escAttr(s.id) + '"' + sel + '>' : '') +
             '<span class="wbs-sess-main"><span class="wbs-sess-title">' + esc(title) + '</span>' +
             '<span class="wbs-sess-meta">' + esc(fmtHumanTime(s.last_activity_at || s.updated_at || s.created_at)) + '</span></span>' +
-            (batch ? '' : rememberSessionButton(s) + sessSyncButton(s) + autoCopyButton('session', s.id, s.user_id, marked, inherited)) +
+            (batch ? '' : sessSyncButton(s) + autoCopyButton('session', s.id, s.user_id, marked, inherited)) +
             '<span class="wbs-sess-size" title="会话大小（消息和附件）">' + sessionCopySizeText(s.totalBytes) + '</span>' +
             '</div>';
         });
@@ -9974,7 +9944,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
             (batch ? '<input type="checkbox" class="wbs-sess-check" data-id="' + escAttr(s.id) + '"' + sel + '>' : '') +
             '<span class="wbs-sess-main"><span class="wbs-sess-title">' + esc(title) + '</span>' +
             '<span class="wbs-sess-meta">' + esc(fmtHumanTime(s.last_activity_at || s.updated_at || s.created_at)) + '</span></span>' +
-            (batch ? '' : rememberSessionButton(s) + sessSyncButton(s) + autoCopyButton('session', s.id, s.user_id, marked, inherited)) +
+            (batch ? '' : sessSyncButton(s) + autoCopyButton('session', s.id, s.user_id, marked, inherited)) +
             '<span class="wbs-sess-size" title="会话大小（消息和附件）">' + sessionCopySizeText(s.totalBytes) + '</span>' +
             '</div>';
         });
@@ -10070,17 +10040,6 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     function bindSessEvents(listEl) {
       listEl.onclick = function (e) {
         var t = e.target;
-        var rememberBtn = t.closest ? t.closest('.wbs-sess-remember') : null;
-        if (rememberBtn) {
-          e.preventDefault();
-          e.stopPropagation();
-          var rememberedSession = sessionsState.list.find(function (item) { return String(item.id) === String(rememberBtn.getAttribute('data-id')); });
-          if (rememberedSession) {
-            toggleRememberedSession(rememberedSession);
-            renderSessions();
-          }
-          return;
-        }
         // [会话单条同步] 行内同步按钮：打开单条目标账号弹窗
         var syncBtn = t.closest ? t.closest('.wbs-sess-sync') : null;
         if (syncBtn) {
@@ -19055,9 +19014,6 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     /* [会话单条同步] 行内同步图标按钮：尺寸/圆角/交互色与自动同步按钮一致 */
     '.wbs-sess-sync{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;width:26px;height:26px;margin-top:-2px;border:1px solid transparent;border-radius:7px;background:transparent;color:var(--wb-icon-tertiary,#999);cursor:pointer;padding:0;transition:background .15s,color .15s;font:inherit}',
     '.wbs-sess-sync:hover{background:var(--wb-bg-hover,#f5f5f5);color:var(--wb-color-text-primary,#1f1f1f)}',
-    '.wbs-sess-remember{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;width:26px;height:26px;margin-top:-2px;border:1px solid transparent;border-radius:7px;background:transparent;color:var(--wb-icon-tertiary,#999);cursor:pointer;padding:0;transition:background .15s,color .15s;font:inherit}',
-    '.wbs-sess-remember:hover,.wbs-sess-remember.active{background:var(--wb-bg-hover,#f5f5f5);color:var(--wb-accent-primary,var(--wb-color-text-primary,#1f1f1f))}',
-    '.wbs-sess-remember:focus-visible{outline:2px solid color-mix(in srgb,var(--wb-color-text-primary,#1f1f1f) 50%,transparent);outline-offset:1px}',
     '.wbs-sess-sync:focus-visible{outline:2px solid color-mix(in srgb,var(--wb-color-text-primary,#1f1f1f) 50%,transparent);outline-offset:1px}',
     '.wbs-sess-auto-switch{position:relative;display:inline-flex;align-items:center;width:24px;height:14px;flex:0 0 24px;border-radius:999px;background:var(--wb-bg-tertiary,#dedede);transition:background .15s}',
     '.wbs-sess-auto-switch span{width:10px;height:10px;margin-left:2px;border-radius:50%;background:var(--wb-bg-popover,#fff);box-shadow:0 1px 2px rgba(0,0,0,.18);transition:transform .15s}',

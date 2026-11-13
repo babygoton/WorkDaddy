@@ -9,7 +9,7 @@ const source = fs.readFileSync(require.resolve('../scripts/daemon.js'), 'utf8');
 function harness({ kind = 'workbuddy', owner = 'target', connected = true, reject = false, status = 'copied', openSessionId = '' } = {}) {
   const stored = new Set(), visible = new Set(), calls = [];
   let activeSession = 'existing-session';
-  const ctx = { crypto, Date, PROFILE: { kind }, cdp: { connected },
+  const ctx = { syncSessionPins: async () => {}, crypto, Date, PROFILE: { kind }, cdp: { connected },
     currentAccount: () => ({ uid: owner }),
     autoCopyJobs: new Map(), autoCopyQueue: [],
     yieldAutoCopyToRenderer: async () => {},
@@ -60,6 +60,7 @@ test('completed copy batches publish the new WorkBuddy list before reporting don
 async function manualCopy({ kind = 'workbuddy', owner = 'target', connected = true, reject = false, status = 'copied' } = {}) {
   const stored = new Set(), visible = new Set(), calls = [];
   const ctx = {
+    syncSessionPins: async () => {}, captureSessionPins: async () => {},
     PROFILE: { kind }, cdp: { connected },
     currentAccount: () => ({ uid: owner }),
     readBody: async () => ({ ids: ['a', 'b'], targetUid: 'target' }),
