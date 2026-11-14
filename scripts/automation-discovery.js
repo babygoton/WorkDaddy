@@ -169,7 +169,9 @@ async function searchGitee(fetchImpl, marker, pageSize) {
   const repositories = [];
   for (let from = 0; repositories.length < MAX_REPOSITORIES; from += pageSize) {
     const url = new URL('https://so.gitee.com/v1/search/widget/' + GITEE_WIDGET);
-    url.searchParams.set('q', marker);
+    // Gitee 建索引时会把 description 里的驼峰标记折叠分词，驼峰原词反而查不全；
+    // 用小写关键词可以同时命中折叠后的新索引和保留原词的老索引。
+    url.searchParams.set('q', marker.toLowerCase());
     url.searchParams.set('from', String(from));
     url.searchParams.set('size', String(pageSize));
     const result = await requestJson(fetchImpl, url, ['so.gitee.com']);

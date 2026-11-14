@@ -294,3 +294,29 @@ test('separate clients reuse the newest public catalog while retaining their own
   const failedRefresh=await offline.getCatalog({force:true});assert.equal(failedRefresh.tasks.length,first.tasks.length);
   assert.equal(failedRefresh.stale,true);
 });
+
+test('Gitee search folds the marker to lowercase so case-folded index terms still match', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wd-discovery-gitee-lowercase-'));
+  try {
+    const calls = [];
+    const fetchImpl = async input => {
+      const url = new URL(String(input));
+      calls.push(url.toString());
+      if (url.hostname === 'api.github.com' && url.pathname === '/search/repositories') {
+        return json({ total_count: 0, incomplete_results: false, items: [] });
+      }
+      if (url.hostname === 'so.gitee.com') {
+        return json({ hits: { total: { value: 0, relation: 'eq' }, hits: [] } });
+      }
+      throw new Error('Unexpected URL: ' + url);
+    };
+    const discovery = createAutomationDiscovery({ dataDir: dir, fetchImpl, now: () => 1_000_000, pageSize: 10, runtime });
+    assert.equal((await discovery.getCatalog()).tasks.length, 0);
+    const giteeCalls = calls.filter(url => url.includes('so.gitee.com/'));
+    assert.equal(giteeCalls.length, 1);
+    assert.equal(new URL(giteeCalls[0]).searchParams.get('q'), MARKER.toLowerCase());
+    assert.notEqual(new URL(giteeCalls[0]).searchParams.get('q'), MARKER);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
