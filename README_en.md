@@ -16,7 +16,7 @@ CodeBuddy support targets its **Electron agent window**, not the VS Code editor 
 
 ## 💖 Sponsors
 
-> Want to be featured here? **Early sponsor slots are CNY 99/month.** Contact [richdaddycashmany@163.com](mailto:richdaddycashmany@163.com).
+> Want to be featured here? [Contact us](mailto:richdaddycashmany@163.com).
 
 <table>
 <tr>

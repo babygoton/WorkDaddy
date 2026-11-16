@@ -16,7 +16,7 @@ CodeBuddy 支持范围为 **Electron 智能体窗口**，不包含 VS Code 编�
 
 ## 💖 赞助商
 
-> 想出现在这里？**首批广告位 99 元/月**，欢迎联系 [richdaddycashmany@163.com](mailto:richdaddycashmany@163.com)。
+> 想出现在这里？欢迎[联系我们](mailto:richdaddycashmany@163.com)。
 
 <table>
 <tr>

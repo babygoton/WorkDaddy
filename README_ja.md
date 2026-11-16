@@ -16,7 +16,7 @@ CodeBuddy への対応は、VS Code のエディターのモードではなく�
 
 ## 💖 スポンサー
 
-> ここに広告を掲載しませんか？**初回募集の広告枠は月額99人民元です。** お問い合わせ：[richdaddycashmany@163.com](mailto:richdaddycashmany@163.com)。
+> ここに広告を掲載しませんか？お気軽に[お問い合わせください](mailto:richdaddycashmany@163.com)。
 
 <table>
 <tr>
