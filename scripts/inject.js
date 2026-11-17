@@ -1788,7 +1788,8 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '去完成': 'Start', '未选择当前 Buddy': 'No current Buddy selected', 'Buddy 未选择': 'Buddy not selected', '选择 Buddy': 'Choose Buddy', '设为当前': 'Set as current', '选择中': 'Selecting', 'Buddy 已设为当前': 'Buddy is now current', '选择后未读取到最新状态': 'Could not load the current Buddy', '请先选择当前 Buddy，再派出旅行': 'Choose a current Buddy before departure', 'Buddy 编号无效': 'Invalid Buddy ID', '当前客户端不支持 Buddy 选择': 'Buddy selection is unavailable in this client', '请重新选择该账号拥有的 Buddy': 'Select a Buddy owned by this account', '选择 Buddy 失败': 'Could not select Buddy',
     '无法打开官方成长中心': 'Could not open the official growth center', '请先切换到该账号再操作': 'Switch to this account first', '无法确认当前登录账号': 'Could not verify the current account', '去官网接取': 'Open official site to accept', '去官网开启': 'Open official site to open', '去官网抽奖': 'Open official site to draw', '去官网解锁 Buddy': 'Open official site to unlock Buddy', '去官网领取': 'Open official site to claim', '去官网派出': 'Open official site to depart', '去官网选择 Buddy': 'Open official site to choose Buddy',
     '正在刷新成长计划与 Buddy 旅行状态…': 'Refreshing the growth plan and Buddy travel status…', '刷新失败，移开后再次悬浮即可重试': 'Refresh failed. Move away and hover again to retry.', '本次刷新失败，当前展示上次结果': 'Refresh failed. Showing the previous result.',
-    ' 待领取': ' pending', 'Buddy 旅行': 'Buddy travel', '开启盲盒': 'Open blind box', '待抽奖': 'Draw chances', '未派出': 'Not departed', '刷新于 ': 'Refreshed at ', '尚未刷新': 'Not refreshed', '连续登录 ': 'Current streak ', '连续登录读取中': 'Loading streak', '连续登录读取失败': 'Streak unavailable', '补登卡': 'Makeup cards', ' 张': '', '入门档': 'Starter', '进阶档': 'Advanced', '巅峰档': 'Peak', '还差 ': '', ' 天': ' days remaining', '可领取': 'Available', '每日积分趋势': 'Daily Credits trend', '每日 Token 趋势': 'Daily Token trend',
+    ' 待领取': ' pending', 'Buddy 旅行': 'Buddy travel', '开启盲盒': 'Open blind box', '待抽奖': 'Draw chances', '未派出': 'Not departed', '刷新于 ': 'Refreshed at ', '尚未刷新': 'Not refreshed', '连续登录 ': 'Current streak ', '连续登录读取中': 'Loading streak', '连续登录读取失败': 'Streak unavailable', '补登卡': 'Makeup cards', ' 张': '', '入门档': 'Starter', '进阶档': 'Advanced', '巅峰档': 'Peak', '还差 ': '', ' 天': ' days remaining', '可领取': 'Available',
+    '连续登录奖励已领取': 'Streak reward claimed', '连续登录奖励领取失败': 'Could not claim the streak reward', '领取该档连续登录奖励': 'Claim this streak reward', '本月已领取奖励': 'Reward already claimed this month', '每日积分趋势': 'Daily Credits trend', '每日 Token 趋势': 'Daily Token trend',
     '停止运行': 'Stop running',
     '账号': 'Accounts', '主题': 'Theme', '会话': 'Sessions', '模型': 'Models', '增强': 'Enhance', '自动化': 'Automation', '电脑': 'Computer', '关于': 'About', '设置': 'Settings',
     '导出': 'Export', '导入': 'Import', '删除': 'Delete', '编辑': 'Edit', '保存': 'Save', '内置': 'Built-in', '取消': 'Cancel', '确定': 'Confirm', '确认': 'Confirm', '复制': 'Copy', '切换': 'Switch', '启用': 'Enable', '停用': 'Disable', '停止': 'Stop', '立即运行': 'Run now', '新建任务': 'New task', '刷新': 'Refresh', '步骤 JSON': 'Steps JSON', '任务说明': 'Task description', '任务名称': 'Task name', '调度': 'Schedule', '手动运行': 'Manual', '手动': 'Manual', '每小时': 'Hourly', '每天': 'Daily', '选择任务': 'Select tasks', '查看接口': 'View capabilities', '拾取元素': 'Pick element', '复制 XPath': 'Copy XPath', '运行中': 'Running', '已成功': 'Succeeded', '失败': 'Failed', '未运行': 'Not run', '页面加载完成': 'Page loaded', '账号切换完成': 'Account switched', '新自动化任务': 'New automation task', '任务已保存': 'Task saved', '任务已开始运行': 'Task started', '步骤 JSON 格式无效': 'Invalid steps JSON', '步骤 JSON 必须是数组': 'Steps JSON must be an array', '查看接口说明': 'View interface docs', '自动化接口协议': 'Automation interface protocol', '复制全部': 'Copy all', '接口协议已复制': 'Interface protocol copied', '暂无自动化任务': 'No automations yet', '编辑任务': 'Edit task', '触发方式': 'Trigger', '插入点击步骤': 'Insert click step', 'XPath 已复制': 'XPath copied', '点击步骤已插入': 'Click step inserted', '请先拾取元素': 'Pick an element first', '加载自动化失败': 'Failed to load automations', '读取接口失败': 'Failed to read interfaces', '批量操作失败': 'Batch operation failed', '删除失败': 'Delete failed', '确认删除该任务？': 'Delete this task?', '执行': 'Apply', '已拾取': 'Picked', '运行失败': 'Run failed', '（副本）': ' (copy)', '查看提示词': 'View prompt', '交给 WorkBuddy 创建': 'Ask WorkBuddy to create', '正在打开新任务…': 'Opening a new task…', '已创建新会话，WorkBuddy 完成后任务会自动出现': 'New session created. The task will appear after WorkBuddy finishes.', 'WorkBuddy 创建失败': 'WorkBuddy creation failed', '加载示例失败': 'Failed to load examples', '暂无示例': 'No examples available', '运行日志': 'Run logs', '暂无运行日志': 'No run logs yet', '开始时间': 'Started', '结束时间': 'Finished', '捕获错误': 'Caught error', '暂无执行日志': 'No execution log entries', '执行日志': 'Execution log', '尚未结束': 'Still running',
@@ -2354,7 +2355,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
 
   var accountMaskEnabled = false;
   try { accountMaskEnabled = localStorage.getItem(WBS_ACCOUNT_MASK_KEY) === '1'; } catch (_) {}
-  var state = { accounts: [], current: null, open: false, batchRunning: false, creditRunId: 0, creditRefreshGeneration: {}, activityRunId: 0, dailyProgressRunId: 0, dailyProgressForceNext: false, dailyProgressRefreshing: {}, dailyProgressRefreshErrors: {}, dailyClaimedExpanded: {}, creditRemaining: 0, creditSummaryValue: null, mask: accountMaskEnabled, rotationNotice: null, rotationPromptDay: '', sessionCopyNotice: null, sessionCopyDetailsModal: null, sessionCopyNoticePollTimer: null, sessionCopyNoticeChecked: false, sessionCopyNoticeActiveAttempts: 0 };
+  var state = { accounts: [], current: null, open: false, batchRunning: false, creditRunId: 0, creditRefreshGeneration: {}, activityRunId: 0, dailyProgressRunId: 0, dailyProgressForceNext: false, dailyProgressRefreshing: {}, dailyProgressRefreshErrors: {}, dailyClaimedExpanded: {}, streakClaiming: {}, creditRemaining: 0, creditSummaryValue: null, mask: accountMaskEnabled, rotationNotice: null, rotationPromptDay: '', sessionCopyNotice: null, sessionCopyDetailsModal: null, sessionCopyNoticePollTimer: null, sessionCopyNoticeChecked: false, sessionCopyNoticeActiveAttempts: 0 };
   var currentBuild = null;
   // 当前注入的 daemon 版本号（由 daemon.js 注入时把 __WBS_VERSION__ 替换为 DAEMON_VERSION）
   // 「关于」tab 直接展示，升级 daemon 后这里自动同步
@@ -7788,12 +7789,18 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
           hide(true);
           return;
         }
-        var button = event.target && event.target.closest ? event.target.closest('[data-wbs-growth-official],[data-wbs-claimed-toggle]') : null;
+        var button = event.target && event.target.closest ? event.target.closest('[data-wbs-growth-official],[data-wbs-claimed-toggle],[data-wbs-streak-claim]') : null;
         if (!button || !popup.contains(button)) return;
         event.preventDefault();
         event.stopPropagation();
         if (!activeRing || button.disabled) return;
         var uid = activeRing.getAttribute('data-uid');
+        // Streak rewards are claimed with that account's own token, so the
+        // current login does not have to be switched first.
+        if (button.hasAttribute('data-wbs-streak-claim')) {
+          claimStreakTierReward(uid, button.getAttribute('data-wbs-streak-claim'));
+          return;
+        }
         confirmCurrentGrowthAccount(uid).then(function (isCurrent) {
           if (!isCurrent) return;
           if (button.hasAttribute('data-wbs-claimed-toggle')) {
@@ -16640,6 +16647,48 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       }).join('') + '</span>';
     }
 
+    var GROWTH_TIER_NAMES = { '7d': '入门档', '14d': '进阶档', '28d': '巅峰档' };
+    var GROWTH_TIER_DEFAULTS = [{ key: '7d', days: 7 }, { key: '14d', days: 14 }, { key: '28d', days: 28 }];
+    var GROWTH_TIER_CLAIMABLE = ['available', 'claimable', 'completed', 'unlocked'];
+
+    function growthStreakTierRewardText(tier) {
+      var parts = [];
+      var credits = Math.max(0, Number(tier && tier.credit) || 0);
+      var energy = Math.max(0, Number(tier && tier.energy) || 0);
+      var cards = Math.max(0, Number(tier && tier.cards) || 0);
+      var chances = Math.max(0, Number(tier && tier.chances) || 0);
+      if (credits > 0) parts.push(credits + ' Credits');
+      if (energy > 0) parts.push(energy + ' 能量');
+      if (cards > 0) parts.push(cards + ' 补登卡');
+      if (chances > 0) parts.push(chances + ' 抽奖');
+      return parts.join(' · ');
+    }
+
+    // One streak tier row. Claimable tiers show the pending reward plus a direct
+    // claim button; the button is disabled while that tier's request is running.
+    function growthStreakTierHtml(tier, index, options) {
+      var opts = options || {};
+      var fallback = GROWTH_TIER_DEFAULTS[index] || GROWTH_TIER_DEFAULTS[0];
+      var key = String(tier && (tier.key || tier.tier) || fallback.key);
+      var days = Math.max(1, Number(tier && tier.days) || Number(key.replace(/\D/g, '')) || fallback.days);
+      var status = String(tier && tier.status || 'locked');
+      var claimable = GROWTH_TIER_CLAIMABLE.indexOf(status) >= 0;
+      var claimingKey = claimable && opts.uid ? String(opts.uid) + ':' + key : '';
+      var claiming = !!(claimingKey && opts.claiming && opts.claiming[claimingKey]);
+      var reward = claimable ? growthStreakTierRewardText(tier) : '';
+      var result = status === 'claimed' ? '已领取'
+        : claimable ? (reward || '可领取')
+        : '还差 ' + Math.max(0, days - (Number(opts.progressDays) || 0)) + ' 天';
+      var button = claimable
+        ? '<button type="button" class="wbs-growth-tier-claim"' + (claiming ? ' disabled aria-disabled="true"' : '') +
+          ' data-wbs-streak-claim="' + escAttr(key) + '" title="' + escAttr(claiming ? '领取中' : '领取该档连续登录奖励') + '">' +
+          (claiming ? '领取中' : '领取') + '</button>'
+        : '';
+      return '<div class="wbs-growth-tier' + (status === 'claimed' ? ' is-claimed' : '') + (claimable ? ' is-claimable' : '') + '">' +
+        '<span>' + esc(GROWTH_TIER_NAMES[key] || key) + '</span><em>' + days + ' 天</em>' +
+        '<b' + (reward ? ' title="' + escAttr(reward) + '"' : '') + '>' + esc(result) + '</b>' + button + '</div>';
+    }
+
     function dailyProgressPopoverHtml(account) {
       var progress = account && account.dailyProgress;
       var uid = account && String(account.uid);
@@ -16703,18 +16752,10 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         '<div class="wbs-daily-action"><span>开启盲盒</span><b>' + esc(actionCount(gacha)) + '</b>' + gachaButton + '</div>' +
         '<div class="wbs-daily-action"><span>待抽奖</span><b>' + esc(actionCount(lottery)) + '</b>' + lotteryButton + '</div>' +
         '</div>';
-      var tierNames = { '7d': '入门档', '14d': '进阶档', '28d': '巅峰档' };
-      var tierDefaults = [{ key: '7d', days: 7 }, { key: '14d', days: 14 }, { key: '28d', days: 28 }];
-      var tiers = Array.isArray(streak.tiers) && streak.tiers.length ? streak.tiers : tierDefaults;
+      var tiers = Array.isArray(streak.tiers) && streak.tiers.length ? streak.tiers : GROWTH_TIER_DEFAULTS;
       var progressDays = Number.isFinite(Number(streak.progressDays)) ? Math.max(0, Number(streak.progressDays)) : Math.max(0, Number(streak.days) || 0);
       var tierHtml = tiers.map(function (tier, index) {
-        var key = String(tier.key || tier.tier || tierDefaults[index] && tierDefaults[index].key || '');
-        var days = Math.max(1, Number(tier.days) || Number(key.replace(/\D/g, '')) || 0);
-        var status = String(tier.status || 'locked');
-        var result = status === 'claimed' ? '已领取'
-          : ['available', 'claimable', 'completed', 'unlocked'].indexOf(status) >= 0 ? '可领取'
-          : '还差 ' + Math.max(0, days - progressDays) + ' 天';
-        return '<div class="wbs-growth-tier' + (status === 'claimed' ? ' is-claimed' : '') + '"><span>' + esc(tierNames[key] || key) + '</span><em>' + days + ' 天</em><b>' + esc(result) + '</b></div>';
+        return growthStreakTierHtml(tier, index, { uid: uid, progressDays: progressDays, claiming: state.streakClaiming });
       }).join('');
       var streakDays = Number.isSafeInteger(streak.days) && streak.days >= 0 ? streak.days : null;
       var makeupCards = Number.isFinite(Number(streak.makeupCards)) ? Math.max(0, Number(streak.makeupCards)) : null;
@@ -16787,6 +16828,41 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         if (refreshDailyProgressPopover) refreshDailyProgressPopover(uid);
       });
       dailyProgressRefreshPromises[uid] = request;
+      return request;
+    }
+
+    var streakClaimPromises = {};
+    // Claim a streak tier reward directly into the account that owns it. One
+    // request per account+tier so double clicks cannot spend a second chance.
+    function claimStreakTierReward(uid, tier) {
+      uid = String(uid || '');
+      tier = String(tier || '');
+      if (!uid || ['7d', '14d', '28d'].indexOf(tier) < 0) return Promise.resolve();
+      var key = uid + ':' + tier;
+      if (streakClaimPromises[key]) return streakClaimPromises[key];
+      state.streakClaiming[key] = true;
+      if (refreshDailyProgressPopover) refreshDailyProgressPopover(uid);
+      var request = api('/api/growth/streak/claim', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ uid: uid, tier: tier }),
+      }).then(function (result) {
+        var target = state.accounts.filter(function (item) { return String(item.uid) === uid; })[0];
+        if (target && result && result.streak && target.dailyProgress) {
+          target.dailyProgress = Object.assign({}, target.dailyProgress, { streak: result.streak });
+        }
+        toast(result && result.alreadyClaimed ? '本月已领取奖励' : '连续登录奖励已领取', false, root);
+        if (result && Number(result.credits) > 0) refreshCreditForAccount(uid);
+      }).catch(function (error) {
+        toast(error && error.message || '连续登录奖励领取失败', true, root);
+      }).finally(function () {
+        delete state.streakClaiming[key];
+        delete streakClaimPromises[key];
+        if (!alive) return;
+        updateDailyProgressCells();
+        if (refreshDailyProgressPopover) refreshDailyProgressPopover(uid);
+      });
+      streakClaimPromises[key] = request;
       return request;
     }
 
@@ -18543,7 +18619,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '.wbs-growth-task-head>span{display:inline-flex;align-items:center;gap:7px}.wbs-growth-task-head i.growth{width:8px;height:8px;flex:none;border-radius:50%;background:var(--wbs-ring-growth);box-shadow:0 0 0 2px color-mix(in srgb,var(--wbs-ring-growth) 17%,transparent)}.wbs-growth-task-head em{color:var(--wb-icon-tertiary,#7c818b)}.wbs-growth-task-title{grid-template-columns:6px minmax(0,1fr) auto minmax(78px,auto)}.wbs-growth-task-title>span{font-size:11px}.wbs-growth-task-tag{display:inline-flex!important;min-height:17px;box-sizing:border-box;align-items:center;padding:1px 6px;border:1px solid var(--wb-border-subtle,rgba(20,24,32,.1));border-radius:999px;background:color-mix(in srgb,var(--wb-bg-tertiary,#f2f3f4) 72%,transparent);color:var(--wb-color-text-secondary,#5f6368)!important;font-size:9px!important;font-weight:550!important;white-space:nowrap}.wbs-growth-task-state{grid-column:4;min-width:78px}.wbs-growth-task-action{min-width:74px}.wbs-growth-task-guide{margin:4px 78px 0 13px;color:var(--wb-color-text-secondary,#5f6368);font-size:10px;line-height:1.5;overflow-wrap:anywhere}.wbs-growth-task-meta{flex-wrap:wrap;gap:5px 14px;margin-top:6px}.wbs-growth-task-meta>span:last-child{flex:0 1 auto}.wbs-growth-task-reward{flex:1 1 150px!important}.wbs-growth-task-progress{font-variant-numeric:tabular-nums}.wbs-growth-reward-tag{opacity:.76}.wbs-growth-claimed-toggle{display:flex;width:100%;align-items:center;justify-content:center;margin:3px 0 0;padding:6px 0 2px;border:0;border-top:1px solid color-mix(in srgb,var(--wb-border-subtle,rgba(20,24,32,.1)) 72%,transparent);background:transparent;color:var(--wb-icon-secondary,#667085);font:600 10px/1.4 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;cursor:pointer}.wbs-growth-claimed-toggle em{font-style:normal;font-weight:500;color:var(--wb-icon-tertiary,#7c818b)}.wbs-growth-claimed-toggle:hover{color:var(--wb-color-text-primary,#1f1f1f)}.wbs-growth-claimed-toggle:focus-visible{outline:2px solid color-mix(in srgb,var(--wbs-primary) 40%,transparent);outline-offset:2px}',
     '.wbs-buddy-picker{display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:8px;padding:7px 9px 2px;font-size:10.5px;color:var(--wb-color-text-secondary,#5f6368)}',
     '.wbs-daily-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px;margin-top:4px}.wbs-daily-action{display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:center;gap:7px;min-height:29px;padding:3px 5px 3px 8px;border:1px solid var(--wb-border-subtle,rgba(20,24,32,.1));border-radius:7px;background:color-mix(in srgb,var(--wb-bg-secondary,#f6f7f8) 72%,transparent)}.wbs-daily-action span{min-width:0;color:var(--wb-color-text-secondary,#5f6368);white-space:nowrap}.wbs-daily-action b{color:var(--wb-color-text-primary,#1f1f1f);font-size:11px;font-weight:650;white-space:nowrap}.wbs-daily-action-button{min-width:46px}',
-    '.wbs-growth-rewards{margin-top:8px;padding:8px;border:1px solid var(--wb-border-subtle,rgba(20,24,32,.1));border-radius:8px;background:color-mix(in srgb,var(--wb-bg-secondary,#f6f7f8) 46%,transparent)}.wbs-growth-rewards-head,.wbs-growth-tier{display:grid;align-items:center;column-gap:8px}.wbs-growth-rewards-head{grid-template-columns:minmax(0,1fr) auto;padding-bottom:6px;border-bottom:1px solid var(--wb-border-subtle,rgba(20,24,32,.1))}.wbs-growth-rewards-head span{font-weight:650;white-space:nowrap}.wbs-growth-rewards-head em{font-size:10px;font-style:normal;color:var(--wb-icon-tertiary,#7c818b);white-space:nowrap}.wbs-growth-tier{grid-template-columns:52px 38px minmax(0,1fr);min-height:24px;color:var(--wb-color-text-secondary,#5f6368);font-size:10.5px}.wbs-growth-tier span,.wbs-growth-tier em,.wbs-growth-tier b{white-space:nowrap}.wbs-growth-tier em{font-style:normal;color:var(--wb-icon-tertiary,#7c818b)}.wbs-growth-tier b{text-align:right;color:var(--wb-color-text-secondary,#5f6368);font-weight:650}.wbs-growth-tier.is-claimed b{color:var(--wb-icon-tertiary,#7c818b)}',
+    '.wbs-growth-rewards{margin-top:8px;padding:8px;border:1px solid var(--wb-border-subtle,rgba(20,24,32,.1));border-radius:8px;background:color-mix(in srgb,var(--wb-bg-secondary,#f6f7f8) 46%,transparent)}.wbs-growth-rewards-head,.wbs-growth-tier{display:grid;align-items:center;column-gap:8px}.wbs-growth-rewards-head{grid-template-columns:minmax(0,1fr) auto;padding-bottom:6px;border-bottom:1px solid var(--wb-border-subtle,rgba(20,24,32,.1))}.wbs-growth-rewards-head span{font-weight:650;white-space:nowrap}.wbs-growth-rewards-head em{font-size:10px;font-style:normal;color:var(--wb-icon-tertiary,#7c818b);white-space:nowrap}.wbs-growth-tier{grid-template-columns:52px 38px minmax(0,1fr) auto;min-height:24px;color:var(--wb-color-text-secondary,#5f6368);font-size:10.5px}.wbs-growth-tier span,.wbs-growth-tier em,.wbs-growth-tier b{white-space:nowrap}.wbs-growth-tier em{font-style:normal;color:var(--wb-icon-tertiary,#7c818b)}.wbs-growth-tier b{min-width:0;overflow:hidden;text-align:right;text-overflow:ellipsis;color:var(--wb-color-text-secondary,#5f6368);font-weight:650}.wbs-growth-tier.is-claimed b{color:var(--wb-icon-tertiary,#7c818b)}.wbs-growth-tier.is-claimable b{color:var(--wb-color-text-primary,var(--wb-color-text-secondary,#5f6368))}.wbs-growth-tier-claim{display:inline-flex;align-items:center;justify-content:center;height:18px;padding:0 6px;border:1px solid var(--wb-button-primary-bg,#1f1f1f);border-radius:5px;background:var(--wb-button-primary-bg,#1f1f1f);color:var(--wb-button-primary-fg,#fff);font:600 10px/1 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;white-space:nowrap;cursor:pointer;transition:background-color .16s,border-color .16s,box-shadow .16s}.wbs-growth-tier-claim:hover:not([disabled]),.wbs-growth-tier-claim:focus-visible:not([disabled]){background:var(--wb-button-primary-bg-hover,var(--wb-button-primary-bg,#1f1f1f));border-color:var(--wb-button-primary-bg-hover,var(--wb-button-primary-bg,#1f1f1f))}.wbs-growth-tier-claim:focus-visible{outline:0;box-shadow:0 0 0 2px color-mix(in srgb,var(--wb-button-primary-bg,#1f1f1f) 34%,transparent)}.wbs-growth-tier-claim[disabled]{opacity:.72;cursor:default}',
     '.wbs-status-popover button:not([disabled]){cursor:pointer}',
     '.wbs-credit-tip-account{margin:-4px 0 8px;color:var(--wb-icon-tertiary,#8a8f98);font-size:10px;line-height:1.35;overflow-wrap:anywhere}',
     '.wbs-credit-tip-value{display:flex;align-items:center;gap:8px;padding:8px 9px;border:1px solid var(--wb-border-subtle,rgba(20,24,32,.1));border-radius:8px;background:color-mix(in srgb,var(--wb-bg-secondary,#f6f7f8) 72%,transparent);color:var(--wb-color-text-primary,#1f1f1f)}.wbs-credit-tip-value i.credit{color:var(--wbs-tip-credit)}.wbs-credit-tip-value b{font-size:12px;font-variant-numeric:tabular-nums}.wbs-credit-tip-value+.wbs-daily-manual{margin-top:11px}',
