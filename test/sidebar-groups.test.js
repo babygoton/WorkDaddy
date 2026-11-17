@@ -44,6 +44,21 @@ test('选中分组时只有成员目录的行留下', () => {
   assert.equal(ctx.sgRowKeeps('D:/media/b', selection), false);
 });
 
+test('成员目录下的子目录会话也算这个分组', () => {
+  const ctx = loadPure();
+  const selection = { mode: 'group', members: new Set(['D:/media/a']), union: new Set(['D:/media/a']) };
+  assert.equal(ctx.sgRowKeeps('D:/media/a/sub/deep', selection), true);
+  // 前缀要按目录边界判断，不能把 D:/media/ab 当成 D:/media/a 的子目录
+  assert.equal(ctx.sgRowKeeps('D:/media/ab', selection), false);
+  const unassigned = { mode: 'unassigned', members: new Set(), union: new Set(['D:/media/a']) };
+  assert.equal(ctx.sgRowKeeps('D:/media/a/sub', unassigned), false);
+});
+
+test('会话卡片和所属目录用同一套判据', () => {
+  const module = slice('function createSidebarGroups(', 'function createBuildLifecycle(');
+  assert.match(module, /var keep = spacePath \? sgRowKeeps\(spacePath, selection\) : sgRowKeeps\(cwd, selection\)/);
+});
+
 test('未分组视图收的正好是所有分组之外的目录', () => {
   const ctx = loadPure();
   const selection = { mode: 'unassigned', members: new Set(), union: new Set(['D:/media/a']) };

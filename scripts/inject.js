@@ -201,13 +201,27 @@ function sgSpaceIdOfPrefix(prefix) {
   return value.slice(cut + 1, value.length - 2);
 }
 
+// 成员是目录，目录下子目录里的会话也算这个分组的：逐级往上看父目录，不遍历整个集合
+function sgSetHas(set, path) {
+  var value = String(path || '');
+  if (!value) return false;
+  if (set.has(value)) return true;
+  while (value) {
+    var cut = value.lastIndexOf('/');
+    if (cut <= 0) return false;
+    value = value.slice(0, cut);
+    if (set.has(value)) return true;
+  }
+  return false;
+}
+
 // mode: all | group | unassigned。members 是当前分组成员，union 是所有分组的并集。
 function sgRowKeeps(cwd, selection) {
   if (!selection || selection.mode === 'all') return true;
   var path = String(cwd || '');
   if (!path) return selection.mode === 'unassigned';
-  if (selection.mode === 'unassigned') return !selection.union.has(path);
-  return selection.members.has(path);
+  if (selection.mode === 'unassigned') return !sgSetHas(selection.union, path);
+  return sgSetHas(selection.members, path);
 }
 
 // 侧边栏索引分组：把工作目录当标签用，而不是当容器。
@@ -312,39 +326,16 @@ function createSidebarGroups(options) {
     return doc.querySelector('.conversation-list-content');
   }
 
-  function counts() {
-    var map = Object.create(null);
-    var union = new Set();
-    state.groups.forEach(function (group) {
-      map[group.id] = 0;
-      group.members.forEach(function (member) { union.add(member); });
-    });
-    map[UNASSIGNED] = 0;
-    if (!state.cwdById) return map;
-    Object.keys(state.cwdById).forEach(function (id) {
-      var cwd = state.cwdById[id];
-      if (!cwd) return;
-      var hit = false;
-      state.groups.forEach(function (group) {
-        if (group.members.indexOf(cwd) >= 0) { map[group.id]++; hit = true; }
-      });
-      if (!hit) map[UNASSIGNED]++;
-    });
-    return map;
-  }
-
   function renderBar() {
     if (!barEl || !barEl.isConnected) return;
-    var tally = counts();
+    // 不挂会话条数：侧栏对折叠目录不渲染卡片，任何「N 条」都会和眼前看到的对不上
     var html = '<button class="wbs-sg-chip' + (state.selected === ALL ? ' active' : '') + '" type="button" data-sg-select="' + ALL + '">' + esc(t('全部')) + '</button>';
     state.groups.forEach(function (group) {
       html += '<button class="wbs-sg-chip' + (state.selected === group.id ? ' active' : '') + '" type="button" data-sg-select="' + escAttr(group.id) + '" title="' + escAttr(group.name) + '">' +
-        '<span class="wbs-sg-dot" style="background:' + escAttr(group.color) + '"></span>' + esc(group.name) +
-        (tally[group.id] ? '<span class="wbs-sg-count">' + tally[group.id] + '</span>' : '') + '</button>';
+        '<span class="wbs-sg-dot" style="background:' + escAttr(group.color) + '"></span>' + esc(group.name) + '</button>';
     });
     if (state.groups.length) {
-      html += '<button class="wbs-sg-chip' + (state.selected === UNASSIGNED ? ' active' : '') + '" type="button" data-sg-select="' + UNASSIGNED + '">' + esc(t('未分组')) +
-        (tally[UNASSIGNED] ? '<span class="wbs-sg-count">' + tally[UNASSIGNED] + '</span>' : '') + '</button>';
+      html += '<button class="wbs-sg-chip' + (state.selected === UNASSIGNED ? ' active' : '') + '" type="button" data-sg-select="' + UNASSIGNED + '">' + esc(t('未分组')) + '</button>';
     }
     var manageLabel = escAttr(t('管理分组'));
     html += '<button class="wbs-sg-more" type="button" data-sg-manage="1" title="' + manageLabel + '" aria-label="' + manageLabel + '">' + GEAR + '</button>';
@@ -382,12 +373,14 @@ function createSidebarGroups(options) {
     var headers = scope.querySelectorAll('[data-flat-row-id$="::header"]');
     var keepPrefix = Object.create(null);
     Array.prototype.forEach.call(cards, function (card) {
-      var id = card.getAttribute('data-conversation-id');
-      var cwd = state.cwdById ? (state.cwdById[id] || '') : '';
-      var keep = sgRowKeeps(cwd, selection);
+      var prefix = sgRowGroupPrefix(card.getAttribute('data-flat-row-id'));
+      var spaceId = sgSpaceIdOfPrefix(prefix);
+      var spacePath = (spaceId && state.spacePath[spaceId]) || '';
+      var cwd = state.cwdById ? (state.cwdById[card.getAttribute('data-conversation-id')] || '') : '';
+      // 卡片和所属目录用同一套判据：否则目录留下了、里面的会话却被隐藏，点开是空的
+      var keep = spacePath ? sgRowKeeps(spacePath, selection) : sgRowKeeps(cwd, selection);
       setHidden(card, !keep);
       if (keep) {
-        var prefix = sgRowGroupPrefix(card.getAttribute('data-flat-row-id'));
         if (prefix) keepPrefix[prefix] = true;
       }
     });
@@ -435,7 +428,8 @@ function createSidebarGroups(options) {
   }
 
   function refreshMaps() {
-    var sessions = api('/api/sessions').then(function (data) {
+    // 侧栏列的是所有账号的会话，只取当前账号会让 chip 数字和目录归属都对不上
+    var sessions = api('/api/sessions?uid=&range=all').then(function (data) {
       var list = (data && (data.sessions || data.list)) || [];
       var map = Object.create(null);
       list.forEach(function (item) {
@@ -672,7 +666,6 @@ function createSidebarGroups(options) {
       '.wbs-sg-chip:hover{background:rgba(127,127,127,.14);opacity:1}',
       '.wbs-sg-chip.active{background:rgba(127,127,127,.2);border-color:rgba(127,127,127,.5);opacity:1}',
       '.wbs-sg-dot{width:6px;height:6px;flex:0 0 6px;border-radius:50%;background:#4f86ff}',
-      '.wbs-sg-count{font-size:10px;opacity:.6;font-variant-numeric:tabular-nums}',
       '.wbs-sg-more{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;margin-left:auto;padding:0;border:0;border-radius:6px;background:transparent;color:inherit;opacity:.55;cursor:pointer}',
       '.wbs-sg-more:hover{background:rgba(127,127,127,.16);opacity:.95}',
       '.wbs-sg-dialog{width:min(560px,92%);box-sizing:border-box}',
