@@ -1,9 +1,19 @@
 'use strict';
 
+const crypto = require('node:crypto');
+
 const GROWTH_ACTIVE_TIMEOUT_MS = 12000;
 const GROWTH_SESSION_TIMEOUT_MS = 30000;
 const DEFAULT_GROWTH_PROMPT = '你好';
 const DEFAULT_GROWTH_MODEL = 'deepseek-r1';
+// Official streak tiers and their default rewards. The redeem endpoint accepts
+// exactly these tier keys, so the daemon must not forward arbitrary values.
+const STREAK_TIER_DEFAULTS = [
+  { tier: '7d', days: 7, credit: 0, energy: 2, cards: 1, chances: 1 },
+  { tier: '14d', days: 14, credit: 50, energy: 3, cards: 1, chances: 1 },
+  { tier: '28d', days: 28, credit: 150, energy: 5, cards: 1, chances: 1 },
+];
+const STREAK_TIER_PATTERN = /^(7d|14d|28d)$/;
 
 function responseData(payload) {
   if (payload && typeof payload === 'object' && payload.data && typeof payload.data === 'object') {
@@ -60,6 +70,11 @@ function timeoutSignal(timeoutMs) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   return { controller, timer };
+}
+
+function tierRewardCount(value, fallback) {
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0 ? number : fallback;
 }
 
 function sseEventParser(onMessage) {
@@ -349,12 +364,19 @@ async function fetchGrowthStreak(accessToken, options = {}) {
     const progressDays = Number.isSafeInteger(redemption.remaining_days) && redemption.remaining_days >= 0
       ? redemption.remaining_days : days;
     const configured = Array.isArray(redemption.tiers) ? redemption.tiers : [];
-    const defaults = [{ tier: '7d', days: 7 }, { tier: '14d', days: 14 }, { tier: '28d', days: 28 }];
-    const tiers = defaults.map((fallback) => {
-      const source = configured.find((tier) => tier && tier.tier === fallback.tier) || fallback;
+    const tiers = STREAK_TIER_DEFAULTS.map((fallback) => {
+      const source = configured.find((tier) => tier && tier.tier === fallback.tier) || {};
       const tierDays = Number.isSafeInteger(source.days) && source.days > 0 ? source.days : fallback.days;
       const status = String(redemption[`tier_${fallback.tier}_status`] || source.status || 'locked');
-      return { key: fallback.tier, days: tierDays, status };
+      return {
+        key: fallback.tier,
+        days: tierDays,
+        status,
+        credit: tierRewardCount(source.credit, fallback.credit),
+        energy: tierRewardCount(source.energy, fallback.energy),
+        cards: tierRewardCount(source.cards, fallback.cards),
+        chances: tierRewardCount(source.chances, fallback.chances),
+      };
     });
     return {
       days,
@@ -367,6 +389,67 @@ async function fetchGrowthStreak(accessToken, options = {}) {
     };
   } catch (error) {
     if (error && error.name === 'AbortError') throw new Error('成长活跃接口请求超时');
+    throw error;
+  } finally { clearTimeout(timer); }
+}
+
+/**
+ * Claim one continuous-login streak tier reward with the account's own token.
+ * Rewards land on that account; the renderer's login state is never touched.
+ * The official endpoint answers 409 duplicate when this tier was already
+ * redeemed in the current window, which callers treat as "already claimed".
+ */
+async function claimGrowthStreakReward(accessToken, tier, options = {}) {
+  const apiHost = String(options.apiHost || 'https://www.workbuddy.cn').replace(/\/+$/, '');
+  const fetchImpl = options.fetchImpl || globalThis.fetch;
+  const key = typeof tier === 'string' ? tier.trim() : '';
+  if (!accessToken || typeof fetchImpl !== 'function') throw new Error('连续登录奖励领取参数不完整');
+  if (!STREAK_TIER_PATTERN.test(key)) throw new Error('连续登录奖励档位无效');
+  const clientToken = typeof options.clientToken === 'string' && options.clientToken.trim()
+    ? options.clientToken.trim().slice(0, 120)
+    : `redeem-${crypto.randomUUID()}`;
+  const timeoutMs = Number.isFinite(options.timeoutMs) && options.timeoutMs > 0 ? options.timeoutMs : GROWTH_ACTIVE_TIMEOUT_MS;
+  const { controller, timer } = timeoutSignal(timeoutMs);
+  try {
+    const response = await fetchImpl(`${apiHost}/activity/growth/redeem`, {
+      method: 'POST',
+      redirect: 'error',
+      signal: controller.signal,
+      headers: requestHeaders(apiHost, accessToken, { referer: `${apiHost}/profile/growth-center` }),
+      body: JSON.stringify({ tier: key, client_token: clientToken }),
+    });
+    const text = await response.text();
+    let payload;
+    try { payload = JSON.parse(text); }
+    catch (_) { throw new Error('连续登录奖励接口返回了无法解析的数据'); }
+    if (!response.ok) {
+      const message = String(payload && (payload.msg || payload.message) || `连续登录奖励接口 HTTP ${response.status}`);
+      const error = new Error(message);
+      error.status = response.status;
+      // 409 means this tier was already redeemed in the current window. CN
+      // returns it as 「该档位本月已兑换」, so the status - not the wording -
+      // decides; only duplicate wording appears on some builds.
+      error.duplicate = response.status === 409;
+      error.expired = response.status === 401 || response.status === 403;
+      throw error;
+    }
+    if (payload && payload.code !== undefined && payload.code !== null && payload.code !== 0) {
+      const error = new Error(payload.msg || payload.message || `连续登录奖励接口 code=${payload.code}`);
+      error.status = response.status;
+      error.expired = payload.code === 401 || payload.code === 403;
+      throw error;
+    }
+    const data = payload && payload.data && typeof payload.data === 'object' ? payload.data : {};
+    return {
+      tier: key,
+      credits: tierRewardCount(data.credit_granted, 0),
+      energy: tierRewardCount(data.energy_granted, 0),
+      cards: tierRewardCount(data.cards_granted, 0),
+      cardsOverflow: tierRewardCount(data.cards_overflow, 0),
+      chances: tierRewardCount(data.chances_granted, 0),
+    };
+  } catch (error) {
+    if (error && error.name === 'AbortError') throw new Error('连续登录奖励请求超时');
     throw error;
   } finally { clearTimeout(timer); }
 }
@@ -402,4 +485,4 @@ function createGrowthStreakCache(load, options = {}) {
   return { get, peek };
 }
 
-module.exports = { fetchGrowthTodayActive, activateGrowthAccount, fetchGrowthStreak, createGrowthStreakCache };
+module.exports = { fetchGrowthTodayActive, activateGrowthAccount, fetchGrowthStreak, claimGrowthStreakReward, createGrowthStreakCache };
