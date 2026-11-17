@@ -472,25 +472,55 @@ function createSidebarGroups(options) {
     });
   }
 
+  // 成员候选 = 宿主空间（含刚建、还没有会话的空项目）+ 已经有会话的目录。
+  // 只看 sessions.cwd 的话，新建项目要等它产生第一条会话才能进分组。
   function loadWorkspaces() {
-    return api('/api/sessions/workspaces').then(function (data) {
-      var list = ((data && data.workspaces) || []).map(function (item) { return normalize(item); }).filter(Boolean);
-      // 成员目录可能已经不存在，也要列出来让人自己决定
+    var fromSessions = api('/api/sessions/workspaces').then(function (data) {
+      return ((data && data.workspaces) || []).map(function (item) { return { path: normalize(item), name: '', stale: false }; });
+    }).catch(function () { return []; });
+    var fromSpaces = api('/api/spaces').then(function (data) {
+      return ((data && data.spaces) || []).map(function (space) {
+        return { path: normalize(space && space.path), name: String((space && space.name) || ''), stale: false };
+      });
+    }).catch(function () { return []; });
+    return Promise.all([fromSessions, fromSpaces]).then(function (res) {
+      var list = [];
+      var byPath = Object.create(null);
+      res[1].concat(res[0]).forEach(function (entry) {
+        if (!entry.path) return;
+        var seen = byPath[entry.path];
+        if (seen) {
+          // 同一路径可能有多个空间记录，优先保留有名字的那个
+          if (!seen.name && entry.name) seen.name = entry.name;
+          return;
+        }
+        byPath[entry.path] = entry;
+        list.push(entry);
+      });
+      // 分组里已经记着、但宿主已经不再列出的目录也要留着，标成失效让人自己决定
       state.groups.forEach(function (group) {
-        group.members.forEach(function (member) { if (list.indexOf(member) < 0) list.push(member); });
+        group.members.forEach(function (member) {
+          if (byPath[member]) return;
+          var stale = { path: member, name: '', stale: true };
+          byPath[member] = stale;
+          list.push(stale);
+        });
       });
       state.workspaces = list;
       return list;
-    }).catch(function () { return state.workspaces || []; });
+    });
   }
 
   // ===== 管理弹窗 =====
-  function memberRow(path, checked) {
-    var exists = (state.workspaces || []).indexOf(path) >= 0;
-    return '<label class="wbs-sg-member' + (exists ? '' : ' invalid') + '">' +
+  function memberRow(entry, checked) {
+    var path = entry.path;
+    // 目录名常常是时间戳（宿主按创建时间建目录），所以把宿主里的项目名一起显示
+    return '<label class="wbs-sg-member' + (entry.stale ? ' invalid' : '') + '">' +
       '<input type="checkbox" data-sg-member="' + escAttr(path) + '"' + (checked ? ' checked' : '') + '>' +
-      '<span class="wbs-sg-member-path" title="' + escAttr(path) + '">' + esc(path) + '</span>' +
-      (exists ? '' : '<span class="wbs-sg-invalid">' + esc(t('路径失效')) + '</span>') +
+      '<span class="wbs-sg-member-text">' +
+      (entry.name ? '<span class="wbs-sg-member-name">' + esc(entry.name) + '</span>' : '') +
+      '<span class="wbs-sg-member-path" title="' + escAttr(path) + '">' + esc(path) + '</span></span>' +
+      (entry.stale ? '<span class="wbs-sg-invalid">' + esc(t('路径失效')) + '</span>' : '') +
       '</label>';
   }
 
@@ -521,8 +551,8 @@ function createSidebarGroups(options) {
         '</div>';
     });
     html += '</div><div class="wbs-sg-members-head">' + esc(t('成员目录')) + '</div><div class="wbs-sg-members">';
-    state.workspaces.forEach(function (path) {
-      html += memberRow(path, editing.members.indexOf(path) >= 0);
+    state.workspaces.forEach(function (entry) {
+      html += memberRow(entry, editing.members.indexOf(entry.path) >= 0);
     });
     html += '</div>';
     body.innerHTML = html;
@@ -709,12 +739,14 @@ function createSidebarGroups(options) {
       '.wbs-sg-del.armed{background:#dc2626;border-color:#dc2626;color:#fff}',
       '.wbs-sg-members-head{font-size:11px;font-weight:700;color:var(--wb-icon-secondary,#666);margin-top:2px}',
       '.wbs-sg-members{display:flex;flex-direction:column;gap:1px}',
-      '.wbs-sg-member{display:flex;align-items:center;gap:7px;padding:3px 5px;border-radius:6px;font-size:11.5px;color:var(--wb-color-text-secondary,#555);cursor:pointer;min-width:0}',
+      '.wbs-sg-member{display:flex;align-items:flex-start;gap:7px;padding:4px 5px;border-radius:6px;font-size:11.5px;color:var(--wb-color-text-secondary,#555);cursor:pointer;min-width:0}',
       '.wbs-sg-member:hover{background:var(--wb-bg-hover,#f4f4f4)}',
-      '.wbs-sg-member input{width:14px;height:14px;flex:0 0 14px;margin:0;accent-color:var(--wb-button-primary-bg,#1f1f1f);cursor:pointer}',
-      '.wbs-sg-member-path{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;direction:rtl;text-align:left}',
+      '.wbs-sg-member input{width:14px;height:14px;flex:0 0 14px;margin:2px 0 0;accent-color:var(--wb-button-primary-bg,#1f1f1f);cursor:pointer}',
+      '.wbs-sg-member-text{display:flex;flex:1 1 auto;min-width:0;flex-direction:column;gap:1px}',
+      '.wbs-sg-member-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;font-weight:600;color:var(--wb-color-text-primary,#1f1f1f)}',
+      '.wbs-sg-member-path{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10.5px;color:var(--wb-icon-tertiary,#8a8a8a)}',
       '.wbs-sg-member.invalid .wbs-sg-member-path{opacity:.6}',
-      '.wbs-sg-invalid{flex:0 0 auto;padding:0 5px;border-radius:5px;background:rgba(220,38,38,.12);color:#dc2626;font-size:10px}',
+      '.wbs-sg-invalid{flex:0 0 auto;margin-top:2px;padding:0 5px;border-radius:5px;background:rgba(220,38,38,.12);color:#dc2626;font-size:10px}',
       '.wbs-sg-hint{padding:14px 4px;color:var(--wb-icon-tertiary,#888);font-size:12px}',
       '.wbs-sg-create{display:flex;align-items:center;gap:6px;margin-top:10px}',
       '.wbs-sg-new{flex:1 1 auto;min-width:0;padding:6px 8px;border:1px solid var(--wb-border-subtle,#ddd);border-radius:8px;background:transparent;color:inherit;font:inherit;font-size:12px}',

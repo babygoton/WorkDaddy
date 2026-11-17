@@ -182,3 +182,15 @@ test('空间 id 与目录的映射由 daemon 只读提供', () => {
   // 该表的 deleted_at 用负数表示未删除，只写 IS NULL 会一条都取不到
   assert.match(daemon, /deleted_at IS NULL OR deleted_at < 0/);
 });
+
+test('成员候选包含宿主空间，刚建的空项目也能进分组', () => {
+  const module = slice('function createSidebarGroups(', 'function createBuildLifecycle(');
+  const block = module.slice(module.indexOf('function loadWorkspaces()'), module.indexOf('// ===== 管理弹窗 ====='));
+  // 只取「有会话的目录」会让新建项目（还没有会话）永远进不了分组
+  assert.match(block, /api\('\/api\/spaces'\)/);
+  assert.match(block, /api\('\/api\/sessions\/workspaces'\)/);
+  assert.match(block, /byPath\[entry\.path\]/);
+  // 成员行要显示宿主里的项目名，否则时间戳目录认不出来
+  const row = module.slice(module.indexOf('function memberRow('), module.indexOf('function renderModal('));
+  assert.match(row, /wbs-sg-member-name/);
+});
