@@ -348,7 +348,8 @@ function createSidebarGroups(options) {
     }
     var manageLabel = escAttr(t('管理分组'));
     html += '<button class="wbs-sg-more" type="button" data-sg-manage="1" title="' + manageLabel + '" aria-label="' + manageLabel + '">' + GEAR + '</button>';
-    barEl.innerHTML = html;
+    // 只在内容真的变了才重写：每次重写都会把按下中的按钮换成新节点，click 就永远发不出来
+    if (barEl.innerHTML !== html) barEl.innerHTML = html;
   }
 
   function ensureBar() {
@@ -411,7 +412,15 @@ function createSidebarGroups(options) {
     if (observer) observer.disconnect();
     var target = contentEl();
     if (!target) return;
-    observer = new MutationObserver(schedule);
+    observer = new MutationObserver(function (records) {
+      // 自己那条 chip 的增删不算宿主变化，否则「重写 chip -> 收到通知 -> 再重写」会自激
+      for (var i = 0; i < records.length; i++) {
+        var node = records[i].target;
+        if (node && node.closest && node.closest('.wbs-sg-bar')) continue;
+        schedule();
+        return;
+      }
+    });
     // 只监听节点增删：React 重建行时重新收窄；自身只改 style 属性，不会自激
     observer.observe(target, { childList: true, subtree: true });
   }

@@ -70,6 +70,14 @@ test('分组条挂在宿主的「分组」标题之后，不去改标题行本�
   assert.doesNotMatch(module, /\.appendChild\((card|header|row)\)/);
 });
 
+test('分组条不会自激重建（否则点不中按钮）', () => {
+  const module = slice('function createSidebarGroups(', 'function createBuildLifecycle(');
+  // 每次重写 innerHTML 都会把按下中的按钮换掉，click 就发不出来
+  assert.match(module, /if \(barEl\.innerHTML !== html\) barEl\.innerHTML = html/);
+  // 自己的 chip 变化不能再触发观察者，否则「重写 -> 通知 -> 重写」
+  assert.match(module, /closest\('\.wbs-sg-bar'\)\) continue/);
+});
+
 test('空间 id 与目录的映射由 daemon 只读提供', () => {
   assert.match(daemon, /p === '\/api\/spaces'/);
   assert.match(daemon, /FROM spaces/);
