@@ -547,8 +547,8 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 // 1.2.70：视频壁纸层夹在 body 底色与 #root 之间，毛玻璃主题下正常显示画面。
 // #507: explicit cleanup of old Windows client temp files, only before a verified cold launch.
 // 1.2.81：在共享目标分支加入视频壁纸及失败重试、主题路径边界修复。
-const DAEMON_VERSION = '1.2.84';
-const DAEMON_BUILD_ID = 'release-1.2.84-session-pin-capture';
+const DAEMON_VERSION = '1.2.85';
+const DAEMON_BUILD_ID = 'release-1.2.85-sidebar-index-groups';
 const usageReporter = createUsageReporter({ profile: PROFILE.id, version: DAEMON_VERSION });
 configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const automationDiscovery = createAutomationDiscovery({
