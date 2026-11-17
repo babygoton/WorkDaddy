@@ -328,11 +328,13 @@ function createSidebarGroups(options) {
 
   function renderBar() {
     if (!barEl || !barEl.isConnected) return;
-    // 不挂会话条数：侧栏对折叠目录不渲染卡片，任何「N 条」都会和眼前看到的对不上
+    // 数字表示这个分组里有几个工作目录（目录数固定可见，会话数会随折叠状态对不上）
+    var unit = t('个目录');
     var html = '<button class="wbs-sg-chip' + (state.selected === ALL ? ' active' : '') + '" type="button" data-sg-select="' + ALL + '">' + esc(t('全部')) + '</button>';
     state.groups.forEach(function (group) {
-      html += '<button class="wbs-sg-chip' + (state.selected === group.id ? ' active' : '') + '" type="button" data-sg-select="' + escAttr(group.id) + '" title="' + escAttr(group.name) + '">' +
-        '<span class="wbs-sg-dot" style="background:' + escAttr(group.color) + '"></span>' + esc(group.name) + '</button>';
+      var count = '<span class="wbs-sg-count">' + group.members.length + '</span>';
+      html += '<button class="wbs-sg-chip' + (state.selected === group.id ? ' active' : '') + '" type="button" data-sg-select="' + escAttr(group.id) + '" title="' + escAttr(group.name + ' · ' + group.members.length + ' ' + unit) + '">' +
+        '<span class="wbs-sg-dot" style="background:' + escAttr(group.color) + '"></span>' + esc(group.name) + count + '</button>';
     });
     if (state.groups.length) {
       html += '<button class="wbs-sg-chip' + (state.selected === UNASSIGNED ? ' active' : '') + '" type="button" data-sg-select="' + UNASSIGNED + '">' + esc(t('未分组')) + '</button>';
@@ -666,6 +668,7 @@ function createSidebarGroups(options) {
       '.wbs-sg-chip:hover{background:rgba(127,127,127,.14);opacity:1}',
       '.wbs-sg-chip.active{background:rgba(127,127,127,.2);border-color:rgba(127,127,127,.5);opacity:1}',
       '.wbs-sg-dot{width:6px;height:6px;flex:0 0 6px;border-radius:50%;background:#4f86ff}',
+      '.wbs-sg-count{font-size:10px;opacity:.62;font-variant-numeric:tabular-nums}',
       '.wbs-sg-more{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;margin-left:auto;padding:0;border:0;border-radius:6px;background:transparent;color:inherit;opacity:.55;cursor:pointer}',
       '.wbs-sg-more:hover{background:rgba(127,127,127,.16);opacity:.95}',
       '.wbs-sg-dialog{width:min(560px,92%);box-sizing:border-box}',
