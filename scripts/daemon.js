@@ -12313,6 +12313,22 @@ function handleApi(req, res) {
       .then((rows) => json(res, 200, { ok: true, workspaces: rows.map((r) => r.cwd) }))
       .catch((e) => json(res, 500, { ok: false, error: e.message }));
   }
+  // 空间列表：GET /api/spaces
+  // 侧边栏折叠起来的分组不渲染卡片，只能靠空间 id 认目录，这里把 id 和目录路径的对应关系给出。
+  if (req.method === 'GET' && p === '/api/spaces') {
+      return sqliteQuery("SELECT id, name, primary_folder_path, create_folder_path FROM spaces WHERE deleted_at IS NULL OR deleted_at < 0;")
+      .then((rows) => json(res, 200, {
+        ok: true,
+        spaces: rows
+          .map((row) => ({
+            id: String(row.id || ''),
+            name: String(row.name || ''),
+            path: String(row.primary_folder_path || row.create_folder_path || ''),
+          }))
+          .filter((row) => row.id),
+      }))
+      .catch((e) => json(res, 500, { ok: false, error: e.message }));
+  }
   // 模型连通测试：只返回网络/HTTP 状态，不记录或回传 URL 查询参数、API Key 等敏感内容。
   // 大多数 OpenAI 兼容服务的根路径不响应（404），因此按候选顺序探测真实端点：
   //   {base}/models → {base}/v1/models（base 未带版本前缀时）→ base 本身。
