@@ -78,6 +78,14 @@ test('分组条不会自激重建（否则点不中按钮）', () => {
   assert.match(module, /closest\('\.wbs-sg-bar'\)\) continue/);
 });
 
+test('只看「分组」区，「最近」不受影响', () => {
+  const module = slice('function createSidebarGroups(', 'function createBuildLifecycle(');
+  // 「最近」是跨目录的时间列表，跟着分组一起清空会让人找不到刚做的任务
+  assert.match(module, /content\.querySelector\('\.conversation-section-groups'\) \|\| content/);
+  assert.match(module, /scope\.querySelectorAll\('\.conversation-item/);
+  assert.match(module, /if \(!scope\.contains\(el\)\)/);
+});
+
 test('空间 id 与目录的映射由 daemon 只读提供', () => {
   assert.match(daemon, /p === '\/api\/spaces'/);
   assert.match(daemon, /FROM spaces/);

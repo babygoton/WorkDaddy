@@ -376,8 +376,10 @@ function createSidebarGroups(options) {
     if (!content) return;
     var selection = selectionOf();
     if (selection.mode === 'all') { clearHidden(); return; }
-    var cards = content.querySelectorAll('.conversation-item[data-conversation-id]');
-    var headers = content.querySelectorAll('[data-flat-row-id$="::header"]');
+    // 只收窄「分组」区：「最近」是按时间排的跨目录列表，跟着分组一起清空会让人找不到刚做的任务
+    var scope = content.querySelector('.conversation-section-groups') || content;
+    var cards = scope.querySelectorAll('.conversation-item[data-conversation-id]');
+    var headers = scope.querySelectorAll('[data-flat-row-id$="::header"]');
     var keepPrefix = Object.create(null);
     Array.prototype.forEach.call(cards, function (card) {
       var id = card.getAttribute('data-conversation-id');
@@ -396,6 +398,13 @@ function createSidebarGroups(options) {
       // 折叠的分组不渲染卡片，按空间路径判断；拿不到路径时退回看有没有可见卡片
       var keep = path ? sgRowKeeps(path, selection) : !!keepPrefix[prefix];
       setHidden(header, !keep);
+    });
+    // 「最近」里残留的旧标记（上一版会连它一起隐藏）在这里清掉
+    Array.prototype.forEach.call(content.querySelectorAll('[data-wbs-sg-hidden]'), function (el) {
+      if (!scope.contains(el)) {
+        el.style.display = '';
+        el.removeAttribute('data-wbs-sg-hidden');
+      }
     });
   }
 
