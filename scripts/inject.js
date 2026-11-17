@@ -246,6 +246,8 @@ function createSidebarGroups(options) {
   var refreshTimer = null;
   var disposed = false;
   var deleteArmed = null;
+  var pendingTap = null;
+  var lastPointerAt = 0;
   var editingId = null;
   var GEAR = '<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6.6 1.9h2.8l.35 1.6 1.35.78 1.55-.55 1.4 2.42-1.2 1.1v1.56l1.2 1.1-1.4 2.42-1.55-.55-1.35.78-.35 1.6H6.6l-.35-1.6-1.35-.78-1.55.55L1.95 9.3l1.2-1.1V6.65l-1.2-1.1L3.35 3.13l1.55.55 1.35-.78z"/><circle cx="8" cy="8" r="1.9"/></svg>';
 
@@ -530,7 +532,9 @@ function createSidebarGroups(options) {
     modalEl.addEventListener('click', onModalClick);
     modalEl.addEventListener('change', onModalChange);
     modalEl.addEventListener('keydown', onModalKey);
-    editingId = state.groups[0] ? state.groups[0].id : null;
+    // 保留上次编辑的分组：每次打开都跳回第一个，改成员时很容易改到别的组上去
+    editingId = state.groups.some(function (group) { return group.id === editingId; })
+      ? editingId : (state.groups[0] ? state.groups[0].id : null);
     deleteArmed = null;
     renderModal();
     loadWorkspaces().then(renderModal);
@@ -664,6 +668,9 @@ function createSidebarGroups(options) {
     styleEl.id = 'wbs-sg-style';
     styleEl.textContent = [
       '.wbs-sg-bar{display:flex;flex-wrap:wrap;align-items:center;gap:4px;padding:1px 10px 7px;min-width:0}',
+      // 宿主收起「分组」区时，这行 chip 也跟着收起来，别孤零零挂在一个折叠的标题下。
+      // 注意：:has() 里不能再套 :has()，整条规则会被解析器直接丢弃。
+      '.conversation-section-groups:has(.conversation-section-chevron:not(.conversation-section-chevron-expanded)) .wbs-sg-bar{display:none}',
       '.wbs-sg-chip{display:inline-flex;align-items:center;gap:4px;max-width:132px;padding:2px 7px;border:1px solid rgba(127,127,127,.28);border-radius:999px;background:transparent;color:inherit;font:inherit;font-size:11px;line-height:1.5;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;opacity:.82}',
       '.wbs-sg-chip:hover{background:rgba(127,127,127,.14);opacity:1}',
       '.wbs-sg-chip.active{background:rgba(127,127,127,.2);border-color:rgba(127,127,127,.5);opacity:1}',
@@ -707,6 +714,8 @@ function createSidebarGroups(options) {
     refreshMaps();
     // 分组条会被 React 重建，事件挂在 document 上按节点判断
     doc.addEventListener('click', onDocClick, true);
+    doc.addEventListener('pointerdown', onDocPointerDown, true);
+    doc.addEventListener('pointerup', onDocPointerUp, true);
     // 会话变化（新建/切换账号）后重新取映射，30 秒一次足够
     refreshTimer = setInterval(function () {
       if (doc.visibilityState === 'visible') refreshMaps();
@@ -720,7 +729,36 @@ function createSidebarGroups(options) {
     var target = event.target;
     if (!target || !target.closest) return;
     if (!target.closest('.wbs-sg-bar')) return;
-    onBarClick(event);
+    // 键盘触发的 click（detail=0）没有 pointer 序列；指针序列刚处理过就跳过，避免重复执行
+    if (event.detail === 0 || Date.now() - lastPointerAt > 400) onBarClick(event);
+  }
+
+  // 按下时记住点的是哪个 chip：宿重重渲染会把 chip 节点整个换掉，
+  // 这时 mouseup 落在新节点上，click 根本不会派发 —— 表现为「点了没反应」。
+  function onDocPointerDown(event) {
+    var target = event.target;
+    if (!target || !target.closest || !target.closest('.wbs-sg-bar')) { pendingTap = null; return; }
+    var chip = target.closest('[data-sg-select]');
+    if (chip) { pendingTap = { id: chip.getAttribute('data-sg-select'), x: event.clientX, y: event.clientY }; return; }
+    if (target.closest('[data-sg-manage]')) { pendingTap = { manage: true, x: event.clientX, y: event.clientY }; return; }
+    pendingTap = null;
+  }
+
+  function onDocPointerUp(event) {
+    var tap = pendingTap;
+    pendingTap = null;
+    if (!tap) return;
+    // 拖动（滑开超过 6px）或松手时已经离开分组条，都不算点击
+    if (Math.abs(event.clientX - tap.x) > 6 || Math.abs(event.clientY - tap.y) > 6) return;
+    var bar = barEl && barEl.isConnected ? barEl : null;
+    if (!bar) return;
+    var box = bar.getBoundingClientRect();
+    if (event.clientX < box.left || event.clientX > box.right || event.clientY < box.top || event.clientY > box.bottom) return;
+    lastPointerAt = Date.now();
+    event.preventDefault();
+    event.stopPropagation();
+    if (tap.manage) openModal();
+    else selectGroup(tap.id);
   }
 
   function destroy() {
@@ -729,6 +767,9 @@ function createSidebarGroups(options) {
     if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
     if (observer) { observer.disconnect(); observer = null; }
     doc.removeEventListener('click', onDocClick, true);
+    doc.removeEventListener('pointerdown', onDocPointerDown, true);
+    doc.removeEventListener('pointerup', onDocPointerUp, true);
+    pendingTap = null;
     clearHidden();
     closeModal();
     if (barEl) { barEl.remove(); barEl = null; }

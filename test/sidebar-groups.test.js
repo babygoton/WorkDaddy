@@ -101,6 +101,32 @@ test('只看「分组」区，「最近」不受影响', () => {
   assert.match(module, /if \(!scope\.contains\(el\)\)/);
 });
 
+test('宿主收起「分组」区时分组条一起收起', () => {
+  const module = slice('function createSidebarGroups(', 'function createBuildLifecycle(');
+  // :has() 里套 :has() 会让整条规则被解析器丢弃，这里必须是单层
+  const rule = module.match(/'\.conversation-section-groups:has\([^']*\) \.wbs-sg-bar\{display:none\}'/);
+  assert.ok(rule, 'missing collapse rule');
+  assert.equal((rule[0].match(/:has\(/g) || []).length, 1);
+  assert.match(rule[0], /conversation-section-chevron:not\(\.conversation-section-chevron-expanded\)/);
+});
+
+test('管理弹窗保留上次编辑的分组', () => {
+  const module = slice('function createSidebarGroups(', 'function createBuildLifecycle(');
+  // 每次打开都跳回第一个分组，改成员很容易改到别的组上
+  assert.match(module, /editingId = state\.groups\.some\(function \(group\) \{ return group\.id === editingId; \}\)/);
+});
+
+test('点击意图在按下时记录，宿主重渲染不会吃掉这次点击', () => {
+  const module = slice('function createSidebarGroups(', 'function createBuildLifecycle(');
+  assert.match(module, /function onDocPointerDown\(/);
+  assert.match(module, /function onDocPointerUp\(/);
+  // 松手位置必须仍在分组条范围内，且移动超过 6px 视为拖动
+  assert.match(module, /Math\.abs\(event\.clientX - tap\.x\) > 6/);
+  assert.match(module, /if \(!bar\) return;/);
+  // click 只留键盘路径，避免与指针序列重复执行
+  assert.match(module, /event\.detail === 0 \|\| Date\.now\(\) - lastPointerAt > 400/);
+});
+
 test('空间 id 与目录的映射由 daemon 只读提供', () => {
   assert.match(daemon, /p === '\/api\/spaces'/);
   assert.match(daemon, /FROM spaces/);
