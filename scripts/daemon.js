@@ -547,8 +547,8 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 // 1.2.70：视频壁纸层夹在 body 底色与 #root 之间，毛玻璃主题下正常显示画面。
 // #507: explicit cleanup of old Windows client temp files, only before a verified cold launch.
 // 1.2.81：在共享目标分支加入视频壁纸及失败重试、主题路径边界修复。
-const DAEMON_VERSION = '1.2.84';
-const DAEMON_BUILD_ID = 'release-1.2.84-session-pin-capture';
+const DAEMON_VERSION = '1.2.85';
+const DAEMON_BUILD_ID = 'release-1.2.85-sidebar-index-groups';
 const usageReporter = createUsageReporter({ profile: PROFILE.id, version: DAEMON_VERSION });
 configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const automationDiscovery = createAutomationDiscovery({
@@ -12311,6 +12311,22 @@ function handleApi(req, res) {
   if (req.method === 'GET' && p === '/api/sessions/workspaces') {
       return sqliteQuery("SELECT DISTINCT cwd FROM sessions WHERE deleted_at IS NULL AND cwd IS NOT NULL AND cwd != '' ORDER BY cwd;")
       .then((rows) => json(res, 200, { ok: true, workspaces: rows.map((r) => r.cwd) }))
+      .catch((e) => json(res, 500, { ok: false, error: e.message }));
+  }
+  // 空间列表：GET /api/spaces
+  // 侧边栏折叠起来的分组不渲染卡片，只能靠空间 id 认目录，这里把 id 和目录路径的对应关系给出。
+  if (req.method === 'GET' && p === '/api/spaces') {
+      return sqliteQuery("SELECT id, name, primary_folder_path, create_folder_path FROM spaces WHERE deleted_at IS NULL OR deleted_at < 0;")
+      .then((rows) => json(res, 200, {
+        ok: true,
+        spaces: rows
+          .map((row) => ({
+            id: String(row.id || ''),
+            name: String(row.name || ''),
+            path: String(row.primary_folder_path || row.create_folder_path || ''),
+          }))
+          .filter((row) => row.id),
+      }))
       .catch((e) => json(res, 500, { ok: false, error: e.message }));
   }
   // 模型连通测试：只返回网络/HTTP 状态，不记录或回传 URL 查询参数、API Key 等敏感内容。
