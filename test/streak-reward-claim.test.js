@@ -85,18 +85,31 @@ test('claim rejects unknown tiers before reaching the network', async () => {
   assert.equal(called, false);
 });
 
-test('claim marks repeat redemptions and expired logins for the caller', async () => {
-  await assert.rejects(
-    claimGrowthStreakReward('sample-token', '7d', {
-      fetchImpl: async () => ({ ok: false, status: 409, text: async () => JSON.stringify({ code: 409, msg: 'duplicate redeem' }) }),
-    }),
-    (error) => error.status === 409 && error.duplicate === true && error.expired === false,
-  );
+test('claim treats any 409 as an already-redeemed tier, whatever the wording', async () => {
+  // The live CN endpoint answers 409 with 「该档位本月已兑换」 (no "duplicate"
+  // substring), so the status code must decide, not the message text.
+  for (const msg of ['duplicate redeem', '该档位本月已兑换']) {
+    await assert.rejects(
+      claimGrowthStreakReward('sample-token', '7d', {
+        fetchImpl: async () => ({ ok: false, status: 409, text: async () => JSON.stringify({ code: 409, msg }) }),
+      }),
+      (error) => error.status === 409 && error.duplicate === true && error.expired === false && error.message === msg,
+    );
+  }
+});
+
+test('claim marks expired logins on both HTTP and body codes', async () => {
   await assert.rejects(
     claimGrowthStreakReward('sample-token', '7d', {
       fetchImpl: async () => ({ ok: false, status: 401, text: async () => JSON.stringify({ code: 401, msg: 'unauthorized' }) }),
     }),
-    (error) => error.status === 401 && error.expired === true,
+    (error) => error.status === 401 && error.expired === true && error.duplicate === false,
+  );
+  await assert.rejects(
+    claimGrowthStreakReward('sample-token', '7d', {
+      fetchImpl: async () => ({ ok: true, status: 200, text: async () => JSON.stringify({ code: 403, msg: 'token expired' }) }),
+    }),
+    (error) => error.status === 200 && error.expired === true,
   );
 });
 

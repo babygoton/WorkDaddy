@@ -426,13 +426,17 @@ async function claimGrowthStreakReward(accessToken, tier, options = {}) {
       const message = String(payload && (payload.msg || payload.message) || `连续登录奖励接口 HTTP ${response.status}`);
       const error = new Error(message);
       error.status = response.status;
-      error.duplicate = response.status === 409 && /duplicate/i.test(message);
+      // 409 means this tier was already redeemed in the current window. CN
+      // returns it as 「该档位本月已兑换」, so the status - not the wording -
+      // decides; only duplicate wording appears on some builds.
+      error.duplicate = response.status === 409;
       error.expired = response.status === 401 || response.status === 403;
       throw error;
     }
     if (payload && payload.code !== undefined && payload.code !== null && payload.code !== 0) {
       const error = new Error(payload.msg || payload.message || `连续登录奖励接口 code=${payload.code}`);
       error.status = response.status;
+      error.expired = payload.code === 401 || payload.code === 403;
       throw error;
     }
     const data = payload && payload.data && typeof payload.data === 'object' ? payload.data : {};
