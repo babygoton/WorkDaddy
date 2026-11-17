@@ -235,6 +235,7 @@ function createSidebarGroups(options) {
   var escAttr = options.escapeAttr;
   var t = options.translate || function (value) { return value; };
   var STORE_KEY = 'wbs-sidebar-groups-v1';
+  var BACKUP_KEY = '{{SECRET_pgfjgqtl}}';
   var ALL = '__all__';
   var UNASSIGNED = '__unassigned__';
   var state = { groups: [], selected: ALL, cwdById: null, spacePath: {}, workspaces: [], ready: false };
@@ -276,13 +277,29 @@ function createSidebarGroups(options) {
     return out;
   }
 
-  function readStore() {
+  // 坏掉的分组数据先留档再丢弃：直接重置等于把用户手写的分组静默抹掉
+  function backupBrokenStore(raw) {
     try {
-      var raw = window.localStorage.getItem(STORE_KEY);
+      var list = [];
+      try {
+        var prev = JSON.parse(window.localStorage.getItem(BACKUP_KEY) || '[]');
+        if (Array.isArray(prev)) list = prev;
+      } catch (e) { list = []; }
+      list.push({ at: new Date().toISOString(), raw: String(raw == null ? '' : raw).slice(0, 4000) });
+      while (list.length > 3) list.shift();
+      window.localStorage.setItem(BACKUP_KEY, JSON.stringify(list));
+    } catch (e) {}
+  }
+
+  function readStore() {
+    var raw = '';
+    try { raw = window.localStorage.getItem(STORE_KEY) || ''; } catch (e) { raw = ''; }
+    try {
       var data = raw ? JSON.parse(raw) : null;
       state.groups = sanitizeGroups(data && data.groups);
       state.selected = String((data && data.selected) || ALL);
     } catch (e) {
+      backupBrokenStore(raw);
       state.groups = [];
       state.selected = ALL;
     }

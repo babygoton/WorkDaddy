@@ -127,6 +127,55 @@ test('点击意图在按下时记录，宿主重渲染不会吃掉这次点击',
   assert.match(module, /event\.detail === 0 \|\| Date\.now\(\) - lastPointerAt > 400/);
 });
 
+test('存储损坏时先留档再重置', () => {
+  const source = slice('function groupId()', 'function writeStore()');
+  const store = {
+    __data: { 'wbs.sidebarGroups.v2': '{ broken json' },
+    getItem(k) { return Object.prototype.hasOwnProperty.call(this.__data, k) ? this.__data[k] : null; },
+    setItem(k, v) { this.__data[k] = String(v); },
+  };
+  const ctx = vm.createContext({
+    window: { localStorage: store },
+    state: { groups: [{ id: 'x' }], selected: 'g-x' },
+    STORE_KEY: 'wbs.sidebarGroups.v2',
+    BACKUP_KEY: 'wbs.sidebarGroups.v2:corrupt',
+    ALL: '__all__',
+    Set, Object, Array, String, Date, JSON, Math, console,
+    normalize: value => String(value || '').replace(/\\/g, '/'),
+  });
+  vm.runInContext(source, ctx);
+  ctx.readStore();
+  // 坏数据被忽略，内存状态退回空
+  assert.equal(ctx.state.groups.length, 0);
+  assert.equal(ctx.state.selected, '__all__');
+  // 原始内容留在备份键里，可用于手工恢复
+  const backup = JSON.parse(store.__data['wbs.sidebarGroups.v2:corrupt']);
+  assert.equal(backup.length, 1);
+  assert.equal(backup[0].raw, '{ broken json');
+  assert.ok(backup[0].at);
+});
+
+test('备份只保留最近 3 份，不会无限增长', () => {
+  const source = slice('function groupId()', 'function writeStore()');
+  const store = {
+    __data: { 'k': 'oops', 'k:corrupt': JSON.stringify([{ at: '1', raw: 'a' }, { at: '2', raw: 'b' }, { at: '3', raw: 'c' }]) },
+    getItem(k) { return Object.prototype.hasOwnProperty.call(this.__data, k) ? this.__data[k] : null; },
+    setItem(k, v) { this.__data[k] = String(v); },
+  };
+  const ctx = vm.createContext({
+    window: { localStorage: store },
+    state: { groups: [], selected: '__all__' },
+    STORE_KEY: 'k', BACKUP_KEY: 'k:corrupt', ALL: '__all__',
+    Set, Object, Array, String, Date, JSON, Math, console,
+    normalize: v => String(v || ''),
+  });
+  vm.runInContext(source, ctx);
+  ctx.readStore();
+  const backup = JSON.parse(store.__data['k:corrupt']);
+  assert.equal(backup.length, 3);
+  assert.deepEqual(backup.map(e => e.raw), ['b', 'c', 'oops']);
+});
+
 test('空间 id 与目录的映射由 daemon 只读提供', () => {
   assert.match(daemon, /p === '\/api\/spaces'/);
   assert.match(daemon, /FROM spaces/);
