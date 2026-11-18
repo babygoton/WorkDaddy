@@ -162,7 +162,7 @@ const {
   shouldRefreshAccessToken,
   normalizeTimestamp: normalizeTokenTimestamp,
 } = require('./token-refresh.js');
-const { fetchGrowthTodayActive, activateGrowthAccount, fetchGrowthStreak, createGrowthStreakCache } = require('./growth-active.js');
+const { fetchGrowthTodayActive, activateGrowthAccount, fetchGrowthStreak, claimGrowthStreakReward, createGrowthStreakCache } = require('./growth-active.js');
 const {
   createDailyProgressCache,
   fetchDailyProgress,
@@ -547,8 +547,9 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 // 1.2.70：视频壁纸层夹在 body 底色与 #root 之间，毛玻璃主题下正常显示画面。
 // #507: explicit cleanup of old Windows client temp files, only before a verified cold launch.
 // 1.2.81：在共享目标分支加入视频壁纸及失败重试、主题路径边界修复。
-const DAEMON_VERSION = '1.2.84';
-const DAEMON_BUILD_ID = 'release-1.2.84-session-pin-capture';
+// 1.2.85：成长计划连续登录奖励支持在面板内直接领取到对应账号。
+const DAEMON_VERSION = '1.2.85';
+const DAEMON_BUILD_ID = 'release-1.2.85-streak-sidebar-groups';
 const usageReporter = createUsageReporter({ profile: PROFILE.id, version: DAEMON_VERSION });
 configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const automationDiscovery = createAutomationDiscovery({
@@ -11752,6 +11753,52 @@ function handleApi(req, res) {
     });
   }
 
+  // Claim one continuous-login tier reward with the account's own token. The
+  // reward is granted to that account; the current login is never switched.
+  if (req.method === 'POST' && p === '/api/growth/streak/claim') {
+    return readBody(req).then(async (body) => {
+      const uid = String(body && body.uid || '').trim();
+      const tier = String(body && body.tier || '').trim();
+      if (!/^[A-Za-z0-9_-]{1,128}$/.test(uid)) return json(res, 400, { ok: false, error: 'uid 格式无效' });
+      if (!/^(7d|14d|28d)$/.test(tier)) return json(res, 400, { ok: false, error: '连续登录奖励档位无效' });
+      if (PROFILE.capabilities.growthDaily !== true) return json(res, 400, { ok: false, error: '当前客户端不支持成长计划奖励领取' });
+      if (!fs.existsSync(accountBackupFile(uid))) return json(res, 404, { ok: false, error: '账号备份不存在' });
+      let token = '';
+      try {
+        const j = wdCompatDecryptAuthJson(JSON.parse(fs.readFileSync(accountBackupFile(uid), 'utf8'))); // [wd-compat]
+        token = wdCompatAuthToken(j.auth);
+      } catch (error) {
+        log(`[growth] 读取 ${uid} 备份失败: ${redactDiagnosticText(error && error.message || error, 120)}`);
+        return json(res, 500, { ok: false, error: '读取账号备份失败' });
+      }
+      if (!token) return json(res, 400, { ok: false, error: '备份中无 accessToken' });
+      const refreshStreak = async () => {
+        try { return await growthStreakCache.get(uid, { force: true }); }
+        catch (_) { return null; }
+      };
+      try {
+        const claim = await claimGrowthStreakReward(token, tier, { apiHost: PROFILE.apiHost });
+        // Redeeming changes the tier status; refresh before the panel re-renders.
+        const streak = await refreshStreak();
+        log(`[growth] 账号 ${uid} 连续登录 ${tier} 奖励已领取`);
+        return json(res, 200, { ok: true, uid, ...claim, streak });
+      } catch (error) {
+        // The official endpoint reports a repeat redeem as 409 duplicate; that is
+        // a successful end state, so refresh the status and report it as claimed.
+        if (error && error.duplicate) {
+          const streak = await refreshStreak();
+          const claimed = streak && streak.status === 'ready' && Array.isArray(streak.tiers) && streak.tiers.some(item => item.key === tier && item.status === 'claimed');
+          if (!claimed) return json(res, 409, { ok: false, error: '领取状态未能确认，请刷新后重试' });
+          log(`[growth] 账号 ${uid} 连续登录 ${tier} 奖励此前已领取`);
+          return json(res, 200, { ok: true, uid, tier, alreadyClaimed: true, streak });
+        }
+        log(`[growth] 账号 ${uid} 领取连续登录 ${tier} 奖励失败: ${redactDiagnosticText(error && error.message || error, 160)}`);
+        if (error && error.expired) return json(res, 401, { ok: false, expired: true, error: '登录身份过期' });
+        return json(res, 500, { ok: false, uid, tier, error: error && error.message || '连续登录奖励领取失败' });
+      }
+    });
+  }
+
   // 查询指定账号今日是否活跃（成长中心热力墙 is_active）
   if (req.method === 'POST' && p === '/api/growth/today-active') {
     return readBody(req).then(async (body) => {
@@ -12306,6 +12353,15 @@ function handleApi(req, res) {
         });
       })
       .catch((e) => json(res, 500, { ok: false, error: e.message }));
+  }
+  // Lightweight sidebar index: no session payload or filesystem size scans.
+  if (req.method === 'GET' && p === '/api/sidebar-groups/maps') {
+    if (PROFILE.kind !== 'workbuddy') return json(res, 400, { ok: false, error: '当前客户端不支持侧边栏分组' });
+    return Promise.all([
+      sqliteQuery("SELECT id, cwd FROM sessions WHERE deleted_at IS NULL;"),
+      sqliteQuery("SELECT id, primary_folder_path, create_folder_path FROM spaces WHERE deleted_at IS NULL OR deleted_at < 0;")
+    ]).then(([sessions, spaces]) => json(res, 200, { ok: true, sessions, spaces: spaces.map(row => ({ id: row.id, path: row.primary_folder_path || row.create_folder_path || '' })) }))
+      .catch(() => json(res, 500, { ok: false, error: '读取侧边栏目录失败' }));
   }
   // 会话空间列表：GET /api/sessions/workspaces
   if (req.method === 'GET' && p === '/api/sessions/workspaces') {
