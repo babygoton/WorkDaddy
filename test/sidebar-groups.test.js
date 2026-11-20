@@ -118,6 +118,35 @@ test('管理弹窗保留上次编辑的分组', () => {
   assert.match(module, /editingId = state\.groups\.some\(function \(group\) \{ return group\.id === editingId; \}\)/);
 });
 
+test('整个组名是一个标签，管理操作只出现一次', () => {
+  const controls = { innerHTML: '' };
+  const ctx = vm.createContext({
+    modalEl: { isConnected: true, querySelector: () => controls },
+    state: { groups: [{ id: 'g-a', name: '甲' }, { id: 'g-b', name: '乙' }] },
+    editingId: 'g-b', groupAction: '',
+    t: value => value, esc: value => value, escAttr: value => value,
+  });
+  vm.runInContext(slice('  function groupIconButton(', '  function renderMembers()'), ctx);
+  ctx.renderMembers = () => {};
+  ctx.renderModal();
+  assert.match(controls.innerHTML, /role="tab"[^>]*aria-selected="false"[^>]*>甲<\/button>/);
+  assert.match(controls.innerHTML, /role="tab"[^>]*aria-selected="true"[^>]*>乙<\/button>/);
+  assert.equal((controls.innerHTML.match(/data-sg-delete/g) || []).length, 1);
+  assert.equal((controls.innerHTML.match(/data-sg-rename/g) || []).length, 1);
+  assert.match(controls.innerHTML, /data-sg-rename title="重命名" aria-label="重命名"><svg/);
+  assert.match(controls.innerHTML, /data-sg-delete title="删除" aria-label="删除"><svg/);
+  assert.doesNotMatch(controls.innerHTML, /<input|编辑成员/);
+});
+
+test('新增入口放在弹窗标题栏，名称输入单独弹出', () => {
+  const main = slice('  function openModal()', '  function openCreateGroup()');
+  assert.match(main, /wbs-sg-title[\s\S]*groupIconButton\('open-create', '新增分组', 'plus', '[^']+', true\)/);
+  assert.doesNotMatch(main, /data-sg-new/);
+  const popup = slice('  function openCreateGroup()', '  function closeCreateGroup()');
+  assert.match(popup, /role="dialog"[\s\S]*data-sg-new/);
+  assert.match(popup, /\[data-sg-new\]'\)\.focus\(\)/);
+});
+
 test('点击意图在按下时记录，宿主重渲染不会吃掉这次点击', () => {
   const module = slice('function createSidebarGroups(', 'function createBuildLifecycle(');
   assert.match(module, /function onDocPointerDown\(/);
@@ -178,9 +207,61 @@ test('备份只保留最近 3 份，不会无限增长', () => {
   assert.deepEqual(backup.map(e => e.raw), ['b', 'c', 'oops']);
 });
 
-test('空间 id 与目录的映射由 daemon 只读提供', () => {
-  assert.match(daemon, /p === '\/api\/sidebar-groups\/maps'/);
-  assert.match(daemon, /FROM spaces/);
-  // 该表的 deleted_at 用负数表示未删除，只写 IS NULL 会一条都取不到
-  assert.match(daemon, /deleted_at IS NULL OR deleted_at < 0/);
+let DatabaseSync;
+try { ({ DatabaseSync } = require('node:sqlite')); } catch (_) {}
+
+test('侧边栏目录接口兼容两种数据库结构且只提供当前账号的会话名', { skip: !DatabaseSync }, async (t) => {
+  const from = daemon.indexOf("  if (req.method === 'GET' && p === '/api/sidebar-groups/maps')");
+  assert.ok(from >= 0);
+  const to = daemon.indexOf('  // 会话空间列表', from);
+  const route = vm.runInNewContext('(function (sqliteQuery, json, url, currentAccount) {' +
+    "const req = { method: 'GET' }, p = '/api/sidebar-groups/maps', res = {}, PROFILE = { kind: 'workbuddy' };" +
+    daemon.slice(from, to) + '})');
+
+  for (const [name, schema, spaces] of [
+    ['仅有 workspaces', "CREATE TABLE workspaces (path TEXT); INSERT INTO workspaces VALUES ('/empty');", [{ id: '', path: '/empty' }]],
+    ['有 spaces', "CREATE TABLE spaces (id TEXT, primary_folder_path TEXT, create_folder_path TEXT, deleted_at INTEGER);" +
+      "INSERT INTO spaces VALUES ('space', '', '/empty', -1), ('deleted', '/deleted', '', 1);", [{ id: 'space', path: '/empty' }]],
+    ['仅有 sessions', '', []],
+  ]) {
+    await t.test(name, async () => {
+      const db = new DatabaseSync(':memory:');
+      try {
+        db.exec("CREATE TABLE sessions (id TEXT, cwd TEXT, deleted_at INTEGER, user_id TEXT, title TEXT, custom_title TEXT, is_background_automation INTEGER);" +
+          "INSERT INTO sessions VALUES ('session', '/active', NULL, 'current', 'Original', 'Renamed', 0)," +
+          "('foreign', '/active', NULL, 'other', 'Private', '', 0)," +
+          "('automation', '/active', NULL, 'current', 'Automation', '', 1)," +
+          "('deleted', '/deleted', 1, 'current', 'Deleted', '', 0);" + schema);
+        const run = (query, account) => route(async (sql, params = []) => db.prepare(sql).all(...params),
+          (_, status, body) => [status, body], new URL('http://localhost/' + query), () => account);
+        const result = await run('');
+        assert.deepEqual(JSON.parse(JSON.stringify(result)), [200, {
+          ok: true, sessions: ['session', 'foreign', 'automation'].map(id => ({ id, cwd: '/active' })), spaces,
+        }]);
+        const [, preview] = await run('?titles=1', { uid: 'current' });
+        assert.deepEqual(JSON.parse(JSON.stringify(preview.sessionTitles)), [{ cwd: '/active', title: 'Renamed' }]);
+        const [, signedOut] = await run('?titles=1');
+        assert.deepEqual(JSON.parse(JSON.stringify(signedOut.sessionTitles)), []);
+      } finally {
+        db.close();
+      }
+    });
+  }
+});
+
+test('成员目录预览包含子目录会话并转义会话标题', () => {
+  const ctx = loadPure();
+  Object.assign(ctx, {
+    state: {
+      workspaces: ['/work'],
+      sessionTitles: [{ cwd: '/work/sub', title: '<会话>' }, { cwd: '/work-other', title: '不属于该目录' }],
+    },
+    esc: value => value.replace(/</g, '&lt;').replace(/>/g, '&gt;'),
+    escAttr: value => value,
+    t: value => value,
+  });
+  vm.runInContext(slice('  function memberRow(', '  function renderModal('), ctx);
+  const html = ctx.memberRow('/work', false);
+  assert.match(html, /&lt;会话&gt;/);
+  assert.doesNotMatch(html, /不属于该目录/);
 });
