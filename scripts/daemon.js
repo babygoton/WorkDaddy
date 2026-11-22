@@ -548,8 +548,8 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 // #507: explicit cleanup of old Windows client temp files, only before a verified cold launch.
 // 1.2.81：在共享目标分支加入视频壁纸及失败重试、主题路径边界修复。
 // 1.2.85：成长计划连续登录奖励支持在面板内直接领取到对应账号。
-const DAEMON_VERSION = '1.2.87';
-const DAEMON_BUILD_ID = 'release-1.2.87-sidebar-group-session-titles';
+const DAEMON_VERSION = '1.2.88';
+const DAEMON_BUILD_ID = 'release-1.2.88-sidebar-indexed-sessions';
 const usageReporter = createUsageReporter({ profile: PROFILE.id, version: DAEMON_VERSION });
 configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const automationDiscovery = createAutomationDiscovery({
@@ -12373,7 +12373,7 @@ function handleApi(req, res) {
       if (url.searchParams.get('titles') === '1') {
         const uid = String((currentAccount() || {}).uid || '').trim();
         result.sessionTitles = uid ? await sqliteQuery(
-          "SELECT cwd, COALESCE(NULLIF(TRIM(custom_title), ''), NULLIF(TRIM(title), ''), '') AS title " +
+          "SELECT id, cwd, COALESCE(NULLIF(TRIM(custom_title), ''), NULLIF(TRIM(title), ''), '') AS title " +
           "FROM sessions WHERE user_id = ? AND deleted_at IS NULL AND COALESCE(is_background_automation, 0) = 0 " +
           "AND cwd IS NOT NULL AND TRIM(cwd) != '' ORDER BY title COLLATE NOCASE, id;",
           [uid],

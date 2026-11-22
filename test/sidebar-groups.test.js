@@ -239,7 +239,7 @@ test('侧边栏目录接口兼容两种数据库结构且只提供当前账号�
           ok: true, sessions: ['session', 'foreign', 'automation'].map(id => ({ id, cwd: '/active' })), spaces,
         }]);
         const [, preview] = await run('?titles=1', { uid: 'current' });
-        assert.deepEqual(JSON.parse(JSON.stringify(preview.sessionTitles)), [{ cwd: '/active', title: 'Renamed' }]);
+        assert.deepEqual(JSON.parse(JSON.stringify(preview.sessionTitles)), [{ id: 'session', cwd: '/active', title: 'Renamed' }]);
         const [, signedOut] = await run('?titles=1');
         assert.deepEqual(JSON.parse(JSON.stringify(signedOut.sessionTitles)), []);
       } finally {
@@ -264,4 +264,67 @@ test('成员目录预览包含子目录会话并转义会话标题', () => {
   const html = ctx.memberRow('/work', false);
   assert.match(html, /&lt;会话&gt;/);
   assert.doesNotMatch(html, /不属于该目录/);
+});
+
+test('侧栏显示当前分组的索引会话，保留匹配的原生行并去重', () => {
+  const ctx = loadPure();
+  const conversation = {
+    getAttribute(name) {
+      return name === 'data-conversation-id' ? 'native-session' : 'grouped-sub-space:native::card::native-session';
+    },
+  };
+  const header = { getAttribute: () => 'grouped-sub-space:native::header' };
+  const more = { getAttribute: () => 'grouped-sub-space:native::more' };
+  const section = {
+    querySelectorAll(selector) {
+      return selector.startsWith('.conversation-item') ? [conversation] : [header, more];
+    },
+    contains: () => true,
+  };
+  Object.assign(ctx, {
+    disposed: false,
+    renderIndexed: items => { ctx.indexedIds = Array.from(items, item => item.id); },
+    contentEl: () => ({
+      querySelector: () => section,
+      querySelectorAll: () => [],
+    }),
+    selectionOf: () => ({ mode: 'group', members: new Set(['/other-account']) }),
+    state: {
+      ready: true,
+      spacePath: { native: '/current-account' },
+      cwdById: { 'native-session': '/current-account' },
+      sessionTitles: [
+        { id: 'native-session', cwd: '/current-account', title: '原生会话' },
+        { id: 'indexed', cwd: '/current-account/sub', title: '索引会话' },
+      ],
+    },
+    setHidden: (element, hidden) => { element.hidden = hidden; },
+  });
+  vm.runInContext(slice('function apply() {', 'function schedule() {'), ctx);
+  ctx.apply();
+  assert.deepEqual(ctx.indexedIds, []);
+  assert.equal(conversation.hidden, true);
+  assert.equal(header.hidden, true);
+  assert.equal(more.hidden, true);
+  ctx.selectionOf = () => ({ mode: 'group', members: new Set(['/current-account']) });
+  ctx.apply();
+  assert.deepEqual(ctx.indexedIds, ['indexed']);
+  assert.equal(conversation.hidden, false);
+  assert.equal(header.hidden, false);
+  assert.equal(more.hidden, false);
+});
+
+test('选中分组时补出未挂载的索引会话，按 ID 去重并限定当前目录', () => {
+  const ctx = loadPure();
+  const items = [
+    { id: 'native', cwd: '/work', title: '已显示' },
+    { id: 'one', cwd: '/work/sub', title: '同名' },
+    { id: 'two', cwd: '/work/sub', title: '同名' },
+    { id: 'two', cwd: '/work/sub', title: '同名' },
+    { id: 'other', cwd: '/workspace', title: '别的目录' },
+  ];
+  const selection = { mode: 'group', members: new Set(['/work']) };
+  const result = ctx.sgMissingSessions(items, selection, new Set(['native']));
+  assert.deepEqual(Array.from(result, item => item.id), ['one', 'two']);
+  assert.equal(ctx.sgMissingSessions(items, { mode: 'all' }, new Set()).length, 0);
 });

@@ -224,9 +224,17 @@ function sgRowKeeps(cwd, selection) {
   return sgSetHas(selection.members, path);
 }
 
-// 侧边栏索引分组：把工作目录当标签用，而不是当容器。
-// WorkBuddy 的会话侧栏只能按工作目录分块显示，这一层只在渲染层收窄可见行，
-// 不移动文件、不改宿主数据；分组本身只存目录路径，一个目录可以属于多个分组。
+function sgMissingSessions(items, selection, mounted) {
+  if (selection.mode !== 'group') return [];
+  var seen = new Set(mounted);
+  return (items || []).filter(function (item) {
+    if (!item.id || seen.has(item.id) || !sgRowKeeps(item.cwd, selection)) return false;
+    seen.add(item.id);
+    return true;
+  });
+}
+
+// 分组本身只存目录路径，一个目录可以属于多个分组。
 function createSidebarGroups(options) {
   var doc = options.document;
   var api = options.api;
@@ -240,6 +248,9 @@ function createSidebarGroups(options) {
   var UNASSIGNED = '__unassigned__';
   var state = { groups: [], selected: ALL, cwdById: null, spacePath: {}, workspaces: [], sessionTitles: [], ready: false, mapsFailed: false };
   var barEl = null;
+  var indexedList = null;
+  var indexedHtml = null;
+  var mapsRequest = 0;
   var styleEl = null;
   var modalEl = null;
   var createEl = null;
@@ -385,18 +396,48 @@ function createSidebarGroups(options) {
     return barEl;
   }
 
+  function renderIndexed(items) {
+    if (!items.length || !barEl || !barEl.isConnected) {
+      if (indexedList) indexedList.remove();
+      indexedList = null;
+      indexedHtml = null;
+      return;
+    }
+    if (!indexedList || indexedList.previousElementSibling !== barEl || !indexedList.isConnected) {
+      if (indexedList) indexedList.remove();
+      indexedList = doc.createElement('div');
+      indexedList.className = 'wbs-sg-indexed';
+      barEl.insertAdjacentElement('afterend', indexedList);
+      indexedHtml = null;
+    }
+    var html = items.map(function (item) {
+      return '<button type="button" data-sg-session="' + escAttr(item.id) + '" title="' +
+        escAttr(item.title) + '">' + esc(item.title) + '</button>';
+    }).join('');
+    if (indexedHtml !== html) {
+      indexedList.innerHTML = html;
+      indexedHtml = html;
+    }
+  }
+
   function apply() {
     if (disposed) return;
     var content = contentEl();
     if (!content) return;
     var selection = selectionOf();
-    if (selection.mode === 'all' || !state.ready) { clearHidden(); return; }
+    if (selection.mode === 'all' || !state.ready) {
+      renderIndexed([]);
+      clearHidden();
+      return;
+    }
     // 只收窄「分组」区：「最近」是按时间排的跨目录列表，跟着分组一起清空会让人找不到刚做的任务
     var scope = content.querySelector('.conversation-section-groups') || content;
     var cards = scope.querySelectorAll('.conversation-item[data-conversation-id]');
-    var headers = scope.querySelectorAll('[data-flat-row-id$="::header"]');
+    var spaceRows = scope.querySelectorAll('[data-flat-row-id$="::header"],[data-flat-row-id$="::more"]');
     var keepPrefix = Object.create(null);
+    var mounted = new Set();
     Array.prototype.forEach.call(cards, function (card) {
+      mounted.add(card.getAttribute('data-conversation-id'));
       var prefix = sgRowGroupPrefix(card.getAttribute('data-flat-row-id'));
       var spaceId = sgSpaceIdOfPrefix(prefix);
       var spacePath = (spaceId && state.spacePath[spaceId]) || '';
@@ -409,15 +450,16 @@ function createSidebarGroups(options) {
         if (prefix) keepPrefix[prefix] = true;
       }
     });
-    Array.prototype.forEach.call(headers, function (header) {
-      var prefix = sgRowGroupPrefix(header.getAttribute('data-flat-row-id'));
+    Array.prototype.forEach.call(spaceRows, function (row) {
+      var prefix = sgRowGroupPrefix(row.getAttribute('data-flat-row-id'));
       var spaceId = sgSpaceIdOfPrefix(prefix);
       var path = (spaceId && state.spacePath[spaceId]) || '';
       // 折叠的分组不渲染卡片，按空间路径判断；拿不到路径时退回看有没有可见卡片
       var keep = !path || !!keepPrefix[prefix] || sgRowKeeps(path, selection) ||
         (selection.mode === 'group' && Array.from(selection.members).some(function (member) { return sgSetHas(new Set([path]), member); }));
-      setHidden(header, !keep);
+      setHidden(row, !keep);
     });
+    renderIndexed(sgMissingSessions(state.sessionTitles, selection, mounted));
     // 「最近」里残留的旧标记（上一版会连它一起隐藏）在这里清掉
     Array.prototype.forEach.call(content.querySelectorAll('[data-wbs-sg-hidden]'), function (el) {
       if (!scope.contains(el)) {
@@ -457,8 +499,10 @@ function createSidebarGroups(options) {
     schedule();
   }
 
-  function refreshMaps(includeTitles) {
-    return api('/api/sidebar-groups/maps' + (includeTitles ? '?titles=1' : '')).then(function (data) {
+  function refreshMaps() {
+    var request = ++mapsRequest;
+    return api('/api/sidebar-groups/maps?titles=1').then(function (data) {
+      if (disposed || request !== mapsRequest) return;
       if (!data || !Array.isArray(data.sessions) || !Array.isArray(data.spaces)) throw new Error('invalid maps');
       var cwd = Object.create(null), spaces = Object.create(null), workspaces = [];
       data.sessions.forEach(function (item) {
@@ -473,14 +517,14 @@ function createSidebarGroups(options) {
       });
       if (disposed) return;
       state.cwdById = cwd; state.spacePath = spaces; state.workspaces = workspaces; state.ready = true; state.mapsFailed = false;
-      if (includeTitles) {
-        state.sessionTitles = Array.isArray(data.sessionTitles) ? data.sessionTitles.map(function (item) {
-          return { cwd: normalize(item.cwd || ''), title: item.title || t('未命名会话') };
-        }) : null;
-      }
+      state.sessionTitles = Array.isArray(data.sessionTitles) ? data.sessionTitles.map(function (item) {
+        return { id: item.id, cwd: normalize(item.cwd || ''), title: item.title || t('未命名会话') };
+      }) : null;
       ensureBar(); observe(); renderBar(); apply();
     }).catch(function () {
-      if (disposed) return;
+      if (disposed || request !== mapsRequest) return;
+      state.sessionTitles = null;
+      renderIndexed([]);
       state.ready = false;
       state.mapsFailed = true;
       clearHidden();
@@ -608,9 +652,8 @@ function createSidebarGroups(options) {
     editingId = state.groups.some(function (group) { return group.id === editingId; })
       ? editingId : (state.groups[0] ? state.groups[0].id : null);
     groupAction = '';
-    state.sessionTitles = [];
     renderModal();
-    refreshMaps(true).then(renderMembers);
+    refreshMaps().then(renderMembers);
   }
 
   function openCreateGroup() {
@@ -822,6 +865,11 @@ function createSidebarGroups(options) {
       // 宿主收起「分组」区时，这行 chip 也跟着收起来，别孤零零挂在一个折叠的标题下。
       // 注意：:has() 里不能再套 :has()，整条规则会被解析器直接丢弃。
       '.conversation-section-groups:has(.conversation-section-chevron:not(.conversation-section-chevron-expanded)) .wbs-sg-bar{display:none}',
+      '.conversation-section-groups:has(.conversation-section-chevron:not(.conversation-section-chevron-expanded)) .wbs-sg-indexed{display:none}',
+      '.wbs-sg-indexed{display:grid;min-width:0;padding:0 6px}',
+      '.wbs-sg-indexed button{display:block;min-width:0;width:100%;text-align:start;padding:5px 8px;border:0;border-radius:6px;background:transparent;color:var(--wb-color-text-primary,inherit);font:inherit;font-size:12px;line-height:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer}',
+      '.wbs-sg-indexed button:hover{background:var(--wb-bg-hover)}',
+      '.wbs-sg-indexed button:focus-visible{outline:1px solid currentColor;outline-offset:-2px}',
       '.wbs-sg-chip{display:inline-flex;align-items:center;gap:4px;max-width:132px;padding:2px 7px;border:1px solid var(--wb-border-subtle,rgba(127,127,127,.28));border-radius:7px;background:transparent;color:var(--wb-color-text-secondary,inherit);font:inherit;font-size:11px;line-height:1.5;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;opacity:.82}',
       '.wbs-sg-chip:hover{background:var(--wb-bg-hover,rgba(127,127,127,.14));opacity:1}',
       '.wbs-sg-chip.active{background:var(--wb-bg-tertiary,rgba(127,127,127,.2));border-color:var(--wb-border-strong,rgba(127,127,127,.5));color:var(--wb-color-text-primary,inherit);opacity:1}',
@@ -896,6 +944,13 @@ function createSidebarGroups(options) {
   function onDocClick(event) {
     var target = event.target;
     if (!target || !target.closest) return;
+    var session = target.closest('.wbs-sg-indexed [data-sg-session]');
+    if (session && indexedList && indexedList.contains(session)) {
+      event.preventDefault();
+      event.stopPropagation();
+      options.openSession(session.getAttribute('data-sg-session'));
+      return;
+    }
     if (!target.closest('.wbs-sg-bar')) return;
     // 键盘触发的 click（detail=0）没有 pointer 序列；指针序列刚处理过就跳过，避免重复执行
     if (event.detail === 0 || Date.now() - lastPointerAt > 400) onBarClick(event);
@@ -941,6 +996,7 @@ function createSidebarGroups(options) {
     pendingTap = null;
     clearHidden();
     closeModal();
+    renderIndexed([]);
     if (barEl) { barEl.remove(); barEl = null; }
     if (styleEl) { styleEl.remove(); styleEl = null; }
   }
@@ -19153,6 +19209,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       var sidebarGroups = createSidebarGroups({
         document: document,
         api: api,
+        openSession: openCopiedSession,
         normalize: canonicalWorkspaceUI,
         escape: esc,
         escapeAttr: escAttr,
