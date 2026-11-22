@@ -350,7 +350,10 @@ function createDailyProgressCache(load, options = {}) {
   const get = (uid, detail = {}) => {
     const hit = entries.get(uid);
     if (!detail.force && hit && now() < hit.expiresAt) return Promise.resolve(hit.value);
-    if (pending.has(uid)) return pending.get(uid);
+    if (pending.has(uid)) {
+      if (detail.force === true) return pending.get(uid).then(() => get(uid, { force: true }), () => get(uid, { force: true }));
+      return pending.get(uid);
+    }
     const request = Promise.resolve().then(() => load(uid)).then((value) => {
       entries.set(uid, { value, expiresAt: now() + ttlMs });
       if (entries.size > 500) entries.delete(entries.keys().next().value);
