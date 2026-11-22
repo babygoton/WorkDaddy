@@ -548,8 +548,8 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 // #507: explicit cleanup of old Windows client temp files, only before a verified cold launch.
 // 1.2.81：在共享目标分支加入视频壁纸及失败重试、主题路径边界修复。
 // 1.2.85：成长计划连续登录奖励支持在面板内直接领取到对应账号。
-const DAEMON_VERSION = '1.2.85';
-const DAEMON_BUILD_ID = 'release-1.2.85-streak-sidebar-groups';
+const DAEMON_VERSION = '1.2.88';
+const DAEMON_BUILD_ID = 'release-1.2.88-sidebar-indexed-sessions';
 const usageReporter = createUsageReporter({ profile: PROFILE.id, version: DAEMON_VERSION });
 configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const automationDiscovery = createAutomationDiscovery({
@@ -12359,9 +12359,28 @@ function handleApi(req, res) {
     if (PROFILE.kind !== 'workbuddy') return json(res, 400, { ok: false, error: '当前客户端不支持侧边栏分组' });
     return Promise.all([
       sqliteQuery("SELECT id, cwd FROM sessions WHERE deleted_at IS NULL;"),
-      sqliteQuery("SELECT id, primary_folder_path, create_folder_path FROM spaces WHERE deleted_at IS NULL OR deleted_at < 0;")
-    ]).then(([sessions, spaces]) => json(res, 200, { ok: true, sessions, spaces: spaces.map(row => ({ id: row.id, path: row.primary_folder_path || row.create_folder_path || '' })) }))
-      .catch(() => json(res, 500, { ok: false, error: '读取侧边栏目录失败' }));
+      sqliteQuery("SELECT name FROM sqlite_schema WHERE type = 'table' AND name IN ('spaces', 'workspaces');"),
+    ]).then(async ([sessions, tables]) => {
+      let spaces = [];
+      if (tables.some(row => row.name === 'spaces')) {
+        const rows = await sqliteQuery("SELECT id, primary_folder_path, create_folder_path FROM spaces WHERE deleted_at IS NULL OR deleted_at < 0;");
+        spaces = rows.map(row => ({ id: row.id, path: row.primary_folder_path || row.create_folder_path || '' }));
+      } else if (tables.some(row => row.name === 'workspaces')) {
+        // Some WorkBuddy clients record workspace paths without sidebar space IDs.
+        spaces = await sqliteQuery("SELECT '' AS id, path FROM workspaces WHERE path IS NOT NULL AND TRIM(path) != '';");
+      }
+      const result = { ok: true, sessions, spaces };
+      if (url.searchParams.get('titles') === '1') {
+        const uid = String((currentAccount() || {}).uid || '').trim();
+        result.sessionTitles = uid ? await sqliteQuery(
+          "SELECT id, cwd, COALESCE(NULLIF(TRIM(custom_title), ''), NULLIF(TRIM(title), ''), '') AS title " +
+          "FROM sessions WHERE user_id = ? AND deleted_at IS NULL AND COALESCE(is_background_automation, 0) = 0 " +
+          "AND cwd IS NOT NULL AND TRIM(cwd) != '' ORDER BY title COLLATE NOCASE, id;",
+          [uid],
+        ).catch(() => null) : [];
+      }
+      return json(res, 200, result);
+    }).catch(() => json(res, 500, { ok: false, error: '读取侧边栏目录失败' }));
   }
   // 会话空间列表：GET /api/sessions/workspaces
   if (req.method === 'GET' && p === '/api/sessions/workspaces') {

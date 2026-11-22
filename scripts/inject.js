@@ -224,9 +224,17 @@ function sgRowKeeps(cwd, selection) {
   return sgSetHas(selection.members, path);
 }
 
-// 侧边栏索引分组：把工作目录当标签用，而不是当容器。
-// WorkBuddy 的会话侧栏只能按工作目录分块显示，这一层只在渲染层收窄可见行，
-// 不移动文件、不改宿主数据；分组本身只存目录路径，一个目录可以属于多个分组。
+function sgMissingSessions(items, selection, mounted) {
+  if (selection.mode !== 'group') return [];
+  var seen = new Set(mounted);
+  return (items || []).filter(function (item) {
+    if (!item.id || seen.has(item.id) || !sgRowKeeps(item.cwd, selection)) return false;
+    seen.add(item.id);
+    return true;
+  });
+}
+
+// 分组本身只存目录路径，一个目录可以属于多个分组。
 function createSidebarGroups(options) {
   var doc = options.document;
   var api = options.api;
@@ -238,17 +246,21 @@ function createSidebarGroups(options) {
   var BACKUP_KEY = 'wbs-sidebar-groups-v1:corrupt';
   var ALL = '__all__';
   var UNASSIGNED = '__unassigned__';
-  var state = { groups: [], selected: ALL, cwdById: null, spacePath: {}, workspaces: [], ready: false };
+  var state = { groups: [], selected: ALL, cwdById: null, spacePath: {}, workspaces: [], sessionTitles: [], ready: false, mapsFailed: false };
   var barEl = null;
+  var indexedList = null;
+  var indexedHtml = null;
+  var mapsRequest = 0;
   var styleEl = null;
   var modalEl = null;
+  var createEl = null;
   var observer = null;
   var observedTarget = null;
   var mountTimer = null;
   var applyTimer = null;
   var refreshTimer = null;
   var disposed = false;
-  var deleteArmed = null;
+  var groupAction = '';
   var pendingTap = null;
   var lastPointerAt = 0;
   var editingId = null;
@@ -384,18 +396,48 @@ function createSidebarGroups(options) {
     return barEl;
   }
 
+  function renderIndexed(items) {
+    if (!items.length || !barEl || !barEl.isConnected) {
+      if (indexedList) indexedList.remove();
+      indexedList = null;
+      indexedHtml = null;
+      return;
+    }
+    if (!indexedList || indexedList.previousElementSibling !== barEl || !indexedList.isConnected) {
+      if (indexedList) indexedList.remove();
+      indexedList = doc.createElement('div');
+      indexedList.className = 'wbs-sg-indexed';
+      barEl.insertAdjacentElement('afterend', indexedList);
+      indexedHtml = null;
+    }
+    var html = items.map(function (item) {
+      return '<button type="button" data-sg-session="' + escAttr(item.id) + '" title="' +
+        escAttr(item.title) + '">' + esc(item.title) + '</button>';
+    }).join('');
+    if (indexedHtml !== html) {
+      indexedList.innerHTML = html;
+      indexedHtml = html;
+    }
+  }
+
   function apply() {
     if (disposed) return;
     var content = contentEl();
     if (!content) return;
     var selection = selectionOf();
-    if (selection.mode === 'all' || !state.ready) { clearHidden(); return; }
+    if (selection.mode === 'all' || !state.ready) {
+      renderIndexed([]);
+      clearHidden();
+      return;
+    }
     // 只收窄「分组」区：「最近」是按时间排的跨目录列表，跟着分组一起清空会让人找不到刚做的任务
     var scope = content.querySelector('.conversation-section-groups') || content;
     var cards = scope.querySelectorAll('.conversation-item[data-conversation-id]');
-    var headers = scope.querySelectorAll('[data-flat-row-id$="::header"]');
+    var spaceRows = scope.querySelectorAll('[data-flat-row-id$="::header"],[data-flat-row-id$="::more"]');
     var keepPrefix = Object.create(null);
+    var mounted = new Set();
     Array.prototype.forEach.call(cards, function (card) {
+      mounted.add(card.getAttribute('data-conversation-id'));
       var prefix = sgRowGroupPrefix(card.getAttribute('data-flat-row-id'));
       var spaceId = sgSpaceIdOfPrefix(prefix);
       var spacePath = (spaceId && state.spacePath[spaceId]) || '';
@@ -408,15 +450,16 @@ function createSidebarGroups(options) {
         if (prefix) keepPrefix[prefix] = true;
       }
     });
-    Array.prototype.forEach.call(headers, function (header) {
-      var prefix = sgRowGroupPrefix(header.getAttribute('data-flat-row-id'));
+    Array.prototype.forEach.call(spaceRows, function (row) {
+      var prefix = sgRowGroupPrefix(row.getAttribute('data-flat-row-id'));
       var spaceId = sgSpaceIdOfPrefix(prefix);
       var path = (spaceId && state.spacePath[spaceId]) || '';
       // 折叠的分组不渲染卡片，按空间路径判断；拿不到路径时退回看有没有可见卡片
       var keep = !path || !!keepPrefix[prefix] || sgRowKeeps(path, selection) ||
         (selection.mode === 'group' && Array.from(selection.members).some(function (member) { return sgSetHas(new Set([path]), member); }));
-      setHidden(header, !keep);
+      setHidden(row, !keep);
     });
+    renderIndexed(sgMissingSessions(state.sessionTitles, selection, mounted));
     // 「最近」里残留的旧标记（上一版会连它一起隐藏）在这里清掉
     Array.prototype.forEach.call(content.querySelectorAll('[data-wbs-sg-hidden]'), function (el) {
       if (!scope.contains(el)) {
@@ -457,7 +500,9 @@ function createSidebarGroups(options) {
   }
 
   function refreshMaps() {
-    return api('/api/sidebar-groups/maps').then(function (data) {
+    var request = ++mapsRequest;
+    return api('/api/sidebar-groups/maps?titles=1').then(function (data) {
+      if (disposed || request !== mapsRequest) return;
       if (!data || !Array.isArray(data.sessions) || !Array.isArray(data.spaces)) throw new Error('invalid maps');
       var cwd = Object.create(null), spaces = Object.create(null), workspaces = [];
       data.sessions.forEach(function (item) {
@@ -471,56 +516,117 @@ function createSidebarGroups(options) {
         if (path && workspaces.indexOf(path) < 0) workspaces.push(path);
       });
       if (disposed) return;
-      state.cwdById = cwd; state.spacePath = spaces; state.workspaces = workspaces; state.ready = true;
+      state.cwdById = cwd; state.spacePath = spaces; state.workspaces = workspaces; state.ready = true; state.mapsFailed = false;
+      state.sessionTitles = Array.isArray(data.sessionTitles) ? data.sessionTitles.map(function (item) {
+        return { id: item.id, cwd: normalize(item.cwd || ''), title: item.title || t('未命名会话') };
+      }) : null;
       ensureBar(); observe(); renderBar(); apply();
     }).catch(function () {
-      if (disposed) return;
+      if (disposed || request !== mapsRequest) return;
+      state.sessionTitles = null;
+      renderIndexed([]);
       state.ready = false;
+      state.mapsFailed = true;
       clearHidden();
     });
-  }
-
-  function loadWorkspaces() {
-    return refreshMaps().then(function () { return state.workspaces; });
   }
 
   // ===== 管理弹窗 =====
   function memberRow(path, checked) {
     var exists = (state.workspaces || []).indexOf(path) >= 0;
-    return '<label class="wbs-sg-member' + (exists ? '' : ' invalid') + '">' +
+    var directory = new Set([path]);
+    var titles = (state.sessionTitles || []).filter(function (item) { return sgSetHas(directory, item.cwd); });
+    var html = '<div class="wbs-sg-directory"><label class="wbs-sg-member' + (exists ? '' : ' invalid') + '">' +
       '<input type="checkbox" data-sg-member="' + escAttr(path) + '"' + (checked ? ' checked' : '') + '>' +
       '<span class="wbs-sg-member-path" title="' + escAttr(path) + '">' + esc(path) + '</span>' +
       (exists ? '' : '<span class="wbs-sg-invalid">' + esc(t('未出现在当前列表')) + '</span>') +
       '</label>';
+    if (titles.length) {
+      var items = titles.map(function (item) { return '<li>' + esc(item.title) + '</li>'; });
+      html += '<ul class="wbs-sg-session-titles">' + items.slice(0, 3).join('') + '</ul>';
+      if (items.length > 3) {
+        html += '<details class="wbs-sg-session-more"><summary>' +
+          esc(t('更多会话')) + '（' + (items.length - 3) + '）</summary>' +
+          '<ul class="wbs-sg-session-titles">' + items.slice(3).join('') + '</ul></details>';
+      }
+    }
+    return html + '</div>';
   }
 
-  function renderModal() {
+  function groupIconButton(action, label, icon, variant, showLabel) {
+    var paths = {
+      pencil: 'm10.5 3.5 2 2M3 13l3.4-.8L13 5.6a1.4 1.4 0 0 0 0-2l-.6-.6a1.4 1.4 0 0 0-2 0l-6.6 6.6L3 13Z',
+      trash: 'M2.5 4.5h11M6 4.5V3h4v1.5m-6 0 .6 8a1 1 0 0 0 1 .9h4.8a1 1 0 0 0 1-.9l.6-8M6.5 7v3.5m3-3.5v3.5',
+      check: 'm3.5 8 3 3 6-6',
+      close: 'm4 4 8 8m0-8-8 8',
+      plus: 'M8 3v10M3 8h10',
+    };
+    var text = escAttr(t(label));
+    return '<button class="wbs-sg-icon' + (variant ? ' ' + variant : '') + '" type="button" data-sg-' + action +
+      ' title="' + text + '" aria-label="' + text + '"><svg viewBox="0 0 16 16" width="15" height="15" fill="none" ' +
+      'stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="' +
+      paths[icon] + '"/></svg>' + (showLabel ? '<span>' + esc(t(label)) + '</span>' : '') + '</button>';
+  }
+
+  function renderModal(controlsOnly) {
+    if (!modalEl || !modalEl.isConnected) return;
+    var controls = modalEl.querySelector('[data-sg-controls]');
+    var groups = state.groups;
+    var editing = groups.filter(function (group) { return group.id === editingId; })[0] || groups[0];
+    editingId = editing ? editing.id : null;
+    var html = '';
+    if (editing) {
+      html = '<div class="wbs-sg-toolbar"><div class="wbs-sg-tabs" role="tablist" aria-label="' + escAttr(t('分组')) + '">';
+      groups.forEach(function (group) {
+        var active = group.id === editingId;
+        var id = escAttr(group.id);
+        html += '<button class="wbs-sg-tab" type="button" role="tab" id="wbs-sg-tab-' + id + '" data-sg-tab="' + id +
+          '" aria-selected="' + active + '" aria-controls="wbs-sg-member-panel" tabindex="' + (active ? '0' : '-1') +
+          '" title="' + escAttr(group.name) + '">' + esc(group.name) + '</button>';
+      });
+      html += '</div>';
+      if (groupAction === 'rename') {
+        html += '</div><div class="wbs-sg-rename"><input class="wbs-sg-new" type="text" maxlength="24" value="' + escAttr(editing.name) +
+          '" data-sg-name aria-label="' + escAttr(t('分组名称')) + '">' +
+          groupIconButton('save', '保存', 'check', 'primary') + groupIconButton('cancel', '取消', 'close') +
+          '</div><div class="wbs-sg-action-error" data-sg-action-error role="status"></div>';
+      } else {
+        html += '<div class="wbs-sg-group-actions">';
+        if (groupAction === 'delete') {
+          html += '<span class="wbs-sg-confirm-label">' + esc(t('确认删除？')) + '</span>' +
+            groupIconButton('confirm-delete', '确认删除', 'check', 'danger') + groupIconButton('cancel', '取消', 'close');
+        } else {
+          html += groupIconButton('rename', '重命名', 'pencil') + groupIconButton('delete', '删除', 'trash');
+        }
+        html += '</div></div>';
+      }
+    }
+    controls.innerHTML = html;
+    if (!controlsOnly) renderMembers();
+  }
+
+  function renderMembers() {
     if (!modalEl || !modalEl.isConnected) return;
     var body = modalEl.querySelector('[data-sg-body]');
-    if (!body) return;
-    var labelName = escAttr(t('分组名称'));
-    var unitDirectories = t('个目录');
-    var groups = state.groups;
-    if (!groups.length) {
+    var editing = state.groups.find(function (group) { return group.id === editingId; });
+    if (!editing) {
+      body.removeAttribute('role');
+      body.removeAttribute('aria-labelledby');
       body.innerHTML = '<div class="wbs-sg-hint">' + esc(t('还没有分组：先起个名字，再把工作目录勾进来。')) + '</div>';
       return;
     }
-    var editing = groups.filter(function (group) { return group.id === editingId; })[0] || groups[0];
-    editingId = editing.id;
-    var html = '<div class="wbs-sg-list">';
-    groups.forEach(function (group) {
-      var active = group.id === editing.id;
-      var armed = deleteArmed === group.id;
-      html += '<div class="wbs-sg-row' + (active ? ' active' : '') + '">' +
-        '<input class="wbs-sg-name" type="text" maxlength="24" value="' + escAttr(group.name) + '" data-sg-name="' + escAttr(group.id) + '" aria-label="' + labelName + '">' +
-        '<span class="wbs-sg-n">' + group.members.length + ' ' + esc(unitDirectories) + '</span>' +
-        '<button class="wbs-sg-btn" type="button" data-sg-edit="' + escAttr(group.id) + '">' + esc(active ? t('正在编辑') : t('编辑成员')) + '</button>' +
-        '<button class="wbs-sg-btn wbs-sg-del' + (armed ? ' armed' : '') + '" type="button" data-sg-del="' + escAttr(group.id) + '">' + esc(armed ? t('确认删除') : t('删除')) + '</button>' +
-        '</div>';
-    });
-    html += '</div><div class="wbs-sg-members-head">' + esc(t('成员目录')) + '</div><div class="wbs-sg-members">';
+    body.setAttribute('role', 'tabpanel');
+    body.setAttribute('aria-labelledby', 'wbs-sg-tab-' + editingId);
+    var html = '<div class="wbs-sg-members-head">' + esc(t('成员目录')) + '</div><div class="wbs-sg-members">';
     var paths = state.workspaces.slice();
     editing.members.forEach(function (path) { if (paths.indexOf(path) < 0) paths.push(path); });
+    if (state.mapsFailed) {
+      html += '<div class="wbs-sg-hint" role="status">' + esc(t('读取工作目录失败，请关闭后重新打开分组管理。')) + '</div>';
+    } else if (!paths.length) {
+      html += '<div class="wbs-sg-hint" role="status">' + esc(t(state.ready ? '暂无可选工作目录' : '正在读取工作目录…')) + '</div>';
+    } else if (state.sessionTitles === null) {
+      html += '<div class="wbs-sg-hint" role="status">' + esc(t('暂时无法读取会话名称')) + '</div>';
+    }
     paths.forEach(function (path) {
       html += memberRow(path, editing.members.indexOf(path) >= 0);
     });
@@ -530,19 +636,14 @@ function createSidebarGroups(options) {
 
   function openModal() {
     if (modalEl && modalEl.isConnected) { renderModal(); return; }
-    var title = esc(t('分组'));
-    var labelNew = escAttr(t('新分组名称'));
+    var title = esc(t('管理分组'));
     modalEl = doc.createElement('div');
     modalEl.className = 'wbs-modal-mask wbs-sg-mask';
-    modalEl.innerHTML = '<div class="wbs-modal wbs-sg-dialog" role="dialog" aria-modal="true" aria-label="' + title + '">' +
-      '<div class="wbs-modal-title">' + title + '</div>' +
-      '<div class="wbs-modal-body"><div class="wbs-sg-body" data-sg-body></div>' +
-      '<div class="wbs-sg-create">' +
-      '<input class="wbs-sg-new" type="text" maxlength="24" data-sg-new placeholder="' + labelNew + '" aria-label="' + labelNew + '">' +
-      '<button class="wbs-modal-btn wbs-modal-ok" type="button" data-sg-create>' + esc(t('创建')) + '</button>' +
-      '</div></div>' +
-      '<div class="wbs-modal-actions"><button class="wbs-modal-btn" type="button" data-sg-close>' + esc(t('关闭')) + '</button></div>' +
-      '</div>';
+    modalEl.innerHTML = '<div class="wbs-modal wbs-sg-dialog" role="dialog" aria-modal="true" aria-labelledby="wbs-sg-title">' +
+      '<div class="wbs-modal-title wbs-sg-title"><span id="wbs-sg-title">' + title + '</span><div class="wbs-sg-title-actions">' +
+      groupIconButton('open-create', '新增分组', 'plus', 'primary wbs-sg-add', true) + groupIconButton('close', '关闭', 'close') + '</div></div>' +
+      '<div class="wbs-modal-body"><div data-sg-controls></div><div class="wbs-sg-body" id="wbs-sg-member-panel" data-sg-body></div>' +
+      '</div></div>';
     doc.body.appendChild(modalEl);
     modalEl.addEventListener('click', onModalClick);
     modalEl.addEventListener('change', onModalChange);
@@ -550,14 +651,40 @@ function createSidebarGroups(options) {
     // 保留上次编辑的分组：每次打开都跳回第一个，改成员时很容易改到别的组上去
     editingId = state.groups.some(function (group) { return group.id === editingId; })
       ? editingId : (state.groups[0] ? state.groups[0].id : null);
-    deleteArmed = null;
+    groupAction = '';
     renderModal();
-    loadWorkspaces().then(renderModal);
+    refreshMaps().then(renderMembers);
+  }
+
+  function openCreateGroup() {
+    if (createEl) return;
+    createEl = doc.createElement('div');
+    createEl.className = 'wbs-modal-mask wbs-sg-create-mask';
+    var label = esc(t('新分组名称'));
+    createEl.innerHTML = '<div class="wbs-modal wbs-sg-create-dialog" role="dialog" aria-modal="true" aria-labelledby="wbs-sg-create-title">' +
+      '<div class="wbs-modal-title wbs-sg-title"><span id="wbs-sg-create-title">' + esc(t('新增分组')) + '</span>' +
+      groupIconButton('cancel-create', '取消', 'close') + '</div>' +
+      '<div class="wbs-modal-body"><label class="wbs-sg-create-label" for="wbs-sg-create-name">' + label + '</label>' +
+      '<div class="wbs-sg-create"><input class="wbs-sg-new" id="wbs-sg-create-name" type="text" maxlength="24" data-sg-new>' +
+      groupIconButton('create', '创建', 'check', 'primary') + '</div>' +
+      '<div class="wbs-sg-action-error" data-sg-create-error role="status"></div></div></div>';
+    modalEl.querySelector('.wbs-sg-dialog').inert = true;
+    modalEl.appendChild(createEl);
+    createEl.querySelector('[data-sg-new]').focus();
+  }
+
+  function closeCreateGroup() {
+    if (!createEl) return;
+    createEl.remove();
+    createEl = null;
+    modalEl.querySelector('.wbs-sg-dialog').inert = false;
+    modalEl.querySelector('[data-sg-open-create]').focus();
   }
 
   function closeModal() {
     if (modalEl) { modalEl.remove(); modalEl = null; }
-    deleteArmed = null;
+    createEl = null;
+    groupAction = '';
   }
 
   function selectGroup(value) {
@@ -568,44 +695,65 @@ function createSidebarGroups(options) {
   }
 
   function createGroup() {
-    var nameEl = modalEl && modalEl.querySelector('[data-sg-new]');
-    var name = nameEl && nameEl.value ? nameEl.value.trim() : '';
-    if (!name) return;
-    if (state.groups.some(function (group) { return group.name === name; })) return;
+    if (!createEl) return;
+    var nameEl = createEl.querySelector('[data-sg-new]');
+    var name = nameEl.value.trim().slice(0, 24);
+    var message = groupNameError(name);
+    if (message) {
+      createEl.querySelector('[data-sg-create-error]').textContent = t(message);
+      nameEl.focus();
+      return;
+    }
     var created = { id: groupId(), name: name, members: [] };
     state.groups.push(created);
-    editingId = created.id;
     writeStore();
-    renderModal();
+    closeCreateGroup();
+    selectEditingGroup(created.id);
     renderBar();
   }
 
-  function patchGroup(id, patch) {
-    var group = state.groups.filter(function (item) { return item.id === id; })[0];
+  function groupNameError(name, except) {
+    if (!name) return '请输入分组名称';
+    return state.groups.some(function (item) { return item !== except && item.name === name; }) ? '分组名称已存在' : '';
+  }
+
+  function renameGroup() {
+    var group = state.groups.find(function (item) { return item.id === editingId; });
     if (!group) return;
-    if (patch.name !== undefined) {
-      var name = String(patch.name || '').trim().slice(0, 24);
-      if (!name || state.groups.some(function (item) { return item !== group && item.name === name; })) { renderModal(); return; }
-      group.name = name;
+    var input = modalEl.querySelector('[data-sg-name]');
+    var name = input.value.trim().slice(0, 24);
+    var message = groupNameError(name, group);
+    if (message) {
+      modalEl.querySelector('[data-sg-action-error]').textContent = t(message);
+      input.focus();
+      return;
     }
+    group.name = name;
     writeStore();
-    renderModal();
+    selectEditingGroup(editingId);
     renderBar();
   }
 
   function deleteGroup(id) {
-    if (deleteArmed !== id) {
-      deleteArmed = id;
-      renderModal();
-      return;
-    }
-    deleteArmed = null;
-    state.groups = state.groups.filter(function (group) { return group.id !== id; });
+    var index = state.groups.findIndex(function (group) { return group.id === id; });
+    if (index < 0) return;
+    state.groups.splice(index, 1);
     if (state.selected === id) state.selected = ALL;
     writeStore();
-    renderModal();
+    var next = state.groups[index] || state.groups[index - 1];
+    selectEditingGroup(next ? next.id : null);
     renderBar();
     apply();
+  }
+
+  function selectEditingGroup(id) {
+    var changed = editingId !== id;
+    editingId = id;
+    groupAction = '';
+    renderModal(!changed);
+    if (changed) modalEl.querySelector('[data-sg-body]').scrollTop = 0;
+    var target = modalEl.querySelector('[data-sg-tab][aria-selected="true"]') || modalEl.querySelector('[data-sg-open-create]');
+    target.focus();
   }
 
   function toggleMember(path, on) {
@@ -615,25 +763,35 @@ function createSidebarGroups(options) {
     if (on && at < 0) group.members.push(path);
     if (!on && at >= 0) group.members.splice(at, 1);
     writeStore();
-    // 不重建整个列表：重建会把正在点的那个复选框换成新节点，连续勾选会断掉
-    if (modalEl) {
-      var button = modalEl.querySelector('[data-sg-edit="' + group.id + '"]');
-      var row = button && button.parentElement;
-      var counter = row && row.querySelector('.wbs-sg-n');
-      if (counter) counter.textContent = group.members.length + ' ' + t('个目录');
-    }
     renderBar();
     apply();
   }
 
   function onModalClick(event) {
     var target = event.target;
+    if (target === createEl) { closeCreateGroup(); return; }
     if (target === modalEl) { closeModal(); return; }
     var hit = function (attr) { return target.closest ? target.closest('[' + attr + ']') : null; };
-    var edit = hit('data-sg-edit');
-    if (edit) { editingId = edit.getAttribute('data-sg-edit'); deleteArmed = null; renderModal(); return; }
-    var del = hit('data-sg-del');
-    if (del) { deleteGroup(del.getAttribute('data-sg-del')); return; }
+    if (hit('data-sg-open-create')) { openCreateGroup(); return; }
+    if (hit('data-sg-cancel-create')) { closeCreateGroup(); return; }
+    var tab = hit('data-sg-tab');
+    if (tab) { selectEditingGroup(tab.getAttribute('data-sg-tab')); return; }
+    if (hit('data-sg-rename')) {
+      groupAction = 'rename';
+      renderModal(true);
+      var input = modalEl.querySelector('[data-sg-name]');
+      input.focus(); input.select();
+      return;
+    }
+    if (hit('data-sg-delete')) {
+      groupAction = 'delete';
+      renderModal(true);
+      modalEl.querySelector('[data-sg-cancel]').focus();
+      return;
+    }
+    if (hit('data-sg-save')) { renameGroup(); return; }
+    if (hit('data-sg-confirm-delete')) { deleteGroup(editingId); return; }
+    if (hit('data-sg-cancel')) { selectEditingGroup(editingId); return; }
     if (hit('data-sg-create')) { createGroup(); return; }
     if (hit('data-sg-close')) { closeModal(); }
   }
@@ -641,17 +799,42 @@ function createSidebarGroups(options) {
   function onModalChange(event) {
     var target = event.target;
     if (!target || !target.getAttribute) return;
-    var nameId = target.getAttribute('data-sg-name');
-    if (nameId) { patchGroup(nameId, { name: target.value }); return; }
     var member = target.getAttribute('data-sg-member');
     if (member) { toggleMember(member, !!target.checked); }
   }
 
   function onModalKey(event) {
-    if (event.key === 'Escape') { event.preventDefault(); closeModal(); }
-    if (event.key === 'Enter' && event.target && event.target.getAttribute && event.target.getAttribute('data-sg-new') !== null) {
+    if (event.isComposing) return;
+    if (event.key === 'Escape') {
       event.preventDefault();
-      createGroup();
+      event.stopPropagation();
+      if (createEl) closeCreateGroup();
+      else if (groupAction) selectEditingGroup(editingId);
+      else closeModal();
+      return;
+    }
+    var target = event.target;
+    if (event.key === 'Tab' && createEl) {
+      var focusable = createEl.querySelectorAll('button, input');
+      var first = focusable[0], last = focusable[focusable.length - 1];
+      if (event.shiftKey && target === first) { event.preventDefault(); last.focus(); }
+      if (!event.shiftKey && target === last) { event.preventDefault(); first.focus(); }
+      return;
+    }
+    if (event.key === 'Enter' && target.hasAttribute('data-sg-name')) {
+      event.preventDefault(); renameGroup(); return;
+    }
+    if (event.key === 'Enter' && target.hasAttribute('data-sg-new')) {
+      event.preventDefault(); createGroup(); return;
+    }
+    if (target.hasAttribute('data-sg-tab')) {
+      var index = state.groups.findIndex(function (group) { return group.id === editingId; });
+      var size = state.groups.length;
+      var directions = { ArrowLeft: (index + size - 1) % size, ArrowRight: (index + 1) % size, Home: 0, End: size - 1 };
+      if (Object.hasOwn(directions, event.key)) {
+        event.preventDefault();
+        selectEditingGroup(state.groups[directions[event.key]].id);
+      }
     }
   }
 
@@ -682,33 +865,57 @@ function createSidebarGroups(options) {
       // 宿主收起「分组」区时，这行 chip 也跟着收起来，别孤零零挂在一个折叠的标题下。
       // 注意：:has() 里不能再套 :has()，整条规则会被解析器直接丢弃。
       '.conversation-section-groups:has(.conversation-section-chevron:not(.conversation-section-chevron-expanded)) .wbs-sg-bar{display:none}',
+      '.conversation-section-groups:has(.conversation-section-chevron:not(.conversation-section-chevron-expanded)) .wbs-sg-indexed{display:none}',
+      '.wbs-sg-indexed{display:grid;min-width:0;padding:0 6px}',
+      '.wbs-sg-indexed button{display:block;min-width:0;width:100%;text-align:start;padding:5px 8px;border:0;border-radius:6px;background:transparent;color:var(--wb-color-text-primary,inherit);font:inherit;font-size:12px;line-height:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer}',
+      '.wbs-sg-indexed button:hover{background:var(--wb-bg-hover)}',
+      '.wbs-sg-indexed button:focus-visible{outline:1px solid currentColor;outline-offset:-2px}',
       '.wbs-sg-chip{display:inline-flex;align-items:center;gap:4px;max-width:132px;padding:2px 7px;border:1px solid var(--wb-border-subtle,rgba(127,127,127,.28));border-radius:7px;background:transparent;color:var(--wb-color-text-secondary,inherit);font:inherit;font-size:11px;line-height:1.5;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;opacity:.82}',
       '.wbs-sg-chip:hover{background:var(--wb-bg-hover,rgba(127,127,127,.14));opacity:1}',
       '.wbs-sg-chip.active{background:var(--wb-bg-tertiary,rgba(127,127,127,.2));border-color:var(--wb-border-strong,rgba(127,127,127,.5));color:var(--wb-color-text-primary,inherit);opacity:1}',
       '.wbs-sg-count{font-size:10px;opacity:.62;font-variant-numeric:tabular-nums}',
       '.wbs-sg-more{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;margin-left:auto;padding:0;border:0;border-radius:6px;background:transparent;color:inherit;opacity:.55;cursor:pointer}',
       '.wbs-sg-more:hover{background:rgba(127,127,127,.16);opacity:.95}',
-      '.wbs-sg-dialog{width:min(560px,92%);box-sizing:border-box}',
-      '.wbs-sg-body{display:flex;flex-direction:column;gap:8px;max-height:52vh;overflow:auto}',
-      '.wbs-sg-list{display:flex;flex-direction:column;gap:6px}',
-      '.wbs-sg-row{display:flex;align-items:center;gap:6px;padding:5px 7px;border:1px solid var(--wb-border-subtle,#e7e7e7);border-radius:9px}',
-      '.wbs-sg-row.active{border-color:var(--wb-button-primary-bg,#1f1f1f);background:color-mix(in srgb,var(--wb-button-primary-bg,#1f1f1f) 6%,transparent)}',
-      '.wbs-sg-name{flex:1 1 auto;min-width:0;padding:4px 6px;border:1px solid transparent;border-radius:6px;background:transparent;color:var(--wb-color-text-primary,#1f1f1f);font:inherit;font-size:12px}',
-      '.wbs-sg-name:hover,.wbs-sg-name:focus{border-color:var(--wb-border-subtle,#ddd)}',
-      '.wbs-sg-n{flex:0 0 auto;font-size:11px;color:var(--wb-icon-tertiary,#888)}',
-      '.wbs-sg-btn{flex:0 0 auto;padding:3px 8px;border:1px solid var(--wb-border-subtle,#ddd);border-radius:7px;background:transparent;color:var(--wb-color-text-secondary,#555);font:inherit;font-size:11px;cursor:pointer}',
-      '.wbs-sg-btn:hover{background:var(--wb-bg-hover,#f2f2f2)}',
-      '.wbs-sg-del.armed{background:#dc2626;border-color:#dc2626;color:#fff}',
-      '.wbs-sg-members-head{font-size:11px;font-weight:700;color:var(--wb-icon-secondary,#666);margin-top:2px}',
-      '.wbs-sg-members{display:flex;flex-direction:column;gap:1px}',
-      '.wbs-sg-member{display:flex;align-items:center;gap:7px;padding:3px 5px;border-radius:6px;font-size:11.5px;color:var(--wb-color-text-secondary,#555);cursor:pointer;min-width:0}',
+      '.wbs-sg-dialog{width:min(460px,92%);box-sizing:border-box}',
+      '.wbs-sg-title{display:flex;align-items:center;justify-content:space-between;gap:8px}',
+      '.wbs-sg-title-actions{display:flex;align-items:center;gap:4px}',
+      '.wbs-sg-body{display:flex;flex-direction:column;max-height:50vh;overflow:auto;scrollbar-gutter:stable}',
+      '.wbs-sg-toolbar{display:flex;align-items:center;gap:6px;min-width:0;padding-bottom:8px;border-bottom:1px solid var(--wb-border-subtle)}',
+      '.wbs-sg-tabs{display:flex;flex:1;gap:4px;min-width:0;overflow-x:auto;scrollbar-width:thin;padding:2px}',
+      '.wbs-sg-tab{flex:0 0 auto;max-width:70%;padding:4px 9px;border:1px solid transparent;border-radius:7px;background:transparent;color:var(--wb-color-text-secondary);font:inherit;font-size:12px;line-height:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer}',
+      '.wbs-sg-tab:hover{background:var(--wb-bg-hover)}',
+      '.wbs-sg-tab[aria-selected="true"]{background:var(--wb-bg-tertiary);border-color:var(--wb-border-subtle);color:var(--wb-color-text-primary);font-weight:600}',
+      '.wbs-sg-tab:focus-visible,.wbs-sg-icon:focus-visible{outline:1px solid var(--wb-button-primary-bg,currentColor);outline-offset:-2px}',
+      '.wbs-sg-group-actions,.wbs-sg-rename{display:flex;align-items:center;gap:4px}',
+      '.wbs-sg-group-actions{flex:none;padding-inline-start:6px;border-inline-start:1px solid var(--wb-border-subtle)}',
+      '.wbs-sg-rename{margin-top:8px}',
+      '.wbs-sg-confirm-label{color:var(--wb-color-text-secondary);font-size:11px}',
+      '.wbs-sg-action-error:not(:empty){margin:4px 0;color:var(--wb-color-text-primary);font-size:11px}',
+      '.wbs-sg-icon{display:inline-grid;flex:0 0 26px;place-items:center;width:26px;height:26px;padding:0;border:1px solid transparent;border-radius:7px;background:transparent;color:var(--wb-icon-secondary,currentColor);cursor:pointer}',
+      '.wbs-sg-icon:hover{background:var(--wb-bg-hover);color:var(--wb-color-text-primary)}',
+      '.wbs-sg-icon.primary{background:var(--wb-bg-tertiary);border-color:var(--wb-border-subtle);color:var(--wb-color-text-primary)}',
+      '.wbs-sg-icon.primary:hover{background:var(--wb-bg-hover)}',
+      '.wbs-sg-icon.wbs-sg-add{display:inline-flex;align-items:center;justify-content:center;gap:4px;flex:0 0 auto;width:auto;padding:0 7px;font:inherit;font-size:11px;white-space:nowrap}',
+      '.wbs-sg-icon.danger,.wbs-sg-icon[data-sg-delete]:hover{color:var(--wb-color-text-error,#dc2626)}',
+      '.wbs-sg-members-head{font-size:11px;font-weight:600;color:var(--wb-icon-secondary);padding:9px 5px 4px}',
+      '.wbs-sg-members{display:flex;flex-direction:column}',
+      '.wbs-sg-directory{min-width:0;padding:3px 0}',
+      '.wbs-sg-directory+.wbs-sg-directory{border-top:1px solid var(--wb-border-subtle)}',
+      '.wbs-sg-member{display:flex;align-items:center;gap:7px;padding:4px 5px;border-radius:6px;font-size:12px;font-weight:500;color:var(--wb-color-text-primary);cursor:pointer;min-width:0}',
+      '.wbs-sg-member:has(input:checked){background:var(--wb-bg-tertiary)}',
       '.wbs-sg-member:hover{background:var(--wb-bg-hover,#f4f4f4)}',
       '.wbs-sg-member input{width:14px;height:14px;flex:0 0 14px;margin:0;accent-color:var(--wb-button-primary-bg,#1f1f1f);cursor:pointer}',
       '.wbs-sg-member-path{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;direction:rtl;text-align:left}',
       '.wbs-sg-member.invalid .wbs-sg-member-path{opacity:.6}',
+      '.wbs-sg-session-titles{list-style:none;margin:1px 5px 2px 12px;padding:0 0 0 13px;border-inline-start:1px solid var(--wb-border-subtle);font-size:11px;line-height:1.5;color:var(--wb-color-text-secondary);overflow-wrap:anywhere}',
+      '.wbs-sg-session-more{margin:1px 5px 2px 26px;font-size:11px;color:var(--wb-color-text-secondary)}',
+      '.wbs-sg-session-more summary{width:fit-content;cursor:pointer}',
+      '.wbs-sg-session-more .wbs-sg-session-titles{margin-inline-start:0;padding-inline-start:8px}',
       '.wbs-sg-invalid{flex:0 0 auto;padding:0 5px;border-radius:5px;background:var(--wb-bg-tertiary,rgba(127,127,127,.14));color:var(--wb-color-text-secondary,inherit);font-size:10px}',
       '.wbs-sg-hint{padding:14px 4px;color:var(--wb-icon-tertiary,#888);font-size:12px}',
-      '.wbs-sg-create{display:flex;align-items:center;gap:6px;margin-top:10px}',
+      '.wbs-sg-create-dialog{width:min(340px,92%);box-sizing:border-box}',
+      '.wbs-sg-create-label{display:block;margin-bottom:5px;font-size:11px;color:var(--wb-color-text-secondary)}',
+      '.wbs-sg-create{display:flex;align-items:center;gap:6px}',
       '.wbs-sg-new{flex:1 1 auto;min-width:0;padding:6px 8px;border:1px solid var(--wb-border-subtle,#ddd);border-radius:8px;background:transparent;color:inherit;font:inherit;font-size:12px}',
     ].join('');
     (doc.head || doc.documentElement).appendChild(styleEl);
@@ -737,6 +944,13 @@ function createSidebarGroups(options) {
   function onDocClick(event) {
     var target = event.target;
     if (!target || !target.closest) return;
+    var session = target.closest('.wbs-sg-indexed [data-sg-session]');
+    if (session && indexedList && indexedList.contains(session)) {
+      event.preventDefault();
+      event.stopPropagation();
+      options.openSession(session.getAttribute('data-sg-session'));
+      return;
+    }
     if (!target.closest('.wbs-sg-bar')) return;
     // 键盘触发的 click（detail=0）没有 pointer 序列；指针序列刚处理过就跳过，避免重复执行
     if (event.detail === 0 || Date.now() - lastPointerAt > 400) onBarClick(event);
@@ -782,6 +996,7 @@ function createSidebarGroups(options) {
     pendingTap = null;
     clearHidden();
     closeModal();
+    renderIndexed([]);
     if (barEl) { barEl.remove(); barEl = null; }
     if (styleEl) { styleEl.remove(); styleEl = null; }
   }
@@ -2144,10 +2359,18 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '未出现在当前列表': 'Not in the current list',
     '还没有分组：先起个名字，再把工作目录勾进来。': 'No groups yet. Name one, then tick the workspaces to include.',
     '分组名称': 'Group name',
+    '读取工作目录失败，请关闭后重新打开分组管理。': 'Could not load working directories. Close and reopen group management to retry.',
+    '暂无可选工作目录': 'No working directories available',
+    '暂时无法读取会话名称': 'Session names are temporarily unavailable',
+    '更多会话': 'More sessions',
+    '正在读取工作目录…': 'Loading working directories…',
     '分组颜色': 'Group color',
     '个目录': 'workspaces',
-    '正在编辑': 'Editing',
-    '编辑成员': 'Edit members',
+    '重命名': 'Rename',
+    '新增分组': 'New group',
+    '确认删除？': 'Delete group?',
+    '请输入分组名称': 'Enter a group name',
+    '分组名称已存在': 'This group name already exists',
     '成员目录': 'Member workspaces',
     '新分组名称': 'New group name',
     '创建': 'Create',
@@ -18986,6 +19209,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       var sidebarGroups = createSidebarGroups({
         document: document,
         api: api,
+        openSession: openCopiedSession,
         normalize: canonicalWorkspaceUI,
         escape: esc,
         escapeAttr: escAttr,
