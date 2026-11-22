@@ -547,8 +547,8 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 // 1.2.70：视频壁纸层夹在 body 底色与 #root 之间，毛玻璃主题下正常显示画面。
 // #507: explicit cleanup of old Windows client temp files, only before a verified cold launch.
 // 1.2.81：在共享目标分支加入视频壁纸及失败重试、主题路径边界修复。
-const DAEMON_VERSION = '1.2.84';
-const DAEMON_BUILD_ID = 'release-1.2.84-session-pin-capture';
+const DAEMON_VERSION = '1.2.85';
+const DAEMON_BUILD_ID = 'release-1.2.85-workbuddy-junction-root';
 const usageReporter = createUsageReporter({ profile: PROFILE.id, version: DAEMON_VERSION });
 configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const automationDiscovery = createAutomationDiscovery({
@@ -5271,7 +5271,9 @@ function ensureArchiveParentNoFollow(wbHome, target) {
   // The configured WorkBuddy root may itself be a junction/symlink. Resolve
   // only that boundary; every managed child component remains no-follow.
   const configuredRoot = path.resolve(wbHome);
-  const root = fs.realpathSync(configuredRoot);
+  const root = typeof plat !== 'undefined' && plat && typeof plat.resolveLinkedPath === 'function'
+    ? plat.resolveLinkedPath(configuredRoot, { fs })
+    : fs.realpathSync(configuredRoot);
   const rootStat = fs.lstatSync(root);
   if (!rootStat.isDirectory()) throw new Error('WorkBuddy 数据目录不是受管目录');
   const relativeTarget = archiveRelativePath(configuredRoot, path.resolve(target));
@@ -6985,7 +6987,12 @@ function deleteSessionFiles(wbHome, id) {
   if (codeBuddyFiles) return codeBuddyFiles.remove(id);
   if (!isValidSessionId(id)) throw new Error('无效的会话 ID');
   // 配置的数据根允许是 Windows junction；仅解析这一层，内部 managed parent 仍逐级拒绝链接。
-  try { wbHome = fs.realpathSync(wbHome); }
+  try {
+    wbHome = typeof plat !== 'undefined' && plat && typeof plat.resolveLinkedPath === 'function'
+      ? plat.resolveLinkedPath(wbHome, { fs })
+      : fs.realpathSync(wbHome);
+    fs.lstatSync(wbHome);
+  }
   catch (error) { if (error.code === 'ENOENT') return 0; throw error; }
   let removed = removeSessionAppCache(wbHome, id) ? 1 : 0;
   const delOne = (parent, leaf) => {

@@ -227,6 +227,112 @@ function launcherHomeFor(launcherPath, explicitHome) {
   return path.dirname(localDir);
 }
 
+function normalizeLinkTarget(target, pathApi) {
+  let value = String(target || '');
+  if (pathApi === path.win32 || (pathApi === path && IS_WIN)) {
+    if (/^\\\?\?\\[A-Za-z]:[\\/]/.test(value) || /^\\\\\?\\[A-Za-z]:[\\/]/.test(value)) {
+      value = value.slice(4);
+    } else if (/^\\\\\?\\UNC\\/i.test(value)) {
+      value = '\\\\' + value.slice(8);
+    }
+  }
+  return value;
+}
+
+function redirectLinkedTarget(prefix, linkTarget, restParts, pathApi) {
+  const normalized = normalizeLinkTarget(linkTarget, pathApi);
+  const resolvedTarget = pathApi.resolve(pathApi.dirname(prefix), normalized);
+  return pathApi.join(resolvedTarget, ...restParts);
+}
+
+function splitPathForLinkWalk(current, pathApi) {
+  const parsed = pathApi.parse(current);
+  const relative = current.slice(parsed.root.length);
+  return { root: parsed.root, parts: relative.split(pathApi.sep).filter(Boolean) };
+}
+
+function tooManyLinksError(inputPath) {
+  const err = new Error(`Too many levels of symbolic links: ${inputPath}`);
+  err.code = 'ELOOP';
+  return err;
+}
+
+/**
+ * Resolve symlink / Windows directory junction components via lstat + readlink.
+ * Unlike fs.realpathSync (GetFinalPathNameByHandleW), this reads reparse point
+ * targets directly and preserves any non-existent trailing suffix.
+ */
+function resolveLinkedPath(inputPath, options = {}) {
+  const raw = String(inputPath || '');
+  if (!raw) return raw;
+  const fsImpl = (options && options.fs) || fs;
+  const pathApi = (options && options.path) || path;
+  const maxHops = Number.isInteger(options && options.maxHops) && options.maxHops > 0 ? options.maxHops : 40;
+  let current = pathApi.resolve(raw);
+  let hops = 0;
+
+  for (;;) {
+    const { root, parts } = splitPathForLinkWalk(current, pathApi);
+    let prefix = root;
+    let redirected = false;
+
+    for (let i = 0; i < parts.length; i++) {
+      prefix = pathApi.join(prefix, parts[i]);
+      let stat;
+      try {
+        stat = fsImpl.lstatSync(prefix);
+      } catch (error) {
+        if (error && error.code === 'ENOENT') return pathApi.join(prefix, ...parts.slice(i + 1));
+        throw error;
+      }
+      if (stat && typeof stat.isSymbolicLink === 'function' && stat.isSymbolicLink()) {
+        if (++hops > maxHops) throw tooManyLinksError(inputPath);
+        current = redirectLinkedTarget(prefix, fsImpl.readlinkSync(prefix), parts.slice(i + 1), pathApi);
+        redirected = true;
+        break;
+      }
+    }
+
+    if (!redirected) return current;
+  }
+}
+
+async function resolveLinkedPathAsync(inputPath, options = {}) {
+  const raw = String(inputPath || '');
+  if (!raw) return raw;
+  const fsImpl = (options && options.fs) || fs;
+  const pathApi = (options && options.path) || path;
+  const maxHops = Number.isInteger(options && options.maxHops) && options.maxHops > 0 ? options.maxHops : 40;
+  let current = pathApi.resolve(raw);
+  let hops = 0;
+
+  for (;;) {
+    const { root, parts } = splitPathForLinkWalk(current, pathApi);
+    let prefix = root;
+    let redirected = false;
+
+    for (let i = 0; i < parts.length; i++) {
+      prefix = pathApi.join(prefix, parts[i]);
+      let stat;
+      try {
+        stat = await fsImpl.promises.lstat(prefix);
+      } catch (error) {
+        if (error && error.code === 'ENOENT') return pathApi.join(prefix, ...parts.slice(i + 1));
+        throw error;
+      }
+      if (stat && typeof stat.isSymbolicLink === 'function' && stat.isSymbolicLink()) {
+        if (++hops > maxHops) throw tooManyLinksError(inputPath);
+        const linkTarget = await fsImpl.promises.readlink(prefix);
+        current = redirectLinkedTarget(prefix, linkTarget, parts.slice(i + 1), pathApi);
+        redirected = true;
+        break;
+      }
+    }
+
+    if (!redirected) return current;
+  }
+}
+
 module.exports = {
   IS_WIN,
   IS_MAC,
@@ -246,5 +352,7 @@ module.exports = {
   pickLinuxDataRoot,
   linuxAuthFileFor,
   looksLikeSiblingRoot,
+  resolveLinkedPath,
+  resolveLinkedPathAsync,
   LINUX_APP_CANDIDATES,
 };

@@ -149,16 +149,40 @@ function applyWorkBuddyTarget(profile, target) {
   };
 }
 
+function safeResolveLinkedPath(value) {
+  if (!value) return value;
+  try {
+    return plat.resolveLinkedPath(value);
+  } catch (_) {
+    return value;
+  }
+}
+
+function resolveProfilePaths(profile) {
+  if (!profile) return profile;
+  const resolved = {};
+  let changed = false;
+  for (const field of ['dataRoot', 'sessionDb', 'modelsFile', 'userDataRoot']) {
+    if (!profile[field]) continue;
+    const next = safeResolveLinkedPath(profile[field]);
+    if (next !== profile[field]) {
+      resolved[field] = next;
+      changed = true;
+    }
+  }
+  return changed ? { ...profile, ...resolved } : profile;
+}
+
 function getProfile(id = process.env.WBSWITCH_PROFILE || 'workbuddy-cn', options = {}) {
   const key = String(id || '').trim().toLowerCase();
   if (PROFILES[key]) {
     const base = PROFILES[key];
-    if (base.kind !== 'workbuddy') return base;
+    if (base.kind !== 'workbuddy') return resolveProfilePaths(base);
     const platform = options.platform || process.platform;
     const env = options.env || process.env;
     const dataDir = options.dataDir || env.WBSWITCH_DATA_DIR || profileDataDir(base);
     const target = readWorkBuddyTarget({ dataDir, profileId: key, env, platform });
-    return applyWorkBuddyTarget(base, target);
+    return resolveProfilePaths(applyWorkBuddyTarget(base, target));
   }
   throw new Error(`未知客户端 profile: ${id}`);
 }
@@ -167,20 +191,22 @@ function listProfiles() { return Object.values(PROFILES).map((p) => ({ ...p, cap
 
 function listInstalledModelSources(activeId) {
   const active = PROFILES[activeId];
+  const activeModelsFile = active && safeResolveLinkedPath(active.modelsFile);
   return Object.keys(PROFILES)
     .filter((id) => id !== activeId)
     .map((id) => PROFILES[id])
     .map((profile) => {
+      const modelsFile = safeResolveLinkedPath(profile.modelsFile);
       const installed = fs.existsSync(profile.appPath);
-      const available = fs.existsSync(profile.modelsFile);
+      const available = fs.existsSync(modelsFile);
       // 防御：仅当两端模型文件实际指向同一路径时才视为共享（正常情况
       // CN/AI 各用各的 models.json，可互相导入；若未来某端路径缺失需容错）
-      const shared = !!(active && active.modelsFile && profile.modelsFile &&
-        path.resolve(active.modelsFile) === path.resolve(profile.modelsFile));
+      const shared = !!(activeModelsFile && modelsFile &&
+        path.resolve(activeModelsFile) === path.resolve(modelsFile));
       return {
         profileId: profile.id,
         name: profile.name,
-        modelsFile: profile.modelsFile,
+        modelsFile,
         installed,
         available,
         shared,

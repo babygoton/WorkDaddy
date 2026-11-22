@@ -1,6 +1,7 @@
 'use strict';
 
 const { spawn } = require('node:child_process');
+const { resolveLinkedPath } = require('./platform.js');
 
 const JS_SAFE_INTEGER_MIN = BigInt(Number.MIN_SAFE_INTEGER);
 const JS_SAFE_INTEGER_MAX = BigInt(Number.MAX_SAFE_INTEGER);
@@ -390,6 +391,15 @@ function runCli(command, args, input) {
   });
 }
 
+function resolveDbPath(dbPath) {
+  if (!dbPath || dbPath === ':memory:' || /^file:/i.test(dbPath)) return dbPath;
+  try {
+    return resolveLinkedPath(dbPath);
+  } catch (_) {
+    return dbPath;
+  }
+}
+
 function createSessionDb(options = {}) {
   const dbPath = String(options.dbPath || '');
   if (!dbPath) throw new Error('缺少 sqlite 数据库路径');
@@ -405,7 +415,7 @@ function createSessionDb(options = {}) {
         const values = normalizeParameters(sql, params);
         let db;
         try {
-          db = new sqliteModule.DatabaseSync(dbPath, { readOnly: true });
+          db = new sqliteModule.DatabaseSync(resolveDbPath(dbPath), { readOnly: true });
           return db.prepare(sql).all(...values).map((row) => Object.fromEntries(Object.entries(row)));
         } catch (error) {
           throw new Error(`sqlite 查询失败: ${error.message}`);
@@ -417,7 +427,7 @@ function createSessionDb(options = {}) {
         const values = normalizeParameters(sql, params);
         let db;
         try {
-          db = new sqliteModule.DatabaseSync(dbPath);
+          db = new sqliteModule.DatabaseSync(resolveDbPath(dbPath));
           const result = db.prepare(sql).run(...values);
           return { changes: Number(result.changes), lastInsertRowid: result.lastInsertRowid };
         } catch (error) {
@@ -430,7 +440,7 @@ function createSessionDb(options = {}) {
         const preparedStatements = normalizeTransactionStatements(statements);
         let db;
         try {
-          db = new sqliteModule.DatabaseSync(dbPath);
+          db = new sqliteModule.DatabaseSync(resolveDbPath(dbPath));
           db.exec('BEGIN IMMEDIATE');
           const results = preparedStatements.map((statement) => {
             const result = db.prepare(statement.sql).run(...statement.params);
@@ -452,7 +462,7 @@ function createSessionDb(options = {}) {
     backend: 'sqlite3-cli',
     async all(sql, params = []) {
       const compiled = bindCliSql(sql, params);
-      const stdout = await runCli(sqliteCommand, ['-readonly', '-json', dbPath], `${compiled}\n`);
+      const stdout = await runCli(sqliteCommand, ['-readonly', '-json', resolveDbPath(dbPath)], `${compiled}\n`);
       if (!stdout.trim()) return [];
       try {
         const rows = JSON.parse(stdout);
@@ -464,7 +474,7 @@ function createSessionDb(options = {}) {
     },
     async run(sql, params = []) {
       const compiled = bindCliSql(sql, params);
-      await runCli(sqliteCommand, [dbPath], `${compiled}\n`);
+      await runCli(sqliteCommand, [resolveDbPath(dbPath)], `${compiled}\n`);
       return { changes: null, lastInsertRowid: null };
     },
     async transaction(statements) {
@@ -473,7 +483,7 @@ function createSessionDb(options = {}) {
         const compiled = bindCliSql(statement.sql, statement.params);
         return statement.hasTrailingSemicolon ? compiled : compiled + '\n;';
       }).join('\n');
-      await runCli(sqliteCommand, ['-bail', dbPath], `BEGIN IMMEDIATE;\n${sql}\nCOMMIT;\n`);
+      await runCli(sqliteCommand, ['-bail', resolveDbPath(dbPath)], `BEGIN IMMEDIATE;\n${sql}\nCOMMIT;\n`);
       return preparedStatements.map(() => ({ changes: null, lastInsertRowid: null }));
     },
   };
