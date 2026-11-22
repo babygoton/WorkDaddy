@@ -8,6 +8,7 @@ const crypto = require('node:crypto');
 const { StringDecoder } = require('node:string_decoder');
 const { Readable } = require('node:stream');
 const { pipeline } = require('node:stream/promises');
+const { resolveLinkedPath, resolveLinkedPathAsync } = require('./platform.js');
 const identityKeys = new Set(['sessionId', 'conversationId', 'ownerConversationId', 'session_id', 'conversation_id']);
 const SKIP_LOCAL_DIR = /^workspace\/sessions\/[^/]+\/(?:modify_backup|\.modify_backup_meta)$/;
 const SYNC_BACKUP_DIR = /^sync-[A-Za-z0-9_-]+$/;
@@ -71,7 +72,11 @@ async function safePathAsync(root, relative) {
 // List views need byte counts, not message parsing or payload buffers. Limit
 // concurrent scans, never the size/file count of a session itself.
 async function readSessionSizes(root, ids) {
-  try { root = await fs.promises.realpath(path.resolve(root)); }
+  try {
+    root = await resolveLinkedPathAsync(path.resolve(root));
+    const rootStat = await fs.promises.lstat(root);
+    if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) return new Map((ids || []).map(id => [id, null]));
+  }
   catch (error) {
     if (error && error.code === 'ENOENT') return new Map((ids || []).map(id => [id, null]));
     throw error;
@@ -150,7 +155,7 @@ function readSnapshot(root, id, aliases = [], cache = null) {
   // The configured WorkBuddy data root may itself be a Windows junction. Trust
   // only that configured boundary; safePathFast/safePath still reject links at
   // every managed child component below the resolved root.
-  root = fs.realpathSync(path.resolve(root));
+  root = resolveLinkedPath(path.resolve(root));
   if (fs.lstatSync(root).isSymbolicLink()) throw Error('会话目录包含符号链接，未同步');
   const knownIds = Array.from(new Set([id, ...aliases]));
   const files = new Map();
@@ -374,7 +379,7 @@ async function readTranscriptAsync(file, stat, knownIds) {
 
 async function readSnapshotAsync(root, id, aliases = [], cache = null) {
   if (!validSessionId(id)) throw Error('无效的会话标识');
-  root = await fs.promises.realpath(path.resolve(root));
+  root = await resolveLinkedPathAsync(path.resolve(root));
   const rootStat = await fs.promises.lstat(root);
   if (rootStat.isSymbolicLink()) throw Error('会话目录包含符号链接，未同步');
   if (!rootStat.isDirectory()) throw Error('会话目录无法读取');
@@ -511,7 +516,7 @@ async function readSnapshotAsync(root, id, aliases = [], cache = null) {
 // workspace backup directories are excluded because they are local-only data.
 async function readSessionFingerprintAsync(root, id) {
   if (!validSessionId(id)) throw Error('无效的会话标识');
-  root = await fs.promises.realpath(path.resolve(root));
+  root = await resolveLinkedPathAsync(path.resolve(root));
   const rootStat = await fs.promises.lstat(root);
   if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) throw Error('会话目录无法读取');
   const markers = [];
@@ -562,7 +567,9 @@ async function readSessionFingerprintAsync(root, id) {
 // catches file creation/removal without enumerating every project/session file.
 async function readSessionQuickFingerprintAsync(root, id) {
   if (!validSessionId(id)) throw Error('无效的会话标识');
-  root = await fs.promises.realpath(path.resolve(root));
+  root = await resolveLinkedPathAsync(path.resolve(root));
+  const rootStat = await fs.promises.lstat(root);
+  if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) throw Error('会话目录无法读取');
   const markers = [];
   const add = async (relative) => {
     const file = path.join(root, ...relative.split('/'));

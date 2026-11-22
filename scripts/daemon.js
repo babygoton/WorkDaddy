@@ -5272,7 +5272,9 @@ function ensureArchiveParentNoFollow(wbHome, target) {
   // The configured WorkBuddy root may itself be a junction/symlink. Resolve
   // only that boundary; every managed child component remains no-follow.
   const configuredRoot = path.resolve(wbHome);
-  const root = fs.realpathSync(configuredRoot);
+  const root = typeof plat !== 'undefined' && plat && typeof plat.resolveLinkedPath === 'function'
+    ? plat.resolveLinkedPath(configuredRoot, { fs })
+    : fs.realpathSync(configuredRoot);
   const rootStat = fs.lstatSync(root);
   if (!rootStat.isDirectory()) throw new Error('WorkBuddy 数据目录不是受管目录');
   const relativeTarget = archiveRelativePath(configuredRoot, path.resolve(target));
@@ -6986,7 +6988,12 @@ function deleteSessionFiles(wbHome, id) {
   if (codeBuddyFiles) return codeBuddyFiles.remove(id);
   if (!isValidSessionId(id)) throw new Error('无效的会话 ID');
   // 配置的数据根允许是 Windows junction；仅解析这一层，内部 managed parent 仍逐级拒绝链接。
-  try { wbHome = fs.realpathSync(wbHome); }
+  try {
+    wbHome = typeof plat !== 'undefined' && plat && typeof plat.resolveLinkedPath === 'function'
+      ? plat.resolveLinkedPath(wbHome, { fs })
+      : fs.realpathSync(wbHome);
+    fs.lstatSync(wbHome);
+  }
   catch (error) { if (error.code === 'ENOENT') return 0; throw error; }
   let removed = removeSessionAppCache(wbHome, id) ? 1 : 0;
   const delOne = (parent, leaf) => {

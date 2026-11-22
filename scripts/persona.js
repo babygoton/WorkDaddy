@@ -6,6 +6,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { replaceFileWithRetry } = require('./atomic-file-write');
+const { resolveLinkedPath } = require('./platform.js');
 const IDENTITY_FILES = ['IDENTITY.md', 'USER.md', 'SOUL.md', 'MEMORY.md'];
 const PERSONA_FILES = [...IDENTITY_FILES, 'workspace-state.json', 'BOOTSTRAP.md'];
 const MAX_FILE_SIZE = 20 * 1024 * 1024;
@@ -107,17 +108,7 @@ function inspectPersona(options) {
 // junction). Resolve only the trusted root, including a not-yet-created suffix;
 // account directories and files inside it still reject links.
 function resolveTrustedRoot(root) {
-  let cursor = path.resolve(root);
-  const missing = [];
-  for (;;) {
-    try { return path.join(fs.realpathSync(cursor), ...missing); }
-    catch (error) {
-      const parent = path.dirname(cursor);
-      if (error.code !== 'ENOENT' || parent === cursor) throw error;
-      missing.unshift(path.basename(cursor));
-      cursor = parent;
-    }
-  }
+  return resolveLinkedPath(root);
 }
 function personaSettingsFile(backupRoot) {
   const file = path.join(resolveTrustedRoot(backupRoot), 'persona', 'settings.json');
