@@ -7715,14 +7715,78 @@ function automationAgentSurfaceExpression(focusComposer) {
     function hitTest(el,pt){try{var t=document.elementFromPoint(pt.x,pt.y);return !!(t&&(t===el||el.contains(t)||t.contains(el)))}catch(_){return false}}
     // WorkBuddy 的侧栏工作区（空间）分组把 cwd 放在 React fiber 的 props 上；
     // 只用 DOM 文本匹配会在重名/改名时出错，所以以 fiber 上的 cwd 为准。
+    // 2026-11-22：WorkBuddy 侧栏改版后，cwd 不再平铺在 props.cwd 上，而是挪进了
+    // props.row.subfolder.spaceMeta.primaryFolderPath（FlatSpaceHeader/FlatSubfolderHeader
+    // 的 row 参数）。旧探针只认 props.cwd ⇒ 全部分组被判「无 cwd」⇒ workspaces 为空
+    // ⇒ 报「未在侧栏找到工作区（侧栏未暴露工作区分组）」。此处改成多路径依次兜底。
+    function cwdOfProps(props){
+      if(!props||typeof props!=='object')return null;
+      // ① 新版：row.subfolder.spaceMeta.{primaryFolderPath,createFolderPath}
+      var row=props.row;
+      if(row&&typeof row==='object'){
+        var sf=row.subfolder;
+        if(sf&&typeof sf==='object'){
+          var sm=sf.spaceMeta;
+          if(sm&&typeof sm==='object'){
+            var a=sm.primaryFolderPath,b=sm.createFolderPath;
+            if(typeof a==='string'&&a.trim())return a.trim();
+            if(typeof b==='string'&&b.trim())return b.trim();
+          }
+          var direct=sf.folderPath||sf.cwd;
+          if(typeof direct==='string'&&direct.trim())return direct.trim();
+        }
+        var rr=row.folderPath||row.cwd;
+        if(typeof rr==='string'&&rr.trim())return rr.trim();
+      }
+      // ② props 上的空间元信息
+      var meta=props.spaceMeta;
+      if(meta&&typeof meta==='object'){
+        var m1=meta.primaryFolderPath,m2=meta.createFolderPath;
+        if(typeof m1==='string'&&m1.trim())return m1.trim();
+        if(typeof m2==='string'&&m2.trim())return m2.trim();
+      }
+      // ③ 老版本：平铺 props.cwd（含 workbenchPath / workspace 之类别名）
+      var cands=[props.cwd,props.workbenchPath,props.workspacePath];
+      if(props.workspace&&typeof props.workspace==='object'){
+        cands.push(props.workspace.cwd,props.workspace.path,props.workspace.primaryFolderPath);
+      }
+      for(var i=0;i<cands.length;i++){
+        var v=cands[i];
+        if(typeof v==='string'&&v.trim())return v.trim();
+      }
+      return null;
+    }
+    function labelOfProps(props){
+      if(!props||typeof props!=='object')return '';
+      var d=props.displayName;
+      if(typeof d==='string'&&d.trim())return d.trim();
+      var row=props.row;
+      if(row&&typeof row==='object'){
+        if(typeof row.label==='string'&&row.label.trim())return row.label.trim();
+        if(row.subfolder&&typeof row.subfolder.label==='string'&&row.subfolder.label.trim())return row.subfolder.label.trim();
+        if(row.subfolder&&row.subfolder.spaceMeta&&typeof row.subfolder.spaceMeta.name==='string'&&row.subfolder.spaceMeta.name.trim())return row.subfolder.spaceMeta.name.trim();
+      }
+      return '';
+    }
+    function groupKeyOfProps(props){
+      if(!props||typeof props!=='object')return '';
+      if(typeof props.groupKey==='string'&&props.groupKey.trim())return props.groupKey.trim();
+      var row=props.row;
+      if(row&&typeof row==='object'){
+        if(typeof row.groupValue==='string'&&row.groupValue.trim())return row.groupValue.trim();
+        if(row.subfolder&&row.subfolder.spaceMeta&&typeof row.subfolder.spaceMeta.spaceId==='string')return row.subfolder.spaceMeta.spaceId;
+      }
+      return '';
+    }
+    // 返回「第一个能解析出 cwd 的 props」（深度放到 40，避免组件层级变动后又要改）
     function fiberProps(el){
       try{
         var key=Object.keys(el).find(function(k){return k.indexOf('__reactFiber$')===0||k.indexOf('__reactInternalInstance$')===0});
         if(!key)return null;
         var node=el[key];
-        for(var depth=0;depth<12&&node;depth++,node=node.return){
+        for(var depth=0;depth<40&&node;depth++,node=node.return){
           var props=node.memoizedProps;
-          if(props&&typeof props.cwd==='string'&&props.cwd.trim())return props;
+          if(props&&cwdOfProps(props))return props;
         }
       }catch(_){}
       return null;
@@ -7733,12 +7797,14 @@ function automationAgentSurfaceExpression(focusComposer) {
       if(!btn)return;
       var props=fiberProps(section);
       if(!props)return;
+      var cwd=cwdOfProps(props);
+      if(!cwd)return;
       var header=section.querySelector('.collapsible-section-header');
       var btnPoint=centerOf(btn);
       workspaces.push({
-        cwd:props.cwd,
-        displayName:String(props.displayName||'').trim(),
-        groupKey:String(props.groupKey||''),
+        cwd:cwd,
+        displayName:labelOfProps(props),
+        groupKey:groupKeyOfProps(props),
         header:header?{x:header.getBoundingClientRect().left+Math.min(60,header.getBoundingClientRect().width/2),y:header.getBoundingClientRect().top+header.getBoundingClientRect().height/2}:null,
         button:btnPoint,
         // 「新建任务」按钮是 hover-only：未悬停时 visibility:hidden，点击会落空。
@@ -7760,7 +7826,7 @@ function automationAgentSurfaceExpression(focusComposer) {
       if(pickerCwd||String(labelCwd||'').trim()) boundWorkspaceCwd=pickerCwd||String(labelCwd).trim();
       if(!boundWorkspaceCwd){
         var pickerProps=fiberProps(pickerEl)||fiberProps(pickerLabel);
-        if(pickerProps&&typeof pickerProps.cwd==='string') boundWorkspaceCwd=pickerProps.cwd.trim()||null;
+        if(pickerProps) boundWorkspaceCwd=cwdOfProps(pickerProps)||null;
       }
     }
     var activeNewTask=Array.from(document.querySelectorAll('button.conversation-list-tab-button.active,button.conversation-list-tab-button.conversation-list-tab-button-box')).some(function(el){return visible(el)&&isNewTask(el)&&(/\\bactive\\b/.test(typeof el.className==='string'?el.className:'')||el.getAttribute('aria-selected')==='true')});
