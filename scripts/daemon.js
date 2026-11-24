@@ -548,8 +548,9 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 // #507: explicit cleanup of old Windows client temp files, only before a verified cold launch.
 // 1.2.81：在共享目标分支加入视频壁纸及失败重试、主题路径边界修复。
 // 1.2.85：成长计划连续登录奖励支持在面板内直接领取到对应账号。
-const DAEMON_VERSION = '1.2.88';
-const DAEMON_BUILD_ID = 'release-1.2.88-sidebar-indexed-sessions';
+// 1.2.89：同步会话时跳过任意版本的 modify_backup 快照，本机回滚副本不再被当作会话内容搬运。
+const DAEMON_VERSION = '1.2.89';
+const DAEMON_BUILD_ID = 'release-1.2.89-skip-modify-backup-v2';
 const usageReporter = createUsageReporter({ profile: PROFILE.id, version: DAEMON_VERSION });
 configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const automationDiscovery = createAutomationDiscovery({

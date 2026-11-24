@@ -226,9 +226,13 @@ test('snapshots exclude local modify backups from workspace sessions', async t =
   const sessionRoot = path.join(f.root, 'workspace', 'sessions', 'a');
   fs.mkdirSync(path.join(sessionRoot, 'modify_backup'), { recursive: true });
   fs.mkdirSync(path.join(sessionRoot, '.modify_backup_meta'), { recursive: true });
+  // Current builds write rollback snapshots to modify_backup_v2; the version
+  // suffix must not turn local-only bytes into session payload.
+  fs.mkdirSync(path.join(sessionRoot, 'modify_backup_v2', 'commits', '2'), { recursive: true });
   fs.writeFileSync(path.join(sessionRoot, 'keep.bin'), 'keep');
   fs.writeFileSync(path.join(sessionRoot, 'modify_backup', '12.m.a1b2c3.original'), 'ignored backup');
   fs.writeFileSync(path.join(sessionRoot, '.modify_backup_meta', 'meta.json'), 'ignored metadata');
+  fs.writeFileSync(path.join(sessionRoot, 'modify_backup_v2', 'commits', '2', '9.d.deadbeef.tool.exe'), 'ignored v2 backup');
   for (const read of [
     id => readSnapshot(f.root, id, ['a']),
     id => readSnapshotAsync(f.root, id, ['a']),
@@ -244,8 +248,10 @@ test('session fingerprints ignore local modify backups but change for managed en
   const f = fixture(t); f.write('a', base);
   const sessionRoot = path.join(f.root, 'workspace', 'sessions', 'a');
   fs.mkdirSync(path.join(sessionRoot, 'modify_backup'), { recursive: true });
+  fs.mkdirSync(path.join(sessionRoot, 'modify_backup_v2'), { recursive: true });
   const before = await readSessionFingerprintAsync(f.root, 'a');
   fs.writeFileSync(path.join(sessionRoot, 'modify_backup', '1.m.hash.original'), 'local backup');
+  fs.writeFileSync(path.join(sessionRoot, 'modify_backup_v2', '9.d.hash.tool.exe'), 'local v2 backup');
   assert.equal(await readSessionFingerprintAsync(f.root, 'a'), before);
   fs.writeFileSync(path.join(sessionRoot, 'keep.bin'), 'managed');
   assert.notEqual(await readSessionFingerprintAsync(f.root, 'a'), before);

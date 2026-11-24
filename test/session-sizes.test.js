@@ -40,9 +40,11 @@ test('session size excludes local modify backups from workspace sessions', async
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const sessionRoot = path.join(root, 'workspace', 'sessions', 'a');
   fs.mkdirSync(path.join(sessionRoot, 'modify_backup'), { recursive: true });
+  fs.mkdirSync(path.join(sessionRoot, 'modify_backup_v2', 'commits', '2'), { recursive: true });
   fs.mkdirSync(path.join(sessionRoot, '.modify_backup_meta'), { recursive: true });
   fs.writeFileSync(path.join(sessionRoot, 'keep.bin'), 'keep');
   fs.writeFileSync(path.join(sessionRoot, 'modify_backup', '12.m.a1b2c3.original'), 'ignored backup');
+  fs.writeFileSync(path.join(sessionRoot, 'modify_backup_v2', 'commits', '2', '9.d.deadbeef.tool.exe'), 'ignored v2 backup');
   fs.writeFileSync(path.join(sessionRoot, '.modify_backup_meta', 'meta.json'), 'ignored metadata');
   assert.equal((await readSessionSizes(root, ['a'])).get('a'), 4);
 });

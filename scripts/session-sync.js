@@ -9,7 +9,12 @@ const { StringDecoder } = require('node:string_decoder');
 const { Readable } = require('node:stream');
 const { pipeline } = require('node:stream/promises');
 const identityKeys = new Set(['sessionId', 'conversationId', 'ownerConversationId', 'session_id', 'conversation_id']);
-const SKIP_LOCAL_DIR = /^workspace\/sessions\/[^/]+\/(?:modify_backup|\.modify_backup_meta)$/;
+// WorkBuddy keeps local-only rollback snapshots of every file a session touched.
+// Newer builds write them to "modify_backup_v2"; matching the v1 name only left
+// whole binary copies of edited files inside each synced session, so accept any
+// version suffix and keep the directory itself non-transferable.
+const SKIP_LOCAL_DIR = /^workspace\/sessions\/[^/]+\/(?:modify_backup(?:_v\d+)?|\.modify_backup_meta)$/;
+const isSkippedLocalName = name => /^modify_backup(?:_v\d+)?$/.test(name) || name === '.modify_backup_meta';
 const SYNC_BACKUP_DIR = /^sync-[A-Za-z0-9_-]+$/;
 const DEFAULT_SYNC_BACKUP_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 const RUNTIME_IDENTITY_REPAIR = Symbol('runtime-identity-repair');
@@ -526,19 +531,19 @@ async function readSessionFingerprintAsync(root, id) {
       includeDirectoryTimes || !stat.isDirectory() ? stat.ctimeMs : 0, stat.mode & 0o777]);
     return stat;
   };
-  const addDirectoryChildren = async (relative, skipNames = new Set()) => {
+  const addDirectoryChildren = async (relative, skipName = () => false) => {
     const stat = await addStat(relative, false);
     if (!stat) return;
     if (!stat.isDirectory()) throw Error('会话文件类型不受支持');
     const dir = path.join(root, ...relative.split('/'));
     const entries = await fs.promises.readdir(dir, { withFileTypes: true });
     for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
-      if (skipNames.has(entry.name)) continue;
+      if (skipName(entry.name)) continue;
       await addStat(relative + '/' + entry.name);
     }
   };
   const sessionRoot = 'workspace/sessions/' + id;
-  await addDirectoryChildren(sessionRoot, new Set(['modify_backup', '.modify_backup_meta']));
+  await addDirectoryChildren(sessionRoot, isSkippedLocalName);
   for (const relative of ['tasks/' + id, 'file-history/' + id]) await addDirectoryChildren(relative);
   await addStat('artifact-index/' + id + '.json');
 
