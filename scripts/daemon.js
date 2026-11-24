@@ -548,8 +548,9 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 // #507: explicit cleanup of old Windows client temp files, only before a verified cold launch.
 // 1.2.81：在共享目标分支加入视频壁纸及失败重试、主题路径边界修复。
 // 1.2.85：成长计划连续登录奖励支持在面板内直接领取到对应账号。
-const DAEMON_VERSION = '1.2.88';
-const DAEMON_BUILD_ID = 'release-1.2.88-sidebar-indexed-sessions';
+// 1.2.89：同步会话时 file-history 快照改为硬链接发布，切号不再复制同一份字节。
+const DAEMON_VERSION = '1.2.89';
+const DAEMON_BUILD_ID = 'release-1.2.89-session-hardlink';
 const usageReporter = createUsageReporter({ profile: PROFILE.id, version: DAEMON_VERSION });
 configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const automationDiscovery = createAutomationDiscovery({
@@ -6026,11 +6027,15 @@ async function copySessionRecord(src, targetUid, options = {}) {
         sourceBytes: Number.isFinite(sourceBytes) ? sourceBytes : 0,
         totalBytes: Number.isFinite(totalBytes) ? totalBytes : (Number.isFinite(sourceBytes) ? sourceBytes : 0),
         copiedBytes: 0,
+        linkedBytes: 0,
       };
     }
     // Version 3 proves transcript runtime IDs were rebound, not merely that
     // two accounts have equal messages. Revalidate legacy mappings once.
     let runtimeRepairBytes = 0;
+    // Bytes published as hard links rather than written. Kept apart from
+    // copiedBytes so transfer-rate and storage metrics stay truthful.
+    let linkedBytes = 0;
     const readAndRepairSnapshot = async id => {
       let snapshot = await sessionSync.readSnapshotAsync(PROFILE.dataRoot, id, aliases, syncCache);
       if (PROFILE.kind !== 'workbuddy') return snapshot;
@@ -6112,11 +6117,12 @@ async function copySessionRecord(src, targetUid, options = {}) {
           targetRevision: sessionCopyRowRevision(existing || { ...sourceRow, id: targetId, user_id: targetUid }),
           targetStateRevision: sessionCopyStableStateRevision(existing || { ...sourceRow, id: targetId, user_id: targetUid }),
           sourceBytes: left.totalBytes, totalBytes: left.totalBytes,
+          linkBytes: linkedBytes,
         });
       });
       const warning = left.totalBytes > 100 * 1024 * 1024 ? '会话超过 100 MB，同步可能较慢' : '';
       finishAutoDirty(targetId, titleChanged || runtimeRepairBytes > 0);
-      return { status: titleChanged || runtimeRepairBytes ? 'copied' : 'skipped', sourceId: src.id, targetId, branched: false, failedFiles: 0, warning, sourceBytes: left.totalBytes, totalBytes: left.totalBytes, copiedBytes: runtimeRepairBytes };
+      return { status: titleChanged || runtimeRepairBytes || linkedBytes ? 'copied' : 'skipped', sourceId: src.id, targetId, branched: false, failedFiles: 0, warning, sourceBytes: left.totalBytes, totalBytes: left.totalBytes, copiedBytes: runtimeRepairBytes, linkedBytes };
     }
     let right = await sessionSync.readSnapshotAsync(PROFILE.dataRoot, targetId, aliases, syncCache);
     // Size is advisory only; both manual and automatic sync keep all files.
@@ -6174,10 +6180,12 @@ async function copySessionRecord(src, targetUid, options = {}) {
         backupRoot: path.join(DATA_DIR, 'session-sync-backups'), metadata: toRow,
         missingOnly, guard: verifyRows,
         onProgress: options.onProgress,
+        onLink: options.onLink,
         commit,
       });
       totalBytes = applied.totalBytes;
       copiedBytes += applied.copiedBytes;
+      linkedBytes += Number(applied.linkedBytes) || 0;
       changed = true;
     };
     if (comparison.kind === 'left-extends') await update(left, right, sourceRow, existing);
@@ -6201,10 +6209,11 @@ async function copySessionRecord(src, targetUid, options = {}) {
         targetRevision: sessionCopyRowRevision(mappingTarget),
         targetStateRevision: sessionCopyStableStateRevision(mappingTarget),
         sourceBytes: left.totalBytes, totalBytes,
+        linkBytes: linkedBytes,
       });
     });
     finishAutoDirty(targetId, changed);
-    return { status: changed ? 'copied' : 'skipped', sourceId: src.id, targetId, branched: branched && changed, failedFiles: 0, warning, sourceBytes: left.totalBytes, totalBytes, copiedBytes };
+    return { status: changed ? 'copied' : 'skipped', sourceId: src.id, targetId, branched: branched && changed, failedFiles: 0, warning, sourceBytes: left.totalBytes, totalBytes, copiedBytes, linkedBytes };
   };
   // One lineage lock also serializes manual copy and reverse-direction updates.
   const lockKey = lineageId;
@@ -6635,6 +6644,7 @@ function startAutoCopyJob(sourceUid, targetUid, plan, labels) {
     error: null,
     currentLabel: '',
     copiedBytes: 0,
+    linkedBytes: 0,
     processedBytes: 0,
     totalBytes: null,
     copyStartedAt: null,
@@ -6708,6 +6718,7 @@ function startAutoCopyJob(sourceUid, targetUid, plan, labels) {
           // bytes while this one is awaiting the copy, so a shared before/after
           // comparison can mistake another worker's progress for this one's.
           let reportedBytes = 0;
+          let reportedLinked = 0;
           const activeSession = job.openSessionId && String(src.id || '') === job.openSessionId;
           let result;
           let copyAttempt = 0;
@@ -6719,6 +6730,13 @@ function startAutoCopyJob(sourceUid, targetUid, plan, labels) {
                   const bytes = Math.max(0, Number(progress && progress.bytes) || 0);
                   reportedBytes += bytes;
                   job.copiedBytes += bytes;
+                },
+                // Shared inodes move no bytes; keep them out of the copy-rate
+                // metric so "moved data" stays comparable across runs.
+                onLink: (progress) => {
+                  const bytes = Math.max(0, Number(progress && progress.bytes) || 0);
+                  reportedLinked += bytes;
+                  job.linkedBytes += bytes;
                 },
               });
               break;
@@ -6743,6 +6761,8 @@ function startAutoCopyJob(sourceUid, targetUid, plan, labels) {
           // the unreported remainder so a real callback is never double-counted.
           const resultBytes = Math.max(0, Number(result.copiedBytes) || 0);
           if (resultBytes > reportedBytes) job.copiedBytes += resultBytes - reportedBytes;
+          const resultLinked = Math.max(0, Number(result.linkedBytes) || 0);
+          if (resultLinked > reportedLinked) job.linkedBytes += resultLinked - reportedLinked;
           job.processedBytes += Math.max(0, Number(result.sourceBytes) || 0);
           detail.warning = result.warning || '';
           if (detail.warning) job.warning = detail.warning;
@@ -6846,6 +6866,7 @@ async function refreshCopiedSessionList(job) {
 function publicAutoCopyJob(job) {
   if (!job) return null;
   const copiedBytes = typeof job.copiedBytes === 'number' && Number.isFinite(job.copiedBytes) ? Math.max(0, job.copiedBytes) : null;
+  const linkedBytes = typeof job.linkedBytes === 'number' && Number.isFinite(job.linkedBytes) ? Math.max(0, job.linkedBytes) : null;
   const elapsedMs = job.copyStartedAt == null ? 0 : Math.max(0, (job.finishedAt == null ? Date.now() : job.finishedAt) - job.copyStartedAt);
   return {
     id: job.id,
@@ -6854,6 +6875,7 @@ function publicAutoCopyJob(job) {
     processed: job.processed,
     copied: job.copied,
     copiedBytes,
+    linkedBytes,
     processedBytes: typeof job.processedBytes === 'number' ? Math.max(0, job.processedBytes) : null,
     totalBytes: typeof job.totalBytes === 'number' && Number.isFinite(job.totalBytes) ? Math.max(0, job.totalBytes) : null,
     averageBytesPerSecond: copiedBytes == null || !elapsedMs ? null : Math.round(copiedBytes * 1000 / elapsedMs),

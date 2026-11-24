@@ -1251,3 +1251,33 @@ test('#511 a title update reaches a clean third account through the planner', as
   await h.ctx.copySessionRecord(plan[0], 'two', { auto: true, lineageId: h.lineage });
   assert.equal(h.rows.get('c').custom_title, 'new name');
 });
+
+test('a later switch links new history snapshots instead of copying them', async t => {
+  const h = harness(t, true);
+  const history = name => path.join(h.root, 'file-history', 'a', name);
+  const target = name => path.join(h.root, 'file-history', 'b', name);
+  fs.mkdirSync(path.dirname(history('first.bin')), { recursive: true });
+  fs.writeFileSync(history('first.bin'), Buffer.alloc(4096, 1));
+  const first = await h.copy();
+  assert.equal(first.status, 'copied');
+  assert.equal(first.copiedBytes, 0);
+  assert.equal(first.linkedBytes, 4096);
+  assert.deepEqual(fs.readFileSync(target('first.bin')), Buffer.alloc(4096, 1));
+
+  // A new immutable snapshot appears after the first switch. Bump the source
+  // revision so the mapping fast path revalidates the payload.
+  const payload = Buffer.alloc(32 * 1024, 2);
+  fs.writeFileSync(history('second.bin'), payload);
+  h.rows.get('a').updated_at++;
+  const linked = [];
+  const second = await h.ctx.copySessionRecord(h.rows.get('a'), 'two', {
+    auto: true, lineageId: h.lineage, onLink: event => linked.push(event.bytes),
+  });
+
+  assert.equal(second.status, 'copied');
+  assert.equal(second.copiedBytes, 0, 'only unchanged bytes were published');
+  assert.equal(second.linkedBytes, payload.length);
+  assert.deepEqual(linked, [payload.length]);
+  assert.equal(fs.statSync(target('second.bin')).ino, fs.statSync(history('second.bin')).ino);
+  assert.equal(fs.statSync(target('second.bin')).nlink, 2);
+});

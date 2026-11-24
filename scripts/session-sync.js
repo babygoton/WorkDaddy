@@ -10,6 +10,23 @@ const { Readable } = require('node:stream');
 const { pipeline } = require('node:stream/promises');
 const identityKeys = new Set(['sessionId', 'conversationId', 'ownerConversationId', 'session_id', 'conversation_id']);
 const SKIP_LOCAL_DIR = /^workspace\/sessions\/[^/]+\/(?:modify_backup|\.modify_backup_meta)$/;
+// Session payloads under these roots are written once and never edited in
+// place, so they can share their bytes with the source through a hard link
+// instead of a second physical copy. "file-history" is WorkBuddy's pre-change
+// snapshot archive: every snapshot is a new, content-addressed file, which is
+// what makes sharing safe. workspace/sessions and tasks are deliberately
+// excluded: the app rewrites those files in place, and a shared inode would
+// make one account's edit appear in the other. Transcripts (rebound per
+// account, keep growing) and the artifact index (owner id rewritten) are
+// excluded for the same reason.
+const LINKABLE_KEY = /^file-history\/__session__\//;
+// Escape hatch for volumes that reject hard links or for bisecting a copy that
+// looks wrong: WORKDADDY_SYNC_NO_LINK=1 restores the byte-for-byte copy path.
+const syncLinksDisabled = () => {
+  const raw = String(process.env.WORKDADDY_SYNC_NO_LINK || '').trim().toLowerCase();
+  return raw === '1' || raw === 'true' || raw === 'yes';
+};
+const linkableKey = key => LINKABLE_KEY.test(key);
 const SYNC_BACKUP_DIR = /^sync-[A-Za-z0-9_-]+$/;
 const DEFAULT_SYNC_BACKUP_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 const RUNTIME_IDENTITY_REPAIR = Symbol('runtime-identity-repair');
@@ -847,14 +864,20 @@ function targetBytes(key, file, source, target) {
 
 async function applySnapshot(source, target, options) {
   const { backupRoot, commit = async () => {}, guard = async () => {}, missingOnly = false,
-    onProgress = () => {} } = options;
+    onProgress = () => {}, onLink = () => {} } = options;
   if (source.root !== target.root || source.id === target.id) throw Error('无效的会话同步目标');
+  const canLink = !syncLinksDisabled();
   const changes = [];
   for (const [key, file] of source.files) {
     if (missingOnly && target.files.has(key)) continue;
     const bytes = targetBytes(key, file, source, target);
     if (target.files.get(key)?.hash === digest(bytes)) continue;
-    changes.push({ key, relative: targetRelative(key, target.id), bytes, mode: file.mode, mtimeMs: file.mtimeMs });
+    // targetBytes returning the same buffer proves the payload is published
+    // verbatim: no identity rewrite and no structured normalisation.
+    changes.push({
+      key, relative: targetRelative(key, target.id), bytes, mode: file.mode, mtimeMs: file.mtimeMs,
+      linkFrom: canLink && linkableKey(key) && bytes === file.bytes ? safePath(source.root, file.relative) : null,
+    });
   }
   if (!missingOnly) for (const [key, file] of target.files) {
     if (!source.files.has(key)) changes.push({ key, relative: file.relative, bytes: null });
@@ -868,7 +891,14 @@ async function applySnapshot(source, target, options) {
   for (const [key, file] of backupEntries) {
     const filePath = safePath(backup, 'files/' + key);
     fs.mkdirSync(path.dirname(filePath), { recursive: true, mode: 0o700 });
-    fs.writeFileSync(filePath, file.bytes, { mode: 0o600, flag: 'wx' });
+    // Keep the old inode reachable for rollback instead of writing a second
+    // copy of bytes we already have on disk. The link is removed with the
+    // backup directory, so it never keeps the old file alive.
+    let linked = false;
+    if (canLink && linkableKey(key)) {
+      try { fs.linkSync(safePath(target.root, file.relative), filePath); linked = true; } catch (_) {}
+    }
+    if (!linked) fs.writeFileSync(filePath, file.bytes, { mode: 0o600, flag: 'wx' });
   }
   const journal = { version: 1, sourceId: source.id, targetId: target.id, status: 'prepared', metadata: options.metadata || null,
     files: backupEntries.map(([key, file]) => ({ key, relative: file.relative, mode: file.mode, mtimeMs: file.mtimeMs })),
@@ -891,6 +921,15 @@ async function applySnapshot(source, target, options) {
     totalBytes = now.totalBytes;
   };
   const applied = [];
+  // A rejected hard link is not an error: fall back to a byte copy so the sync
+  // still completes on volumes that do not support links.
+  const stageChange = (change, staged) => {
+    if (change.linkFrom) {
+      try { fs.linkSync(change.linkFrom, staged); return true; } catch (_) { change.linkFrom = null; }
+    }
+    fs.writeFileSync(staged, change.bytes, { mode: change.mode || 0o600, flag: 'wx' });
+    return false;
+  };
   try {
     // Snapshot all old bytes before publication. Recheck after the async guard.
     await guard();
@@ -905,11 +944,12 @@ async function applySnapshot(source, target, options) {
         fs.mkdirSync(path.dirname(file), { recursive: true });
         const staged = path.join(path.dirname(file), '.wbs-sync-' + crypto.randomUUID());
         try {
-          fs.writeFileSync(staged, change.bytes, { mode: change.mode || 0o600, flag: 'wx' });
+          const linked = stageChange(change, staged);
           if (digest(fs.readFileSync(staged)) !== digest(change.bytes)) throw Error('会话文件校验失败');
           fs.utimesSync(staged, new Date(change.mtimeMs), new Date(change.mtimeMs));
           fs.renameSync(staged, file);
-          if (change.bytes !== null) onProgress({ bytes: change.bytes.length, relative: change.relative });
+          if (linked) onLink({ bytes: change.bytes.length, relative: change.relative });
+          else onProgress({ bytes: change.bytes.length, relative: change.relative });
         } finally { if (fs.existsSync(staged)) fs.unlinkSync(staged); }
       }
       applied.push(change);
@@ -924,8 +964,10 @@ async function applySnapshot(source, target, options) {
     removeSyncBackup(backup);
     // Count only newly published payload bytes. Backups, unchanged files and
     // removals are not copied session data; rolled-back writes never reach here.
-    const copiedBytes = changes.reduce((sum, change) => sum + (change.bytes ? change.bytes.length : 0), 0);
-    return { backup, copied: changes.length, copiedBytes, journalPending, totalBytes };
+    // Hard-linked publications moved no bytes, so they are reported separately.
+    const linkedBytes = changes.reduce((sum, change) => sum + (change.linkFrom ? change.bytes.length : 0), 0);
+    const copiedBytes = changes.reduce((sum, change) => sum + (change.bytes && !change.linkFrom ? change.bytes.length : 0), 0);
+    return { backup, copied: changes.length, copiedBytes, linkedBytes, journalPending, totalBytes };
   } catch (error) {
     // Do not roll back over an official write that happened after publication.
     let incomplete = false;
@@ -935,8 +977,25 @@ async function applySnapshot(source, target, options) {
         if (change.bytes === null ? fs.existsSync(file) : !fs.existsSync(file) || digest(fs.readFileSync(file)) !== digest(change.bytes)) { incomplete = true; continue; }
         const old = target.files.get(change.key);
         if (old) {
-          fs.writeFileSync(file, old.bytes, { mode: old.mode });
-          fs.utimesSync(file, new Date(old.mtimeMs), new Date(old.mtimeMs));
+          // The backup entry is either a link to the old inode or a byte copy;
+          // restoring through it keeps the rollback identical to the old file.
+          const backupFile = safePath(backup, 'files/' + change.key);
+          let restored = false;
+          if (fs.existsSync(backupFile)) {
+            const staged = file + '.wbs-rollback-' + crypto.randomUUID();
+            try {
+              fs.linkSync(backupFile, staged);
+              fs.utimesSync(staged, new Date(old.mtimeMs), new Date(old.mtimeMs));
+              fs.renameSync(staged, file);
+              restored = true;
+            } catch (_) {
+              try { if (fs.existsSync(staged)) fs.unlinkSync(staged); } catch (_) {}
+            }
+          }
+          if (!restored) {
+            fs.writeFileSync(file, old.bytes, { mode: old.mode });
+            fs.utimesSync(file, new Date(old.mtimeMs), new Date(old.mtimeMs));
+          }
         } else if (fs.existsSync(file)) fs.unlinkSync(file);
       } catch (_) { incomplete = true; }
     }
@@ -973,9 +1032,10 @@ async function existingHashAsync(file) {
 
 async function applySnapshotAsync(source, target, options) {
   const { backupRoot, commit = async () => {}, guard = async () => {}, missingOnly = false,
-    onProgress = () => {} } = options;
+    onProgress = () => {}, onLink = () => {} } = options;
   const repairIdentityOnly = options[RUNTIME_IDENTITY_REPAIR] === true && source === target;
   if (source.root !== target.root || (source.id === target.id && !repairIdentityOnly)) throw Error('无效的会话同步目标');
+  const canLink = !syncLinksDisabled();
   const changes = [];
   for (const [key, file] of source.files) {
     if (repairIdentityOnly && key !== source.transcriptKey) continue;
@@ -985,9 +1045,12 @@ async function applySnapshotAsync(source, target, options) {
     const rewritten = rebind ? await reboundTranscriptInfo(file, source.aliases, target.id) : null;
     const hash = rewritten ? rewritten.hash : bytes ? digest(bytes) : file.hash;
     if (target.files.get(key)?.hash === hash) continue;
+    // targetBytesAsync returns null when the payload needs no rewrite; such a
+    // file can be published by linking the source inode instead of copying it.
+    const linkFrom = canLink && linkableKey(key) && !bytes && !rebind ? file.sourcePath : null;
     changes.push({
       key, relative: target.resolveRelative ? target.resolveRelative(key) : targetRelative(key, target.id), bytes, sourceFile: file,
-      rebind, hash, size: rewritten ? rewritten.size : bytes ? bytes.length : file.size, mode: file.mode, mtimeMs: file.mtimeMs,
+      rebind, hash, size: rewritten ? rewritten.size : bytes ? bytes.length : file.size, mode: file.mode, mtimeMs: file.mtimeMs, linkFrom,
     });
   }
   if (!missingOnly) for (const [key, file] of target.files) {
@@ -1003,9 +1066,15 @@ async function applySnapshotAsync(source, target, options) {
   for (const [key, file] of backupEntries) {
     const filePath = await safePathAsync(backup, 'files/' + key);
     await fs.promises.mkdir(path.dirname(filePath), { recursive: true, mode: 0o700 });
-    await fs.promises.copyFile(file.sourcePath, filePath, fs.constants.COPYFILE_EXCL);
-    await fs.promises.chmod(filePath, 0o600);
-    if ((await hashFileAsync(filePath)).hash !== file.hash) throw Error('会话备份校验失败');
+    let linked = false;
+    if (canLink && linkableKey(key)) {
+      try { await fs.promises.link(file.sourcePath, filePath); linked = true; } catch (_) {}
+    }
+    if (!linked) {
+      await fs.promises.copyFile(file.sourcePath, filePath, fs.constants.COPYFILE_EXCL);
+      await fs.promises.chmod(filePath, 0o600);
+      if ((await hashFileAsync(filePath)).hash !== file.hash) throw Error('会话备份校验失败');
+    }
   }
   const journal = {
     version: 1, sourceId: source.id, targetId: target.id, status: 'prepared', metadata: options.metadata || null,
@@ -1043,20 +1112,28 @@ async function applySnapshotAsync(source, target, options) {
       } else {
         await fs.promises.mkdir(path.dirname(file), { recursive: true });
         const staged = path.join(path.dirname(file), '.wbs-sync-' + crypto.randomUUID());
+        let linked = false;
         try {
-          if (change.rebind) await pipeline(
-            Readable.from(reboundTranscript(change.sourceFile, source.aliases, target.id)),
-            fs.createWriteStream(staged, { mode: change.mode || 0o600, flags: 'wx' })
-          );
-          else if (change.bytes) await fs.promises.writeFile(staged, change.bytes, { mode: change.mode || 0o600, flag: 'wx' });
-          else await fs.promises.copyFile(change.sourceFile.sourcePath, staged, fs.constants.COPYFILE_EXCL);
+          if (change.linkFrom) {
+            try { await fs.promises.link(change.linkFrom, staged); linked = true; }
+            catch (_) { change.linkFrom = null; }
+          }
+          if (!linked) {
+            if (change.rebind) await pipeline(
+              Readable.from(reboundTranscript(change.sourceFile, source.aliases, target.id)),
+              fs.createWriteStream(staged, { mode: change.mode || 0o600, flags: 'wx' })
+            );
+            else if (change.bytes) await fs.promises.writeFile(staged, change.bytes, { mode: change.mode || 0o600, flag: 'wx' });
+            else await fs.promises.copyFile(change.sourceFile.sourcePath, staged, fs.constants.COPYFILE_EXCL);
+          }
           if ((await hashFileAsync(staged)).hash !== change.hash) throw Error('会话文件校验失败');
           await fs.promises.chmod(staged, change.mode || 0o600);
           await fs.promises.utimes(staged, new Date(change.mtimeMs), new Date(change.mtimeMs));
           await fs.promises.rename(staged, file);
           // Report only after the published target has been replaced. The
           // daemon uses this to update the live "actual written" counter.
-          if (change.hash !== null) await onProgress({ bytes: change.size, relative: change.relative });
+          if (linked) await onLink({ bytes: change.size, relative: change.relative });
+          else if (change.hash !== null) await onProgress({ bytes: change.size, relative: change.relative });
         } finally { try { await fs.promises.unlink(staged); } catch (error) { if (error.code !== 'ENOENT') throw error; } }
       }
       applied.push(change);
@@ -1067,8 +1144,11 @@ async function applySnapshotAsync(source, target, options) {
     let journalPending = false;
     try { await save(); } catch (_) { journalPending = true; }
     await removeSyncBackupAsync(backup);
-    const copiedBytes = changes.reduce((sum, change) => sum + (change.hash === null ? 0 : change.size), 0);
-    return { backup, copied: changes.length, copiedBytes, journalPending, totalBytes };
+    // Hard-linked publications moved no bytes, so report them apart from the
+    // bytes actually written: copy metrics must not count a shared inode.
+    const linkedBytes = changes.reduce((sum, change) => sum + (change.linkFrom ? change.size : 0), 0);
+    const copiedBytes = changes.reduce((sum, change) => sum + (change.hash === null || change.linkFrom ? 0 : change.size), 0);
+    return { backup, copied: changes.length, copiedBytes, linkedBytes, journalPending, totalBytes };
   } catch (error) {
     let incomplete = false;
     for (const change of applied.reverse()) {
@@ -1080,9 +1160,24 @@ async function applySnapshotAsync(source, target, options) {
         if (old) {
           const backupFile = await safePathAsync(backup, 'files/' + change.key);
           await fs.promises.mkdir(path.dirname(file), { recursive: true });
-          await fs.promises.copyFile(backupFile, file);
-          await fs.promises.chmod(file, old.mode || 0o600);
-          await fs.promises.utimes(file, new Date(old.mtimeMs), new Date(old.mtimeMs));
+          let restored = false;
+          try {
+            const staged = file + '.wbs-rollback-' + crypto.randomUUID();
+            try {
+              await fs.promises.link(backupFile, staged);
+              await fs.promises.utimes(staged, new Date(old.mtimeMs), new Date(old.mtimeMs));
+              await fs.promises.rename(staged, file);
+              restored = true;
+            } catch (error) {
+              try { await fs.promises.unlink(staged); } catch (_) {}
+              if (error.code !== 'EEXIST' && error.code !== 'EPERM' && error.code !== 'ENOENT') throw error;
+            }
+          } catch (_) {}
+          if (!restored) {
+            await fs.promises.copyFile(backupFile, file);
+            await fs.promises.chmod(file, old.mode || 0o600);
+            await fs.promises.utimes(file, new Date(old.mtimeMs), new Date(old.mtimeMs));
+          }
         } else if (currentHash !== null) await fs.promises.unlink(file);
       } catch (_) { incomplete = true; }
     }
