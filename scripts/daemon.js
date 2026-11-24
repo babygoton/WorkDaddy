@@ -13921,6 +13921,143 @@ const sessionCwdRepairTimer = setInterval(() => {
   repairMissingSessionWorkspaces().catch((error) => log('[sessions-cwd-repair] 定时修复失败: ' + error.message));
 }, 5000);
 sessionCwdRepairTimer.unref && sessionCwdRepairTimer.unref();
+
+// 空间归一（space normalization，兼容 WorkBuddy 5.11 的空间/分组模型）
+// 与官方迁移/回填语义一致：按 user_id 精确匹配「本账号自己的」空间——会话 cwd 命中某空间的
+// 目录、且该空间的 user_id 与会话 user_id 相同才补 space_id；不做任何跨账号归属推断。
+// user_id 为空的行不属于官方数据形态（每账号一份历史），无法判定归属，本补丁跳过并计歧义。
+// 只回填，不创建空间、不改 user_id、不动其他列。
+// 缺表策略：无 spaces 表 -> 整体跳过；无 space_folders 表 -> 仅用主目录/创建目录。
+const CASE_INSENSITIVE_FS_PLATFORMS = new Set(['win32', 'darwin']);
+
+function normalizeSpaceFolderPath(value) {
+  // 统一斜杠与去尾斜杠；大小写折叠仅限 Windows/macOS（Linux 等保持原大小写比较）。
+  const normalized = String(value == null ? '' : value)
+    .trim()
+    .replace(/\\/g, '/')
+    .replace(/\/+$/, '');
+  return CASE_INSENSITIVE_FS_PLATFORMS.has(process.platform) ? normalized.toLowerCase() : normalized;
+}
+
+async function normalizeSessionSpaces() {
+  // 缺表静默跳过，不能报错中断守护。
+  let spacesExists = false;
+  try {
+    const rows = await sqliteQuery("SELECT name FROM sqlite_master WHERE type='table' AND name='spaces'");
+    spacesExists = rows.some((row) => String(row.name || '') === 'spaces');
+  } catch (_) {
+    spacesExists = false;
+  }
+  if (!spacesExists) return { skipped: true, reason: 'no-spaces-table', skippedTable: true };
+
+  let spaceFoldersExists = false;
+  try {
+    const rows = await sqliteQuery("SELECT name FROM sqlite_master WHERE type='table' AND name='space_folders'");
+    spaceFoldersExists = rows.some((row) => String(row.name || '') === 'space_folders');
+  } catch (_) {
+    spaceFoldersExists = false;
+  }
+
+  // 构造规范化目录 -> 候选空间（含其 user_id）映射；同一目录可对应多个候选。
+  // 同一空间在同一目录重复出现（primary == create、space_folders 与主目录同值）时去重，
+  // 否则会把“本账号唯一候选”误判成多个。
+  const folderToSpaces = new Map();
+  const seenCandidates = new Set();
+  const addFolderCandidate = (folderPath, spaceId, userId) => {
+    const key = normalizeSpaceFolderPath(folderPath);
+    if (!key) return;
+    const dedupeKey = key + '\u0000' + String(spaceId);
+    if (seenCandidates.has(dedupeKey)) return;
+    seenCandidates.add(dedupeKey);
+    const list = folderToSpaces.get(key) || [];
+    list.push({ id: String(spaceId), userId: String(userId == null ? '' : userId) });
+    folderToSpaces.set(key, list);
+  };
+
+  const spaceRows = await sqliteQuery(
+    "SELECT id, user_id, primary_folder_path, create_folder_path FROM spaces WHERE deleted_at < 0 AND status = 'active';"
+  );
+  const spaceUserById = new Map();
+  for (const row of spaceRows) {
+    const spaceId = String(row.id);
+    spaceUserById.set(spaceId, String(row.user_id == null ? '' : row.user_id));
+    addFolderCandidate(row.primary_folder_path, spaceId, row.user_id);
+    addFolderCandidate(row.create_folder_path, spaceId, row.user_id);
+  }
+  if (spaceFoldersExists) {
+    const folderRows = await sqliteQuery('SELECT space_id, path FROM space_folders;');
+    for (const row of folderRows) {
+      const spaceId = String(row.space_id == null ? '' : row.space_id);
+      // 只接受仍属于活跃空间的行；软删/非 active 空间不得混入候选。
+      if (!spaceId || !spaceUserById.has(spaceId)) continue;
+      addFolderCandidate(row.path, spaceId, spaceUserById.get(spaceId));
+    }
+  }
+
+  // 待回填会话：本地、非 playground、未删除、尚未归属空间、且有工作目录。
+  const sessionRows = await sqliteQuery(
+    "SELECT id, user_id, cwd FROM sessions WHERE transport = 'local' AND is_playground = 0 AND (deleted_at IS NULL OR deleted_at < 0) AND (space_id IS NULL OR space_id = '') AND cwd IS NOT NULL AND cwd != '';"
+  );
+
+  const targets = [];
+  let ambiguous = 0;
+  for (const row of sessionRows) {
+    const sessionUserId = String(row.user_id == null ? '' : row.user_id);
+    // user_id 为空的行不属于官方数据形态，无法判定归属；
+    // 本补丁不代为猜测，直接跳过并计入歧义。
+    if (!sessionUserId) {
+      ambiguous++;
+      continue;
+    }
+    const candidates = folderToSpaces.get(normalizeSpaceFolderPath(row.cwd));
+    if (!candidates || !candidates.length) continue;
+    // 与官方迁移/回填一致：只在本账号（user_id 精确匹配）的候选中择一；
+    // 恰好 1 个才回填，0 个或多个一律跳过（fail-closed），绝不写入其他账号的空间 ID。
+    const own = candidates.filter((candidate) => candidate.userId === sessionUserId);
+    if (own.length !== 1) {
+      ambiguous++;
+      continue;
+    }
+    targets.push({ id: String(row.id), spaceId: own[0].id });
+  }
+
+  let updated = 0;
+  if (targets.length) {
+    const results = await SESSION_DB.transaction(
+      targets.map((target) => ({
+        sql: "UPDATE sessions SET space_id = ? WHERE id = ? AND (space_id IS NULL OR space_id = '')",
+        params: [target.spaceId, target.id],
+      }))
+    );
+    // node:sqlite 后端返回 changes；sqlite3 CLI 后端返回 null，此时以目标条数计。
+    let counted = 0;
+    let countable = false;
+    for (const result of results) {
+      if (result && typeof result.changes === 'number') { countable = true; counted += result.changes; }
+    }
+    updated = countable ? counted : targets.length;
+  }
+
+  return { checked: sessionRows.length, updated, ambiguous, skippedTable: false };
+}
+
+const SPACE_NORMALIZE_SWEEP_MS = 10000;
+// 阶段 F6：空间归一守护（兼容 WorkBuddy 5.11 空间迁移，按 user_id 精确回填本账号空间归属）
+const sweepSpaceNormalize = () => normalizeSessionSpaces()
+  .then((r) => {
+    // updated 或 ambiguous 任一非零都记账：纯跳过轮也要可观测，避免 fail-closed 静默。
+    if (r && (r.updated || r.ambiguous)) {
+      const parts = [`[space] 空间归一：扫描 ${r.checked} 条`];
+      if (r.updated) parts.push(`回填 ${r.updated} 条`);
+      if (r.ambiguous) parts.push(`歧义跳过 ${r.ambiguous} 条`);
+      log(parts.join('，'));
+    }
+  })
+  .catch((error) => log('[space] 空间归一失败: ' + error.message));
+sweepSpaceNormalize();
+const spaceNormalizeTimer = setInterval(sweepSpaceNormalize, SPACE_NORMALIZE_SWEEP_MS);
+spaceNormalizeTimer.unref && spaceNormalizeTimer.unref();
+
 log('WorkBuddy 多账号切换器启动 (CDP 模式)');
 log(`登录信息文件: ${currentAuthFile() || '(未唯一确认)'}`);
 log(`备份目录: ${DATA_DIR}`);
