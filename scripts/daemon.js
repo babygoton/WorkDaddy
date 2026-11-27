@@ -4016,21 +4016,20 @@ function automationSwitchAccount(account, options = {}) {
       const rules = sourceUid ? getAutoCopyRules(DATA_DIR, sourceUid) : {};
       let job = null;
       // [wd-pool] 目标账号已勾选同步：整批交接归属，不再逐条复制。
+      // 交接只看「池子现在归谁」，不看「我当前是谁」——登出状态下 currentAccount()
+      // 为空（登录文件缺失 / 多个 auth 文件歧义），若以它为前置条件就会整段跳过，
+      // 表现为切过去只有该账号自己的历史。
       let poolStats = null;
-      if (sourceUid && sourceUid !== uid && accountSyncEnabledFor(uid)) {
+      if (accountSyncEnabledFor(uid)) {
         try {
           const owner = await resolvePoolOwner(sourceUid);
-          if (owner && owner !== uid) {
-            poolStats = await transferPoolOwnership(owner, uid);
-            setSharedPool(DATA_DIR, { owner: uid });
-          } else {
-            setSharedPool(DATA_DIR, { owner: uid });
-          }
+          if (owner && owner !== uid) poolStats = await transferPoolOwnership(owner, uid);
+          setSharedPool(DATA_DIR, { owner: uid });
         } catch (error) {
           poolStats = { ok: false, error: String(error.message || error).slice(0, 200) };
           log('[pool] 交接失败: ' + error.message);
         }
-      } else if (!accountSyncDisabledFor(uid) && (rules.allSessions || (rules.sessionIds || []).length || (rules.workspaces || []).length)) {
+      } else if (sourceUid && sourceUid !== uid && !accountSyncDisabledFor(uid) && (rules.allSessions || (rules.sessionIds || []).length || (rules.workspaces || []).length)) {
         job = startAutoCopyJob(sourceUid, uid, [], { sourceName: active.nickname, targetName: acct.nickname });
       }
       // Sync yields to reload priority: release it before awaiting the job.
@@ -14083,9 +14082,10 @@ function handleApi(req, res) {
         const autoCopyOpenSessionId = currentConversationRow && isAutoCopySessionSelected(sourceRules, currentConversationRow)
           ? currentConversationId : '';
         // [wd-pool] 目标账号已勾选：整批交接归属，不再逐条复制。
+        // 与自动切换路径同理：条件只看目标开关 + 池子持有者，不要求认得源账号。
         let poolStats = null;
         let autoCopyJob = null;
-        if (sourceUid && sourceUid !== uid && accountSyncEnabledFor(uid)) {
+        if (accountSyncEnabledFor(uid)) {
           try {
             const owner = await resolvePoolOwner(sourceUid);
             if (owner && owner !== uid) poolStats = await transferPoolOwnership(owner, uid);
@@ -14101,7 +14101,7 @@ function handleApi(req, res) {
             poolStats = { ok: false, error: String(error.message || error).slice(0, 200) };
             log('[pool] 交接失败: ' + error.message);
           }
-        } else if (!accountSyncDisabledFor(uid) && shouldStartAutoCopyJob(sourceRules, hasPendingAutoCopyTo(sourceUid))) {
+        } else if (sourceUid && sourceUid !== uid && !accountSyncDisabledFor(uid) && shouldStartAutoCopyJob(sourceRules, hasPendingAutoCopyTo(sourceUid))) {
           autoCopyJob = startAutoCopyJob(sourceUid, uid, [], {
             sourceName: sourceAccount.nickname || '',
             targetName: acct.nickname || '',
