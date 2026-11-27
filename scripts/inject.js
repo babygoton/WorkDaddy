@@ -3197,7 +3197,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
 
   var accountMaskEnabled = false;
   try { accountMaskEnabled = localStorage.getItem(WBS_ACCOUNT_MASK_KEY) === '1'; } catch (_) {}
-  var state = { accounts: [], current: null, open: false, batchRunning: false, creditRunId: 0, creditRefreshGeneration: {}, activityRunId: 0, dailyProgressRunId: 0, dailyProgressForceNext: false, dailyProgressRefreshing: {}, dailyProgressRefreshErrors: {}, dailyClaimedExpanded: {}, streakClaiming: {}, creditRemaining: 0, creditSummaryValue: null, mask: accountMaskEnabled, rotationNotice: null, rotationPromptDay: '', sessionCopyNotice: null, sessionCopyDetailsModal: null, sessionCopyNoticePollTimer: null, sessionCopyNoticeChecked: false, sessionCopyNoticeActiveAttempts: 0 };
+  var state = { accountSyncFlags: {}, poolInviteUid: '', poolInviteTimer: null, accounts: [], current: null, open: false, batchRunning: false, creditRunId: 0, creditRefreshGeneration: {}, activityRunId: 0, dailyProgressRunId: 0, dailyProgressForceNext: false, dailyProgressRefreshing: {}, dailyProgressRefreshErrors: {}, dailyClaimedExpanded: {}, streakClaiming: {}, creditRemaining: 0, creditSummaryValue: null, mask: accountMaskEnabled, rotationNotice: null, rotationPromptDay: '', sessionCopyNotice: null, sessionCopyDetailsModal: null, sessionCopyNoticePollTimer: null, sessionCopyNoticeChecked: false, sessionCopyNoticeActiveAttempts: 0 };
   var currentBuild = null;
   // 当前注入的 daemon 版本号（由 daemon.js 注入时把 __WBS_VERSION__ 替换为 DAEMON_VERSION）
   // 「关于」tab 直接展示，升级 daemon 后这里自动同步
@@ -3222,6 +3222,11 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
   var SWITCH_SVG =
     '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
     '<path d="M16 3l4 4-4 4"/><path d="M20 7H8"/><path d="M8 21l-4-4 4-4"/><path d="M4 17h12"/></svg>';
+  var ACCOUNT_SYNC_SVG =
+    '<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+    '<rect class="wbs-acc-sync-box" x="2.2" y="2.2" width="11.6" height="11.6" rx="3"/>' +
+    '<path class="wbs-acc-sync-check" d="m4.9 8.1 2.1 2.1 4.1-4.3"/></svg>';
+
   var AUTO_COPY_SVG =
     '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
     '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M4 16V6a2 2 0 0 1 2-2h10"/><path d="M15 3l3 1-1 3"/></svg>';
@@ -7843,6 +7848,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         '<button class="wbs-acct-io wbs-acct-icon" type="button" data-act="token-stats" title="用量统计" aria-label="用量统计">' + TOKEN_STATS_ICON + '</button>' +
         '<button class="wbs-acct-io wbs-acct-icon" type="button" data-act="export" title="选择账号并输入密码后导出备份" aria-label="导出账号">' + EXPORT_ICON + '</button>' +
         '<button class="wbs-acct-io wbs-acct-icon" type="button" data-act="import" title="从加密导出文件导入账号备份" aria-label="导入账号">' + IMPORT_ICON + '</button>' +
+        '<button class="wbs-acct-io wbs-acct-icon wbs-acct-sync-all" type="button" data-act="sync-all" role="checkbox" aria-checked="false" title="批量设置：所有账号的跨账号同步开关" aria-label="批量设置跨账号同步">' + ACCOUNT_SYNC_SVG + '</button>' +
         '<button class="wbs-acct-io wbs-acct-icon" type="button" data-act="account-more" title="账号设置" aria-label="账号设置"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2.75a2 2 0 0 1 2 1.4l.4 1.1 1.15.47 1.06-.48a2 2 0 0 1 2.4.45l.8.8a2 2 0 0 1 .45 2.4l-.48 1.06.47 1.15 1.1.4a2 2 0 0 1 0 3.8l-1.1.4-.47 1.15.48 1.06a2 2 0 0 1-.45 2.4l-.8.8a2 2 0 0 1-2.4.45l-1.06-.48-1.15.47-.4 1.1a2 2 0 0 1-3.8 0l-.4-1.1-1.15-.47-1.06.48a2 2 0 0 1-2.4-.45l-.8-.8a2 2 0 0 1-.45-2.4l.48-1.06-.47-1.15-1.1-.4a2 2 0 0 1 0-3.8l1.1-.4.47-1.15-.48-1.06a2 2 0 0 1 .45-2.4l.8-.8a2 2 0 0 1 2.4-.45l1.06.48 1.15-.47.4-1.1A2 2 0 0 1 12 2.75Z"/><circle cx="12" cy="12.5" r="3"/></svg></button>' +
         '</div>' +
         '</div>' +
@@ -7851,6 +7857,8 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         '<button class="wbs-logout-btn" type="button" data-act="logout">' + LOGOUT_SVG + '<span>登录新账号</span></button>' +
         '<input type="file" id="wbs-import-file" accept=".json,application/json" style="display:none">';
       root.querySelector('[data-act="account-more"]').addEventListener('click', openAccountOrderModal);
+      var syncAllBtn = root.querySelector('[data-act="sync-all"]');
+      if (syncAllBtn) syncAllBtn.addEventListener('click', function () { toggleAccountSyncAll(); });
       setupCreditSummary();
       setupDailyProgressPopover();
       setupAccountNotePopover();
@@ -17762,6 +17770,30 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       if (notice.place) window.removeEventListener('resize', notice.place);
       if (notice.node && notice.node.parentNode) notice.node.remove();
       state.sessionCopyNotice = null;
+      toggleSessionCopyMask(false);
+    }
+
+    // [wd-account-sync] 手动同步时的全窗口遮罩：只挡操作，不挡进度本身。
+    function toggleSessionCopyMask(show) {
+      if (state.sessionCopyMaskTimer) { clearTimeout(state.sessionCopyMaskTimer); state.sessionCopyMaskTimer = null; }
+      var mask = document.getElementById('wbs-session-copy-mask');
+      if (!show) {
+        if (mask && mask.parentNode) mask.remove();
+        return;
+      }
+      if (!mask) {
+        mask = document.createElement('div');
+        mask.id = 'wbs-session-copy-mask';
+        mask.className = 'wbs-session-copy-mask';
+        mask.setAttribute('aria-hidden', 'true');
+        document.body.appendChild(mask);
+      }
+      // 兜底：daemon 中途挂掉时不会再有状态轮询，遮罩必须自己能撤，否则整个窗口无法操作。
+      state.sessionCopyMaskTimer = setBuildTimeout(function () {
+        state.sessionCopyMaskTimer = null;
+        var stale = document.getElementById('wbs-session-copy-mask');
+        if (stale && stale.parentNode) stale.remove();
+      }, 5 * 60 * 1000);
     }
 
     function closeSessionCopyDetails() {
@@ -17937,6 +17969,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     function placeSessionCopyNotice() {
       var notice = state.sessionCopyNotice;
       if (!notice || !notice.node) return;
+      if (notice.blocking) return;
       var node = notice.node;
       var width = Math.min(348, Math.max(270, window.innerWidth - 24));
       node.style.width = width + 'px';
@@ -17973,15 +18006,22 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       var node = notice.node;
       notice.job = job;
       var active = job.status === 'queued' || job.status === 'running';
+      // [wd-account-sync] 手动同步的台前阶段（项目 + 未归档）盖遮罩，归档阶段退回角标进度。
+      var blocking = !!(active && job.purpose === 'account-sync' && job.phase === 'foreground');
       var total = Math.max(0, Number(job.total) || 0);
       var processed = Math.min(total, Math.max(0, Number(job.processed) || 0));
       var percent = total ? Math.round(processed / total * 100) : (active ? 0 : 100);
-      var title = job.status === 'queued' ? '同步等待中' : active ? '正在同步会话' : job.status === 'done' ? '同步完成' : job.status === 'conflict' ? '同步完成，已保留分叉' : job.status === 'partial' ? '同步完成，部分失败' : '同步失败';
+      var title = job.status === 'queued' ? '同步等待中' : active ? (blocking ? '正在同步账号数据' : '正在同步会话') : job.status === 'done' ? '同步完成' : job.status === 'conflict' ? '同步完成，已保留分叉' : job.status === 'partial' ? '同步完成，部分失败' : '同步失败';
       var sourceLabel = sessionCopyAccountLabel(job.sourceUid, job.sourceName);
       var targetLabel = accountName || sessionCopyAccountLabel(job.targetUid, job.targetName);
-      var status = active ? '正在把已标记的会话从「' + sourceLabel + '」同步到「' + targetLabel + '」' :
-        job.status === 'error' ? (job.error || '同步任务异常中断，请稍后重新同步') : '';
-      node.className = 'wbs-session-copy-notice is-' + String(job.status || 'running');
+      var phaseText = job.phase === 'projects' ? '正在同步项目…' : job.phase === 'background' ? '归档对话继续在后台同步' : '';
+      var status = active
+        ? (blocking ? '正在同步项目和未归档对话，完成前请勿操作 WorkBuddy' : '正在把已标记的会话从「' + sourceLabel + '」同步到「' + targetLabel + '」')
+        : job.status === 'error' ? (job.error || '同步任务异常中断，请稍后重新同步') : '';
+      if (active && phaseText && blocking) status = phaseText + ' · 完成前请勿操作 WorkBuddy';
+      notice.blocking = blocking;
+      node.className = 'wbs-session-copy-notice is-' + String(job.status || 'running') + (blocking ? ' is-blocking' : '');
+      toggleSessionCopyMask(blocking);
       node.querySelector('.wbs-session-copy-title').textContent = title;
       node.querySelector('.wbs-session-copy-route').textContent = sourceLabel + ' → ' + targetLabel;
       node.querySelector('.wbs-session-copy-status').textContent = status;
@@ -18005,7 +18045,15 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       track.setAttribute('aria-valuenow', String(percent));
       track.setAttribute('aria-valuetext', title + '，' + processed + '/' + total);
       node.querySelector('.wbs-session-copy-fill').style.width = percent + '%';
-      placeSessionCopyNotice();
+      if (blocking) {
+        node.style.width = Math.min(420, Math.max(280, window.innerWidth - 48)) + 'px';
+        node.style.left = '50%';
+        node.style.top = '50%';
+        node.style.transform = 'translate(-50%, -50%)';
+      } else {
+        node.style.transform = '';
+        placeSessionCopyNotice();
+      }
       if (job.status === 'error') node.querySelector('.wbs-session-copy-countdown').textContent = '请查看明细';
       if (!active && job.status !== 'error' && !notice.closeScheduled) {
         notice.closeScheduled = true;
@@ -18080,6 +18128,81 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       pollSessionCopyNotice('', '');
     }
 
+    // [wd-account-sync] 账号卡片勾选后的状态同步与进度展示
+    function accountSyncFlagOf(uid) {
+      return (state.accountSyncFlags && state.accountSyncFlags[uid]) || null;
+    }
+    function syncAccountSyncButtons() {
+      var list = accountsPane && accountsPane.querySelector('.wbs-acct-list');
+      if (list) {
+        list.querySelectorAll('.wbs-acc-sync').forEach(function (btn) {
+          var flag = accountSyncFlagOf(btn.dataset.uid);
+          var on = !!(flag && flag.enabled);
+          btn.setAttribute('aria-checked', on ? 'true' : 'false');
+          btn.classList.toggle('on', on);
+          var detail = flag && flag.enabled && flag.lastOkAt ? '上次合并：' + fmtDateTime(flag.lastOkAt) : '';
+          btn.setAttribute('title', (on ? '已参与对话合并（点击关闭）' : '参与对话合并：开启后，切换账号时会把对话整批合并过来')
+            + (detail ? '\n' + detail : ''));
+        });
+      }
+      var all = root.querySelector('[data-act="sync-all"]');
+      if (all) {
+        // 总开关的显示状态由实际勾选推导：只有「全部账号都勾选」才是开。
+        // 少勾一个就自动回到未勾选，点击则是「全选 → 全取消」两个动作循环。
+        var known = state.accounts.slice();
+        var on = known.length > 0 && known.every(function (a) {
+          var flag = accountSyncFlagOf(a.uid);
+          return !!(flag && flag.enabled);
+        });
+        all.setAttribute('aria-checked', on ? 'true' : 'false');
+        all.classList.toggle('on', on);
+        all.setAttribute('title', on ? '批量：全部取消（当前已全选）' : '批量：全部选中（当前未全选）');
+      }
+    }
+    function setAccountSync(uid, enabled, btn) {
+      var list = String(uid || '').trim();
+      if (!list) return;
+      if (btn) btn.disabled = true;
+      api('/api/accounts/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ uids: [list], enabled: !!enabled }),
+      }).then(function (result) {
+        state.accountSyncFlags = (result && result.flags) || state.accountSyncFlags || {};
+        syncAccountSyncButtons();
+        toast(enabled ? '已开启，之后切换账号时会把这个账号的对话合并过来' : '已关闭，之后切换账号时不再合并它的对话', false, root);
+      }).catch(function (error) {
+        toast('同步开关设置失败: ' + ((error && error.message) || error), true, root);
+      }).finally(function () {
+        if (btn) btn.disabled = false;
+      });
+    }
+    function toggleAccountSyncAll() {
+      var targets = state.accounts.slice();
+      if (!targets.length) { toast('没有可设置的账号', true, root); return; }
+      // 总开关只有两个动作，按实际状态切换：
+      // 当前不是「全部勾选」→ 这一次全部选中；当前已经全部勾选 → 全部取消。
+      var allOn = targets.every(function (a) {
+        var flag = accountSyncFlagOf(a.uid);
+        return !!(flag && flag.enabled);
+      });
+      var next = !allOn;
+      var button = root.querySelector('[data-act="sync-all"]');
+      if (button) button.disabled = true;
+      api('/api/accounts/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ uids: targets.map(function (a) { return a.uid; }), enabled: next }),
+      }).then(function (result) {
+        state.accountSyncFlags = (result && result.flags) || state.accountSyncFlags || {};
+        syncAccountSyncButtons();
+        toast((next ? '已全部选中 ' : '已全部取消 ') + targets.length + ' 个账号' + (next ? '，切换账号时合并生效' : '，单独开关可随时改回'), false, root);
+      }).catch(function (error) {
+        toast('批量设置失败: ' + ((error && error.message) || error), true, root);
+      }).finally(function () {
+        if (button) button.disabled = false;
+      });
+    }
     function pollAutoCopyJob(jobId, accountName) {
       if (!jobId) return;
       pollSessionCopyNotice(jobId, accountName);
@@ -18235,11 +18358,153 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       return { warn: false, label: fmtDateTime(expiresAt) };
     }
 
+    // [wd-pool] 新登录账号：询问是否加入全局对话记录（默认不勾选）。
+    // 选「加入」才写 enabled=true；选「暂不加入」只记 asked，不动数据。
+    function poolInvitePending() {
+      if (state.poolInviteUid) return null;
+      var flags = state.accountSyncFlags || {};
+      // 标志尚未加载时不要盲弹，否则会把所有老账号问一遍。
+      if (!Object.keys(flags).length) return null;
+      var list = state.accounts || [];
+      for (var i = 0; i < list.length; i++) {
+        var account = list[i];
+        if (!account || !account.uid) continue;
+        var flag = flags[account.uid];
+        if (flag && flag.asked === true) continue;
+        return account;
+      }
+      return null;
+    }
+    function maybeAskPoolInvite() {
+      var account = poolInvitePending();
+      if (account) askPoolInvite(account);
+    }
+    function askPoolInvite(account, options) {
+      if (!account || !account.uid) return;
+      if (state.poolInviteUid) return;
+      var preview = !!(options && options.preview);
+      state.poolInviteUid = account.uid;
+      var name = accountDisplayName(account, !!state.mask);
+      var mask = document.createElement('div');
+      mask.className = 'wbs-modal-mask';
+      mask.id = 'wbs-pool-invite-modal';
+      mask.innerHTML =
+        '<div class="wbs-modal wbs-pool-invite-dialog" role="dialog" aria-modal="true" aria-labelledby="wbs-pool-invite-title">' +
+        '<div class="wbs-modal-title" id="wbs-pool-invite-title">加入全局对话记录？</div>' +
+        '<div class="wbs-modal-body">检测到新登录的账号「' + esc(name) + '」。<br>' +
+        '加入后，它的对话会并入全局记录，切换账号时一起带走；暂不加入则只保留它自己的对话。</div>' +
+        '<div class="wbs-modal-actions">' +
+        '<button class="wbs-modal-btn" type="button" id="wbs-pool-invite-no">暂不加入</button>' +
+        '<button class="wbs-modal-btn wbs-modal-ok" type="button" id="wbs-pool-invite-yes">加入</button>' +
+        '</div></div>';
+      document.body.appendChild(mask);
+      var yes = mask.querySelector('#wbs-pool-invite-yes');
+      var no = mask.querySelector('#wbs-pool-invite-no');
+      function close() {
+        if (mask.parentNode) mask.parentNode.removeChild(mask);
+        if (state.poolInviteUid === account.uid) state.poolInviteUid = '';
+      }
+      function submit(join) {
+        yes.disabled = true;
+        no.disabled = true;
+        if (preview) { close(); return; }
+        api('/api/accounts/pool-invite', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ uid: account.uid, join: !!join }),
+        }).then(function (result) {
+          if (result && result.flags) state.accountSyncFlags = result.flags;
+          close();
+          syncAccountSyncButtons();
+          var stats = result && result.pool;
+          if (!join) {
+            toast('已跳过，之后可在账号卡片上手动开启对话合并', false, root);
+          } else if (stats && (stats.moved || stats.merged)) {
+            toast('已加入，合并 ' + (stats.moved || stats.merged) + ' 条对话', false, root);
+            setBuildTimeout(refresh, 700);
+          } else {
+            toast('已加入，切换账号时会把对话合并过来', false, root);
+          }
+          setBuildTimeout(maybeAskPoolInvite, 900);
+        }).catch(function (error) {
+          yes.disabled = false;
+          no.disabled = false;
+          toast('保存失败：' + ((error && error.message) || error), true, root);
+        });
+      }
+      yes.addEventListener('click', function () { submit(true); });
+      no.addEventListener('click', function () { submit(false); });
+      mask.addEventListener('click', function (ev) { if (ev.target === mask) submit(false); });
+      setBuildTimeout(function () { if (yes.isConnected) yes.focus(); }, 30);
+    }
+    // 本地验证入口：手动弹出某个账号的询问框（preview 模式不写任何数据）。
+    window.__wbsPoolInvitePreview = function (uid) {
+      function pick(list) {
+        for (var i = 0; i < list.length; i++) {
+          if (list[i] && (!uid || list[i].uid === uid)) return list[i];
+        }
+        return null;
+      }
+      var found = pick(state.accounts || []);
+      if (found) { askPoolInvite(found, { preview: true }); return Promise.resolve(true); }
+      return api('/api/accounts').then(function (data) {
+        var list = (data && data.accounts) || [];
+        if (data && data.accountSync) state.accountSyncFlags = data.accountSync;
+        state.current = (data && data.current) || state.current;
+        state.accounts = list;
+        var account = pick(list);
+        if (!account) return false;
+        askPoolInvite(account, { preview: true });
+        return true;
+      });
+    };
+    if (typeof registerDisposer === 'function') {
+      registerDisposer(function () { if (window.__wbsPoolInvitePreview) delete window.__wbsPoolInvitePreview; });
+    }
+    // 面板构建完即开始巡检，不必等用户打开账号页。
+    setBuildTimeout(ensurePoolInviteWatch, 8000);
+
+    // 页面加载后周期巡检：新账号可能是在别处登录的（无感登录），不打开账号面板也要能问。
+    // 走轻量的 /api/accounts/sync，只看 pendingInvite，不拉积分等重数据。
+    function ensurePoolInviteWatch() {
+      if (state.poolInviteWatch) return;
+      state.poolInviteWatch = true;
+      var first = true;
+      (function tick() {
+        var delay = first ? 3000 : 45000;
+        first = false;
+        state.poolInvitePollTimer = setBuildTimeout(function () {
+          state.poolInvitePollTimer = null;
+          if (!alive) return;
+          if (!state.poolInviteUid) {
+            api('/api/accounts/sync').then(function (result) {
+              var pending = (result && result.pendingInvite) || [];
+              if (!pending.length || state.poolInviteUid) return;
+              var hit = null;
+              (state.accounts || []).forEach(function (a) {
+                if (!hit && a && a.uid === pending[0].uid) hit = a;
+              });
+              askPoolInvite(hit || { uid: pending[0].uid, nickname: pending[0].name });
+            }).catch(function () {});
+          }
+          tick();
+        }, delay);
+      })();
+    }
+
     function render(data) {
       var previous = state.accounts;
       var currentChanged = previous.length > 0 && (state.current && state.current.uid) !== (data.current && data.current.uid);
       state.current = data.current;
       state.accounts = mergeAccountSnapshot(previous, data.accounts || []);
+      if (data && data.accountSync && typeof data.accountSync === 'object') state.accountSyncFlags = data.accountSync;
+      // [wd-pool] 出现了没问过的账号就弹一次询问；连续刷新只排一个定时器。
+      if (!state.poolInviteTimer && !state.poolInviteUid) {
+        state.poolInviteTimer = setBuildTimeout(function () {
+          state.poolInviteTimer = null;
+          maybeAskPoolInvite();
+        }, 600);
+      }
       state.accountOrder = data.accountOrder || state.accountOrder || { mode: 'expiry' };
       // 页面重载后还没有积分缓存，或刚切换账号：等本轮积分齐备后校正一次顺序。
       if (currentChanged || (!previous.length && state.accounts.some(function (account) { return !Array.isArray(account.creditSegments); }))) {
@@ -18283,6 +18548,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         var ops = (isCur
           ? ''
           : (a.authValid === false ? '' : '<button class="wbs-icon-btn wbs-acc-switch" type="button" title="' + (expired ? '切换（可能需要重新登录）' : '切换') + '" data-uid="' + escAttr(a.uid) + '" data-name="' + escAttr(accountDisplayName(a, state.mask)) + '">' + SWITCH_SVG + '</button>') +
+            '<button class="wbs-icon-btn wbs-acc-sync" type="button" role="checkbox" aria-checked="' + (state.accountSyncFlags && state.accountSyncFlags[a.uid] && state.accountSyncFlags[a.uid].enabled ? 'true' : 'false') + '" title="参与对话合并：开启后，切换账号时会把对话整批合并过来" data-uid="' + escAttr(a.uid) + '">' + ACCOUNT_SYNC_SVG + '</button>' +
             '<button class="wbs-icon-btn wbs-del" type="button" title="删除" data-uid="' + escAttr(a.uid) + '" data-name="' + escAttr(accountDisplayName(a, state.mask)) + '">' + TRASH_SVG + '</button>');
         ops = '<div class="wbs-ops"' + (isCur ? ' hidden' : '') + '>' + ops + '</div>';
         // 国际版没有手机号：用 UIN（账号唯一数字标识）替代展示；国内版仍显示手机。
@@ -18305,6 +18571,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         list.appendChild(card);
       });
       applyAccountMask();
+      syncAccountSyncButtons();
       // 切换按钮：两击确认（第一次点击进入确认态，3s 内再点才真正切换，防止误触）
       list.querySelectorAll('.wbs-acc-switch').forEach(function (btn) {
         var armed = false;
@@ -18364,6 +18631,13 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
             })
             .catch(function (e) { toast('切换失败: ' + e.message, true, root); })
             .finally(function () { btn.disabled = false; btn.setAttribute('title', prevTitle || '切换'); });
+        });
+      });
+      // [wd-account-sync] 每个账号的跨账号同步勾选（切换按钮右侧）
+      list.querySelectorAll('.wbs-acc-sync').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          if (btn.disabled) return;
+          setAccountSync(btn.dataset.uid, btn.getAttribute('aria-checked') !== 'true', btn);
         });
       });
       // 删除按钮：二次确认（永久删除本地备份）
@@ -19978,6 +20252,9 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     /* 免打扰确认弹窗：挂载在面板容器内，仅覆盖面板区域（弹窗居中于面板，不盖住 WorkBuddy 窗口） */
     '.wbs-modal-mask.wbs-modal-mask-panel{position:absolute;inset:0;z-index:2147483645;border-radius:18px}',
     '.wbs-modal{width:300px;max-width:88vw;background:var(--wb-bg-popover,#fff);border-radius:14px;padding:16px;box-shadow:0 10px 40px rgba(0,0,0,.25);color:var(--wb-color-text-primary,#1f1f1f)}',
+    /* [wd-pool] 新账号加入对话记录的询问弹窗：比默认 300px 稍宽，容纳两行说明 */
+    '.wbs-modal.wbs-pool-invite-dialog{width:360px;box-sizing:border-box}',
+    '.wbs-pool-invite-dialog .wbs-modal-body{line-height:1.65}',
     ':is(html.cb-dark,html[data-theme="dark"],body[data-vscode-theme-name*="dark" i],body[data-vscode-theme-name*="night" i]) :is(.wbs-modal,.wbs-account-note-popover,.wbs-status-popover,.wbs-credit-summary-popover){background:var(--wb-bg-popover,#131316);border-color:var(--wb-border-default,#2c2c33);color:var(--wb-color-text-primary,#e6e6e9)}',
     /* 弹窗文字主题适配：body 继承 .wbs-root 硬编码深色字，暗色下必须显式覆盖为浅色 */
     'html.cb-dark .wbs-modal,html.cb-dark .wbs-modal-title,html.cb-dark .wbs-modal-body,html[data-theme="dark"] .wbs-modal,html[data-theme="dark"] .wbs-modal-title,html[data-theme="dark"] .wbs-modal-body{color:#e6e6e9}',
@@ -20205,6 +20482,13 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '.wbs-acct-io span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
     '.wbs-acct-icon{width:28px;height:28px;padding:0;border-radius:8px}',
     '.wbs-acct-list{flex:1;min-height:0;overflow-y:auto;padding-right:2px}',
+    '.wbs-acc-sync{color:var(--wb-icon-secondary,#667085)}',
+    '.wbs-acc-sync .wbs-acc-sync-check{opacity:0;transition:opacity .12s}',
+    '.wbs-acc-sync.on{color:var(--wb-button-primary-bg,#1f1f1f)}',
+    '.wbs-acc-sync.on .wbs-acc-sync-check{opacity:1}',
+    '.wbs-acct-sync-all.on{color:var(--wb-button-primary-bg,#1f1f1f);border-color:var(--wb-button-primary-bg,#1f1f1f)}',
+    '.wbs-acct-sync-all .wbs-acc-sync-check{opacity:0}',
+    '.wbs-acct-sync-all.on .wbs-acc-sync-check{opacity:1}',
     '.wbs-logout-btn{display:flex;align-items:center;justify-content:center;gap:6px;width:100%;margin-top:10px;padding:10px 0;border:1px solid var(--wb-border-default,#e5e5e5);border-radius:12px;background:transparent;color:var(--wb-icon-secondary,#666);font-size:13px;font-weight:600;cursor:pointer;transition:all .15s;font-family:inherit;flex-shrink:0}',
     '.wbs-logout-btn:hover{background:var(--wb-bg-hover,#f5f5f5);color:var(--wb-color-text-primary,#1f1f1f);border-color:var(--wb-border-default,#d5d5d5)}',
     '.wbs-logout-btn.armed{background:#f53f3f;color:#fff;border-color:#f53f3f}',
@@ -20224,6 +20508,10 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '.wbs-credit-rotation-actions button:disabled{opacity:.55;cursor:wait}',
     '.wbs-session-copy-notice{position:fixed;z-index:2147483647;box-sizing:border-box;min-height:108px;padding:12px 13px 11px;border:1px solid var(--wb-border-subtle,rgba(0,0,0,.1));border-radius:13px;background:var(--wb-bg-popover,#fff);color:var(--wb-color-text-primary,#1f2937);box-shadow:0 12px 34px rgba(0,0,0,.18);font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;animation:wbs-session-copy-in .2s cubic-bezier(.22,1,.36,1);pointer-events:auto}',
     '@keyframes wbs-session-copy-in{from{opacity:0;transform:translateY(7px) scale(.985)}to{opacity:1;transform:translateY(0) scale(1)}}',
+    // [wd-account-sync] 手动同步期间用遮罩挡住整个 WorkBuddy 窗口，避免同步中改动会话。
+    '.wbs-session-copy-mask{position:fixed;inset:0;z-index:2147483646;background:rgba(9,12,18,.42);backdrop-filter:blur(1.5px);-webkit-backdrop-filter:blur(1.5px);cursor:progress}',
+    '.wbs-session-copy-notice.is-blocking{width:420px;max-width:calc(100vw - 48px);box-shadow:0 20px 60px rgba(0,0,0,.32)}',
+    '.wbs-session-copy-notice.is-blocking .wbs-session-copy-close{display:none}',
     '.wbs-session-copy-head{display:flex;align-items:center;gap:7px;min-height:22px}',
     '.wbs-session-copy-icon{display:inline-flex;align-items:center;justify-content:center;width:23px;height:23px;flex:0 0 23px;border-radius:7px;background:color-mix(in srgb,var(--wb-button-primary-bg,#1f1f1f) 13%,transparent);color:var(--wb-button-primary-bg,#1f1f1f)}',
     '.wbs-session-copy-title{min-width:0;flex:1;font-size:12px;font-weight:700;line-height:1.35;overflow-wrap:anywhere}',
