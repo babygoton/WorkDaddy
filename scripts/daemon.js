@@ -109,6 +109,9 @@ const {
   updateMeta,
   canonicalWorkspace,
   getAutoCopyRules,
+  getAccountSyncFlags,
+  setAccountSyncFlags,
+  markPoolInviteAsked, // [wd-pool] 标记「已询问是否加入对话记录」
   dedupeAutoCopySessionRows,
   setAutoCopyRule,
   setAutoCopyAllSessions,
@@ -144,6 +147,9 @@ const {
   enableModelBackup,
   importModels,
   checkinDisplayValue,
+  readMeta, // [wd-pool] 账号备注 / 昵称，用于汇聚副本标题前缀
+  getSharedPool, // [wd-pool] 共享对话池状态
+  setSharedPool, // [wd-pool] 写入池子 owner
   getAccountOrder,
   setAccountOrder,
   setAccountNote,
@@ -548,8 +554,8 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 // #507: explicit cleanup of old Windows client temp files, only before a verified cold launch.
 // 1.2.81：在共享目标分支加入视频壁纸及失败重试、主题路径边界修复。
 // 1.2.85：成长计划连续登录奖励支持在面板内直接领取到对应账号。
-const DAEMON_VERSION = '1.2.88';
-const DAEMON_BUILD_ID = 'release-1.2.88-sidebar-indexed-sessions';
+const DAEMON_VERSION = '1.2.23';
+const DAEMON_BUILD_ID = 'release-1.2.23-sidebar-indexed-sessions';
 const usageReporter = createUsageReporter({ profile: PROFILE.id, version: DAEMON_VERSION });
 configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const automationDiscovery = createAutomationDiscovery({
@@ -3891,7 +3897,20 @@ async function assertSessionSyncIdle(sessionIds = []) {
 
 async function assertAccountSwitchIdle() {
   if (accountSwitchInProgress) throw new Error('账号正在切换，请稍后重试');
-  if (autoCopyWorkerRunning || autoCopyQueue.length || sessionCopyLocks.size) throw new Error('会话同步尚未完成，请稍后切换账号');
+  if (autoCopyWorkerRunning || autoCopyQueue.length || sessionCopyLocks.size) {
+    // 只说「尚未完成」用户无法判断要等多久，也看不出是哪个任务卡住。
+    const busy = activeAccountSyncJob();
+    let detail = '';
+    if (busy && busy.status === 'running') {
+      detail = '正在同步「' + String(busy.sourceName || '其他账号') + '」' +
+        (Number(busy.processed) || 0) + '/' + (Number(busy.total) || 0);
+    } else if (autoCopyQueue.length) {
+      detail = '队列中还有 ' + autoCopyQueue.length + ' 个任务';
+    } else if (sessionCopyLocks.size) {
+      detail = '仍有会话正在写入';
+    }
+    throw new Error('会话同步尚未完成' + (detail ? '（' + detail + '）' : '') + '，请稍后切换账号');
+  }
   accountSwitchInProgress = true;
   return () => { accountSwitchInProgress = false; };
 }
@@ -3996,7 +4015,22 @@ function automationSwitchAccount(account, options = {}) {
       }
       const rules = sourceUid ? getAutoCopyRules(DATA_DIR, sourceUid) : {};
       let job = null;
-      if (rules.allSessions || (rules.sessionIds || []).length || (rules.workspaces || []).length) {
+      // [wd-pool] 目标账号已勾选同步：整批交接归属，不再逐条复制。
+      let poolStats = null;
+      if (sourceUid && sourceUid !== uid && accountSyncEnabledFor(uid)) {
+        try {
+          const owner = await resolvePoolOwner(sourceUid);
+          if (owner && owner !== uid) {
+            poolStats = await transferPoolOwnership(owner, uid);
+            setSharedPool(DATA_DIR, { owner: uid });
+          } else {
+            setSharedPool(DATA_DIR, { owner: uid });
+          }
+        } catch (error) {
+          poolStats = { ok: false, error: String(error.message || error).slice(0, 200) };
+          log('[pool] 交接失败: ' + error.message);
+        }
+      } else if (!accountSyncDisabledFor(uid) && (rules.allSessions || (rules.sessionIds || []).length || (rules.workspaces || []).length)) {
         job = startAutoCopyJob(sourceUid, uid, [], { sourceName: active.nickname, targetName: acct.nickname });
       }
       // Sync yields to reload priority: release it before awaiting the job.
@@ -4004,7 +4038,7 @@ function automationSwitchAccount(account, options = {}) {
       releaseRendererReload = null;
       if (job) await waitAutomationSyncJob(job, options);
       if (options.isCancelled && options.isCancelled()) throw new Error('任务已停止');
-      return { ok: true, uid: acct.uid, nickname: acct.nickname, switched: true, syncJobId: job ? job.id : null, automationSync, officialAutomationSync };
+      return { ok: true, uid: acct.uid, nickname: acct.nickname, switched: true, syncJobId: job ? job.id : null, poolStats, automationSync, officialAutomationSync };
     } catch (error) {
       pendingAutomationAccountSwitch = null;
       throw error;
@@ -5347,7 +5381,8 @@ function sqlPlaceholders(values) {
   return values.map(() => '?').join(',');
 }
 
-async function insertCopiedSession(src, targetUid, newId) {
+async function insertCopiedSession(src, targetUid, newId, overrides) {
+  const options = overrides && typeof overrides === 'object' ? overrides : {};
   let rollbackNativeIndex = null;
   if (codeBuddyFiles) {
     codeBuddyFiles.register({...src,id:newId,user_id:targetUid});
@@ -5355,12 +5390,15 @@ async function insertCopiedSession(src, targetUid, newId) {
   }
   const updatedAt = Date.now();
   const lastActivityAt = Number(src.last_activity_at || src.updated_at || updatedAt);
+  // [wd-branch-title] 分叉副本可以在插入时覆盖标题，普通副本仍原样继承。
+  const insertTitle = options.title != null ? String(options.title) : (src.title || '');
+  const insertCustomTitle = options.customTitle != null ? String(options.customTitle) : (src.custom_title || '');
   const vals = [
     newId,
     src.cwd || '',
     targetUid,
-    src.title || '',
-    src.custom_title || '',
+    insertTitle,
+    insertCustomTitle,
     src.status || 'Pending',
     Number(src.created_at || Date.now()),
     updatedAt,
@@ -5378,10 +5416,14 @@ async function insertCopiedSession(src, targetUid, newId) {
     src.use_sandbox_cli === null || src.use_sandbox_cli === undefined || src.use_sandbox_cli === '' ? null : Number(src.use_sandbox_cli),
     src.project_id || null,
   ];
+  // [wd-space-sync] 副本必须落到目标账号的项目下，否则会话没有项目归属，
+  // 侧边栏会把项目当成空壳隐藏（这正是切号后「项目不见了」的直接原因）。
+  const columns = SESSION_COPY_COLUMNS.concat(['space_id']);
+  const values = vals.concat([options.spaceId ? String(options.spaceId) : null]);
   try {
   await sqliteRun(
-    'INSERT INTO sessions (' + SESSION_COPY_COLUMNS.join(',') + ') VALUES (' + sqlPlaceholders(vals) + ');',
-    vals
+    'INSERT INTO sessions (' + columns.join(',') + ') VALUES (' + sqlPlaceholders(values) + ');',
+    values
   );
   } catch(error) {
     if(rollbackNativeIndex) await rollbackNativeIndex();
@@ -5391,7 +5433,165 @@ async function insertCopiedSession(src, targetUid, newId) {
   // source revision here would make every later switch look dirty.
   return Object.assign({}, src, {
     id: newId, user_id: targetUid, updated_at: updatedAt, last_activity_at: lastActivityAt,
+    title: insertTitle, custom_title: insertCustomTitle,
+    space_id: options.spaceId ? String(options.spaceId) : null,
   });
+}
+
+// [wd-space-sync] 项目（spaces）跟着会话一起搬：先按目录路径把源账号的项目去重
+// 映射到目标账号，再把没有项目归属的副本会话绑定回去。
+const SPACE_COPY_COLUMNS = [
+  'id', 'user_id', 'device_id', 'name', 'primary_folder_path', 'create_folder_path',
+  'pinned', 'sort_order', 'status', 'transport', 'conversation_origin', 'deleted_at',
+  'created_at', 'updated_at', 'source_kind',
+];
+
+function normalizeSpaceFolder(value) {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  return text.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+}
+
+function spaceFolderKeys(row) {
+  const keys = [];
+  for (const raw of [row && row.primary_folder_path, row && row.create_folder_path]) {
+    const key = normalizeSpaceFolder(raw);
+    if (key && keys.indexOf(key) < 0) keys.push(key);
+  }
+  return keys;
+}
+
+function sessionCwdMatchesFolder(cwd, folder) {
+  const left = normalizeSpaceFolder(cwd);
+  const right = normalizeSpaceFolder(folder);
+  if (!left || !right) return false;
+  return left === right || left.indexOf(right + '/') === 0;
+}
+
+async function readSpaceRows(uid) {
+  try {
+    return await sqliteQuery(
+      'SELECT ' + SPACE_COPY_COLUMNS.join(',') + ' FROM spaces WHERE user_id = ? AND (deleted_at IS NULL OR deleted_at < 0) ORDER BY created_at ASC;',
+      [uid]
+    );
+  } catch (_) { return []; }
+}
+
+async function healSessionSpaceBindings(targetUid, sourceSpaces, map) {
+  const pairs = [];
+  for (const row of sourceSpaces) {
+    const targetId = map.get(String(row && row.id || ''));
+    if (!targetId) continue;
+    for (const key of spaceFolderKeys(row)) pairs.push({ folder: key, spaceId: targetId });
+  }
+  if (!pairs.length) return 0;
+  // 最长目录优先，保证子项目不会被父目录抢走。
+  pairs.sort((a, b) => b.folder.length - a.folder.length);
+  let rows = [];
+  try {
+    rows = await sqliteQuery(
+      "SELECT id, cwd FROM sessions WHERE user_id = ? AND deleted_at IS NULL AND (space_id IS NULL OR space_id = '') " +
+      "AND cwd IS NOT NULL AND cwd != '' AND COALESCE(is_background_automation, 0) = 0;",
+      [targetUid]
+    );
+  } catch (_) { return 0; }
+  let bound = 0;
+  // 按项目分组批量更新：一次切换最多 5 条语句，避免几百次单行 UPDATE 拖慢切号。
+  const groups = new Map();
+  for (const row of rows) {
+    const match = pairs.find((pair) => sessionCwdMatchesFolder(row.cwd, pair.folder));
+    if (!match) continue;
+    const list = groups.get(match.spaceId) || [];
+    list.push(String(row.id));
+    groups.set(match.spaceId, list);
+  }
+  for (const [spaceId, ids] of groups) {
+    try {
+      await sqliteRun(
+        "UPDATE sessions SET space_id = ? WHERE user_id = ? AND deleted_at IS NULL AND (space_id IS NULL OR space_id = '') AND id IN (" + sqlPlaceholders(ids) + ");",
+        [spaceId, targetUid].concat(ids)
+      );
+      bound += ids.length;
+    } catch (error) {
+      log('[space-sync] 绑定会话项目失败 ' + spaceId + ': ' + error.message);
+    }
+  }
+  return bound;
+}
+
+async function syncTargetSpaces(sourceUid, targetUid) {
+  const result = { map: new Map(), created: 0, matched: 0, folders: 0, bound: 0 };
+  const source = String(sourceUid || '').trim();
+  const target = String(targetUid || '').trim();
+  if (!source || !target || source === target) return result;
+  const sourceSpaces = await readSpaceRows(source);
+  if (!sourceSpaces.length) return result;
+  const targetSpaces = await readSpaceRows(target);
+  const byFolder = new Map();
+  const byName = new Map();
+  const remember = (row) => {
+    for (const key of spaceFolderKeys(row)) if (!byFolder.has(key)) byFolder.set(key, String(row.id));
+    const name = String(row && row.name || '').trim();
+    if (name && !byName.has(name)) byName.set(name, String(row.id));
+  };
+  targetSpaces.forEach(remember);
+  const createdIds = [];
+  for (const row of sourceSpaces) {
+    if (!row || !row.id) continue;
+    let targetId = '';
+    for (const key of spaceFolderKeys(row)) {
+      if (byFolder.has(key)) { targetId = byFolder.get(key); break; }
+    }
+    if (!targetId) {
+      const name = String(row.name || '').trim();
+      if (name && byName.has(name)) targetId = byName.get(name);
+    }
+    if (targetId) {
+      result.matched++;
+      result.map.set(String(row.id), targetId);
+      continue;
+    }
+    const now = Date.now();
+    const newId = crypto.randomUUID();
+    try {
+      await sqliteRun(
+        'INSERT INTO spaces (' + SPACE_COPY_COLUMNS.join(',') + ') VALUES (' + sqlPlaceholders(SPACE_COPY_COLUMNS) + ');',
+        [newId, target, row.device_id || null, row.name || '', row.primary_folder_path || null,
+          row.create_folder_path || null, Number(row.pinned || 0) || 0,
+          row.sort_order == null || row.sort_order === '' ? null : Number(row.sort_order),
+          row.status || 'active', row.transport || 'local', row.conversation_origin || 'local',
+          -1, Number(row.created_at || now), now, row.source_kind || 'seed']
+      );
+    } catch (error) {
+      log('[space-sync] 创建目标项目失败 ' + (row.name || row.id) + ': ' + error.message);
+      continue;
+    }
+    remember(Object.assign({}, row, { id: newId, user_id: target }));
+    createdIds.push(String(row.id));
+    result.map.set(String(row.id), newId);
+    result.created++;
+  }
+  if (createdIds.length) {
+    try {
+      const folders = await sqliteQuery(
+        'SELECT space_id, path, sort_order FROM space_folders WHERE space_id IN (' + sqlPlaceholders(createdIds) + ');',
+        createdIds
+      );
+      for (const folder of folders) {
+        const newSpaceId = result.map.get(String(folder.space_id));
+        if (!newSpaceId) continue;
+        await sqliteRun('INSERT INTO space_folders (space_id, path, sort_order) VALUES (?, ?, ?);',
+          [newSpaceId, folder.path, folder.sort_order == null ? null : Number(folder.sort_order)]);
+        result.folders++;
+      }
+    } catch (error) {
+      log('[space-sync] 复制项目目录失败: ' + error.message);
+    }
+  }
+  result.bound = await healSessionSpaceBindings(target, sourceSpaces, result.map);
+  log('[space-sync] ' + source.slice(0, 8) + ' -> ' + target.slice(0, 8) +
+    ' 项目 新建=' + result.created + ' 复用=' + result.matched + ' 目录=' + result.folders + ' 回绑会话=' + result.bound);
+  return result;
 }
 
 async function createForkSession(src, selection) {
@@ -5572,6 +5772,59 @@ function sessionCopyContentRevision(row) {
 
 function sessionTitlePair(row) {
   return JSON.stringify([String(row && row.title || ''), String(row && row.custom_title || '')]);
+}
+
+// [wd-branch-title] 分叉副本和原件内容不同，但标题是整份复制的，两条在会话
+// 列表里完全同名，只能靠点开才能分辨。给副本加一个带来源和时间后缀的标题，
+// 并在后续同步里按标记跳过标题比对，避免把用户看到的区分又同步回去。
+const BRANCH_TITLE_MARK = '（来自';
+function branchTitleStamp(ts) {
+  const d = new Date(Number(ts) || Date.now());
+  const pad = (n) => String(n).padStart(2, '0');
+  return pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+}
+function stripBranchTitle(value) {
+  return String(value || '')
+    .replace(/（来自[^）]*）/g, '')
+    .replace(/（副本[^）]*）/g, '')
+    .trim();
+}
+function branchTitlesFor(row, sourceName) {
+  const label = String(sourceName || '').trim().slice(0, 8) || '副本';
+  const tag = BRANCH_TITLE_MARK + label + '·' + branchTitleStamp(Date.now()) + '）';
+  const custom = stripBranchTitle(row && row.custom_title);
+  const title = stripBranchTitle(row && row.title);
+  if (custom) return { customTitle: custom + tag };
+  if (title) return { title: title + tag };
+  return { title: '会话' + tag };
+}
+function isBranchTitleRow(row) {
+  if (!row) return false;
+  const text = String(row.custom_title || '') + '\n' + String(row.title || '');
+  return /（来自[^）]*）/.test(text) || /（副本[^）]*）/.test(text);
+}
+// [wd-pool] 汇聚副本的标题前缀：勾选账号时把它的对话拉进当前账号，
+// 用「[账号] 原标题」区分这条原本属于谁。重复汇聚不会叠加前缀。
+const POOL_TITLE_PREFIX_RE = /^\[[^\]\r\n]{1,14}\]\s*/;
+function stripPoolTitlePrefix(value) {
+  return String(value || '').replace(POOL_TITLE_PREFIX_RE, '').trim();
+}
+function isPoolTitleRow(row) {
+  if (!row) return false;
+  return POOL_TITLE_PREFIX_RE.test(String(row.custom_title || '')) ||
+    POOL_TITLE_PREFIX_RE.test(String(row.title || ''));
+}
+function poolTitlesFor(row, prefix) {
+  const raw = String(prefix || '').trim();
+  if (!raw) return null;
+  const tag = raw + ' ';
+  const custom = stripPoolTitlePrefix(stripBranchTitle(row && row.custom_title));
+  const title = stripPoolTitlePrefix(stripBranchTitle(row && row.title));
+  const out = {};
+  if (custom) out.customTitle = tag + custom;
+  if (title) out.title = tag + title;
+  if (!custom && !title) out.title = tag + '会话';
+  return out;
 }
 
 function mappingTitlePair(mapping, side, uid) {
@@ -6060,16 +6313,34 @@ async function copySessionRecord(src, targetUid, options = {}) {
     const branched = selection.comparison.kind === 'conflict';
     if (branched && targetExcluded) return { status: 'skipped', sourceId: src.id, targetId: null };
     const targetId = branched ? crypto.randomUUID() : selection.targetId;
+    // [wd-pool] 汇聚副本的目标标题（含账号前缀）；普通同步为 null，保持原样。
+    // 汇聚任务即使判定为分叉也同样加前缀，不再追加「（来自…）」标记。
+    const poolTitles = poolTitlesFor(sourceRow, options.titlePrefix);
+    // [wd-branch-title] 分叉副本改用一个带来源和时间的标题，原件标题保持不动。
+    let branchTitles = null;
     if (branched) {
       aliases.push(targetId);
-      if (codeBuddyFiles) codeBuddyFiles.register({...sourceRow,id:targetId,user_id:targetUid});
+      branchTitles = branchTitlesFor(sourceRow, String(options.sourceName || '').trim() || accountSyncDisplayName(sourceUid));
+      if (codeBuddyFiles) codeBuddyFiles.register({...sourceRow,id:targetId,user_id:targetUid, ...branchTitles});
     }
     const existing = candidates.find(row => row.id === targetId) || null;
     // Equal message snapshots still need independent title synchronization.
     // The trimmed selection is enough; no message file rewrite is needed.
     if (!branched && selection.comparison.kind === 'equal') {
       let titleChanged = false;
-      if (existing && sessionTitlePair(sourceRow) !== sessionTitlePair(existing)) {
+      // [wd-pool] 汇聚任务把标题统一刷成「[账号] 原标题」，连历史的分支标记一起清掉，
+      // 保证重复勾选后标题最终一致，不会叠加前缀或残留「（来自…）」。
+      const forcedPool = existing && options.titlePrefix ? poolTitlesFor(existing, options.titlePrefix) : null;
+      if (existing && forcedPool && sessionTitlePair(existing) !== JSON.stringify([forcedPool.title || '', forcedPool.customTitle || ''])) {
+        await assertSessionSyncIdle([existing.id]);
+        await sqliteRun(
+          'UPDATE sessions SET title = ?, custom_title = ? WHERE id = ? AND user_id = ? AND deleted_at IS NULL;',
+          [forcedPool.title || '', forcedPool.customTitle || '', existing.id, existing.user_id]
+        );
+        existing.title = forcedPool.title || '';
+        existing.custom_title = forcedPool.customTitle || '';
+        titleChanged = true;
+      } else if (existing && !isBranchTitleRow(existing) && !isPoolTitleRow(existing) && sessionTitlePair(sourceRow) !== sessionTitlePair(existing)) {
         const baseline = sharedTitleBaseline(mapping, reverseMapping, sourceRow, existing);
         const sourceChanged = baseline !== null && baseline !== sessionTitlePair(sourceRow);
         const targetChanged = baseline !== null && baseline !== sessionTitlePair(existing);
@@ -6150,22 +6421,30 @@ async function copySessionRecord(src, targetUid, options = {}) {
           // Reserve provenance before the row becomes visible, so a crash
           // after insertion cannot create an untracked duplicate on retry.
           await withAutoCopyMetaWrite(() => addAutoCopySessionMember(DATA_DIR, lineageId, targetUid, targetId, { branchCopy: branched }));
-          persistedTargetRow = await insertCopiedSession(fromRow, targetUid, targetId);
+          persistedTargetRow = await insertCopiedSession(fromRow, targetUid, targetId, Object.assign(
+            { spaceId: options.spaceId },
+            branched && branchTitles ? branchTitles : null,
+            poolTitles || null
+          ));
           await writeSessionContextWindow(targetId, sourceContextWindow);
           await copySessionUsage(fromRow.id, targetId);
         }
         else if (!missingOnly) {
           const updatedAt = Number(fromRow.updated_at || 0);
           const lastActivityAt = Number(fromRow.last_activity_at || fromRow.updated_at || 0);
+          // [wd-pool] 已存在的汇聚副本做增量更新时，标题也要保持账号前缀。
+          const pushed = poolTitlesFor(fromRow, options.titlePrefix) || {};
+          const nextTitle = pushed.title != null ? pushed.title : (fromRow.title || '');
+          const nextCustom = pushed.customTitle != null ? pushed.customTitle : (fromRow.custom_title || '');
           await sqliteRun(
             'UPDATE sessions SET title = ?, custom_title = ?, status = ?, updated_at = ?, last_activity_at = ? WHERE id = ? AND user_id = ? AND deleted_at IS NULL;',
-            [fromRow.title || '', fromRow.custom_title || '', fromRow.status || 'Pending',
+            [nextTitle, nextCustom, fromRow.status || 'Pending',
               updatedAt, lastActivityAt, toRow.id, toRow.user_id]
           );
           await writeSessionContextWindow(toRow.id, sourceContextWindow);
           await copySessionUsage(fromRow.id, toRow.id);
           persistedTargetRow = Object.assign({}, toRow, {
-            title: fromRow.title || '', custom_title: fromRow.custom_title || '', status: fromRow.status || 'Pending',
+            title: nextTitle, custom_title: nextCustom, status: fromRow.status || 'Pending',
             updated_at: updatedAt, last_activity_at: lastActivityAt,
           });
         }
@@ -6218,10 +6497,13 @@ async function copySessionRecord(src, targetUid, options = {}) {
   }
 }
 
-async function buildAutoCopyPlan(sourceUid, targetUid, requestedSessionIds = []) {
+async function buildAutoCopyPlan(sourceUid, targetUid, requestedSessionIds = [], options = {}) {
   const source = String(sourceUid || '').trim();
   const target = String(targetUid || '').trim();
   if (!source || !target || source === target) return [];
+  // [wd-pool] 汇聚任务（勾选账号）要拉全部对话，不受 autoCopy 规则里
+  // 「只同步勾选的会话」限制，否则用户勾了账号却只过来两三条。
+  const pullAll = !!(options && options.allSessions === true);
   assertSessionAccountIdentity(source);
   assertSessionAccountIdentity(target);
   normalizeAutoCopyLineages(DATA_DIR);
@@ -6230,14 +6512,15 @@ async function buildAutoCopyPlan(sourceUid, targetUid, requestedSessionIds = [])
     .map((id) => String(id || '').trim())
     .filter((id) => id && id.length <= 200 && id !== '.' && id !== '..' &&
       !/[\\/\x00-\x1f\x7f]/.test(id) && !/^[ .]|[ .]$/.test(id) && !/[<>:"|?*]/.test(id)));
-  if (!rules.allSessions && !rules.sessionIds.length && !rules.workspaces.length && !requested.size) return [];
+  if (!pullAll && !rules.allSessions && !rules.sessionIds.length && !rules.workspaces.length && !requested.size) return [];
   const rows = await sqliteQuery(
-    'SELECT id, cwd, user_id, title, custom_title, status, created_at, updated_at, last_activity_at, is_playground, source_mode, is_background_automation, mode, model, expert_id, expert_locale, expert_runtime_identity, expert_marketplace, permission_mode, use_sandbox_cli, project_id ' +
+    'SELECT id, cwd, user_id, title, custom_title, status, created_at, updated_at, last_activity_at, is_playground, source_mode, is_background_automation, mode, model, expert_id, expert_locale, expert_runtime_identity, expert_marketplace, permission_mode, use_sandbox_cli, project_id, space_id ' +
     'FROM sessions WHERE deleted_at IS NULL AND COALESCE(is_background_automation, 0) = 0 AND user_id = ? ORDER BY created_at DESC;',
     [source]
   );
   const workspaceSet = new Set(rules.workspaces.map(canonicalWorkspace));
-  const selectedRows = rows.filter((row) => requested.has(String(row.id || '')) || isAutoCopySessionSelected(rules, row));
+  const selectedRows = pullAll ? rows.slice() : rows.filter((row) => requested.has(String(row.id || '')) || isAutoCopySessionSelected(rules, row));
+  log('[account-sync] 规划 source=' + source.slice(0, 8) + ' pullAll=' + pullAll + ' 可读=' + rows.length + ' 选中=' + selectedRows.length);
   const mappings = getAutoCopyMappings(
     DATA_DIR,
     selectedRows.map((row) => {
@@ -6347,6 +6630,19 @@ async function buildAutoCopyPlan(sourceUid, targetUid, requestedSessionIds = [])
   // planner in a VM context; returning a foreign-realm array breaks callers'
   // strict structural comparisons even when the plan is empty. `filter`
   // preserves the source array's realm in both the daemon and VM harness.
+  // [wd-pool] 汇聚任务：用户勾选账号时明确要拉全量，不走 dirty 增量过滤。
+  // 每条都交给 copySessionRecord 自己判定（相等就跳过，不会重复复制）。
+  if (pullAll) {
+    if (!targetRows) await loadTargetRows();
+    const ensureIds = selectedRows.map((row) => String(row.id)).filter((id) => !rules.allLineages[String(id)]);
+    const ensuredAll = ensureIds.length
+      ? ensureAutoCopySessions(DATA_DIR, source, ensureIds, { enabled: false })
+      : {};
+    log('[account-sync] 汇聚全量 ' + selectedRows.length + ' 条（其中新建 lineage ' + ensureIds.length + ' 条）');
+    return selectedRows.map((row) => Object.assign({}, row, {
+      lineageId: rules.allLineages[String(row.id)] || ensuredAll[String(row.id)] || null,
+    }));
+  }
   const dirtyRows = selectedRows.filter(() => false);
   for (const row of selectedRows) {
     const requestedRow = requested.has(String(row.id || ''));
@@ -6610,6 +6906,125 @@ function runAutoCopyQueue() {
     });
 }
 
+
+// [wd-account-sync] 账号卡片的「是否同步」：把当前账号的记录静默同步到目标账号。
+const ACCOUNT_SYNC_PURPOSE = 'account-sync';
+function accountSyncDisplayName(uid) {
+  const key = String(uid || '').trim();
+  if (!key) return '';
+  try {
+    const meta = readMeta(DATA_DIR);
+    const info = meta.accounts && meta.accounts[key];
+    return String(info && (info.nickname || info.phone) || '').trim();
+  } catch (_) { return ''; }
+}
+// [wd-account-sync] 用户在面板里明确取消勾选的账号，切号时不再把上一个账号的对话搬过去。
+// 没有记录（从未操作过）的账号保持 WorkDaddy 原有行为，避免升级后突然「看起来少了对话」。
+function accountSyncDisabledFor(uid) {
+  const key = String(uid || '').trim();
+  if (!key) return false;
+  try {
+    const flags = getAccountSyncFlags(DATA_DIR);
+    const entry = flags[key];
+    return !!(entry && entry.enabled !== true);
+  } catch (_) { return false; }
+}
+// [wd-pool] 只有用户明确勾选过的账号才参与池子交接，从未操作过的账号保持原行为。
+function accountSyncEnabledFor(uid) {
+  const key = String(uid || '').trim();
+  if (!key) return false;
+  try {
+    const flags = getAccountSyncFlags(DATA_DIR);
+    const entry = flags[key];
+    return !!(entry && entry.enabled === true);
+  } catch (_) { return false; }
+}
+
+// [wd-pool] 切号 = 整批交接：把池子当前持有的全部对话改归属到目标账号，源账号清空。
+// 只改 user_id：projects 目录路径不含账号、文件名是会话 id，所以一个文件都不用挪。
+async function transferPoolOwnership(fromUid, toUid) {
+  const from = String(fromUid || '').trim();
+  const to = String(toUid || '').trim();
+  if (!from || !to || from === to) return { ok: false, reason: 'noop' };
+  const startedAt = Date.now();
+  // ① 先记住目标账号原有的会话。去重只在这批里做，绝不动池子里的历史副本，
+  //    否则会把用户真实的旧对话当成重复项误删。
+  const targetRows = await sqliteQuery('SELECT id FROM sessions WHERE user_id = ? AND deleted_at IS NULL;', [to]);
+  const targetIds = targetRows.map((row) => String(row && row.id || '')).filter(Boolean);
+  // ② 并入源账号（零成本，不复制任何文件）。
+  const merged = await sqliteRun('UPDATE sessions SET user_id = ? WHERE user_id = ? AND deleted_at IS NULL;', [from, to]);
+  // ③ 只清理「目标原有 + 存在同源兄弟 + 自己不是最新」的那几条：
+  //    同目录 + 同创建时间视为同一条对话的多份拷贝，保留更新时间最新的那份。
+  let droppedChanges = 0;
+  for (let i = 0; i < targetIds.length; i += 400) {
+    const chunk = targetIds.slice(i, i + 400);
+    const marks = chunk.map(() => '?').join(',');
+    const result = await sqliteRun(
+      'UPDATE sessions SET deleted_at = ? WHERE user_id = ? AND deleted_at IS NULL AND id IN (' + marks + ') AND EXISTS (' +
+      'SELECT 1 FROM sessions AS b WHERE b.user_id = ? AND b.deleted_at IS NULL AND b.cwd = sessions.cwd ' +
+      'AND b.created_at = sessions.created_at AND (b.updated_at > sessions.updated_at OR (b.updated_at = sessions.updated_at AND b.id > sessions.id)));',
+      [Date.now(), from].concat(chunk, [from])
+    );
+    droppedChanges += (result && result.changes) || 0;
+  }
+  // ④ 整批交接给目标账号（含已删除行，保持源账号彻底空出来）。
+  const moved = await sqliteRun('UPDATE sessions SET user_id = ? WHERE user_id = ?;', [to, from]);
+  // ⑤ 项目一起走，否则会话在目标账号里没有项目归属，侧边栏会把项目当空壳隐藏。
+  const spaces = await sqliteRun('UPDATE spaces SET user_id = ? WHERE user_id = ?;', [to, from]);
+  const stats = {
+    ok: true,
+    merged: (merged && merged.changes) || 0,
+    dropped: droppedChanges,
+    moved: (moved && moved.changes) || 0,
+    spaces: (spaces && spaces.changes) || 0,
+    elapsedMs: Date.now() - startedAt,
+  };
+  log('[pool] 交接 ' + from.slice(0, 8) + ' → ' + to.slice(0, 8) +
+    ' 并入=' + stats.merged + ' 去重=' + stats.dropped + ' 会话=' + stats.moved +
+    ' 项目=' + stats.spaces + ' 用时=' + stats.elapsedMs + 'ms');
+  return stats;
+}
+// [wd-pool] 首次升级：现存账号一律视为「已经问过」，避免升级后一次性弹出十几个询问框。
+// 只跑一次，之后新出现的账号（未带 asked 标记）才会在面板上收到询问。
+let poolInviteMigratedCache = false;
+function ensurePoolInviteMigrated() {
+  if (poolInviteMigratedCache) return;
+  poolInviteMigratedCache = true;
+  try {
+    const meta = readMeta(DATA_DIR);
+    if (meta.autoCopy && meta.autoCopy.poolInviteMigrated === true) return;
+    const uids = listAccounts(DATA_DIR).map((account) => String(account && account.uid || '').trim()).filter(Boolean);
+    markPoolInviteAsked(DATA_DIR, uids);
+    log('[pool] 询问状态迁移完成，已标记 ' + uids.length + ' 个已有账号（不弹窗）');
+  } catch (error) {
+    poolInviteMigratedCache = false;
+    log('[pool] 询问状态迁移失败: ' + error.message);
+  }
+}
+// 池子当前持有者：记录优先；记录指向的账号已经空了（被手动清过）就退回源账号。
+async function resolvePoolOwner(sourceUid) {
+  const source = String(sourceUid || '').trim();
+  let owner = '';
+  try { owner = String((getSharedPool(DATA_DIR) || {}).owner || '').trim(); } catch (_) { owner = ''; }
+  if (!owner) return source;
+  try {
+    const rows = await sqliteQuery('SELECT COUNT(*) AS c FROM sessions WHERE user_id = ? AND deleted_at IS NULL;', [owner]);
+    const count = Number(rows && rows[0] && rows[0].c) || 0;
+    if (count > 0) return owner;
+  } catch (_) {}
+  return source;
+}
+
+function activeAccountSyncJob() {
+  const jobs = Array.from(autoCopyJobs.values()).filter((job) => job.purpose === ACCOUNT_SYNC_PURPOSE);
+  const running = jobs
+    .filter((job) => job.status === 'running' || job.status === 'queued')
+    .sort((a, b) => Number(a.startedAt || 0) - Number(b.startedAt || 0))[0];
+  if (running) return running;
+  return jobs
+    .filter((job) => job.finishedAt && Date.now() - job.finishedAt < 20000)
+    .sort((a, b) => Number(b.finishedAt || 0) - Number(a.finishedAt || 0))[0] || null;
+}
 function startAutoCopyJob(sourceUid, targetUid, plan, labels) {
   const id = crypto.randomUUID();
   const accountLabels = labels && typeof labels === 'object' ? labels : {};
@@ -6621,6 +7036,10 @@ function startAutoCopyJob(sourceUid, targetUid, plan, labels) {
     sourceName: String(accountLabels.sourceName || ''),
     targetName: String(accountLabels.targetName || ''),
     openSessionId: String(accountLabels.openSessionId || '').trim(),
+    purpose: String(accountLabels.purpose || ''),
+    // [wd-pool] 汇聚任务：副本标题统一加账号前缀，切号转移时不加。
+    titlePrefix: String(accountLabels.titlePrefix || ''),
+    poolPull: accountLabels.poolPull === true,
     openSessionTargetId: '',
     plan: Array.isArray(plan) ? plan : [],
     total: Array.isArray(plan) ? plan.length : 0,
@@ -6652,8 +7071,36 @@ function startAutoCopyJob(sourceUid, targetUid, plan, labels) {
     // A rapid switch chain may enqueue this job before the previous copy has
     // created the target rows. Re-plan after the queue reaches this job.
     job.copyStartedAt = Date.now();
-    job.plan = await buildAutoCopyPlan(sourceUid, targetUid, job.openSessionId ? [job.openSessionId] : []);
+    // [wd-space-sync] 先项目、后会话：项目要先落到目标账号，副本会话才有归属。
+    // 切号同步（purpose=''）与面板手动同步都要走这一步，否则副本落不到项目里。
+    job.phase = job.purpose === ACCOUNT_SYNC_PURPOSE ? 'projects' : '';
+    let spaceSync = null;
+    try {
+      spaceSync = await syncTargetSpaces(sourceUid, targetUid);
+      job.spaceStats = spaceSync ? {
+        created: spaceSync.created, matched: spaceSync.matched,
+        folders: spaceSync.folders, bound: spaceSync.bound,
+      } : null;
+    } catch (error) {
+      job.spaceStats = { created: 0, matched: 0, folders: 0, bound: 0, error: String(error.message || error).slice(0, 200) };
+      log('[account-sync] 项目同步失败: ' + error.message);
+    }
+    job.plan = await buildAutoCopyPlan(sourceUid, targetUid, job.openSessionId ? [job.openSessionId] : [], { allSessions: job.poolPull === true });
     job.total = job.plan.length;
+    // [wd-space-sync] 计划行带上目标项目 id，复制时直接落到对应项目。
+    if (spaceSync && spaceSync.map.size) {
+      for (const row of job.plan) {
+        const mapped = spaceSync.map.get(String(row && row.space_id || ''));
+        if (mapped) row.targetSpaceId = mapped;
+      }
+    }
+    // [wd-account-sync] 台前优先：未归档会话先复制，归档会话排到最后由后台补齐。
+    if (job.purpose === ACCOUNT_SYNC_PURPOSE) {
+      job.plan.sort((a, b) => (String(a && a.status || '') === 'archived' ? 1 : 0) - (String(b && b.status || '') === 'archived' ? 1 : 0));
+      // 未归档跑完即可放行界面，归档部分继续在后台静默补齐。
+      job.foregroundTotal = job.plan.filter((row) => String(row && row.status || '') !== 'archived').length;
+      job.phase = 'sessions';
+    }
     if (job.openSessionId && !job.plan.some((row) => String(row && row.id || '') === job.openSessionId)) {
       job.openSessionTargetId = resolveAutoCopyTargetId(sourceUid, targetUid, job.openSessionId);
     }
@@ -6715,6 +7162,9 @@ function startAutoCopyJob(sourceUid, targetUid, plan, labels) {
             try {
               result = await copySessionRecord(src, targetUid, {
                 sourceUid, lineageId: src.lineageId, auto: true,
+                sourceName: job.sourceName || '',
+                titlePrefix: job.titlePrefix || '',
+                spaceId: src.targetSpaceId || '',
                 onProgress: (progress) => {
                   const bytes = Math.max(0, Number(progress && progress.bytes) || 0);
                   reportedBytes += bytes;
@@ -6756,7 +7206,7 @@ function startAutoCopyJob(sourceUid, targetUid, plan, labels) {
         } catch (e) {
           recoverOpenSessionTarget(src);
           const errorText = String(e.message || e).slice(0, 240);
-          if (['会话消息文件没有消息，未同步', '会话消息文件为空，未同步'].includes(errorText)) {
+          if (['会话消息文件没有消息，未同步', '会话消息文件为空，未同步', '双方会话消息文件均缺失，未同步'].includes(errorText)) {
             // Empty metadata-only sessions are normal transient WorkBuddy
             // rows (for example a newly opened draft), not sync failures.
             if (typeof getSessionDirtyIndex === 'function' && typeof clearSessionDirty === 'function') {
@@ -6783,7 +7233,21 @@ function startAutoCopyJob(sourceUid, targetUid, plan, labels) {
     await refreshCopiedSessionList(job);
     job.details = job.details.filter(Boolean);
     job.status = job.conflicts ? 'conflict' : (job.failed || job.partial ? 'partial' : 'done');
+    job.phase = 'done';
     job.finishedAt = Date.now();
+    if (job.purpose === ACCOUNT_SYNC_PURPOSE) {
+      try {
+        const patch = {
+          status: job.status,
+          lastRunAt: job.finishedAt || Date.now(),
+          total: job.total, copied: job.copied, skipped: job.skipped,
+          failed: (Number(job.failed) || 0) + (Number(job.partial) || 0),
+          error: job.status === 'done' ? '' : String(job.error || '部分会话未能同步'),
+        };
+        if (job.status === 'done') patch.lastOkAt = job.finishedAt || Date.now();
+        setAccountSyncFlags(DATA_DIR, [String(job.targetUid || '')], true, patch);
+      } catch (_) {}
+    }
     log(`[sessions-auto-copy] ${sourceUid} -> ${targetUid} 完成 total=${job.total} copied=${job.copied} skipped=${job.skipped} partial=${job.partial} conflicts=${job.conflicts} failed=${job.failed}`);
     const cleanup = setTimeout(() => autoCopyJobs.delete(id), 30 * 60 * 1000);
     if (cleanup.unref) cleanup.unref();
@@ -6847,9 +7311,19 @@ function publicAutoCopyJob(job) {
   if (!job) return null;
   const copiedBytes = typeof job.copiedBytes === 'number' && Number.isFinite(job.copiedBytes) ? Math.max(0, job.copiedBytes) : null;
   const elapsedMs = job.copyStartedAt == null ? 0 : Math.max(0, (job.finishedAt == null ? Date.now() : job.finishedAt) - job.copyStartedAt);
+  // [wd-account-sync] 台前/台后阶段：projects → sessions(台前) → background(归档) → done。
+  let phase = String(job.phase || '');
+  if (job.purpose === 'account-sync' && phase === 'sessions') {
+    phase = Number(job.foregroundTotal) > 0 && Number(job.processed) >= Number(job.foregroundTotal)
+      ? 'background' : 'foreground';
+  }
   return {
     id: job.id,
     status: job.status,
+    phase,
+    purpose: String(job.purpose || ''),
+    foregroundTotal: Number(job.foregroundTotal) || 0,
+    spaceStats: job.spaceStats || null,
     total: job.total,
     processed: job.processed,
     copied: job.copied,
@@ -11336,6 +11810,71 @@ function handleApi(req, res) {
     });
   }
 
+  // [wd-account-sync] 账号卡片上的「是否同步」开关：读取当前状态与后台任务进度。
+  if (req.method === 'GET' && p === '/api/accounts/sync') {
+    // 迁移可能还没被 /api/accounts 触发，这里补一次，否则会把所有老账号当成待确认。
+    ensurePoolInviteMigrated();
+    const current = currentAccount();
+    const flags = getAccountSyncFlags(DATA_DIR);
+    // [wd-pool] 还没确认过「是否加入对话记录」的账号，前端据此弹询问框。
+    const pendingInvite = listAccounts(DATA_DIR)
+      .filter((account) => {
+        const uid = String(account && account.uid || '').trim();
+        return uid && !(flags[uid] && flags[uid].asked === true);
+      })
+      .map((account) => ({ uid: account.uid, name: String(account.note || account.nickname || account.phone || '').replace(/\s+/g, ' ').trim() }));
+    return json(res, 200, {
+      ok: true,
+      currentUid: String(current && current.uid || ''),
+      flags,
+      pendingInvite,
+      job: publicAutoCopyJob(activeAccountSyncJob()),
+    });
+  }
+  // [wd-pool] 勾选只是开关，单个点与批量点完全等价：只写开关，不排队、不复制。
+  // 真正的合并发生在切号时（/api/switch 判断目标账号是否勾选）。
+  if (req.method === 'POST' && p === '/api/accounts/sync') {
+    return readBody(req).then((body) => {
+      try {
+        const raw = Array.isArray(body && body.uids) ? body.uids : [body && body.uid];
+        const uids = raw.map((uid) => String(uid || '').trim()).filter(Boolean);
+        if (!uids.length) return json(res, 400, { ok: false, error: '缺少 uid' });
+        const enabled = body && body.enabled === true;
+        const flags = setAccountSyncFlags(DATA_DIR, uids, enabled);
+        log('[account-sync] 开关 ' + (enabled ? '开 ' : '关 ') + uids.map((uid) => uid.slice(0, 8)).join(',') + '（切号时生效）');
+        return json(res, 200, { ok: true, flags, job: publicAutoCopyJob(activeAccountSyncJob()) });
+      } catch (error) {
+        return json(res, 400, { ok: false, error: error.message });
+      }
+    });
+  }
+
+  // [wd-pool] 新账号登录确认：是否加入全局对话记录。
+  // 选是 → 勾选并（若它已是当前账号）立即合并；选否 → 只记标记，数据不动。
+  if (req.method === 'POST' && p === '/api/accounts/pool-invite') {
+    return readBody(req).then(async (body) => {
+      const uid = String((body && body.uid) || '').trim();
+      const join = !!(body && body.join === true);
+      if (!uid) return json(res, 400, { ok: false, error: '缺少 uid' });
+      if (!/^[A-Za-z0-9_-]{1,128}$/.test(uid)) return json(res, 400, { ok: false, error: 'uid 格式无效' });
+      const flags = setAccountSyncFlags(DATA_DIR, [uid], join, { asked: true, status: join ? 'idle' : 'skipped' });
+      let pool = null;
+      const current = currentAccount();
+      if (join && current && current.uid === uid) {
+        try {
+          const owner = await resolvePoolOwner(uid);
+          if (owner && owner !== uid) pool = await transferPoolOwnership(owner, uid);
+          setSharedPool(DATA_DIR, { owner: uid });
+        } catch (error) {
+          log('[pool] 新账号立即合并失败: ' + error.message);
+          return json(res, 500, { ok: false, error: '已加入，但合并对话失败：' + error.message, flags });
+        }
+      }
+      log('[pool] 新账号确认 uid=' + uid.slice(0, 8) + ' join=' + (join ? 'yes' : 'no') + (pool ? ' 合并=' + pool.moved : ''));
+      return json(res, 200, { ok: true, flags: getAccountSyncFlags(DATA_DIR), pool });
+    });
+  }
+
   if (req.method === 'POST' && p === '/api/accounts/order') {
     return readBody(req).then((body) => {
       try { return json(res, 200, { ok: true, accountOrder: setAccountOrder(DATA_DIR, body) }); }
@@ -11500,6 +12039,8 @@ function handleApi(req, res) {
   }
 
   if (req.method === 'GET' && p === '/api/accounts') {
+    // [wd-pool] 老账号补 asked 标记（只跑一次），新登录账号才会在面板弹询问框。
+    ensurePoolInviteMigrated();
     const accounts = listAccountsWithRuntimeTokenCache();
     const checkinAutomationEnabled = readCurrentAutomations().some(task => task.enabled && stepsContainCheckin(task.steps));
     const cache = loadCheckinCache();
@@ -11532,11 +12073,11 @@ function handleApi(req, res) {
             const withUsage = withLimits.map((account) => summaries[account.uid]
               ? Object.assign({}, account, { todayUsage: summaries[account.uid] })
               : account);
-            return json(res, 200, { ok: true, checkinAutomationEnabled, current: currentAccount(), primaryUid: primaryAccountStore.get(), accountOrder: getAccountOrder(DATA_DIR), accounts: withUsage });
+            return json(res, 200, { ok: true, checkinAutomationEnabled, current: currentAccount(), primaryUid: primaryAccountStore.get(), accountOrder: getAccountOrder(DATA_DIR), accountSync: getAccountSyncFlags(DATA_DIR), accounts: withUsage });
           })
           .catch((error) => {
             log('[credits-usage] 读取本地今日用量失败: ' + error.message);
-            return json(res, 200, { ok: true, checkinAutomationEnabled, current: currentAccount(), primaryUid: primaryAccountStore.get(), accountOrder: getAccountOrder(DATA_DIR), accounts: withLimits });
+            return json(res, 200, { ok: true, checkinAutomationEnabled, current: currentAccount(), primaryUid: primaryAccountStore.get(), accountOrder: getAccountOrder(DATA_DIR), accountSync: getAccountSyncFlags(DATA_DIR), accounts: withLimits });
           });
         });
       });
@@ -13541,19 +14082,39 @@ function handleApi(req, res) {
         // open conversation into copying. Use the planner's exact selection rule.
         const autoCopyOpenSessionId = currentConversationRow && isAutoCopySessionSelected(sourceRules, currentConversationRow)
           ? currentConversationId : '';
-        const autoCopyJob = shouldStartAutoCopyJob(sourceRules, hasPendingAutoCopyTo(sourceUid))
-          ? startAutoCopyJob(sourceUid, uid, [], {
+        // [wd-pool] 目标账号已勾选：整批交接归属，不再逐条复制。
+        let poolStats = null;
+        let autoCopyJob = null;
+        if (sourceUid && sourceUid !== uid && accountSyncEnabledFor(uid)) {
+          try {
+            const owner = await resolvePoolOwner(sourceUid);
+            if (owner && owner !== uid) poolStats = await transferPoolOwnership(owner, uid);
+            setSharedPool(DATA_DIR, { owner: uid });
+            if (poolStats && poolStats.ok) {
+              try {
+                setAccountSyncFlags(DATA_DIR, [uid], true, {
+                  lastRunAt: Date.now(), lastOkAt: Date.now(), total: Number(poolStats.moved) || 0,
+                });
+              } catch (_) {}
+            }
+          } catch (error) {
+            poolStats = { ok: false, error: String(error.message || error).slice(0, 200) };
+            log('[pool] 交接失败: ' + error.message);
+          }
+        } else if (!accountSyncDisabledFor(uid) && shouldStartAutoCopyJob(sourceRules, hasPendingAutoCopyTo(sourceUid))) {
+          autoCopyJob = startAutoCopyJob(sourceUid, uid, [], {
             sourceName: sourceAccount.nickname || '',
             targetName: acct.nickname || '',
             openSessionId: autoCopyOpenSessionId,
-          })
-          : null;
+          });
+        }
         return json(res, 200, {
           ok: true,
           uid: acct.uid,
           nickname: acct.nickname,
           reloaded,
           autoCopy: autoCopyJob ? { jobId: autoCopyJob.id, total: autoCopyJob.total, openSessionId: autoCopyJob.openSessionId || '' } : { total: 0 },
+          poolStats,
           automationSync,
           officialAutomationSync,
           hint: reloaded ? '已切换并触发窗口刷新' : hint,
