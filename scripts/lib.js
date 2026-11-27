@@ -2059,6 +2059,95 @@ function switchTo(dataDir, uid, log = () => {}) {
   return { uid, rawUid: String(acct.uid), type: acct.type, enterpriseId: acct.enterpriseId, nickname: wdCompatText(acct.nickname), uin: typeof acct.uin === 'string' || typeof acct.uin === 'number' ? acct.uin : '', authFile: target };
 }
 
+
+// [wd-account-sync] 账号卡片上的「是否同步」开关：记录每个账号是否参与跨账号后台同步。
+function accountSyncBucketOf(meta) {
+  const autoCopy = meta && meta.autoCopy && typeof meta.autoCopy === 'object' && !Array.isArray(meta.autoCopy)
+    ? meta.autoCopy : null;
+  if (!autoCopy) return {};
+  if (!autoCopy.accountSync || typeof autoCopy.accountSync !== 'object' || Array.isArray(autoCopy.accountSync)) {
+    autoCopy.accountSync = {};
+  }
+  return autoCopy.accountSync;
+}
+
+function normalizeAccountSyncEntry(entry) {
+  const value = entry && typeof entry === 'object' && !Array.isArray(entry) ? entry : {};
+  const num = (input) => { const n = Number(input); return Number.isFinite(n) && n > 0 ? n : 0; };
+  return {
+    enabled: value.enabled === true,
+    // [wd-pool] 是否已经问过「要不要加入全局对话记录」。老账号在首次升级时补 true，
+    // 之后只有新出现的账号才会弹询问框。
+    asked: value.asked === true,
+    status: typeof value.status === 'string' ? value.status.slice(0, 32) : 'idle',
+    lastRunAt: num(value.lastRunAt),
+    lastOkAt: num(value.lastOkAt),
+    total: num(value.total),
+    copied: num(value.copied),
+    skipped: num(value.skipped),
+    failed: num(value.failed),
+    error: typeof value.error === 'string' ? value.error.slice(0, 300) : '',
+  };
+}
+
+// [wd-pool] 共享对话池：同一时刻只有一个账号持有这批对话，切号时整批改归属。
+// owner 记录「池子现在在谁手上」，从不同步账号切回来时靠它找对源。
+function getSharedPool(dataDir) {
+  const meta = readMeta(dataDir);
+  const pool = meta.autoCopy && meta.autoCopy.sharedPool;
+  return pool && typeof pool === 'object' ? pool : {};
+}
+function setSharedPool(dataDir, patch) {
+  const meta = readMeta(dataDir);
+  if (!meta.autoCopy || typeof meta.autoCopy !== 'object') meta.autoCopy = {};
+  meta.autoCopy.sharedPool = Object.assign({}, meta.autoCopy.sharedPool || {}, patch || {}, { updatedAt: Date.now() });
+  writeMeta(dataDir, meta);
+  return meta.autoCopy.sharedPool;
+}
+function getAccountSyncFlags(dataDir) {
+  const meta = readMeta(dataDir);
+  const bucket = accountSyncBucketOf(meta);
+  const flags = {};
+  for (const uid of Object.keys(bucket)) flags[uid] = normalizeAccountSyncEntry(bucket[uid]);
+  return flags;
+}
+
+// 同步读改写：daemon 内所有 meta 写入都在事件循环里串行完成，不会与其他写者交错。
+function setAccountSyncFlags(dataDir, uids, enabled, patch) {
+  const list = (Array.isArray(uids) ? uids : [uids]).map((uid) => String(uid || '').trim()).filter(Boolean);
+  const meta = readMeta(dataDir);
+  const bucket = accountSyncBucketOf(meta);
+  const on = enabled === true;
+  for (const uid of list) {
+    const next = normalizeAccountSyncEntry(bucket[uid]);
+    next.enabled = on;
+    bucket[uid] = patch && typeof patch === 'object'
+      ? normalizeAccountSyncEntry(Object.assign({}, next, patch))
+      : next;
+  }
+  writeMeta(dataDir, meta);
+  return getAccountSyncFlags(dataDir);
+}
+
+/**
+ * [wd-pool] 把账号标记为「已经问过要不要加入全局对话记录」，不改变 enabled。
+ * 首次升级时给所有现存账号补一次，之后只有新登录的账号才会触发询问弹窗。
+ */
+function markPoolInviteAsked(dataDir, uids) {
+  const list = (Array.isArray(uids) ? uids : [uids]).map((uid) => String(uid || '').trim()).filter(Boolean);
+  const meta = readMeta(dataDir);
+  if (!meta.autoCopy || typeof meta.autoCopy !== 'object' || Array.isArray(meta.autoCopy)) meta.autoCopy = {};
+  const bucket = accountSyncBucketOf(meta);
+  for (const uid of list) {
+    const next = normalizeAccountSyncEntry(bucket[uid]);
+    next.asked = true;
+    bucket[uid] = next;
+  }
+  meta.autoCopy.poolInviteMigrated = true;
+  writeMeta(dataDir, meta);
+  return getAccountSyncFlags(dataDir);
+}
+
 module.exports = {
   isWbEncryptedEnvelope, // [wd-compat]
   wdCompatExeCandidates, // [wd-compat]
@@ -2071,7 +2160,13 @@ module.exports = {
   normalizeAccountImportJson, // [wd-compat]
   wdCompatDecryptAuthJson, // [wd-compat]
   wdCompatEncryptAuthJson, // [wd-compat]
+  readMeta, // [wd-pool] 读取账号元数据（备注 / 昵称 / 手机号）
+  getSharedPool, // [wd-pool] 共享对话池状态
+  setSharedPool, // [wd-pool] 写入池子 owner
   getAccountOrder,
+  getAccountSyncFlags,
+  setAccountSyncFlags,
+  markPoolInviteAsked,
   setAccountOrder,
   setAccountNote,
   readModelsFile,
